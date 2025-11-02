@@ -34,6 +34,8 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         EmployeeModule,
         ClientModule,
         EmployeeScheduleModule,
+        ClientModule,
+        EmployeeScheduleModule,
     ],
     controllers: [AuthController, EformsignController],
     providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],
