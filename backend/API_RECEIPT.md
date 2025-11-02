@@ -47,6 +47,27 @@ Overview of public HTTP endpoints exposed by the Imirae Incheon back-office back
 | `PATCH` | `/employees/:id/open-status` | Toggle availability. Body: `{ openToNextWork: boolean }`. Returns updated employee. |
 | `GET` | `/employees/open-to-next-work` | Convenience list of employees open to next work. |
 
+## Employee Schedules (`/employee-schedules`)
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `POST` | `/employee-schedules` | Create schedule entry. Body: `{ employeeId: number, workAddress: string, startDate: string (ISO), endDate: string (ISO), replaced: boolean }`. |
+| `GET` | `/employee-schedules` | List all schedules. |
+| `GET` | `/employee-schedules/:id` | Fetch schedule by id. |
+| `GET` | `/employee-schedules/employee/:employeeId` | List schedules for a specific employee. |
+| `PATCH` | `/employee-schedules/:id` | Update schedule fields. Body fields optional (`workAddress`, `startDate`, `endDate`, `replaced`). |
+| `DELETE` | `/employee-schedules/:id` | Remove schedule entry. |
+
+## Clients (`/clients`)
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `POST` | `/clients` | Create client record. Body includes `{ name, primaryEmployeeId, secondaryEmployeeId?, address?, phone?, type?, duration?, fullPrice?, grant?, actualPrice?, startDate?, endDate?, careCenter, voucherClient }`. |
+| `GET` | `/clients` | List all clients. |
+| `GET` | `/clients/:id` | Fetch client by id. |
+| `PATCH` | `/clients/:id` | Update client profile fields; accepts the same shape as creation (all optional). |
+| `DELETE` | `/clients/:id` | Delete client record. |
+
 ## Voucher Price Info (`/voucher-price-infos`)
 
 | Method | Path | Description |
