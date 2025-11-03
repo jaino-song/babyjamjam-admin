@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { QueryProvider } from "./query-provider";
+import { NavBar } from "./(components)/nav-bar/NavBar";
+import { MuiThemeProvider as ThemeProvider } from "./(components)/mui-theme-provider";
 
 export const metadata: Metadata = {
   title: "Create Next App",
@@ -13,9 +15,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en">  
       <body className={`antialiased`}>
-        <QueryProvider>{children}</QueryProvider>
+        <ThemeProvider>          
+          <QueryProvider>
+            <NavBar />
+            {children}
+          </QueryProvider>
+        </ThemeProvider>          
       </body>
     </html>
   );
