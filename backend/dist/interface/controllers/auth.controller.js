@@ -22,8 +22,16 @@ let AuthController = class AuthController {
     }
     async kakaoLogin() {
     }
-    async kakaoCallback(req) {
-        return await this.authService.validateKakaoUser(req.user);
+    async kakaoCallback(req, res) {
+        const result = await this.authService.validateKakaoUser(req.user);
+        res.cookie("auth_token", result.token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax",
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+        res.redirect(frontendUrl);
     }
 };
 exports.AuthController = AuthController;
@@ -38,8 +46,9 @@ __decorate([
     (0, common_1.Get)("kakao/callback"),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)("kakao")),
     __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], AuthController.prototype, "kakaoCallback", null);
 exports.AuthController = AuthController = __decorate([

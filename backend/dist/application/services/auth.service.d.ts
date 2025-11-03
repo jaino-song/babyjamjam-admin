@@ -2,18 +2,18 @@ import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { JwtService } from "@nestjs/jwt";
 export interface KakaoData {
     kakaoId: string;
-    name?: string;
     email?: string;
+    name?: string;
     profileImage?: string;
 }
 export interface TokenPayload {
-    userId: string;
-    email: string;
-    role: string;
+    sub: string;
+    role: string | null;
 }
 export interface UserValidationResult {
     user: string;
     token: string;
+    refreshToken: string;
 }
 export declare class AuthService {
     private prisma;

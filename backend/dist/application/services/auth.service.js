@@ -21,13 +21,14 @@ let AuthService = class AuthService {
     async validateKakaoUser(kakaoData) {
         let user = await this.prisma.user.findFirst({
             where: {
-                profile_image: kakaoData.profileImage
+                kakaoId: kakaoData.kakaoId
             },
         });
         if (!user) {
             user = await this.prisma.user.create({
                 data: {
                     kakaoId: kakaoData.kakaoId,
+                    email: kakaoData.email,
                     name: kakaoData.name,
                     profile_image: kakaoData.profileImage,
                     role: "user",
@@ -35,16 +36,18 @@ let AuthService = class AuthService {
             });
         }
         const payload = {
-            userId: user.id,
-            kakaoId: kakaoData.kakaoId,
-            name: user.name,
-            profileImage: user.profile_image,
+            sub: user.id,
             role: user.role,
         };
-        const token = await this.jwt.signAsync(payload);
+        const signOptions = user.role === "owner"
+            ? {}
+            : { expiresIn: "7d" };
+        const refreshToken = await this.jwt.signAsync(payload, signOptions);
+        const token = await this.jwt.signAsync(payload, signOptions);
         return {
             user: user.id,
-            token: token,
+            token,
+            refreshToken,
         };
     }
 };

@@ -14,7 +14,16 @@ interface JwtPayload {
 export class JwtStrategy extends PassportStrategy(Strategy) {
     constructor() {
         super({
-            jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+            jwtFromRequest: ExtractJwt.fromExtractors([
+                ExtractJwt.fromAuthHeaderAsBearerToken(),
+                (req: any) => {
+                    // Try to get token from cookie
+                    if (req && req.cookies) {
+                        return req.cookies.auth_token;
+                    }
+                    return null;
+                },
+            ]),
             ignoreExpiration: false,
             secretOrKey: process.env.JWT_SECRET,
         });

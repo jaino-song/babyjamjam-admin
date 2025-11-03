@@ -4,20 +4,20 @@ import { JwtService } from "@nestjs/jwt";
 
 export interface KakaoData {
     kakaoId: string;
-    name?: string;
     email?: string;
+    name?: string;
     profileImage?: string;
 }
 
 export interface TokenPayload {
-    userId: string;
-    email: string;
-    role: string;
+    sub: string;
+    role: string | null;
 }
 
 export interface UserValidationResult {
     user: string;
     token: string;
+    refreshToken: string;
 }
 
 @Injectable()
@@ -27,7 +27,7 @@ export class AuthService {
     async validateKakaoUser(kakaoData: KakaoData): Promise<UserValidationResult> {
         let user = await this.prisma.user.findFirst({
             where: { 
-                profile_image: kakaoData.profileImage
+                kakaoId: kakaoData.kakaoId
             },
         });
 
@@ -35,6 +35,7 @@ export class AuthService {
             user = await this.prisma.user.create({
                 data: {
                     kakaoId: kakaoData.kakaoId,
+                    email: kakaoData.email,
                     name: kakaoData.name,
                     profile_image: kakaoData.profileImage,
                     role: "user",
@@ -42,18 +43,22 @@ export class AuthService {
             });
         }
 
-        const payload = {
-            userId: user.id,
-            kakaoId: kakaoData.kakaoId,
-            name: user.name,
-            profileImage: user.profile_image,
+        const payload: TokenPayload = {
+            sub: user.id,
             role: user.role,
         };
-        const token = await this.jwt.signAsync(payload);
+
+        const signOptions = user.role === "owner"
+            ? {}
+            : { expiresIn: "7d" };
+
+        const refreshToken = await this.jwt.signAsync(payload, signOptions);
+        const token = await this.jwt.signAsync(payload, signOptions);
 
         return {
             user: user.id,
-            token: token,
+            token,
+            refreshToken,
         };
     }
 }
