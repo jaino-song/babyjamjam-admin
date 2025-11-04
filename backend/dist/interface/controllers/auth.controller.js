@@ -16,9 +16,12 @@ exports.AuthController = void 0;
 const common_1 = require("@nestjs/common");
 const passport_1 = require("@nestjs/passport");
 const auth_service_1 = require("../../application/services/auth.service");
+const jwt_guard_1 = require("../../infrastructure/auth/jwt.guard");
+const prisma_service_1 = require("../../infrastructure/database/prisma.service");
 let AuthController = class AuthController {
-    constructor(authService) {
+    constructor(authService, prisma) {
         this.authService = authService;
+        this.prisma = prisma;
     }
     async kakaoLogin() {
     }
@@ -32,6 +35,19 @@ let AuthController = class AuthController {
         });
         const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
         res.redirect(frontendUrl);
+    }
+    async getCurrentUser(req) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: req.user.userId },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                profile_image: true,
+                role: true,
+            },
+        });
+        return user;
     }
 };
 exports.AuthController = AuthController;
@@ -51,8 +67,17 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], AuthController.prototype, "kakaoCallback", null);
+__decorate([
+    (0, common_1.Get)("me"),
+    (0, common_1.UseGuards)(jwt_guard_1.JwtGuard),
+    __param(0, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], AuthController.prototype, "getCurrentUser", null);
 exports.AuthController = AuthController = __decorate([
     (0, common_1.Controller)("auth"),
-    __metadata("design:paramtypes", [auth_service_1.AuthService])
+    __metadata("design:paramtypes", [auth_service_1.AuthService,
+        prisma_service_1.PrismaService])
 ], AuthController);
 //# sourceMappingURL=auth.controller.js.map

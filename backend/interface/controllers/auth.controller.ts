@@ -3,10 +3,15 @@ import { Response } from "express";
 import { AuthGuard } from "@nestjs/passport";
 import { AuthService, KakaoData } from "../../application/services/auth.service";
 import { UserValidationResult } from "../../application/services/auth.service";
+import { JwtGuard } from "../../infrastructure/auth/jwt.guard";
+import { PrismaService } from "../../infrastructure/database/prisma.service";
 
 @Controller("auth")
 export class AuthController {
-    constructor(private readonly authService: AuthService) {}
+    constructor(
+        private readonly authService: AuthService,
+        private readonly prisma: PrismaService,
+    ) {}
 
     @Get("kakao")
     @UseGuards(AuthGuard("kakao"))
@@ -30,5 +35,21 @@ export class AuthController {
         // Redirect to frontend
         const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
         res.redirect(frontendUrl);
+    }
+
+    @Get("me")
+    @UseGuards(JwtGuard)
+    async getCurrentUser(@Request() req: any) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: req.user.userId },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                profile_image: true,
+                role: true,
+            },
+        });
+        return user;
     }
 }

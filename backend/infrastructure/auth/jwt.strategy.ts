@@ -3,10 +3,7 @@ import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 
 interface JwtPayload {
-    userId: string;
-    kakaoId: string;
-    name: string;
-    profileImageUrl: string;
+    sub: string;
     role: string;
 }
 
@@ -31,10 +28,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     async validate(payload: JwtPayload) {
         return {
-            userId: payload.userId,
-            kakaoId: payload.kakaoId,
-            name: payload.name,
-            profileImageUrl: payload.profileImageUrl,
+            userId: payload.sub,
             role: payload.role,
         };
     }

@@ -31,10 +31,7 @@ let JwtStrategy = class JwtStrategy extends (0, passport_1.PassportStrategy)(pas
     }
     async validate(payload) {
         return {
-            userId: payload.userId,
-            kakaoId: payload.kakaoId,
-            name: payload.name,
-            profileImageUrl: payload.profileImageUrl,
+            userId: payload.sub,
             role: payload.role,
         };
     }
