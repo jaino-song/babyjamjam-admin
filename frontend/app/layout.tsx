@@ -6,6 +6,7 @@ import { MuiThemeProvider as ThemeProvider } from "./(components)/mui-theme-prov
 import { LanguageSwitcher } from "./(components)/nav-bar/LanguageSwitcher";
 import { getLanguageForServerComp } from "./lib/i18n/getLanguageForServerComp";
 import { NavBar } from "./(components)/nav-bar/NavBar";
+import EmotionRegistry from "./(components)/EmotionRegistry";
 
 export const metadata: Metadata = {
   title: "Incheon Imirae Back Office",
@@ -22,14 +23,16 @@ export default async function RootLayout({
   return (
     <html lang={language}>  
       <body className={`antialiased`}>
-        <ThemeProvider>          
-          <QueryProvider>
-            <Header language={language} />
-            <NavBar />
-            {children}
-            <LanguageSwitcher />
-          </QueryProvider>
-        </ThemeProvider>          
+        <EmotionRegistry>
+          <ThemeProvider>          
+            <QueryProvider>
+              <Header language={language} />
+              <NavBar />
+              {children}
+              <LanguageSwitcher />
+            </QueryProvider>
+          </ThemeProvider>
+        </EmotionRegistry>          
       </body>
     </html>
   );

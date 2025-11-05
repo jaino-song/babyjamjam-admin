@@ -25,18 +25,18 @@ export class VoucherPriceInfoController {
         return this.voucherService.list();
     }
 
-    @Get(":id")
-    findById(@Param("id") id: string) {
-        return this.voucherService.findById(Number(id));
-    }
-
-    @Get("search/by-type")
+    @Get("type")
     findByType(@Query("type") type: string) {
         return this.voucherService.findByType(type);
     }
 
-    @Patch(":id")
-    update(@Param("id") id: string, @Body() dto: UpdateVoucherPriceInfoDto) {
+    @Get("id")
+    findById(@Query("id") id: string) {
+        return this.voucherService.findById(Number(id));
+    }
+
+    @Patch()
+    update(@Query("id") id: string, @Body() dto: UpdateVoucherPriceInfoDto) {
         return this.voucherService.update(Number(id), {
             type: dto.type ?? undefined,
             duration: dto.duration !== undefined ? BigInt(dto.duration) : undefined,
@@ -46,8 +46,8 @@ export class VoucherPriceInfoController {
         });
     }
 
-    @Delete(":id")
-    delete(@Param("id") id: string) {
+    @Delete()
+    delete(@Query("id") id: string) {
         return this.voucherService.delete(Number(id));
     }
 }

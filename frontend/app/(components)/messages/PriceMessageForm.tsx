@@ -16,6 +16,8 @@ import {
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import voucherOptions from "./voucher.json";
+import { api } from "@/app/lib/axios";
+import { priceMsgTemplate } from "./templates/priceMsg";
 
 interface PriceFormData {
   name: string;
@@ -59,8 +61,16 @@ export const PriceMessageForm = () => {
   const [selectedType, setSelectedType] = useState("");
   const [availableDurations, setAvailableDurations] = useState<Record<string, { weeks: number; id: number }>>({});
   const [generatedMessage, setGeneratedMessage] = useState("");
+  const [voucherPriceInfos, setVoucherPriceInfos] = useState([]);
+
+  const handleVoucherPriceInfoFetch = async (type: string) => {
+    const { data } = await api.get(`/voucher-price-infos/type`, { params: { type: type } });
+    setVoucherPriceInfos(data);
+    console.log(voucherPriceInfos);
+  };
 
   const handleVoucherTypeChange = (value: string) => {
+    handleVoucherPriceInfoFetch(value);
     setSelectedType(value);
     
     // Find the selected voucher type and its durations in the object tree
@@ -105,7 +115,7 @@ export const PriceMessageForm = () => {
   };
 
   const handleGenerate = () => {
-    const message = getMessageTemplate(formData);
+    const message = priceMsgTemplate(formData);
     setGeneratedMessage(message);
   };
 

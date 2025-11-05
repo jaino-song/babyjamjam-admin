@@ -21,28 +21,13 @@ export class EmployeeController {
         return this.employeeService.findAll();
     }
 
-    @Get(":id")
-    findById(@Param("id") id: string) {
-        return this.employeeService.findById(Number(id));
-    }
-
-    @Patch(":id")
-    update(@Param("id") id: string, @Body() dto: UpdateEmployeeDto) {
-        return this.employeeService.update(Number(id), dto);
-    }
-
-    @Delete(":id")
-    delete(@Param("id") id: string) {
-        return this.employeeService.delete(Number(id));
-    }
-
-    @Get("work-area/:workArea")
-    findByWorkArea(@Param("workArea") workArea: string) {
+    @Get("work-area")
+    findByWorkArea(@Query("workArea") workArea: string) {
         return this.employeeService.findByWorkArea(workArea);
     }
 
-    @Get("grade/:grade")
-    findByGrade(@Param("grade") grade: string) {
+    @Get("grade")
+    findByGrade(@Query("grade") grade: string) {
         return this.employeeService.findByGrade(grade);
     }
 
@@ -52,8 +37,8 @@ export class EmployeeController {
         return this.employeeService.findByOpenStatus(flag);
     }
 
-    @Get("registered-date/:date")
-    findByRegisteredDate(@Param("date") date: string) {
+    @Get("registered-date")
+    findByRegisteredDate(@Query("date") date: string) {
         return this.employeeService.findByRegisteredDate(new Date(date));
     }
 
@@ -62,14 +47,29 @@ export class EmployeeController {
         return this.employeeService.findByRegisteredDateRange(new Date(query.startDate), new Date(query.endDate));
     }
 
-    @Patch(":id/open-status")
-    changeOpenStatus(@Param("id") id: string, @Body() dto: ChangeEmployeeOpenStatusDto) {
-        return this.employeeService.changeOpenStatus(Number(id), dto.openToNextWork);
-    }
-
     @Get("open-to-next-work")
     findAllOpenToNextWork() {
         return this.employeeService.findAllOpenToNextWork();
+    }
+
+    @Get("id")
+    findById(@Query("id") id: string) {
+        return this.employeeService.findById(Number(id));
+    }
+
+    @Patch("open-status")
+    changeOpenStatus(@Query("id") id: string, @Body() dto: ChangeEmployeeOpenStatusDto) {
+        return this.employeeService.changeOpenStatus(Number(id), dto.openToNextWork);
+    }
+
+    @Patch()
+    update(@Query("id") id: string, @Body() dto: UpdateEmployeeDto) {
+        return this.employeeService.update(Number(id), dto);
+    }
+
+    @Delete()
+    delete(@Query("id") id: string) {
+        return this.employeeService.delete(Number(id));
     }
 }
 

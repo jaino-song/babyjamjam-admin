@@ -75,7 +75,7 @@ Overview of public HTTP endpoints exposed by the Imirae Incheon back-office back
 | `POST` | `/voucher-price-infos` | Create voucher pricing entry. Body: `{ type: string, duration: string (numeric), fullPrice, grant, actualPrice }`. Duration is parsed to bigint. |
 | `GET` | `/voucher-price-infos` | List all voucher price entries. |
 | `GET` | `/voucher-price-infos/:id` | Retrieve voucher by id. |
-| `GET` | `/voucher-price-infos/search/by-type` | Find voucher by type via `?type=<value>`. |
+| `GET` | `/voucher-price-infos/type` | Find voucher by type via `?type=<value>`. |
 | `PATCH` | `/voucher-price-infos/:id` | Partial update. Body fields optional; `duration` string is converted to bigint when provided. |
 | `DELETE` | `/voucher-price-infos/:id` | Delete voucher entry. |
 

@@ -32,11 +32,11 @@ let VoucherPriceInfoController = class VoucherPriceInfoController {
     list() {
         return this.voucherService.list();
     }
-    findById(id) {
-        return this.voucherService.findById(Number(id));
-    }
     findByType(type) {
         return this.voucherService.findByType(type);
+    }
+    findById(id) {
+        return this.voucherService.findById(Number(id));
     }
     update(id, dto) {
         return this.voucherService.update(Number(id), {
@@ -66,30 +66,30 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], VoucherPriceInfoController.prototype, "list", null);
 __decorate([
-    (0, common_1.Get)(":id"),
-    __param(0, (0, common_1.Param)("id")),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
-    __metadata("design:returntype", void 0)
-], VoucherPriceInfoController.prototype, "findById", null);
-__decorate([
-    (0, common_1.Get)("search/by-type"),
+    (0, common_1.Get)("type"),
     __param(0, (0, common_1.Query)("type")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], VoucherPriceInfoController.prototype, "findByType", null);
 __decorate([
-    (0, common_1.Patch)(":id"),
-    __param(0, (0, common_1.Param)("id")),
+    (0, common_1.Get)("id"),
+    __param(0, (0, common_1.Query)("id")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], VoucherPriceInfoController.prototype, "findById", null);
+__decorate([
+    (0, common_1.Patch)(),
+    __param(0, (0, common_1.Query)("id")),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, voucher_price_info_dto_1.UpdateVoucherPriceInfoDto]),
     __metadata("design:returntype", void 0)
 ], VoucherPriceInfoController.prototype, "update", null);
 __decorate([
-    (0, common_1.Delete)(":id"),
-    __param(0, (0, common_1.Param)("id")),
+    (0, common_1.Delete)(),
+    __param(0, (0, common_1.Query)("id")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)

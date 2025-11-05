@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Query, Patch, Post } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import { CreateClientDto, UpdateClientDto } from "interface/dto/client.dto";
 
@@ -31,13 +31,13 @@ export class ClientController {
         return this.clientService.findAll();
     }
 
-    @Get(":id")
-    findById(@Param("id") id: string) {
+    @Get("id")
+    findById(@Query("id") id: string) {
         return this.clientService.findById(Number(id));
     }
 
-    @Patch(":id")
-    update(@Param("id") id: string, @Body() dto: UpdateClientDto) {
+    @Patch()
+    update(@Query("id") id: string, @Body() dto: UpdateClientDto) {
         return this.clientService.update(Number(id), {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
@@ -56,8 +56,8 @@ export class ClientController {
         });
     }
 
-    @Delete(":id")
-    delete(@Param("id") id: string) {
+    @Delete()
+    delete(@Query("id") id: string) {
         return this.clientService.delete(Number(id));
     }
 }

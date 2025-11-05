@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Query, Patch, Post } from "@nestjs/common";
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
 import { CreateEmployeeScheduleDto, UpdateEmployeeScheduleDto } from "interface/dto/employee-schedule.dto";
 
@@ -22,18 +22,18 @@ export class EmployeeScheduleController {
         return this.employeeScheduleService.findAll();
     }
 
-    @Get("employee/:employeeId")
-    findByEmployee(@Param("employeeId") employeeId: string) {
+    @Get("employee")
+    findByEmployee(@Query("employeeId") employeeId: string) {
         return this.employeeScheduleService.findByEmployeeId(Number(employeeId));
     }
 
-    @Get(":id")
-    findById(@Param("id") id: string) {
+    @Get("id")
+    findById(@Query("id") id: string) {
         return this.employeeScheduleService.findById(Number(id));
     }
 
-    @Patch(":id")
-    update(@Param("id") id: string, @Body() dto: UpdateEmployeeScheduleDto) {
+    @Patch()
+    update(@Query("id") id: string, @Body() dto: UpdateEmployeeScheduleDto) {
         return this.employeeScheduleService.update(Number(id), {
             workAddress: dto.workAddress,
             startDate: dto.startDate,
@@ -42,8 +42,8 @@ export class EmployeeScheduleController {
         });
     }
 
-    @Delete(":id")
-    delete(@Param("id") id: string) {
+    @Delete()
+    delete(@Query("id") id: string) {
         return this.employeeScheduleService.delete(Number(id));
     }
 }

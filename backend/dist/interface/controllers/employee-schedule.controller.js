@@ -65,30 +65,30 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], EmployeeScheduleController.prototype, "findAll", null);
 __decorate([
-    (0, common_1.Get)("employee/:employeeId"),
-    __param(0, (0, common_1.Param)("employeeId")),
+    (0, common_1.Get)("employee"),
+    __param(0, (0, common_1.Query)("employeeId")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], EmployeeScheduleController.prototype, "findByEmployee", null);
 __decorate([
-    (0, common_1.Get)(":id"),
-    __param(0, (0, common_1.Param)("id")),
+    (0, common_1.Get)("id"),
+    __param(0, (0, common_1.Query)("id")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], EmployeeScheduleController.prototype, "findById", null);
 __decorate([
-    (0, common_1.Patch)(":id"),
-    __param(0, (0, common_1.Param)("id")),
+    (0, common_1.Patch)(),
+    __param(0, (0, common_1.Query)("id")),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, employee_schedule_dto_1.UpdateEmployeeScheduleDto]),
     __metadata("design:returntype", void 0)
 ], EmployeeScheduleController.prototype, "update", null);
 __decorate([
-    (0, common_1.Delete)(":id"),
-    __param(0, (0, common_1.Param)("id")),
+    (0, common_1.Delete)(),
+    __param(0, (0, common_1.Query)("id")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)

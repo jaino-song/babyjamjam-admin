@@ -26,15 +26,6 @@ let EmployeeController = class EmployeeController {
     findAll() {
         return this.employeeService.findAll();
     }
-    findById(id) {
-        return this.employeeService.findById(Number(id));
-    }
-    update(id, dto) {
-        return this.employeeService.update(Number(id), dto);
-    }
-    delete(id) {
-        return this.employeeService.delete(Number(id));
-    }
     findByWorkArea(workArea) {
         return this.employeeService.findByWorkArea(workArea);
     }
@@ -51,11 +42,20 @@ let EmployeeController = class EmployeeController {
     findByRegisteredDateRange(query) {
         return this.employeeService.findByRegisteredDateRange(new Date(query.startDate), new Date(query.endDate));
     }
+    findAllOpenToNextWork() {
+        return this.employeeService.findAllOpenToNextWork();
+    }
+    findById(id) {
+        return this.employeeService.findById(Number(id));
+    }
     changeOpenStatus(id, dto) {
         return this.employeeService.changeOpenStatus(Number(id), dto.openToNextWork);
     }
-    findAllOpenToNextWork() {
-        return this.employeeService.findAllOpenToNextWork();
+    update(id, dto) {
+        return this.employeeService.update(Number(id), dto);
+    }
+    delete(id) {
+        return this.employeeService.delete(Number(id));
     }
 };
 exports.EmployeeController = EmployeeController;
@@ -73,37 +73,15 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], EmployeeController.prototype, "findAll", null);
 __decorate([
-    (0, common_1.Get)(":id"),
-    __param(0, (0, common_1.Param)("id")),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
-    __metadata("design:returntype", void 0)
-], EmployeeController.prototype, "findById", null);
-__decorate([
-    (0, common_1.Patch)(":id"),
-    __param(0, (0, common_1.Param)("id")),
-    __param(1, (0, common_1.Body)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, employee_dto_1.UpdateEmployeeDto]),
-    __metadata("design:returntype", void 0)
-], EmployeeController.prototype, "update", null);
-__decorate([
-    (0, common_1.Delete)(":id"),
-    __param(0, (0, common_1.Param)("id")),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
-    __metadata("design:returntype", void 0)
-], EmployeeController.prototype, "delete", null);
-__decorate([
-    (0, common_1.Get)("work-area/:workArea"),
-    __param(0, (0, common_1.Param)("workArea")),
+    (0, common_1.Get)("work-area"),
+    __param(0, (0, common_1.Query)("workArea")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], EmployeeController.prototype, "findByWorkArea", null);
 __decorate([
-    (0, common_1.Get)("grade/:grade"),
-    __param(0, (0, common_1.Param)("grade")),
+    (0, common_1.Get)("grade"),
+    __param(0, (0, common_1.Query)("grade")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
@@ -116,8 +94,8 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], EmployeeController.prototype, "findByOpenStatus", null);
 __decorate([
-    (0, common_1.Get)("registered-date/:date"),
-    __param(0, (0, common_1.Param)("date")),
+    (0, common_1.Get)("registered-date"),
+    __param(0, (0, common_1.Query)("date")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
@@ -130,19 +108,41 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], EmployeeController.prototype, "findByRegisteredDateRange", null);
 __decorate([
-    (0, common_1.Patch)(":id/open-status"),
-    __param(0, (0, common_1.Param)("id")),
+    (0, common_1.Get)("open-to-next-work"),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], EmployeeController.prototype, "findAllOpenToNextWork", null);
+__decorate([
+    (0, common_1.Get)("id"),
+    __param(0, (0, common_1.Query)("id")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], EmployeeController.prototype, "findById", null);
+__decorate([
+    (0, common_1.Patch)("open-status"),
+    __param(0, (0, common_1.Query)("id")),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, employee_dto_1.ChangeEmployeeOpenStatusDto]),
     __metadata("design:returntype", void 0)
 ], EmployeeController.prototype, "changeOpenStatus", null);
 __decorate([
-    (0, common_1.Get)("open-to-next-work"),
+    (0, common_1.Patch)(),
+    __param(0, (0, common_1.Query)("id")),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [String, employee_dto_1.UpdateEmployeeDto]),
     __metadata("design:returntype", void 0)
-], EmployeeController.prototype, "findAllOpenToNextWork", null);
+], EmployeeController.prototype, "update", null);
+__decorate([
+    (0, common_1.Delete)(),
+    __param(0, (0, common_1.Query)("id")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], EmployeeController.prototype, "delete", null);
 exports.EmployeeController = EmployeeController = __decorate([
     (0, common_1.Controller)("employees"),
     __metadata("design:paramtypes", [employee_service_1.EmployeeService])

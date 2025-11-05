@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Query, Patch, Post } from "@nestjs/common";
 import { MessageService } from "application/services/message.service";
 import { CreateMessageDto, UpdateMessageDto } from "interface/dto/message.dto";
 
@@ -11,18 +11,18 @@ export class MessageController {
         return this.messageService.create(dto.title, dto.text);
     }
 
-    @Get(":id")
-    findById(@Param("id") id: string) {
+    @Get("id")
+    findById(@Query("id") id: string) {
         return this.messageService.findById(Number(id));
     }
 
-    @Patch(":id")
-    update(@Param("id") id: string, @Body() dto: UpdateMessageDto) {
+    @Patch()
+    update(@Query("id") id: string, @Body() dto: UpdateMessageDto) {
         return this.messageService.update(Number(id), dto.title, dto.text);
     }
 
-    @Delete(":id")
-    delete(@Param("id") id: string) {
+    @Delete()
+    delete(@Query("id") id: string) {
         return this.messageService.delete(Number(id));
     }
 }

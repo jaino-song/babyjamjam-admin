@@ -42,23 +42,23 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], BankAccountInfoController.prototype, "create", null);
 __decorate([
-    (0, common_1.Get)(":area"),
-    __param(0, (0, common_1.Param)("area")),
+    (0, common_1.Get)("area"),
+    __param(0, (0, common_1.Query)("area")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], BankAccountInfoController.prototype, "findByArea", null);
 __decorate([
-    (0, common_1.Patch)(":area"),
-    __param(0, (0, common_1.Param)("area")),
+    (0, common_1.Patch)(),
+    __param(0, (0, common_1.Query)("area")),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, bank_account_info_dto_1.UpdateBankAccountInfoDto]),
     __metadata("design:returntype", void 0)
 ], BankAccountInfoController.prototype, "update", null);
 __decorate([
-    (0, common_1.Delete)(":area"),
-    __param(0, (0, common_1.Param)("area")),
+    (0, common_1.Delete)(),
+    __param(0, (0, common_1.Query)("area")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
