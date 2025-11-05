@@ -1,0 +1,42 @@
+{
+  "common": {
+    "welcome": "Welcome",
+    "loading": "Loading...",
+    "error": "Error",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create"
+  },
+  "dashboard": {
+    "title": "Admin Dashboard",
+    "subtitle": "Monitor operations at a glance",
+    "welcome_back": "Welcome back",
+    "active_users": "Active Users",
+    "pending_approvals": "Pending Approvals",
+    "revenue": "Revenue",
+    "reports": "Reports",
+    "weekly_performance": "Weekly Performance",
+    "quick_actions": "Quick Actions",
+    "recent_activity": "Recent Activity",
+    "view_insights": "View Insights",
+    "schedule_briefing": "Schedule Briefing",
+    "view_all": "View all"
+  },
+  "actions": {
+    "add_user": "Add User",
+    "review_requests": "Review Requests",
+    "create_report": "Create Report",
+    "schedule_meeting": "Schedule Meeting",
+    "price_calculator": "Price Calculator",
+    "write_message": "Write Message"
+  },
+  "user": {
+    "profile": "Profile",
+    "settings": "Settings",
+    "logout": "Logout",
+    "login": "Login"
+  }
+}
+

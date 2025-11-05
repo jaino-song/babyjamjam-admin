@@ -3,35 +3,39 @@ import ChecklistIcon from "@mui/icons-material/Checklist";
 import PeopleOutlineIcon from "@mui/icons-material/PeopleOutline";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import { Box, Stack } from "@mui/material";
-import { HeroBanner } from "../(components)/dashboard/HeroBanner";
-import { StatsGrid, StatItem } from "../(components)/dashboard/StatsGrid";
-import { PerformanceOverview, PerformanceMetric } from "../(components)/dashboard/PerformanceOverview";
-import { QuickActions } from "../(components)/dashboard/QuickActions";
-import { ActivityItem, RecentActivity } from "../(components)/dashboard/RecentActivity";
-import { getCurrentUser } from "../lib/auth/cookies";
-import { getLanguageForServerComp } from "../lib/i18n/getLanguageForServerComp";
+import { HeroBanner } from "./(components)/dashboard/HeroBanner";
+import { StatsGrid, StatItem } from "./(components)/dashboard/StatsGrid";
+import { PerformanceOverview, PerformanceMetric } from "./(components)/dashboard/PerformanceOverview";
+import { QuickActions } from "./(components)/dashboard/QuickActions";
+import { ActivityItem, RecentActivity } from "./(components)/dashboard/RecentActivity";
+import { getCurrentUser } from "./lib/auth/cookies";
+import { getLanguageForServerComp } from "./lib/i18n/getLanguageForServerComp";
+import { t } from "./lib/i18n/translations";
+import { getLocale } from "./actions/locale";
+
+const locale = await getLocale();
 
 const stats: StatItem[] = [
   {
-    label: "Active Users",
+    label: t(locale, "dashboard.active_users"),
     value: "1,248",
     helper: "+18% vs last week",
     icon: PeopleOutlineIcon,
   },
   {
-    label: "Pending Approvals",
+    label: t(locale, "dashboard.pending_approvals"),
     value: "32",
     helper: "5 require follow-up",
     icon: ChecklistIcon,
   },
   {
-    label: "Revenue",
+    label: t(locale, "dashboard.revenue"),
     value: "$42.8k",
     helper: "+6.2% growth",
     icon: TrendingUpIcon,
   },
   {
-    label: "Reports",
+    label: t(locale, "dashboard.reports"),
     value: "14",
     helper: "Updated today",
     icon: AssessmentIcon,
@@ -72,28 +76,28 @@ export default async function Home() {
       >
         <Stack spacing={3}>
           <HeroBanner
-            subtitle={language === "ko" ? "환영합니다 😀" : "Welcome back 😀"}
-            title={language === "ko" ? `${user?.name} 님` : `${user?.name} 👋` || "Stranger"} 
-            primaryActionLabel={language === "ko" ? "요금 계산기" : "Price Calculator"}
-            secondaryActionLabel={language === "ko" ? "메시지 작성" : "Write Message"}
+            subtitle={t(locale, "dashboard.welcome_back")}
+            title={`${user?.name} ${t(locale, "dashboard.suffix")}`} 
+            primaryActionLabel={t(locale, "actions.price_calculator")}
+            secondaryActionLabel={t(locale, "actions.write_message")}
           />
 
           <StatsGrid stats={stats} />
 
           <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
             <PerformanceOverview
-              title="Weekly Performance"
-              subtitle="Total conversion rate compared to the previous period."
+              title={t(locale, "dashboard.weekly_performance")}
+              subtitle={t(locale, "dashboard.weekly_performance_subtitle")}
               metrics={performanceMetrics}
             />
             <QuickActions
-              title="Quick Actions"
-              subtitle="Stay ahead of today's priorities."
+              title={t(locale, "dashboard.quick_actions")}
+              subtitle={t(locale, "dashboard.quick_actions_subtitle")}
               actions={quickActions}
             />
           </Stack>
 
-          <RecentActivity items={activity} title="Recent Activity" actionLabel="View all" />
+          <RecentActivity items={activity} title={t(locale, "dashboard.recent_activity")} actionLabel={t(locale, "dashboard.view_all")} />
         </Stack>
       </Box>
     </Box>

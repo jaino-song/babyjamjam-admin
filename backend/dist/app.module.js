@@ -46,8 +46,6 @@ exports.AppModule = AppModule = __decorate([
             employee_module_1.EmployeeModule,
             client_module_1.ClientModule,
             employee_schedule_module_1.EmployeeScheduleModule,
-            client_module_1.ClientModule,
-            employee_schedule_module_1.EmployeeScheduleModule,
         ],
         controllers: [auth_controller_1.AuthController, eformsign_controller_1.EformsignController],
         providers: [auth_service_1.AuthService, eformsign_service_1.EformsignService, kakao_strategy_1.KakaoStrategy, jwt_strategy_1.JwtStrategy, prisma_service_1.PrismaService],

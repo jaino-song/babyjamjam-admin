@@ -1,0 +1,43 @@
+{
+  "common": {
+    "welcome": "환영합니다",
+    "loading": "로딩 중...",
+    "error": "오류",
+    "save": "저장",
+    "cancel": "취소",
+    "delete": "삭제",
+    "edit": "수정",
+    "create": "생성"
+  },
+  "dashboard": {
+    "title": "관리자 대시보드",
+    "subtitle": "운영을 한눈에 모니터링",
+    "welcome_back": "환영합니다",
+    "suffix": "님 😀",
+    "active_users": "활성 사용자",
+    "pending_approvals": "승인 대기",
+    "revenue": "수익",
+    "reports": "보고서",
+    "weekly_performance": "주간 실적",
+    "quick_actions": "빠른 작업",
+    "recent_activity": "최근 활동",
+    "view_insights": "인사이트 보기",
+    "schedule_briefing": "브리핑 일정 잡기",
+    "view_all": "전체 보기"
+  },
+  "actions": {
+    "add_user": "사용자 추가",
+    "review_requests": "요청 검토",
+    "create_report": "보고서 작성",
+    "schedule_meeting": "회의 일정 잡기",
+    "price_calculator": "요금 계산기",
+    "write_message": "메시지 작성"
+  },
+  "user": {
+    "profile": "프로필",
+    "settings": "설정",
+    "logout": "로그아웃",
+    "login": "로그인"
+  }
+}
+
