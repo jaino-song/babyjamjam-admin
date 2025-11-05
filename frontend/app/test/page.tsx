@@ -1,4 +1,4 @@
-import { api } from "@/lib/axios";
+import { api } from "@/app/lib/axios";
 
 const TestPage = () => {
     const testAPI = async () => {

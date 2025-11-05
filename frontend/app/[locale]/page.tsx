@@ -3,13 +3,13 @@ import ChecklistIcon from "@mui/icons-material/Checklist";
 import PeopleOutlineIcon from "@mui/icons-material/PeopleOutline";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import { Box, Stack } from "@mui/material";
-import { HeroBanner } from "./(components)/dashboard/HeroBanner";
-import { StatsGrid, StatItem } from "./(components)/dashboard/StatsGrid";
-import { PerformanceOverview, PerformanceMetric } from "./(components)/dashboard/PerformanceOverview";
-import { QuickActions } from "./(components)/dashboard/QuickActions";
-import { ActivityItem, RecentActivity } from "./(components)/dashboard/RecentActivity";
-import { getCurrentUser } from "./lib/auth/cookies";
-import { getLanguageForServerComp } from "./lib/i18n/getLanguageForServerComp";
+import { HeroBanner } from "../(components)/dashboard/HeroBanner";
+import { StatsGrid, StatItem } from "../(components)/dashboard/StatsGrid";
+import { PerformanceOverview, PerformanceMetric } from "../(components)/dashboard/PerformanceOverview";
+import { QuickActions } from "../(components)/dashboard/QuickActions";
+import { ActivityItem, RecentActivity } from "../(components)/dashboard/RecentActivity";
+import { getCurrentUser } from "../lib/auth/cookies";
+import { getLanguageForServerComp } from "../lib/i18n/getLanguageForServerComp";
 
 const stats: StatItem[] = [
   {

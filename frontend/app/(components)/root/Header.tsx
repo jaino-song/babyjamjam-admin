@@ -4,7 +4,7 @@ import MenuIcon from "@mui/icons-material/Menu";
 import NotificationsNoneIcon from "@mui/icons-material/NotificationsNone";
 import LoginIcon from '@mui/icons-material/Login';
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/axios";
+import { api } from "@/app/lib/axios";
 
 interface HeaderProps {
     language: string;
@@ -43,10 +43,10 @@ export const Header = ({ language }: HeaderProps) => {
             </IconButton>
             <Box sx={{ flexGrow: 1 }}>
               <Typography variant="h6" fontWeight={600}>
-                {language === "ko" ? "관리자 대시보드" : "Admin Dashboard"}
+                {language === "ko" ? "인천 아이미래로" : "Imirae Incheon"}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {language === "ko" ? "운영을 한눈에 모니터링" : "Monitor operations at a glance"}
+                {language === "ko" ? "운영 플랫폼 백오피스" : "Imirae Incheon Back Office"}
               </Typography>
             </Box>
             <IconButton color="inherit" aria-label="notifications">
