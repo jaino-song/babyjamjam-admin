@@ -6,7 +6,7 @@ export declare class VoucherPriceInfoController {
     create(dto: CreateVoucherPriceInfoDto): Promise<import("../../domain/entities/voucher-price-info.entity").VoucherPriceInfoEntity>;
     list(): Promise<import("../../domain/entities/voucher-price-info.entity").VoucherPriceInfoEntity[]>;
     findById(id: string): Promise<import("../../domain/entities/voucher-price-info.entity").VoucherPriceInfoEntity>;
-    findByType(type: string): Promise<import("../../domain/entities/voucher-price-info.entity").VoucherPriceInfoEntity>;
+    findByType(type: string): Promise<import("../../domain/entities/voucher-price-info.entity").VoucherPriceInfoEntity[]>;
     update(id: string, dto: UpdateVoucherPriceInfoDto): Promise<import("../../domain/entities/voucher-price-info.entity").VoucherPriceInfoEntity>;
     delete(id: string): Promise<void>;
 }

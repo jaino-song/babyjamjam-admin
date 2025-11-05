@@ -3,5 +3,5 @@ import { IVoucherPriceInfoRepository } from "domain/repositories/voucher-price-i
 export declare class FindVoucherPriceInfoByTypeUsecase {
     private readonly voucherPriceInfoRepository;
     constructor(voucherPriceInfoRepository: IVoucherPriceInfoRepository);
-    execute(type: string): Promise<VoucherPriceInfoEntity | null>;
+    execute(type: string): Promise<VoucherPriceInfoEntity[]>;
 }

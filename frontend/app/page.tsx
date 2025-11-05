@@ -9,7 +9,6 @@ import { PerformanceOverview, PerformanceMetric } from "./(components)/dashboard
 import { QuickActions } from "./(components)/dashboard/QuickActions";
 import { ActivityItem, RecentActivity } from "./(components)/dashboard/RecentActivity";
 import { getCurrentUser } from "./lib/auth/cookies";
-import { getLanguageForServerComp } from "./lib/i18n/getLanguageForServerComp";
 import { t } from "./lib/i18n/translations";
 import { getLocale } from "./actions/locale";
 
@@ -61,7 +60,6 @@ const activity: ActivityItem[] = [
 
 export default async function Home() {
   const user = await getCurrentUser();
-  const language = await getLanguageForServerComp();
 
   return (
     <Box sx={{ minHeight: "100vh", bgcolor: "background.default" }}>

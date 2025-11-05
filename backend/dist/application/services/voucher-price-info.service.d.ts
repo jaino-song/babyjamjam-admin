@@ -18,7 +18,7 @@ export declare class VoucherPriceInfoService {
     constructor(createVoucherPriceInfoUsecase: CreateVoucherPriceInfoUsecase, findVoucherPriceInfoByIdUsecase: FindVoucherPriceInfoByIdUsecase, findVoucherPriceInfoByTypeUsecase: FindVoucherPriceInfoByTypeUsecase, listVoucherPriceInfoUsecase: ListVoucherPriceInfoUsecase, updateVoucherPriceInfoUsecase: UpdateVoucherPriceInfoUsecase, deleteVoucherPriceInfoUsecase: DeleteVoucherPriceInfoUsecase);
     create(params: CreateVoucherParams): Promise<VoucherPriceInfoEntity>;
     findById(id: number): Promise<VoucherPriceInfoEntity | null>;
-    findByType(type: string): Promise<VoucherPriceInfoEntity | null>;
+    findByType(type: string): Promise<VoucherPriceInfoEntity[]>;
     list(): Promise<VoucherPriceInfoEntity[]>;
     update(id: number, params: UpdateVoucherPriceInfoParams): Promise<VoucherPriceInfoEntity>;
     delete(id: number): Promise<void>;

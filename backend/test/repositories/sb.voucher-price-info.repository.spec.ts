@@ -48,22 +48,23 @@ describe("SbVoucherPriceInfoRepository", () => {
         expect(result).toBeNull();
     });
 
-    it("returns a voucher price info when findByType finds a match", async () => {
-        voucherModel.findFirst.mockResolvedValue(sampleRow);
+    it("returns voucher price infos when findByType finds matches", async () => {
+        voucherModel.findMany.mockResolvedValue([sampleRow, { ...sampleRow, id: 11 }]);
 
         const result = await repository.findByType("standard");
 
-        expect(voucherModel.findFirst).toHaveBeenCalledWith({ where: { type: "standard" } });
-        expect(result).toMatchObject({ id: 10, type: "standard" });
+        expect(voucherModel.findMany).toHaveBeenCalledWith({ where: { type: "standard" } });
+        expect(result).toHaveLength(2);
+        expect(result[0]).toMatchObject({ id: 10, type: "standard" });
     });
 
-    it("returns null when findByType finds nothing", async () => {
-        voucherModel.findFirst.mockResolvedValue(null);
+    it("returns empty array when findByType finds nothing", async () => {
+        voucherModel.findMany.mockResolvedValue([]);
 
         const result = await repository.findByType("missing");
 
-        expect(voucherModel.findFirst).toHaveBeenCalledWith({ where: { type: "missing" } });
-        expect(result).toBeNull();
+        expect(voucherModel.findMany).toHaveBeenCalledWith({ where: { type: "missing" } });
+        expect(result).toHaveLength(0);
     });
 
     it("creates a voucher price info using Prisma", async () => {

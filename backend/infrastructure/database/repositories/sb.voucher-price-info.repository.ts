@@ -15,11 +15,11 @@ export class SbVoucherPriceInfoRepository implements IVoucherPriceInfoRepository
         return voucherPriceInfo ? VoucherPriceInfoMapper.toDomain(voucherPriceInfo) : null;
     }
 
-    async findByType(type: string): Promise<VoucherPriceInfoEntity | null> {
-        const voucherPriceInfo = await this.prismaService.voucherPriceInfo.findFirst({
+    async findByType(type: string): Promise<VoucherPriceInfoEntity[]> {
+        const voucherPriceInfos = await this.prismaService.voucherPriceInfo.findMany({
             where: { type: type },
         });
-        return voucherPriceInfo ? VoucherPriceInfoMapper.toDomain(voucherPriceInfo) : null;
+        return voucherPriceInfos.map(row => VoucherPriceInfoMapper.toDomain(row));
     }
     
     async create(voucherPriceInfo: VoucherPriceInfoEntity): Promise<VoucherPriceInfoEntity> {

@@ -9,7 +9,7 @@ export class FindVoucherPriceInfoByTypeUsecase {
         private readonly voucherPriceInfoRepository: IVoucherPriceInfoRepository,
     ) {}
 
-    execute(type: string): Promise<VoucherPriceInfoEntity | null> {
+    execute(type: string): Promise<VoucherPriceInfoEntity[]> {
         return this.voucherPriceInfoRepository.findByType(type);
     }
 }

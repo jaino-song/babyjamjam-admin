@@ -5,7 +5,7 @@ export declare class SbVoucherPriceInfoRepository implements IVoucherPriceInfoRe
     private prismaService;
     constructor(prismaService: PrismaService);
     findById(id: number): Promise<VoucherPriceInfoEntity | null>;
-    findByType(type: string): Promise<VoucherPriceInfoEntity | null>;
+    findByType(type: string): Promise<VoucherPriceInfoEntity[]>;
     create(voucherPriceInfo: VoucherPriceInfoEntity): Promise<VoucherPriceInfoEntity>;
     update(voucherPriceInfo: VoucherPriceInfoEntity): Promise<VoucherPriceInfoEntity>;
     delete(id: number): Promise<void>;

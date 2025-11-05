@@ -43,7 +43,7 @@ export class VoucherPriceInfoService {
         return this.findVoucherPriceInfoByIdUsecase.execute(id);
     }
 
-    findByType(type: string): Promise<VoucherPriceInfoEntity | null> {
+    findByType(type: string): Promise<VoucherPriceInfoEntity[]> {
         return this.findVoucherPriceInfoByTypeUsecase.execute(type);
     }
 

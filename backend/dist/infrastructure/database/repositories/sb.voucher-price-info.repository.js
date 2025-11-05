@@ -24,10 +24,10 @@ let SbVoucherPriceInfoRepository = class SbVoucherPriceInfoRepository {
         return voucherPriceInfo ? voucher_price_info_mapper_1.VoucherPriceInfoMapper.toDomain(voucherPriceInfo) : null;
     }
     async findByType(type) {
-        const voucherPriceInfo = await this.prismaService.voucherPriceInfo.findFirst({
+        const voucherPriceInfos = await this.prismaService.voucherPriceInfo.findMany({
             where: { type: type },
         });
-        return voucherPriceInfo ? voucher_price_info_mapper_1.VoucherPriceInfoMapper.toDomain(voucherPriceInfo) : null;
+        return voucherPriceInfos.map(row => voucher_price_info_mapper_1.VoucherPriceInfoMapper.toDomain(row));
     }
     async create(voucherPriceInfo) {
         const created = await this.prismaService.voucherPriceInfo.create({
