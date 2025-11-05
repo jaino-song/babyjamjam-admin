@@ -33,6 +33,15 @@ interface PriceFormData {
   accNum: string;
 }
 
+interface VoucherPriceInfo {
+  id: number;
+  type: string | null;
+  duration: string;
+  fullPrice: string | null;
+  grant: string | null;
+  actualPrice: string | null;
+}
+
 const areaOptions = [
   { value: "Namdonggu", label: "남동구", bankName: "신한은행", accNum: "110-123-456789" },
   { value: "Seogu", label: "서구", bankName: "우리은행", accNum: "1002-234-567890" },
@@ -61,12 +70,18 @@ export const PriceMessageForm = () => {
   const [selectedType, setSelectedType] = useState("");
   const [availableDurations, setAvailableDurations] = useState<Record<string, { weeks: number; id: number }>>({});
   const [generatedMessage, setGeneratedMessage] = useState("");
-  const [voucherPriceInfos, setVoucherPriceInfos] = useState([]);
+  const [voucherPriceInfos, setVoucherPriceInfos] = useState<VoucherPriceInfo[]>([]);
 
   const handleVoucherPriceInfoFetch = async (type: string) => {
-    const { data } = await api.get(`/voucher-price-infos/type`, { params: { type: type } });
-    setVoucherPriceInfos(data);
-    console.log(voucherPriceInfos);
+    try {
+      const { data } = await api.get(`/voucher-price-infos/type`, {
+        params: { type }
+      });
+      console.log('Fetched voucher prices:', data);
+      setVoucherPriceInfos(data);
+    } catch (error) {
+      console.error('Error fetching voucher prices:', error);
+    }
   };
 
   const handleVoucherTypeChange = (value: string) => {
@@ -97,6 +112,21 @@ export const PriceMessageForm = () => {
         weeks: duration.weeks,
         days: Number(days),
         voucherId: duration.id,
+      }));
+    }
+  };
+
+  const handleVoucherIdChange = (id: number) => {
+    const selected = voucherPriceInfos.find(v => v.id === id);
+    if (selected) {
+      setFormData(prev => ({
+        ...prev,
+        voucherId: selected.id,
+        days: Number(selected.duration) || 0,
+        // weeks are not provided by DB; keep existing value
+        fullPrice: selected.fullPrice ?? "",
+        grant: selected.grant ?? "",
+        actualPrice: selected.actualPrice ?? "",
       }));
     }
   };
@@ -164,17 +194,17 @@ export const PriceMessageForm = () => {
               </Select>
             </FormControl>
 
-            {Object.keys(availableDurations).length > 0 && (
+            {voucherPriceInfos.length > 0 && (
               <FormControl fullWidth>
                 <InputLabel>서비스 기간</InputLabel>
                 <Select
-                  value={formData.days || ""}
+                  value={formData.voucherId ?? ""}
                   label="서비스 기간"
-                  onChange={(e) => handleDurationChange(Number(e.target.value))}
+                  onChange={(e) => handleVoucherIdChange(Number(e.target.value))}
                 >
-                  {Object.entries(availableDurations).map(([days, data]) => (
-                    <MenuItem key={data.id} value={days}>
-                      {data.weeks}주 ({days}일)
+                  {voucherPriceInfos.map((v) => (
+                    <MenuItem key={v.id} value={v.id}>
+                      {v.duration}일
                     </MenuItem>
                   ))}
                 </Select>
