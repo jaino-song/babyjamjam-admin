@@ -26,7 +26,7 @@ import { useQuery } from "@tanstack/react-query";
 interface PriceFormData {
   name: string;
   weeks: number;
-  days: number;
+  duration: string;
   type: string;
   voucherId: number | null;
   fullPrice: string;
@@ -54,11 +54,10 @@ interface BankAccountInfo {
 
 export const PriceMessageForm = () => {
   const [generatedMessage, setGeneratedMessage] = useState("");
-  const [voucherPriceInfos, setVoucherPriceInfos] = useState<VoucherPriceInfo[]>([]);
   const [formData, setFormData] = useState<PriceFormData>({
     name: "",
     weeks: 0,
-    days: 0,
+    duration: "",
     type: "",
     voucherId: null,
     fullPrice: "",
@@ -68,57 +67,59 @@ export const PriceMessageForm = () => {
     bankName: "",
     accNum: "",
   });
-  const [bankAccountInfos, setBankAccountInfos] = useState<BankAccountInfo[]>([]);
-  const { data: bankAccountInfosData, isLoading: isBankAccountInfosLoading, error: bankAccountInfosError } = useQuery<BankAccountInfo[]>({
+  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading, error: bankAccountInfosError } = useQuery<BankAccountInfo[]>({
     queryKey: ['bank-account-infos'],
     queryFn: async () => { 
       const { data } = await api.get(`/bank-account-infos`); 
       console.log('Fetched bank account info:', data);
-      setBankAccountInfos(data as BankAccountInfo[]);
       return data as BankAccountInfo[];
     },
   });
-  const { data: voucherPriceInfosData, isLoading: isVoucherPriceInfosLoading, error: voucherPriceInfosError } = useQuery<VoucherPriceInfo[]>({
-    queryKey: ['voucher-price-infos'],
+  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading, error: voucherPriceInfosError } = useQuery<VoucherPriceInfo[]>({
+    queryKey: ['voucher-price-infos', formData.type],
     queryFn: async () => {
       const { data } = await api.get(`/voucher-price-infos/type`, {
         params: { type: formData.type }
       });
+      console.log('Fetched voucher price info:', data);
       return data as VoucherPriceInfo[];
     },
     enabled: !!formData.type,
   });
 
-  useEffect(() => {
-    if (voucherPriceInfosData) {
-      setVoucherPriceInfos(voucherPriceInfosData);
-    }
-  }, [formData.type]);
-
-  useEffect(() => {
-    if (bankAccountInfosData) {
-      setBankAccountInfos(bankAccountInfosData ?? []);
-      console.log('Fetched bank account info useEffect:', bankAccountInfosData);
-    }
-  }, [formData.area]);
+  // useEffect(() => {
+  //   if (bankAccountInfosData) {
+  //     setBankAccountInfos(bankAccountInfosData ?? []);
+  //     console.log('Fetched bank account info useEffect:', bankAccountInfosData);
+  //   }
+  // }, [formData.area]);
 
   const handleVoucherTypeChange = (value: string) => {
+    console.log('Voucher type changed:', value);
     setFormData(prev => ({
       ...prev,
       type: value,
       weeks: 0,
-      days: 0,
+      duration: "",
       voucherId: null,
     }));
   };
 
-  const handleDurationChange = (days: number) => {
-    const duration = voucherPriceInfos.find(v => v.duration === days.toString());
-    setFormData(prev => ({
-      ...prev,
-      days: Number(days),
-      voucherId: duration?.id ?? null,
-    }));
+  const handleDurationChange = (duration: string) => {
+    const selectedVoucher = voucherPriceInfos.find(v => v.duration === duration);
+    console.log('Selected Duration:', duration);
+
+    if (selectedVoucher) {
+      setFormData(prev => ({
+        ...prev,
+        duration: duration,
+        weeks: Math.floor(Number(selectedVoucher.duration) / 5),
+        voucherId: selectedVoucher.id,
+        fullPrice: selectedVoucher.fullPrice ?? "",
+        grant: selectedVoucher.grant ?? "",
+        actualPrice: selectedVoucher.actualPrice ?? "",
+      }));
+    }
   };
 
   const handleAreaChange = (value: string) => {
@@ -170,6 +171,7 @@ export const PriceMessageForm = () => {
                 value={formData.type}
                 label={isVoucherPriceInfosLoading ? t("ko", "common.loading") : t("ko", "price-info-msg.voucher-type-label")}
                 onChange={(e) => handleVoucherTypeChange(e.target.value)}
+                disabled={isVoucherPriceInfosLoading}
               >
                 {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
                   <MenuItem key={groupName} disabled sx={{ fontWeight: 600 }}>
@@ -185,16 +187,16 @@ export const PriceMessageForm = () => {
             </FormControl>
 
             {/* voucher duration */}
-            {formData.type && (
+            {formData.type && voucherPriceInfos.length > 0 && (
               <FormControl fullWidth>
                 <InputLabel>{t("ko", "price-info-msg.duration-label")}</InputLabel>
                 <Select
-                  value={formData.days ?? ""}
+                  value={formData.duration === "" ? "" : formData.duration}
                   label={t("ko", "price-info-msg.duration-label")}
-                  onChange={(e) => handleDurationChange(Number(e.target.value))}
+                  onChange={(e) => handleDurationChange(e.target.value)}
                 >
                   {voucherPriceInfos.map((v) => (
-                    <MenuItem key={v.id} value={v.id}>
+                    <MenuItem key={v.duration} value={v.duration}>
                       {v.duration}일
                     </MenuItem>
                   ))}
@@ -232,9 +234,9 @@ export const PriceMessageForm = () => {
               variant="contained"
               size="large"
               onClick={handleGenerate}
-              disabled={!formData.name || !formData.type || !formData.area}
+              disabled={!formData.name || !formData.type || !formData.area || isVoucherPriceInfosLoading || isBankAccountInfosLoading}
             >
-              {t("ko", "price-info-msg.generate-button")}
+              {isVoucherPriceInfosLoading || isBankAccountInfosLoading ? t("ko", "price-info-msg.generate-button-loading") : t("ko", "price-info-msg.generate-button")}
             </Button>
           </Stack>
         </CardContent>

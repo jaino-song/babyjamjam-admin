@@ -1,7 +1,7 @@
 interface PriceMessageData {
   name: string;
   weeks: number;
-  days: number;
+  duration: string;
   type: string;
   fullPrice: string;
   grant: string;
@@ -17,7 +17,7 @@ ${data.name} 산모님~♡
 예약금 관련해서 안내 드립니다 :)
 
 서비스 기간: 
-    출퇴근 ${data.weeks}주 (평일기준 ${data.days}일)
+    출퇴근 ${data.weeks}주 (평일기준 ${data.duration}일)
 정부지원 바우처 유형: 
     ${data.type}
 
