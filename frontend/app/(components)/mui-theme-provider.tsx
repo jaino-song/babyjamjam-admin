@@ -7,7 +7,7 @@ import CssBaseline from "@mui/material/CssBaseline";
 
 const theme = createTheme({ 
     typography: {
-      fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif",
+      fontFamily: "var(--font-pretendard), 'Helvetica Neue', Arial, sans-serif",
     },
     palette: {
       background: {

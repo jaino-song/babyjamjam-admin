@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Box,
   Button,
@@ -16,8 +16,12 @@ import {
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import voucherOptions from "./voucher.json";
+import bankAccountJSON from "./bank-account.json";
 import { api } from "@/app/lib/axios";
 import { priceMsgTemplate } from "./templates/priceMsg";
+import { t } from "@/app/lib/i18n/translations";
+import { useQuery } from "@tanstack/react-query";
+
 
 interface PriceFormData {
   name: string;
@@ -42,16 +46,15 @@ interface VoucherPriceInfo {
   actualPrice: string | null;
 }
 
-const areaOptions = [
-  { value: "Namdonggu", label: "남동구", bankName: "신한은행", accNum: "110-123-456789" },
-  { value: "Seogu", label: "서구", bankName: "우리은행", accNum: "1002-234-567890" },
-  { value: "Bupyunggu", label: "부평구", bankName: "국민은행", accNum: "123456-01-234567" },
-  { value: "Yeonsu", label: "연수구", bankName: "하나은행", accNum: "789-456123-12345" },
-];
-
-
+interface BankAccountInfo {
+  area: string;
+  bankName: string;
+  accNum: string;
+}
 
 export const PriceMessageForm = () => {
+  const [generatedMessage, setGeneratedMessage] = useState("");
+  const [voucherPriceInfos, setVoucherPriceInfos] = useState<VoucherPriceInfo[]>([]);
   const [formData, setFormData] = useState<PriceFormData>({
     name: "",
     weeks: 0,
@@ -65,83 +68,66 @@ export const PriceMessageForm = () => {
     bankName: "",
     accNum: "",
   });
-
-
-  const [selectedType, setSelectedType] = useState("");
-  const [availableDurations, setAvailableDurations] = useState<Record<string, { weeks: number; id: number }>>({});
-  const [generatedMessage, setGeneratedMessage] = useState("");
-  const [voucherPriceInfos, setVoucherPriceInfos] = useState<VoucherPriceInfo[]>([]);
-
-  const handleVoucherPriceInfoFetch = async (type: string) => {
-    try {
+  const [bankAccountInfos, setBankAccountInfos] = useState<BankAccountInfo[]>([]);
+  const { data: bankAccountInfosData, isLoading: isBankAccountInfosLoading, error: bankAccountInfosError } = useQuery<BankAccountInfo[]>({
+    queryKey: ['bank-account-infos'],
+    queryFn: async () => { 
+      const { data } = await api.get(`/bank-account-infos`); 
+      console.log('Fetched bank account info:', data);
+      setBankAccountInfos(data as BankAccountInfo[]);
+      return data as BankAccountInfo[];
+    },
+  });
+  const { data: voucherPriceInfosData, isLoading: isVoucherPriceInfosLoading, error: voucherPriceInfosError } = useQuery<VoucherPriceInfo[]>({
+    queryKey: ['voucher-price-infos'],
+    queryFn: async () => {
       const { data } = await api.get(`/voucher-price-infos/type`, {
-        params: { type }
+        params: { type: formData.type }
       });
-      console.log('Fetched voucher prices:', data);
-      setVoucherPriceInfos(data);
-    } catch (error) {
-      console.error('Error fetching voucher prices:', error);
+      return data as VoucherPriceInfo[];
+    },
+    enabled: !!formData.type,
+  });
+
+  useEffect(() => {
+    if (voucherPriceInfosData) {
+      setVoucherPriceInfos(voucherPriceInfosData);
     }
-  };
+  }, [formData.type]);
+
+  useEffect(() => {
+    if (bankAccountInfosData) {
+      setBankAccountInfos(bankAccountInfosData ?? []);
+      console.log('Fetched bank account info useEffect:', bankAccountInfosData);
+    }
+  }, [formData.area]);
 
   const handleVoucherTypeChange = (value: string) => {
-    handleVoucherPriceInfoFetch(value);
-    setSelectedType(value);
-    
-    // Find the selected voucher type and its durations in the object tree
-    for (const types of Object.values(voucherOptions.voucherOptions)) {
-      if (types[value as keyof typeof types]) {
-        setAvailableDurations((types[value as keyof typeof types] as { durations: Record<string, { weeks: number; id: number }> }).durations);
-        setFormData(prev => ({
-          ...prev,
-          type: value,
-          weeks: 0,
-          days: 0,
-          voucherId: null,
-        }));
-        break;
-      }
-    }
+    setFormData(prev => ({
+      ...prev,
+      type: value,
+      weeks: 0,
+      days: 0,
+      voucherId: null,
+    }));
   };
 
   const handleDurationChange = (days: number) => {
-    const duration = availableDurations[days];
-    if (duration) {
-      setFormData(prev => ({
-        ...prev,
-        weeks: duration.weeks,
-        days: Number(days),
-        voucherId: duration.id,
-      }));
-    }
-  };
-
-  const handleVoucherIdChange = (id: number) => {
-    const selected = voucherPriceInfos.find(v => v.id === id);
-    if (selected) {
-      setFormData(prev => ({
-        ...prev,
-        voucherId: selected.id,
-        days: Number(selected.duration) || 0,
-        // weeks are not provided by DB; keep existing value
-        fullPrice: selected.fullPrice ?? "",
-        grant: selected.grant ?? "",
-        actualPrice: selected.actualPrice ?? "",
-      }));
-    }
+    const duration = voucherPriceInfos.find(v => v.duration === days.toString());
+    setFormData(prev => ({
+      ...prev,
+      days: Number(days),
+      voucherId: duration?.id ?? null,
+    }));
   };
 
   const handleAreaChange = (value: string) => {
-    const selected = areaOptions.find(opt => opt.value === value);
-    
-    if (selected) {
-      setFormData(prev => ({
-        ...prev,
-        area: selected.value,
-        bankName: selected.bankName,
-        accNum: selected.accNum,
-      }));
-    }
+    setFormData(prev => ({
+      ...prev,
+      area: value ?? "",
+      bankName: bankAccountInfos.find(b => b.area === value)?.bankName ?? "",
+      accNum: bankAccountInfos.find(b => b.area === value)?.accNum ?? "",
+    }));
   };
 
   const handleGenerate = () => {
@@ -151,34 +137,38 @@ export const PriceMessageForm = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert("메시지가 클립보드에 복사되었습니다!");
+    alert(t("ko", "price-info-msg.copy-success-message"));
   };
 
   return (
-    <Box sx={{ maxWidth: 1000, mx: "auto", p: 3 }}>
-      <Typography variant="h4" fontWeight={700} gutterBottom>
-        금액 및 계좌번호 안내 문자 생성
+    <Paper elevation={2} sx={{ maxWidth: 1000, mx: 2, p: 3 }}>
+      {/* title */}
+      <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
+        {t("ko", "price-info-msg.title")}
       </Typography>
+      {/* subtitle */}
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        해당 항목들을 모두 작성 및 선택 후에 하단에 있는 문자 생성 버튼을 클릭해 주세요
+        {t("ko", "price-info-msg.subtitle")}
       </Typography>
 
+      {/* form */}
       <Card elevation={0} sx={{ mb: 3 }}>
         <CardContent>
           <Stack spacing={3}>
             <TextField
               fullWidth
-              label="산모님 성함"
+              label={t("ko", "price-info-msg.name-label")}
               value={formData.name}
               onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-              placeholder="예: 홍길동"
+              placeholder={t("ko", "price-info-msg.name-placeholder")}
             />
 
+            {/* voucher type */}
             <FormControl fullWidth>
-              <InputLabel>바우처 유형</InputLabel>
+              <InputLabel>{t("ko", "price-info-msg.voucher-type-label")}</InputLabel>
               <Select
-                value={selectedType}
-                label="바우처 유형"
+                value={formData.type}
+                label={isVoucherPriceInfosLoading ? t("ko", "common.loading") : t("ko", "price-info-msg.voucher-type-label")}
                 onChange={(e) => handleVoucherTypeChange(e.target.value)}
               >
                 {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
@@ -194,13 +184,14 @@ export const PriceMessageForm = () => {
               </Select>
             </FormControl>
 
-            {voucherPriceInfos.length > 0 && (
+            {/* voucher duration */}
+            {formData.type && (
               <FormControl fullWidth>
-                <InputLabel>서비스 기간</InputLabel>
+                <InputLabel>{t("ko", "price-info-msg.duration-label")}</InputLabel>
                 <Select
-                  value={formData.voucherId ?? ""}
-                  label="서비스 기간"
-                  onChange={(e) => handleVoucherIdChange(Number(e.target.value))}
+                  value={formData.days ?? ""}
+                  label={t("ko", "price-info-msg.duration-label")}
+                  onChange={(e) => handleDurationChange(Number(e.target.value))}
                 >
                   {voucherPriceInfos.map((v) => (
                     <MenuItem key={v.id} value={v.id}>
@@ -211,60 +202,72 @@ export const PriceMessageForm = () => {
               </FormControl>
             )}
 
+            {/* area */}
             <FormControl fullWidth>
-              <InputLabel>지역</InputLabel>
+              <InputLabel>{t("ko", "price-info-msg.area-label")}</InputLabel>
               <Select
                 value={formData.area}
-                label="지역"
+                label={t("ko", "price-info-msg.area-label")}
                 onChange={(e) => handleAreaChange(e.target.value)}
               >
-                {areaOptions.map((opt) => (
-                  <MenuItem key={opt.value} value={opt.value}>
-                    {opt.label}
+                {Object.values(bankAccountInfos).map((bankAccountInfo: BankAccountInfo) => (
+                  <MenuItem key={bankAccountInfo.area} value={bankAccountInfo.area}>
+                    {bankAccountJSON[bankAccountInfo.area as keyof typeof bankAccountJSON].area}
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
 
+            {/* Price Info */}
+            {formData.fullPrice && formData.grant && formData.actualPrice && (
+            <Stack spacing={2}>
+              <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.full-price-label")}: {formData.fullPrice}{t("ko", "price-info-msg.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.grant-price-label")}: {formData.grant}{t("ko", "price-info-msg.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.actual-price-label")}: {formData.actualPrice}{t("ko", "price-info-msg.currency-symbol")}</Typography>
+              </Stack>
+            )}
+
+            {/* generate button */}
             <Button
               variant="contained"
               size="large"
               onClick={handleGenerate}
               disabled={!formData.name || !formData.type || !formData.area}
             >
-              문자 생성
+              {t("ko", "price-info-msg.generate-button")}
             </Button>
           </Stack>
         </CardContent>
       </Card>
 
+      {/* generated message */}
       {generatedMessage && (
-        <Paper elevation={0} sx={{ p: 3, bgcolor: "grey.50" }}>
+        <Paper elevation={0} sx={{ p: 3}}>
           <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-            <Typography variant="h6" fontWeight={600}>
-              생성된 메시지
+            <Typography variant="h6" color="primary.main" fontWeight={600}>
+              {t("ko", "price-info-msg.generated-message-title")}
             </Typography>
             <Button
               variant="outlined"
-              size="small"
+              size="medium"
               startIcon={<ContentCopyIcon />}
               onClick={handleCopy}
             >
-              복사
+              {t("ko", "price-info-msg.copy-button")}
             </Button>
           </Stack>
-          <Paper sx={{ p: 2, bgcolor: "white" }}>
+          <Paper sx={{ p: 2, border: 2, borderColor: "grey.200" }}>
             <Typography
               variant="body2"
               component="pre"
-              sx={{ fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+              sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
             >
               {generatedMessage}
             </Typography>
           </Paper>
         </Paper>
       )}
-    </Box>
+    </Paper>
   );
 };
 

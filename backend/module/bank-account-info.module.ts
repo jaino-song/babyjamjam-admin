@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import {
     CreateBankAccountInfoUsecase,
     FindBankAccountInfoByAreaUsecase,
+    ListBankAccountInfoUsecase,
     UpdateBankAccountInfoUsecase,
     DeleteBankAccountInfoUsecase,
 } from "application/usecases/bank-account-info";
@@ -18,6 +19,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
     providers: [
         CreateBankAccountInfoUsecase,
         FindBankAccountInfoByAreaUsecase,
+        ListBankAccountInfoUsecase,
         UpdateBankAccountInfoUsecase,
         DeleteBankAccountInfoUsecase,
         BankAccountInfoService,

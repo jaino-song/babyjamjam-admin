@@ -23,6 +23,7 @@ exports.BankAccountInfoModule = BankAccountInfoModule = __decorate([
         providers: [
             bank_account_info_1.CreateBankAccountInfoUsecase,
             bank_account_info_1.FindBankAccountInfoByAreaUsecase,
+            bank_account_info_1.ListBankAccountInfoUsecase,
             bank_account_info_1.UpdateBankAccountInfoUsecase,
             bank_account_info_1.DeleteBankAccountInfoUsecase,
             bank_account_info_service_1.BankAccountInfoService,

@@ -16,6 +16,11 @@ export class BankAccountInfoController {
         return this.bankAccountInfoService.findByArea(area);
     }
 
+    @Get()
+    findAll() {
+        return this.bankAccountInfoService.findAll();
+    }
+
     @Patch()
     update(@Query("area") area: string, @Body() updateBankAccountInfoDto: UpdateBankAccountInfoDto) {
         return this.bankAccountInfoService.update(area, updateBankAccountInfoDto);

@@ -38,6 +38,30 @@
     "settings": "설정",
     "logout": "로그아웃",
     "login": "로그인"
+  },
+  "price-info-msg": {
+    "title": "이용 요금 문자 생성",
+    "subtitle": "해당 항목들을 모두 작성 및 선택 후에 하단에 있는 문자 생성 버튼을 클릭해 주세요",
+    "name-label": "산모님 성함",
+    "name-placeholder": "홍길동",
+    "voucher-type-label": "바우처 유형",
+    "area-label": "지역",
+    "generate-button": "문자 생성",
+    "copy-button": "복사",
+    "duration-label": "서비스 기간",
+    "generated-message-title": "생성된 문자",
+    "copy-success-message": "메시지가 클립보드에 복사되었습니다!",
+    "full-price-label": "총 서비스 금액",
+    "grant-price-label": "정부지원금",
+    "actual-price-label": "본인부담금",
+    "currency-symbol": " 원"
+  },
+  "bank-account-info": {
+    "nonghyup": "농협은행",
+    "namdonggu": "남동구",
+    "seogu": "서구",
+    "bupyunggu": "부평구",
+    "yeonsu": "연수구"
   }
 }
 

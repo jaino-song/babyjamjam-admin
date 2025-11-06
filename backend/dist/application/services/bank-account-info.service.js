@@ -13,7 +13,8 @@ exports.BankAccountInfoService = void 0;
 const common_1 = require("@nestjs/common");
 const bank_account_info_1 = require("../usecases/bank-account-info");
 let BankAccountInfoService = class BankAccountInfoService {
-    constructor(createBankAccountInfoUsecase, findBankAccountInfoByAreaUsecase, updateBankAccountInfoUsecase, deleteBankAccountInfoUsecase) {
+    constructor(listBankAccountInfoUsecase, createBankAccountInfoUsecase, findBankAccountInfoByAreaUsecase, updateBankAccountInfoUsecase, deleteBankAccountInfoUsecase) {
+        this.listBankAccountInfoUsecase = listBankAccountInfoUsecase;
         this.createBankAccountInfoUsecase = createBankAccountInfoUsecase;
         this.findBankAccountInfoByAreaUsecase = findBankAccountInfoByAreaUsecase;
         this.updateBankAccountInfoUsecase = updateBankAccountInfoUsecase;
@@ -21,6 +22,9 @@ let BankAccountInfoService = class BankAccountInfoService {
     }
     create(params) {
         return this.createBankAccountInfoUsecase.execute(params.area, params.bankName, params.accNum);
+    }
+    findAll() {
+        return this.listBankAccountInfoUsecase.execute();
     }
     findByArea(area) {
         return this.findBankAccountInfoByAreaUsecase.execute(area);
@@ -35,7 +39,8 @@ let BankAccountInfoService = class BankAccountInfoService {
 exports.BankAccountInfoService = BankAccountInfoService;
 exports.BankAccountInfoService = BankAccountInfoService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [bank_account_info_1.CreateBankAccountInfoUsecase,
+    __metadata("design:paramtypes", [bank_account_info_1.ListBankAccountInfoUsecase,
+        bank_account_info_1.CreateBankAccountInfoUsecase,
         bank_account_info_1.FindBankAccountInfoByAreaUsecase,
         bank_account_info_1.UpdateBankAccountInfoUsecase,
         bank_account_info_1.DeleteBankAccountInfoUsecase])

@@ -17,6 +17,7 @@ Overview of public HTTP endpoints exposed by the Imirae Incheon back-office back
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | `POST` | `/bank-account-infos` | Create bank account info for an administrative area. Body: `{ area: string, bankName: string, accNum: string }`. |
+| `GET` | `/bank-account-infos` | List all bank account info entries. |
 | `GET` | `/bank-account-infos/area?area=xxx` | Retrieve bank account info by area code/name. |
 | `PATCH` | `/bank-account-infos?area=xxx` | Update bank name and/or account number: `{ bankName?, accNum? }`. |
 | `DELETE` | `/bank-account-infos?area=xxx` | Delete the entry for the area. |

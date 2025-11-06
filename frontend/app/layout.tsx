@@ -7,6 +7,13 @@ import { LanguageSwitcher } from "./(components)/nav-bar/LanguageSwitcher";
 import { getLanguageForServerComp } from "./lib/i18n/getLanguageForServerComp";
 import { NavBar } from "./(components)/nav-bar/NavBar";
 import EmotionRegistry from "./(components)/EmotionRegistry";
+import localFont from "next/font/local";
+
+const Pretendard = localFont({
+  src: "./fonts/Pretendard.woff2",
+  variable: "--font-pretendard",
+  display: "swap",
+});  
 
 export const metadata: Metadata = {
   title: "Incheon Imirae Back Office",
@@ -22,7 +29,7 @@ export default async function RootLayout({
   
   return (
     <html lang={language}>  
-      <body className={`antialiased`}>
+      <body className={`${Pretendard.variable} antialiased`}>
         <EmotionRegistry>
           <ThemeProvider>          
             <QueryProvider>

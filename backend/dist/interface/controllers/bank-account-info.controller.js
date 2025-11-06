@@ -26,6 +26,9 @@ let BankAccountInfoController = class BankAccountInfoController {
     findByArea(area) {
         return this.bankAccountInfoService.findByArea(area);
     }
+    findAll() {
+        return this.bankAccountInfoService.findAll();
+    }
     update(area, updateBankAccountInfoDto) {
         return this.bankAccountInfoService.update(area, updateBankAccountInfoDto);
     }
@@ -48,6 +51,12 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], BankAccountInfoController.prototype, "findByArea", null);
+__decorate([
+    (0, common_1.Get)(),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], BankAccountInfoController.prototype, "findAll", null);
 __decorate([
     (0, common_1.Patch)(),
     __param(0, (0, common_1.Query)("area")),

@@ -17,6 +17,10 @@ let SbBankAccountInfoRepository = class SbBankAccountInfoRepository {
     constructor(prismaService) {
         this.prismaService = prismaService;
     }
+    async findAll() {
+        const bankAccountInfos = await this.prismaService.bankAccountInfo.findMany();
+        return bankAccountInfos.map(bank_account_info_mapper_1.BankAccountInfoMapper.toDomain);
+    }
     async findByArea(area) {
         const bankAccountInfo = await this.prismaService.bankAccountInfo.findUnique({
             where: { area },

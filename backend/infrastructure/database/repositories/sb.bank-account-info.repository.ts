@@ -8,6 +8,11 @@ import { BankAccountInfoMapper } from "../mapper/bank-account-info.mapper";
 export class SbBankAccountInfoRepository implements IBankAccountInfoRepository {
     constructor(private prismaService: PrismaService) {}
 
+    async findAll(): Promise<BankAccountInfoEntity[]> {
+        const bankAccountInfos = await this.prismaService.bankAccountInfo.findMany();
+        return bankAccountInfos.map(BankAccountInfoMapper.toDomain);
+    }
+
     async findByArea(area: string): Promise<BankAccountInfoEntity | null> {
         const bankAccountInfo = await this.prismaService.bankAccountInfo.findUnique({
             where: { area },

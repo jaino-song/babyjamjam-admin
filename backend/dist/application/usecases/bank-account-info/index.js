@@ -17,5 +17,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 __exportStar(require("./create-bank-account-info.usecase"), exports);
 __exportStar(require("./delete-bank-account-info.usecase"), exports);
 __exportStar(require("./find-bank-account-info-by-area.usecase"), exports);
+__exportStar(require("./list-bank-account-info.usecase"), exports);
 __exportStar(require("./update-bank-account-info.usecase"), exports);
 //# sourceMappingURL=index.js.map

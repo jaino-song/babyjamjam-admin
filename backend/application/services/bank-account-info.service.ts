@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import {
     CreateBankAccountInfoUsecase,
+    ListBankAccountInfoUsecase,
     FindBankAccountInfoByAreaUsecase,
     UpdateBankAccountInfoUsecase,
     DeleteBankAccountInfoUsecase,
@@ -10,6 +11,7 @@ import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity"
 @Injectable()
 export class BankAccountInfoService {
     constructor(
+        private readonly listBankAccountInfoUsecase: ListBankAccountInfoUsecase,
         private readonly createBankAccountInfoUsecase: CreateBankAccountInfoUsecase,
         private readonly findBankAccountInfoByAreaUsecase: FindBankAccountInfoByAreaUsecase,
         private readonly updateBankAccountInfoUsecase: UpdateBankAccountInfoUsecase,
@@ -20,6 +22,10 @@ export class BankAccountInfoService {
         return this.createBankAccountInfoUsecase.execute(params.area, params.bankName, params.accNum);
     }
     
+    findAll(): Promise<BankAccountInfoEntity[]> {
+        return this.listBankAccountInfoUsecase.execute();
+    }
+
     findByArea(area: string): Promise<BankAccountInfoEntity | null> {
         return this.findBankAccountInfoByAreaUsecase.execute(area);
     }
