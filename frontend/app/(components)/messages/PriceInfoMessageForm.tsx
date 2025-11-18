@@ -15,15 +15,15 @@ import {
   Typography,
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import voucherOptions from "./voucher.json";
-import bankAccountJSON from "./bank-account.json";
+import voucherOptions from "./templates/json/voucher.json";
+import bankAccountJSON from "./templates/json/bank-account.json";
 import { api } from "@/app/lib/axios";
-import { priceMsgTemplate } from "./templates/priceMsg";
+import { priceInfoMsgTemplate } from "./templates/messageTemplate/priceInfoMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useQuery } from "@tanstack/react-query";
+import { useFormStore } from "@/app/store/form-store";
 
-
-interface PriceFormData {
+interface PriceInfoFormData {
   name: string;
   weeks: number;
   duration: string;
@@ -52,13 +52,17 @@ interface BankAccountInfo {
   accNum: string;
 }
 
-export const PriceMessageForm = () => {
+export const PriceInfoMessageForm = () => {
   const [generatedMessage, setGeneratedMessage] = useState("");
-  const [formData, setFormData] = useState<PriceFormData>({
-    name: "",
+  
+  // Subscribe to Zustand store
+  const { name, voucherType, voucherDuration, setName, setVoucherType, setVoucherDuration } = useFormStore();
+  
+  const [formData, setFormData] = useState<PriceInfoFormData>({
+    name: name,
     weeks: 0,
-    duration: "",
-    type: "",
+    duration: voucherDuration,
+    type: voucherType,
     voucherId: null,
     fullPrice: "",
     grant: "",
@@ -67,6 +71,18 @@ export const PriceMessageForm = () => {
     bankName: "",
     accNum: "",
   });
+  
+  // Sync local state with Zustand store when store changes
+  useEffect(() => {
+    setFormData(prev => ({
+      ...prev,
+      name: name,
+      duration: voucherDuration,
+      type: voucherType,
+    }));
+  }, [name, voucherType, voucherDuration]);
+
+  // Bank account info query
   const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading, error: bankAccountInfosError } = useQuery<BankAccountInfo[]>({
     queryKey: ['bank-account-infos'],
     queryFn: async () => { 
@@ -74,7 +90,11 @@ export const PriceMessageForm = () => {
       console.log('Fetched bank account info:', data);
       return data as BankAccountInfo[];
     },
+    staleTime: Infinity, // Bank account info rarely changes, keep it fresh indefinitely
+    gcTime: 1000 * 60 * 60 * 24, // Keep in cache for 24 hours (renamed from cacheTime in v5)
   });
+
+  // Voucher price info query
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading, error: voucherPriceInfosError } = useQuery<VoucherPriceInfo[]>({
     queryKey: ['voucher-price-infos', formData.type],
     queryFn: async () => {
@@ -85,15 +105,11 @@ export const PriceMessageForm = () => {
       return data as VoucherPriceInfo[];
     },
     enabled: !!formData.type,
+    staleTime: Infinity, // Voucher price info rarely changes, keep it fresh indefinitely
+    gcTime: 1000 * 60 * 60 * 24, // Keep in cache for 24 hours (renamed from cacheTime in v5)
   });
 
-  // useEffect(() => {
-  //   if (bankAccountInfosData) {
-  //     setBankAccountInfos(bankAccountInfosData ?? []);
-  //     console.log('Fetched bank account info useEffect:', bankAccountInfosData);
-  //   }
-  // }, [formData.area]);
-
+  // Voucher type change handler
   const handleVoucherTypeChange = (value: string) => {
     console.log('Voucher type changed:', value);
     setFormData(prev => ({
@@ -103,6 +119,8 @@ export const PriceMessageForm = () => {
       duration: "",
       voucherId: null,
     }));
+    setVoucherType(value); // Update Zustand store
+    setVoucherDuration(""); // Reset duration in store when type changes
   };
 
   const handleDurationChange = (duration: string) => {
@@ -119,6 +137,7 @@ export const PriceMessageForm = () => {
         grant: selectedVoucher.grant ?? "",
         actualPrice: selectedVoucher.actualPrice ?? "",
       }));
+      setVoucherDuration(duration); // Update Zustand store
     }
   };
 
@@ -132,17 +151,17 @@ export const PriceMessageForm = () => {
   };
 
   const handleGenerate = () => {
-    const message = priceMsgTemplate(formData);
+    const message = priceInfoMsgTemplate(formData);
     setGeneratedMessage(message);
   };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert(t("ko", "price-info-msg.copy-success-message"));
+    alert(t("ko", "common.copy-success-message"));
   };
 
   return (
-    <Paper elevation={2} sx={{ maxWidth: 1000, mx: 2, p: 3 }}>
+    <Paper elevation={2} sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3 }}>
       {/* title */}
       <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
         {t("ko", "price-info-msg.title")}
@@ -153,14 +172,18 @@ export const PriceMessageForm = () => {
       </Typography>
 
       {/* form */}
-      <Card elevation={0} sx={{ mb: 3 }}>
+      <Card elevation={0}>
         <CardContent>
           <Stack spacing={3}>
             <TextField
               fullWidth
               label={t("ko", "price-info-msg.name-label")}
               value={formData.name}
-              onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              onChange={(e) => {
+                const newName = e.target.value;
+                setFormData(prev => ({ ...prev, name: newName }));
+                setName(newName); // Update Zustand store
+              }}
               placeholder={t("ko", "price-info-msg.name-placeholder")}
             />
 
@@ -223,9 +246,9 @@ export const PriceMessageForm = () => {
             {/* Price Info */}
             {formData.fullPrice && formData.grant && formData.actualPrice && (
             <Stack spacing={2}>
-              <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.full-price-label")}: {formData.fullPrice}{t("ko", "price-info-msg.currency-symbol")}</Typography>
-                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.grant-price-label")}: {formData.grant}{t("ko", "price-info-msg.currency-symbol")}</Typography>
-                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.actual-price-label")}: {formData.actualPrice}{t("ko", "price-info-msg.currency-symbol")}</Typography>
+              <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.full-price-label")}: {formData.fullPrice}{t("ko", "common.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.grant-price-label")}: {formData.grant}{t("ko", "common.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.actual-price-label")}: {formData.actualPrice}{t("ko", "common.currency-symbol")}</Typography>
               </Stack>
             )}
 
@@ -236,7 +259,7 @@ export const PriceMessageForm = () => {
               onClick={handleGenerate}
               disabled={!formData.name || !formData.type || !formData.area || isVoucherPriceInfosLoading || isBankAccountInfosLoading}
             >
-              {isVoucherPriceInfosLoading || isBankAccountInfosLoading ? t("ko", "price-info-msg.generate-button-loading") : t("ko", "price-info-msg.generate-button")}
+              {isVoucherPriceInfosLoading || isBankAccountInfosLoading ? t("ko", "common.generate-button-loading") : t("ko", "common.generate-button")}
             </Button>
           </Stack>
         </CardContent>
@@ -244,10 +267,10 @@ export const PriceMessageForm = () => {
 
       {/* generated message */}
       {generatedMessage && (
-        <Paper elevation={0} sx={{ p: 3}}>
+        <Paper elevation={0} sx={{ p: 0 }}>
           <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
             <Typography variant="h6" color="primary.main" fontWeight={600}>
-              {t("ko", "price-info-msg.generated-message-title")}
+              {t("ko", "common.generated-message-title")}
             </Typography>
             <Button
               variant="outlined"
@@ -255,14 +278,14 @@ export const PriceMessageForm = () => {
               startIcon={<ContentCopyIcon />}
               onClick={handleCopy}
             >
-              {t("ko", "price-info-msg.copy-button")}
+              {t("ko", "common.copy-button")}
             </Button>
           </Stack>
-          <Paper sx={{ p: 2, border: 2, borderColor: "grey.200" }}>
+          <Paper sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto"  }}>
             <Typography
               variant="body2"
               component="pre"
-              sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+              sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "1rem" }}
             >
               {generatedMessage}
             </Typography>

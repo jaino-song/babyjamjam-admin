@@ -1,4 +1,4 @@
-interface PriceMessageData {
+interface PriceInfoMessageData {
   name: string;
   weeks: number;
   duration: string;
@@ -10,7 +10,7 @@ interface PriceMessageData {
   accNum: string;
 }
 
-export const priceMsgTemplate = (data: PriceMessageData): string => 
+export const priceInfoMsgTemplate = (data: PriceInfoMessageData): string => 
 `[인천 아이미래로]
 
 ${data.name} 산모님~♡ 

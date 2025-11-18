@@ -7,7 +7,13 @@
     "cancel": "취소",
     "delete": "삭제",
     "edit": "수정",
-    "create": "생성"
+    "create": "생성",
+    "generate-button": "문자 생성",
+    "generate-button-loading": "데이터 조회 중...",
+    "copy-button": "복사",
+    "currency-symbol": " 원",
+    "generated-message-title": "생성된 문자",
+    "copy-success-message": "메시지가 클립보드에 복사되었습니다!"
   },
   "dashboard": {
     "title": "관리자 대시보드",
@@ -46,17 +52,11 @@
     "name-placeholder": "홍길동",
     "voucher-type-label": "바우처 유형",
     "area-label": "지역",
-    "generate-button": "문자 생성",
-    "generate-button-loading": "데이터 조회 중...",
-    "copy-button": "복사",
     "duration-label": "서비스 기간",
     "duration-placeholder": "일 수",
-    "generated-message-title": "생성된 문자",
-    "copy-success-message": "메시지가 클립보드에 복사되었습니다!",
     "full-price-label": "총 서비스 금액",
     "grant-price-label": "정부지원금",
-    "actual-price-label": "본인부담금",
-    "currency-symbol": " 원"
+    "actual-price-label": "본인부담금"
   },
   "bank-account-info": {
     "nonghyup": "농협은행",
@@ -64,6 +64,61 @@
     "seogu": "서구",
     "bupyunggu": "부평구",
     "yeonsu": "연수구"
+  },
+  "msg-type": {
+    "greeting": "첫 인사",
+    "service-info": "서비스 소개",
+    "price-info": "금액 및 계좌번호",
+    "reminder": "상담 후 리마인더",
+    "thanks": "예약 완료",
+    "survey": "모니터링 설문",
+    "contract": "전자계약서"
+  },
+  "greeting-msg": {
+    "subtitle": "첫 인사 문자 메시지를 생성합니다",
+    "name-label": "산모님 성함",
+    "name-placeholder": "홍길동"
+  },
+  "service-info-msg": {
+    "subtitle": "서비스 소개 문자 메시지를 생성합니다",
+    "name-label": "산모님 성함",
+    "name-placeholder": "홍길동"
+  },
+  "reminder-msg": {
+    "subtitle": "상담 후 리마인더 문자 메시지를 생성합니다",
+    "name-label": "산모님 성함",
+    "name-placeholder": "홍길동"
+  },
+  "thanks-msg": {
+    "subtitle": "예약 완료 감사 문자 메시지를 생성합니다",
+    "name-label": "산모님 성함",
+    "name-placeholder": "홍길동"
+  },
+  "survey-msg": {
+    "subtitle": "모니터링 설문 요청 문자 메시지를 생성합니다",
+    "name-label": "산모님 성함",
+    "name-placeholder": "홍길동"
+  },
+  "contract-msg": {
+    "subtitle": "전자계약서 안내 문자 메시지를 생성합니다",
+    "name-label": "산모님 성함",
+    "name-placeholder": "홍길동",
+    "phone-label": "산모님 연락처",
+    "phone-placeholder": "010-1234-5678",
+    "start-date-label": "계약 시작일",
+    "start-date-placeholder": "2025-01-01",
+    "end-date-label": "계약 종료일",
+    "end-date-placeholder": "2025-12-31",
+    "employee-name-label": "제공인력 1 성함",
+    "employee-name-placeholder": "홍길동",
+    "employee-phone-label": "제공인력 1 연락처",
+    "employee-phone-placeholder": "010-1234-5678",
+    "full-price-label": "서비스 금액",
+    "grant-label": "정부지원금",
+    "actual-price-label": "본인부담금",
+    "payment-date-label": "본인부담금 결제일",
+    "payment-date-placeholder": "2025-01-01",
+    "contract-creation": "전자계약서 생성"
   }
 }
 

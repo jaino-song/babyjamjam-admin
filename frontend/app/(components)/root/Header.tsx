@@ -5,12 +5,15 @@ import NotificationsNoneIcon from "@mui/icons-material/NotificationsNone";
 import LoginIcon from '@mui/icons-material/Login';
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/app/lib/axios";
+import { usePathname } from "next/navigation";
 
 interface HeaderProps {
     language: string;
 }
 
 export const Header = ({ language }: HeaderProps) => {
+    const pathname = usePathname();
+    const isLoginPage = pathname?.includes('/login');
 
     const { data: user, isLoading } = useQuery({
         queryKey: ['currentUser'],
@@ -25,6 +28,7 @@ export const Header = ({ language }: HeaderProps) => {
         },
         retry: false,
         staleTime: 5 * 60 * 1000, // 5 minutes
+        enabled: !isLoginPage, // Don't fetch user data on login page
     });
     
     return (

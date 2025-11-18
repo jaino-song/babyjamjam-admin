@@ -34,8 +34,9 @@ export default async function RootLayout({
           <ThemeProvider>          
             <QueryProvider>
               <Header language={language} />
-              <NavBar />
-              {children}
+              <main className="m-4">
+                {children}
+              </main>
               <LanguageSwitcher />
             </QueryProvider>
           </ThemeProvider>

@@ -44,7 +44,7 @@ api.interceptors.response.use(
 
         if (err.response?.status === 401 && originalRequest && !originalRequest._retry) {
             originalRequest._retry = true;
-            if (typeof window !== "undefined") {
+            if (typeof window !== "undefined" && !window.location.pathname.includes("/login")) {
                 window.location.href = "/login";
             }
         }
