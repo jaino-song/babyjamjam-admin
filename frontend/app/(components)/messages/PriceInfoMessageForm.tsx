@@ -54,10 +54,10 @@ interface BankAccountInfo {
 
 export const PriceInfoMessageForm = () => {
   const [generatedMessage, setGeneratedMessage] = useState("");
-  
+
   // Subscribe to Zustand store
   const { name, voucherType, voucherDuration, setName, setVoucherType, setVoucherDuration } = useFormStore();
-  
+
   const [formData, setFormData] = useState<PriceInfoFormData>({
     name: name,
     weeks: 0,
@@ -71,7 +71,7 @@ export const PriceInfoMessageForm = () => {
     bankName: "",
     accNum: "",
   });
-  
+
   // Sync local state with Zustand store when store changes
   useEffect(() => {
     setFormData(prev => ({
@@ -85,8 +85,8 @@ export const PriceInfoMessageForm = () => {
   // Bank account info query
   const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading, error: bankAccountInfosError } = useQuery<BankAccountInfo[]>({
     queryKey: ['bank-account-infos'],
-    queryFn: async () => { 
-      const { data } = await api.get(`/bank-account-infos`); 
+    queryFn: async () => {
+      const { data } = await api.get(`/bank-account-infos`);
       console.log('Fetched bank account info:', data);
       return data as BankAccountInfo[];
     },
@@ -161,7 +161,7 @@ export const PriceInfoMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3 }}>
+    <Paper elevation={2} sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1 }}>
       {/* title */}
       <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
         {t("ko", "price-info-msg.title")}
@@ -245,8 +245,8 @@ export const PriceInfoMessageForm = () => {
 
             {/* Price Info */}
             {formData.fullPrice && formData.grant && formData.actualPrice && (
-            <Stack spacing={2}>
-              <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.full-price-label")}: {formData.fullPrice}{t("ko", "common.currency-symbol")}</Typography>
+              <Stack spacing={2}>
+                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.full-price-label")}: {formData.fullPrice}{t("ko", "common.currency-symbol")}</Typography>
                 <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.grant-price-label")}: {formData.grant}{t("ko", "common.currency-symbol")}</Typography>
                 <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.actual-price-label")}: {formData.actualPrice}{t("ko", "common.currency-symbol")}</Typography>
               </Stack>
@@ -281,7 +281,7 @@ export const PriceInfoMessageForm = () => {
               {t("ko", "common.copy-button")}
             </Button>
           </Stack>
-          <Paper sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto"  }}>
+          <Paper sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto" }}>
             <Typography
               variant="body2"
               component="pre"

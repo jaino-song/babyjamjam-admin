@@ -18,7 +18,7 @@ import { GeneratedMsg } from "./templates/GeneratedMsg";
 export const ReminderMessageForm = () => {
   const [generatedMessage, setGeneratedMessage] = useState("");
   const { name, setName } = useFormStore();
-  
+
 
   const handleGenerate = () => {
     const message = reminderMsgTemplate({ name });
@@ -31,7 +31,7 @@ export const ReminderMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3 }}>
+    <Paper elevation={2} sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1 }}>
       {/* title */}
       <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
         {t("ko", "msg-type.reminder")}

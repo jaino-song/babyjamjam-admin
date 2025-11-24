@@ -1,8 +1,8 @@
 "use client";
 import { Button, Paper, Stack } from "@mui/material";
-import { useState } from "react";
 import { t } from "@/app/lib/i18n/translations";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 interface NavButton {
   id: string;
@@ -21,7 +21,8 @@ const navButtons: NavButton[] = [
 ];
 
 export const MsgNav = () => {
-  const [activeButton, setActiveButton] = useState<string>("greeting");
+  const pathname = usePathname();
+  console.log(pathname);
 
   return (
     <Paper
@@ -44,8 +45,7 @@ export const MsgNav = () => {
             key={button.id}
             component={Link}
             href={button.href}
-            variant={activeButton === button.id ? "contained" : "outlined"}
-            onClick={() => setActiveButton(button.id)}
+            variant={pathname === button.href ? "contained" : "outlined"}
             sx={{
               borderRadius: 0,
               border: "none",
