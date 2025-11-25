@@ -8,20 +8,22 @@ import {
   Stack,
   TextField,
   Typography,
+  Fade,
+  Box,
 } from "@mui/material";
-import { reminderMsgTemplate } from "./templates/messageTemplate/reminderMsg";
+import { surveyMsgTemplate } from "../templates/messageTemplate/surveyMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
-import { GeneratedMsg } from "./templates/GeneratedMsg";
+import { GeneratedMsg } from "../templates/GeneratedMsg";
 
 
-export const ReminderMessageForm = () => {
+export const SurveyMessageForm = () => {
   const [generatedMessage, setGeneratedMessage] = useState("");
   const { name, setName } = useFormStore();
 
 
   const handleGenerate = () => {
-    const message = reminderMsgTemplate({ name });
+    const message = surveyMsgTemplate({ name });
     setGeneratedMessage(message);
   };
 
@@ -32,13 +34,15 @@ export const ReminderMessageForm = () => {
 
   return (
     <Paper elevation={2} sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%" }}>
-      {/* title */}
-      <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-        {t("ko", "msg-type.reminder")}
-      </Typography>
+      <Fade in appear timeout={500}>
+        <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          {/* title */}
+          <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
+            {t("ko", "msg-type.survey")}
+          </Typography>
       {/* subtitle */}
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t("ko", "reminder-msg.subtitle")}
+        {t("ko", "survey-msg.subtitle")}
       </Typography>
 
       {/* form */}
@@ -48,10 +52,10 @@ export const ReminderMessageForm = () => {
             {/* name */}
             <TextField
               fullWidth
-              label={t("ko", "reminder-msg.name-label")}
+              label={t("ko", "survey-msg.name-label")}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={t("ko", "reminder-msg.name-placeholder")}
+              placeholder={t("ko", "survey-msg.name-placeholder")}
             />
 
             {/* generate button */}
@@ -67,12 +71,14 @@ export const ReminderMessageForm = () => {
         </CardContent>
       </Card>
 
-      {/* generated message */}
-      {generatedMessage && (
-        <GeneratedMsg title={t("ko", "common.generated-message-title")} copyButtonText={t("ko", "common.copy-button")} handleCopy={handleCopy}>
-          {generatedMessage}
-        </GeneratedMsg>
-      )}
+          {/* generated message */}
+          {generatedMessage && (
+            <GeneratedMsg title={t("ko", "common.generated-message-title")} copyButtonText={t("ko", "common.copy-button")} handleCopy={handleCopy}>
+              {generatedMessage}
+            </GeneratedMsg>
+          )}
+        </Box>
+      </Fade>
     </Paper>
   );
 };

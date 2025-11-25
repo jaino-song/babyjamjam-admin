@@ -13,15 +13,15 @@ import {
   Stack,
   TextField,
   Typography,
+  Fade,
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import voucherOptions from "./templates/json/voucher.json";
-import bankAccountJSON from "./templates/json/bank-account.json";
-import { api } from "@/app/lib/axios";
-import { priceInfoMsgTemplate } from "./templates/messageTemplate/priceInfoMsg";
+import voucherOptions from "../templates/json/voucher.json";
+import bankAccountJSON from "../templates/json/bank-account.json";
+import { priceInfoMsgTemplate } from "../templates/messageTemplate/priceInfoMsg";
 import { t } from "@/app/lib/i18n/translations";
-import { useQuery } from "@tanstack/react-query";
 import { useFormStore } from "@/app/store/form-store";
+import { useBankAccountInfos, useVoucherPriceInfos } from "@/app/hooks";
 
 interface PriceInfoFormData {
   name: string;
@@ -83,31 +83,10 @@ export const PriceInfoMessageForm = () => {
   }, [name, voucherType, voucherDuration]);
 
   // Bank account info query
-  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading, error: bankAccountInfosError } = useQuery<BankAccountInfo[]>({
-    queryKey: ['bank-account-infos'],
-    queryFn: async () => {
-      const { data } = await api.get(`/bank-account-infos`);
-      console.log('Fetched bank account info:', data);
-      return data as BankAccountInfo[];
-    },
-    staleTime: Infinity, // Bank account info rarely changes, keep it fresh indefinitely
-    gcTime: 1000 * 60 * 60 * 24, // Keep in cache for 24 hours (renamed from cacheTime in v5)
-  });
+  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading, error: bankAccountInfosError } = useBankAccountInfos();
 
   // Voucher price info query
-  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading, error: voucherPriceInfosError } = useQuery<VoucherPriceInfo[]>({
-    queryKey: ['voucher-price-infos', formData.type],
-    queryFn: async () => {
-      const { data } = await api.get(`/voucher-price-infos/type`, {
-        params: { type: formData.type }
-      });
-      console.log('Fetched voucher price info:', data);
-      return data as VoucherPriceInfo[];
-    },
-    enabled: !!formData.type,
-    staleTime: Infinity, // Voucher price info rarely changes, keep it fresh indefinitely
-    gcTime: 1000 * 60 * 60 * 24, // Keep in cache for 24 hours (renamed from cacheTime in v5)
-  });
+  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading, error: voucherPriceInfosError } = useVoucherPriceInfos(formData.type);
 
   // Voucher type change handler
   const handleVoucherTypeChange = (value: string) => {
@@ -133,15 +112,15 @@ export const PriceInfoMessageForm = () => {
         duration: duration,
         weeks: Math.floor(Number(selectedVoucher.duration) / 5),
         voucherId: selectedVoucher.id,
-        fullPrice: selectedVoucher.fullPrice ?? "",
-        grant: selectedVoucher.grant ?? "",
-        actualPrice: selectedVoucher.actualPrice ?? "",
+        fullPrice: selectedVoucher.fullPrice?.toString() ?? "",
+        grant: selectedVoucher.grant?.toString() ?? "",
+        actualPrice: selectedVoucher.actualPrice?.toString() ?? "",
       }));
       // Update Zustand store
       setVoucherDuration(duration);
-      setFullPrice(selectedVoucher.fullPrice ?? "");
-      setGrant(selectedVoucher.grant ?? "");
-      setActualPrice(selectedVoucher.actualPrice ?? "");
+      setFullPrice(selectedVoucher.fullPrice?.toString() ?? "");
+      setGrant(selectedVoucher.grant?.toString() ?? "");
+      setActualPrice(selectedVoucher.actualPrice?.toString() ?? "");
     }
   };
 
@@ -166,10 +145,12 @@ export const PriceInfoMessageForm = () => {
 
   return (
     <Paper elevation={2} sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%" }}>
-      {/* title */}
-      <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-        {t("ko", "price-info-msg.title")}
-      </Typography>
+      <Fade in appear timeout={500}>
+        <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          {/* title */}
+          <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
+            {t("ko", "price-info-msg.title")}
+          </Typography>
       {/* subtitle */}
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         {t("ko", "price-info-msg.subtitle")}
@@ -269,33 +250,35 @@ export const PriceInfoMessageForm = () => {
         </CardContent>
       </Card>
 
-      {/* generated message */}
-      {generatedMessage && (
-        <Paper elevation={0} sx={{ p: 0 }}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-            <Typography variant="h6" color="primary.main" fontWeight={600}>
-              {t("ko", "common.generated-message-title")}
-            </Typography>
-            <Button
-              variant="outlined"
-              size="medium"
-              startIcon={<ContentCopyIcon />}
-              onClick={handleCopy}
-            >
-              {t("ko", "common.copy-button")}
-            </Button>
-          </Stack>
-          <Paper sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto" }}>
-            <Typography
-              variant="body2"
-              component="pre"
-              sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "1rem" }}
-            >
-              {generatedMessage}
-            </Typography>
-          </Paper>
-        </Paper>
-      )}
+          {/* generated message */}
+          {generatedMessage && (
+            <Paper elevation={0} sx={{ p: 0 }}>
+              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                <Typography variant="h6" color="primary.main" fontWeight={600}>
+                  {t("ko", "common.generated-message-title")}
+                </Typography>
+                <Button
+                  variant="outlined"
+                  size="medium"
+                  startIcon={<ContentCopyIcon />}
+                  onClick={handleCopy}
+                >
+                  {t("ko", "common.copy-button")}
+                </Button>
+              </Stack>
+              <Paper sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto" }}>
+                <Typography
+                  variant="body2"
+                  component="pre"
+                  sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "1rem" }}
+                >
+                  {generatedMessage}
+                </Typography>
+              </Paper>
+            </Paper>
+          )}
+        </Box>
+      </Fade>
     </Paper>
   );
 };

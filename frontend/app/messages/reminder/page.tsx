@@ -1,4 +1,4 @@
-import { ReminderMessageForm } from "@/app/(components)/messages/ReminderMessageForm";
+import { ReminderMessageForm } from "@/app/(components)/messages/forms/ReminderMessageForm";
 import { delay } from "@/app/lib/delay";
 
 export default async function ReminderMessagePage() {

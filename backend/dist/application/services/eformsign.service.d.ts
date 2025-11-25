@@ -24,6 +24,13 @@ export declare class EformsignService {
             country_code: string;
             user_key: string;
         };
+        layout: {
+            zoom: string;
+            viewer_toolbar: {
+                "toolbar.save": string;
+                "toolbar.print": string;
+            };
+        };
         user: {
             type: string;
             id: string;

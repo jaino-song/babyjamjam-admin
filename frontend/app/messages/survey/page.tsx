@@ -1,4 +1,4 @@
-import { SurveyMessageForm } from "@/app/(components)/messages/SurveyMessageForm";
+import { SurveyMessageForm } from "@/app/(components)/messages/forms/SurveyMessageForm";
 import { delay } from "@/app/lib/delay";
 
 export default async function SurveyMessagePage() {

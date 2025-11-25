@@ -24,22 +24,27 @@ let EformsignService = class EformsignService {
         this.EFORMSIGN_TEMPLATE_ID = this.configService.get("EFORMSIGN_TEMPLATE_ID");
     }
     generateSignature(executionTime) {
-        const message = `${executionTime}.${this.EFORMSIGN_API_KEY}`;
-        const signature = crypto
-            .createHmac("sha256", this.EFORMSIGN_PRIVATE_KEY)
-            .update(message)
-            .digest("base64");
-        return signature;
+        const message = String(executionTime);
+        const privateKeyHex = this.EFORMSIGN_PRIVATE_KEY;
+        const privateKeyDer = Buffer.from(privateKeyHex, "hex");
+        const privateKey = crypto.createPrivateKey({
+            key: privateKeyDer,
+            format: "der",
+            type: "pkcs8",
+        });
+        const signature = crypto.sign("sha256", Buffer.from(message, "utf-8"), privateKey);
+        return signature.toString("hex");
     }
     async getAccessToken(executionTime, memberEmail) {
         const signature = this.generateSignature(executionTime);
         const email = memberEmail || this.USER_EMAIL;
+        const encodedApiKey = Buffer.from(this.EFORMSIGN_API_KEY).toString("base64");
         const response = await fetch(`${this.EFORMSIGN_API_URL}/v2.0/api_auth/access_token`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 "eformsign_signature": signature,
-                "Authorization": `Bearer ${this.EFORMSIGN_API_KEY}`,
+                "Authorization": `Bearer ${encodedApiKey}`,
             },
             body: JSON.stringify({
                 execution_time: executionTime,
@@ -59,7 +64,7 @@ let EformsignService = class EformsignService {
             headers: {
                 "Content-Type": "application/json",
                 "eformsign_signature": signature,
-                "Authorization": `Bearer ${this.EFORMSIGN_API_KEY}`,
+                "api_key": this.EFORMSIGN_API_KEY,
             },
             body: JSON.stringify({
                 execution_time: executionTime,
@@ -78,6 +83,10 @@ let EformsignService = class EformsignService {
                 id: this.EFORMSIGN_COMPANY_ID,
                 country_code: "kr",
                 user_key: this.USER_EMAIL,
+            },
+            layout: {
+                "zoom": "0.75",
+                "viewer_toolbar": { "toolbar.save": "false", "toolbar.print": "false" }
             },
             user: {
                 type: "01",

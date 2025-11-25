@@ -26,6 +26,13 @@ export declare class EformsignController {
             country_code: string;
             user_key: string;
         };
+        layout: {
+            zoom: string;
+            viewer_toolbar: {
+                "toolbar.save": string;
+                "toolbar.print": string;
+            };
+        };
         user: {
             type: string;
             id: string;

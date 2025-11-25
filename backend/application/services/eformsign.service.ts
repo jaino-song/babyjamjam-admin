@@ -28,25 +28,52 @@ export class EformsignService {
         this.EFORMSIGN_TEMPLATE_ID = this.configService.get("EFORMSIGN_TEMPLATE_ID");
     }
 
+    /**
+     * Generate eformsign signature using SHA256withECDSA
+     * According to eformsign API docs:
+     * - Uses asymmetric key with Elliptic Curve Cryptography
+     * - Algorithm: SHA256withECDSA
+     * - Message: execution_time as string (UTF-8)
+     * - Output: hex string
+     */
     generateSignature(executionTime: number): string {
-        const message = `${executionTime}.${this.EFORMSIGN_API_KEY}`;
-        const signature = crypto
-            .createHmac("sha256", this.EFORMSIGN_PRIVATE_KEY)
-            .update(message)
-            .digest("base64");
-        return signature;
+        const message = String(executionTime);
+        
+        // Convert hex private key to DER format for crypto.sign
+        const privateKeyHex = this.EFORMSIGN_PRIVATE_KEY;
+        const privateKeyDer = Buffer.from(privateKeyHex, "hex");
+        
+        // Create private key object from DER format
+        const privateKey = crypto.createPrivateKey({
+            key: privateKeyDer,
+            format: "der",
+            type: "pkcs8",
+        });
+        
+        // Sign with SHA256 and ECDSA
+        const signature = crypto.sign(
+            "sha256",
+            Buffer.from(message, "utf-8"),
+            privateKey
+        );
+        
+        // Return as hex string
+        return signature.toString("hex");
     }
 
     async getAccessToken(executionTime: number, memberEmail?: string): Promise<EformsignTokenResponse> {
         const signature = this.generateSignature(executionTime);
         const email = memberEmail || this.USER_EMAIL;
+        
+        // API key must be Base64 encoded according to eformsign docs
+        const encodedApiKey = Buffer.from(this.EFORMSIGN_API_KEY).toString("base64");
 
         const response = await fetch(`${this.EFORMSIGN_API_URL}/v2.0/api_auth/access_token`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 "eformsign_signature": signature,
-                "api_key": this.EFORMSIGN_API_KEY,
+                "Authorization": `Bearer ${encodedApiKey}`,
             },
             body: JSON.stringify({
                 execution_time: executionTime,
@@ -92,6 +119,10 @@ export class EformsignService {
                 id: this.EFORMSIGN_COMPANY_ID,
                 country_code: "kr",
                 user_key: this.USER_EMAIL,
+            },
+            layout: {
+                "zoom" : "0.75",
+                "viewer_toolbar" : {"toolbar.save" : "false", "toolbar.print" : "false"}
             },
             user: {
                 type: "01",
