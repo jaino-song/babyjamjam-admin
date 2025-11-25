@@ -31,7 +31,7 @@ export const ServiceInfoMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1 }}>
+    <Paper elevation={2} sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%" }}>
       {/* title */}
       <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
         {t("ko", "msg-type.service-info")}

@@ -56,7 +56,7 @@ export const PriceInfoMessageForm = () => {
   const [generatedMessage, setGeneratedMessage] = useState("");
 
   // Subscribe to Zustand store
-  const { name, voucherType, voucherDuration, setName, setVoucherType, setVoucherDuration } = useFormStore();
+  const { name, voucherType, voucherDuration, setName, setVoucherType, setVoucherDuration, setFullPrice, setActualPrice, setGrant } = useFormStore();
 
   const [formData, setFormData] = useState<PriceInfoFormData>({
     name: name,
@@ -137,7 +137,11 @@ export const PriceInfoMessageForm = () => {
         grant: selectedVoucher.grant ?? "",
         actualPrice: selectedVoucher.actualPrice ?? "",
       }));
-      setVoucherDuration(duration); // Update Zustand store
+      // Update Zustand store
+      setVoucherDuration(duration);
+      setFullPrice(selectedVoucher.fullPrice ?? "");
+      setGrant(selectedVoucher.grant ?? "");
+      setActualPrice(selectedVoucher.actualPrice ?? "");
     }
   };
 
@@ -161,7 +165,7 @@ export const PriceInfoMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1 }}>
+    <Paper elevation={2} sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%" }}>
       {/* title */}
       <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
         {t("ko", "price-info-msg.title")}

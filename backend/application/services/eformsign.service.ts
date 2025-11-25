@@ -46,7 +46,7 @@ export class EformsignService {
             headers: {
                 "Content-Type": "application/json",
                 "eformsign_signature": signature,
-                "Authorization": `Bearer ${this.EFORMSIGN_API_KEY}`,
+                "api_key": this.EFORMSIGN_API_KEY,
             },
             body: JSON.stringify({
                 execution_time: executionTime,
@@ -70,7 +70,7 @@ export class EformsignService {
             headers: {
                 "Content-Type": "application/json",
                 "eformsign_signature": signature,
-                "Authorization": `Bearer ${this.EFORMSIGN_API_KEY}`,
+                "api_key": this.EFORMSIGN_API_KEY,
             },
             body: JSON.stringify({
                 execution_time: executionTime,

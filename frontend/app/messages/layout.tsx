@@ -15,7 +15,7 @@ export default function MessagesLayout({
 }) {
     return (
         <Container sx={{ p: 0 }}>
-            <AnimatedContainer minHeight="40vh">
+            <AnimatedContainer minHeight="50vh">
                 <MsgNav />
                 {children}
             </AnimatedContainer>
