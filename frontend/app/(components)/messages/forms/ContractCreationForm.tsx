@@ -225,11 +225,13 @@ export const ContractCreationForm = () => {
           onSuccess: (response) => {
             console.log("Document created successfully:", response);
             setDocumentCreated(true);
-            alert(`계약서가 성공적으로 생성되었습니다. 문서 ID: ${response.document_id}`);
+            alert(`계약서가 성공적으로 생성되었습니다.`);
+            handleDialogClose();
           },
           onError: (response) => {
             console.error("Document creation failed:", response);
             setSubmitError(`문서 생성 실패: ${response.message}`);
+            handleDialogClose();
           },
           onAction: (response) => {
             console.log("Document action:", response);
@@ -306,7 +308,7 @@ export const ContractCreationForm = () => {
                   {/* 이용자 성명 */}
                   <NameInput name={name} setName={setName} label={t("ko", "contract-msg.name-label")} placeholder={t("ko", "contract-msg.name-placeholder")} />
                   {/* 이용자 연락처 */}
-                  <ContactInput phone={phone} setPhone={setName} label={t("ko", "contract-msg.phone-label")} placeholder={t("ko", "contract-msg.phone-placeholder")} />
+                  <ContactInput phone={phone} setPhone={setPhone} label={t("ko", "contract-msg.phone-label")} placeholder={t("ko", "contract-msg.phone-placeholder")} />
                 </Stack>
               </Fade>
             )}

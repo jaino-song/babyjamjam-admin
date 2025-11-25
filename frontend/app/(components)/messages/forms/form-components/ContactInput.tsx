@@ -1,7 +1,7 @@
 import { TextField } from "@mui/material";
 import { useState } from "react";
 
-const PHONE_REGEX = /^[0-9]*$/;
+const PHONE_REGEX = /^[0-9-]*$/;
 
 export const ContactInput = ({ phone, setPhone, label, placeholder }: { phone: string, setPhone: (phone: string) => void, label: string, placeholder: string }) => {
     const [error, setError] = useState(false);
