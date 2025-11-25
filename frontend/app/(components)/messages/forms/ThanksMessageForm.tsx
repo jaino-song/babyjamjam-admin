@@ -6,7 +6,6 @@ import {
   CardContent,
   Paper,
   Stack,
-  TextField,
   Typography,
   Fade,
   Box,
@@ -15,6 +14,7 @@ import { thanksMsgTemplate } from "../templates/messageTemplate/thanksMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { NameInput } from "./form-components/NameInput";
 
 
 export const ThanksMessageForm = () => {
@@ -50,14 +50,7 @@ export const ThanksMessageForm = () => {
         <CardContent>
           <Stack spacing={3}>
             {/* name */}
-            <TextField
-              fullWidth
-              label={t("ko", "thanks-msg.name-label")}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t("ko", "thanks-msg.name-placeholder")}
-            />
-
+            <NameInput name={name} setName={setName} label={t("ko", "thanks-msg.name-label")} placeholder={t("ko", "thanks-msg.name-placeholder")} />
             {/* generate button */}
             <Button
               variant="contained"

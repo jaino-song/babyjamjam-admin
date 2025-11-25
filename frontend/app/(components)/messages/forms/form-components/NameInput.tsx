@@ -2,7 +2,14 @@ import { TextField } from "@mui/material";
 import { useState } from "react";
 
 // Regex to allow only letters (Korean, English, spaces)
-const NAME_REGEX = /^[a-zA-Z가-힣\s]*$/;
+// Includes:
+// - a-zA-Z: English letters
+// - ㄱ-ㅎ: Korean consonants (Jamo)
+// - ㅏ-ㅣ: Korean vowels (Jamo)
+// - 가-힣: Complete Korean syllables (Hangul)
+// - ᄀ-ᇿ: Hangul compatibility Jamo (for IME composition)
+// - \s: Whitespace
+const NAME_REGEX = /^[a-zA-Zㄱ-ㅎㅏ-ㅣ가-힣ᄀ-ᇿ\s]*$/;
 
 export const NameInput = ({ name, setName, label, placeholder }: { name: string, setName: (name: string) => void, label: string, placeholder: string }) => {
     const [error, setError] = useState(false);

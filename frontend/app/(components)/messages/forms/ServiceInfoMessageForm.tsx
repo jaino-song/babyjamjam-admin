@@ -15,6 +15,7 @@ import { serviceInfoMsgTemplate } from "../templates/messageTemplate/serviceInfo
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { NameInput } from "./form-components/NameInput";
 
 
 export const ServiceInfoMessageForm = () => {
@@ -50,14 +51,7 @@ export const ServiceInfoMessageForm = () => {
         <CardContent>
           <Stack spacing={3}>
             {/* name */}
-            <TextField
-              fullWidth
-              label={t("ko", "service-info-msg.name-label")}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t("ko", "service-info-msg.name-placeholder")}
-            />
-
+            <NameInput name={name} setName={setName} label={t("ko", "service-info-msg.name-label")} placeholder={t("ko", "service-info-msg.name-placeholder")} />
             {/* generate button */}
             <Button
               variant="contained"

@@ -11,7 +11,6 @@ import {
   Paper,
   Select,
   Stack,
-  TextField,
   Typography,
   Fade,
 } from "@mui/material";
@@ -22,6 +21,7 @@ import { priceInfoMsgTemplate } from "../templates/messageTemplate/priceInfoMsg"
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
 import { useBankAccountInfos, useVoucherPriceInfos } from "@/app/hooks";
+import { NameInput } from "./form-components/NameInput";
 
 interface PriceInfoFormData {
   name: string;
@@ -160,18 +160,7 @@ export const PriceInfoMessageForm = () => {
       <Card elevation={0}>
         <CardContent>
           <Stack spacing={3}>
-            <TextField
-              fullWidth
-              label={t("ko", "price-info-msg.name-label")}
-              value={formData.name}
-              onChange={(e) => {
-                const newName = e.target.value;
-                setFormData(prev => ({ ...prev, name: newName }));
-                setName(newName); // Update Zustand store
-              }}
-              placeholder={t("ko", "price-info-msg.name-placeholder")}
-            />
-
+            <NameInput name={name} setName={setName} label={t("ko", "price-info-msg.name-label")} placeholder={t("ko", "price-info-msg.name-placeholder")} />
             {/* voucher type */}
             <FormControl fullWidth>
               <InputLabel>{t("ko", "price-info-msg.voucher-type-label")}</InputLabel>

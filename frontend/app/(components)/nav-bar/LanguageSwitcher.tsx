@@ -15,19 +15,9 @@ export const LanguageSwitcher = () => {
   };
 
   return (
-    <ButtonGroup size="small" variant="outlined">
-      <Button
-        onClick={() => handleLanguageChange("en")}
-        variant={currentLang === "en" ? "contained" : "outlined"}
-      >
-        English 🇺🇸
-      </Button>
-      <Button
-        onClick={() => handleLanguageChange("ko")}
-        variant={currentLang === "ko" ? "contained" : "outlined"}
-      >
-        한국어 🇰🇷
-      </Button>
+    <ButtonGroup size="small" variant="outlined" sx={{ height: '3%' }}>
+      <Button onClick={() => handleLanguageChange("en")} variant={currentLang === "en" ? "contained" : "outlined"} sx={{ width: '50%', borderRadius: '10px 0 0 10px' }}>English</Button>
+      <Button onClick={() => handleLanguageChange("ko")} variant={currentLang === "ko" ? "contained" : "outlined"} sx={{ width: '50%', borderRadius: '0 10px 10px 0' }}>한국어</Button>
     </ButtonGroup>
   );
 };
