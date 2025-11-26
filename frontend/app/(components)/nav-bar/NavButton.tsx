@@ -9,14 +9,16 @@ interface NavButtonProps {
     icon: React.ReactNode;
     active?: boolean;
     onClick?: () => void;
+    disabled?: boolean;
 }
 
-export const NavButton = ({ href, label, icon, active=false, onClick }: NavButtonProps) => {
+export const NavButton = ({ href, label, icon, active=false, onClick, disabled=false }: NavButtonProps) => {
     return (
         <Button 
             component={Link} 
             href={href} 
             onClick={onClick} 
+            disabled={disabled}
             sx={{ 
                 mt: 0, 
                 px: 1.5, 

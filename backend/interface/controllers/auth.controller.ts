@@ -33,7 +33,7 @@ export class AuthController {
         });
         
         // Redirect to frontend
-        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000/dashboard";
         res.redirect(frontendUrl);
     }
 

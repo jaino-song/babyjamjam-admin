@@ -13,9 +13,10 @@ export interface StatItem {
 
 interface StatsGridProps {
   stats: StatItem[];
+  disabled?: boolean;
 }
 
-export const StatsGrid = ({ stats }: StatsGridProps) => {
+export const StatsGrid = ({ stats, disabled=false }: StatsGridProps) => {
   return (
     /* Grid for Stats */
     <Grid container spacing={2}>
@@ -23,7 +24,7 @@ export const StatsGrid = ({ stats }: StatsGridProps) => {
         const Icon = item.icon;
         return (
           /* Grid Item */
-          <Grid key={item.title} size={{ xs: 6, sm: 6, lg: 3 }}>
+          <Grid key={item.title} size={{ xs: 6, sm: 6, lg: 3 }} sx={{ opacity: disabled ? 0.5 : 1 }}>
             {/* Card */}
             <Card elevation={0} sx={{ py: 2.5, px: 3, display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 2 }}>
               <Box sx={{ display: "flex", justifyContent: "center" }}>
@@ -37,8 +38,8 @@ export const StatsGrid = ({ stats }: StatsGridProps) => {
                   <Box key={`${item.firstDataLabel}-${item.firstDataValue}`} sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1.5 }}>
                     <Avatar
                       sx={{
-                        bgcolor: "primary.main",
-                        color: "primary.contrastText",
+                        bgcolor: disabled ? "text.secondary" : "primary.main",
+                        color: disabled ? "white" : "primary.contrastText",
                         width: 44,
                         height: 44,
                       }}
@@ -59,8 +60,8 @@ export const StatsGrid = ({ stats }: StatsGridProps) => {
                     <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1.5 }}>
                       <Avatar
                         sx={{
-                          bgcolor: "primary.main",
-                          color: "primary.contrastText",
+                          bgcolor: disabled ? "text.secondary" : "primary.main",
+                          color: disabled ? "white" : "primary.contrastText",
                           width: 44,
                           height: 44,
                         }}

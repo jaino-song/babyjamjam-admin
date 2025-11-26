@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { QueryProvider } from "./query-provider";
-import { Header } from "./(components)/root/Header";
+import { ConditionalHeader } from "./(components)/root/ConditionalHeader";
 import { MuiThemeProvider as ThemeProvider } from "./(components)/mui-theme-provider";
-import { getLanguageForServerComp } from "./lib/i18n/getLanguageForServerComp";
 import EmotionRegistry from "./(components)/EmotionRegistry";
 import localFont from "next/font/local";
 import AnimatedContainer from "./(components)/root/AnimatedContainer";
@@ -25,16 +24,14 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const language = await getLanguageForServerComp();
-
   return (
-    <html lang={language}>
+    <html lang="ko">
       <body className={Pretendard.variable} style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' }}>
         <EmotionRegistry>
           <ThemeProvider>
             <QueryProvider>
               <AnimatedContainer>
-                <Header language={language} />
+                <ConditionalHeader />
                 <Box component="main" sx={{ m: 1 }}>
                   {children}
                 </Box>

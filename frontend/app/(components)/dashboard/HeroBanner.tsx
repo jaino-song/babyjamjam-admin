@@ -7,6 +7,10 @@ interface HeroBannerProps {
   description?: string;
   primaryActionLabel: string;
   secondaryActionLabel: string;
+  primaryActionDisabled?: boolean;
+  secondaryActionDisabled?: boolean;
+  primaryActionHref?: string;
+  secondaryActionHref?: string;
 }
 
 export const HeroBanner = ({
@@ -15,6 +19,10 @@ export const HeroBanner = ({
   description,
   primaryActionLabel,
   secondaryActionLabel,
+  primaryActionDisabled = false,
+  secondaryActionDisabled = false,
+  primaryActionHref,
+  secondaryActionHref,
 }: HeroBannerProps) => {
   return (
     <Paper
@@ -37,10 +45,10 @@ export const HeroBanner = ({
         {description}
       </Typography>
       <Stack direction="row" spacing={1.5} sx={{ mt: 1.5 }}>
-        <Button variant="outlined" color="inherit" size="small" endIcon={<ArrowForwardIcon />} sx={{ px: 3, width: "50%" }}>
+        <Button href={primaryActionHref} variant="outlined" color="inherit" size="small" disabled={primaryActionDisabled} sx={{ px: 3, width: "50%" }}>
           {primaryActionLabel}
         </Button>
-        <Button variant="outlined" color="inherit" size="small" sx={{ width: "50%" }}>
+        <Button href={secondaryActionHref} variant="outlined" color="inherit" size="small" disabled={secondaryActionDisabled} sx={{ width: "50%" }}>
           {secondaryActionLabel}
         </Button>
       </Stack>

@@ -143,6 +143,8 @@
   "nav-bar": {
     "dashboard": "대시보드",
     "messages": "메시지",
-    "contracts": "계약서"
+    "contracts": "계약서",
+    "clients": "고객 관리",
+    "settings": "설정"
   }
 }

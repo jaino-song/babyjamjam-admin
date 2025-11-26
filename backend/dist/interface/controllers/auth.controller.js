@@ -33,7 +33,7 @@ let AuthController = class AuthController {
             sameSite: "lax",
             maxAge: 7 * 24 * 60 * 60 * 1000,
         });
-        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000/dashboard";
         res.redirect(frontendUrl);
     }
     async getCurrentUser(req) {
