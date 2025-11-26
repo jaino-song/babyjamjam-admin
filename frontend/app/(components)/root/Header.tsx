@@ -8,12 +8,9 @@ import { api } from "@/app/lib/axios";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { NavBar } from "../nav-bar/NavBar";
+import { t } from "@/app/lib/i18n/translations";
 
-interface HeaderProps {
-  language: string;
-}
-
-export const Header = ({ language }: HeaderProps) => {
+export const Header = () => {
   const [isNavOpen, setIsNavOpen] = useState(false);
 
   const handleNavOpen = () => {
@@ -44,9 +41,11 @@ export const Header = ({ language }: HeaderProps) => {
 
   return (
     <>
+      {/* Navbar Drawer */}
       <Drawer anchor="left" open={isNavOpen} onClose={handleNavClose} sx={{ '& .MuiDrawer-paper': { width: '50%' } }}>
         <NavBar onClose={handleNavClose} />
       </Drawer>
+      {/* Header */}
       <AppBar
         position="static"
         elevation={0}
@@ -57,20 +56,25 @@ export const Header = ({ language }: HeaderProps) => {
         }}
       >
         <Toolbar sx={{ gap: 1, minHeight: { xs: 64, sm: 72 } }}>
+          {/* Menu Icon */}
           <IconButton edge="start" color="inherit" aria-label="open navigation" onClick={handleNavOpen}>
             <MenuIcon />
           </IconButton>
+          {/* Company Name */}
           <Box sx={{ flexGrow: 1 }}>
             <Typography variant="h6" fontWeight={600}>
-              {language === "ko" ? "인천 아이미래로" : "Imirae Incheon"}
+              {t("ko", "header.companyName")}
             </Typography>
+            {/* Subtitle */}
             <Typography variant="body2" color="text.secondary">
-              {language === "ko" ? "운영 플랫폼 백오피스" : "Imirae Incheon Back Office"}
+              {t("ko", "header.companySubtitle")}
             </Typography>
           </Box>
-          <IconButton color="inherit" aria-label="notifications">
+          {/* Notifications Icon */}
+          {/* <IconButton color="inherit" aria-label="notifications">
             <NotificationsNoneIcon />
-          </IconButton>
+          </IconButton> */}
+          {/* User Profile */}
           <IconButton color="inherit" aria-label={user ? "user" : "login"} disabled={isLoading}>
             {isLoading ? (
               <Avatar />

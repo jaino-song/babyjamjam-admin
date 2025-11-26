@@ -15,7 +15,7 @@ interface NavBarProps {
 export const NavBar = ({ onClose }: NavBarProps) => {
     const pathname = usePathname();
     const isDashboard = pathname === "/";
-    const isMessages = pathname === "/messages/greeting";
+    const isMessages = pathname?.includes("/messages");
     const isContracts = pathname === "/contracts";
 
     return (

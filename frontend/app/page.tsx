@@ -16,28 +16,26 @@ const locale = await getLocale();
 
 const stats: StatItem[] = [
   {
-    label: t(locale, "dashboard.active_users"),
-    value: "1,248",
-    helper: "+18% vs last week",
+    title: t(locale, "dashboard.active_clients"),
+    firstDataValue: "1,248",
     icon: PeopleOutlineIcon,
   },
   {
-    label: t(locale, "dashboard.pending_approvals"),
-    value: "32",
-    helper: "5 require follow-up",
-    icon: ChecklistIcon,
-  },
-  {
-    label: t(locale, "dashboard.revenue"),
-    value: "$42.8k",
-    helper: "+6.2% growth",
+    title: t(locale, "dashboard.contracts.sending_pending"),
+    firstDataValue: "14",
     icon: TrendingUpIcon,
   },
   {
-    label: t(locale, "dashboard.reports"),
-    value: "14",
-    helper: "Updated today",
+    title: t(locale, "dashboard.contracts.completion_pending"),
+    firstDataValue: "14",
     icon: AssessmentIcon,
+  },
+  {
+    title: t(locale, "dashboard.pending_clients.title"),
+    firstDataLabel: "10월",
+    secondDataLabel: "11월",
+    firstDataValue: "32 명",
+    secondDataValue: "10 명",
   },
 ];
 
@@ -62,17 +60,16 @@ export default async function Home() {
   const user = await getCurrentUser();
 
   return (
-    <Box sx={{ minHeight: "100vh", bgcolor: "background.default" }}>
+    <Box sx={{ bgcolor: "background.default" }}>
       <Box
         component="main"
         sx={{
           px: { xs: 2, sm: 3, md: 6 },
           py: { xs: 3, sm: 4 },
-          maxWidth: 1200,
           mx: "auto",
         }}
       >
-        <Stack spacing={3}>
+        <Stack spacing={3} sx={{ width: "100%" }}>
           <HeroBanner
             subtitle={t(locale, "dashboard.welcome_back")}
             title={`${user?.name} ${t(locale, "dashboard.suffix")}`} 
@@ -81,21 +78,6 @@ export default async function Home() {
           />
 
           <StatsGrid stats={stats} />
-
-          <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-            <PerformanceOverview
-              title={t(locale, "dashboard.weekly_performance")}
-              subtitle={t(locale, "dashboard.weekly_performance_subtitle")}
-              metrics={performanceMetrics}
-            />
-            <QuickActions
-              title={t(locale, "dashboard.quick_actions")}
-              subtitle={t(locale, "dashboard.quick_actions_subtitle")}
-              actions={quickActions}
-            />
-          </Stack>
-
-          <RecentActivity items={activity} title={t(locale, "dashboard.recent_activity")} actionLabel={t(locale, "dashboard.view_all")} />
         </Stack>
       </Box>
     </Box>
