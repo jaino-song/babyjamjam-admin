@@ -1,28 +1,36 @@
 "use client";
 import { Button, Paper, Stack } from "@mui/material";
-import { t } from "@/app/lib/i18n/translations";
+import { t, Locale } from "@/app/lib/i18n/translations";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useLocale } from "@/app/(components)/LocaleProvider";
 
 interface NavButton {
   id: string;
-  label: string;
+  labelKey: string;
   href: string;
 }
 
-const navButtons: NavButton[] = [
-  { id: "greeting", label: t("ko", "msg-type.greeting"), href: "/messages/greeting" },
-  { id: "service-info", label: t("ko", "msg-type.service-info"), href: "/messages/service-info" },
-  { id: "price-info", label: t("ko", "msg-type.price-info"), href: "/messages/price-info" },
-  { id: "reminder", label: t("ko", "msg-type.reminder"), href: "/messages/reminder" },
-  { id: "thanks", label: t("ko", "msg-type.thanks"), href: "/messages/thanks" },
-  { id: "survey", label: t("ko", "msg-type.survey"), href: "/messages/survey" },
-  { id: "contract", label: t("ko", "msg-type.contract"), href: "/messages/contract" },
+const navButtonConfigs: NavButton[] = [
+  { id: "greeting", labelKey: "msg-type.greeting", href: "/messages/greeting" },
+  { id: "service-info", labelKey: "msg-type.service-info", href: "/messages/service-info" },
+  { id: "price-info", labelKey: "msg-type.price-info", href: "/messages/price-info" },
+  { id: "reminder", labelKey: "msg-type.reminder", href: "/messages/reminder" },
+  { id: "thanks", labelKey: "msg-type.thanks", href: "/messages/thanks" },
+  { id: "survey", labelKey: "msg-type.survey", href: "/messages/survey" },
+  { id: "contract", labelKey: "msg-type.contract", href: "/messages/contract" },
 ];
 
+const getNavButtons = (locale: Locale) =>
+  navButtonConfigs.map((config) => ({
+    ...config,
+    label: t(locale, config.labelKey),
+  }));
+
 export const MsgNav = () => {
+  const locale = useLocale();
   const pathname = usePathname();
-  console.log(pathname);
+  const navButtons = getNavButtons(locale);
 
   return (
     <Paper

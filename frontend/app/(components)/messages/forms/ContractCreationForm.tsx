@@ -27,6 +27,7 @@ import {
 import CloseIcon from "@mui/icons-material/Close";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
+import { useLocale } from "@/app/(components)/LocaleProvider";
 import { eformsignApi } from "@/services/api";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
@@ -76,6 +77,7 @@ interface ContractDataDto {
 dayjs.locale("ko");
 
 export const ContractCreationForm = () => {
+  const locale = useLocale();
   const [activeStep, setActiveStep] = useState(0);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -115,7 +117,7 @@ export const ContractCreationForm = () => {
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(voucherType);
 
   // Cast the result of t() to string[] because the translation returns an array for this key
-  const steps = t("ko", "contract-msg.pagination-steps") as unknown as string[];
+  const steps = t(locale, "contract-msg.pagination-steps") as unknown as string[];
 
   const handleStepBack = () => {
     setActiveStep((prevActiveStep) => prevActiveStep - 1);
@@ -282,11 +284,11 @@ export const ContractCreationForm = () => {
           fontWeight={700}
           gutterBottom
         >
-          {t("ko", "msg-type.contract")}
+          {t(locale, "msg-type.contract")}
         </Typography>
         {/* subtitle */}
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          {t("ko", "contract-msg.subtitle")}
+          {t(locale, "contract-msg.subtitle")}
         </Typography>
 
         {/* Stepper */}
@@ -306,9 +308,9 @@ export const ContractCreationForm = () => {
               <Fade in appear timeout={300}>
                 <Stack spacing={3}>
                   {/* 이용자 성명 */}
-                  <NameInput name={name} setName={setName} label={t("ko", "contract-msg.name-label")} placeholder={t("ko", "contract-msg.name-placeholder")} />
+                  <NameInput name={name} setName={setName} label={t(locale, "contract-msg.name-label")} placeholder={t(locale, "contract-msg.name-placeholder")} />
                   {/* 이용자 연락처 */}
-                  <ContactInput phone={phone} setPhone={setPhone} label={t("ko", "contract-msg.phone-label")} placeholder={t("ko", "contract-msg.phone-placeholder")} />
+                  <ContactInput phone={phone} setPhone={setPhone} label={t(locale, "contract-msg.phone-label")} placeholder={t(locale, "contract-msg.phone-placeholder")} />
                 </Stack>
               </Fade>
             )}
@@ -318,9 +320,9 @@ export const ContractCreationForm = () => {
               <Fade in appear timeout={300}>
                 <Stack spacing={3}>
                   {/* 제공인력 1 */}
-                  <NameInput name={employeeName} setName={setEmployeeName} label={t("ko", "contract-msg.employee-name-label")} placeholder={t("ko", "contract-msg.employee-name-placeholder")} />
+                  <NameInput name={employeeName} setName={setEmployeeName} label={t(locale, "contract-msg.employee-name-label")} placeholder={t(locale, "contract-msg.employee-name-placeholder")} />
                   {/* 제공인력 1 연락처 */}
-                  <ContactInput phone={employeePhone} setPhone={setEmployeePhone} label={t("ko", "contract-msg.employee-phone-label")} placeholder={t("ko", "contract-msg.employee-phone-placeholder")} />
+                  <ContactInput phone={employeePhone} setPhone={setEmployeePhone} label={t(locale, "contract-msg.employee-phone-label")} placeholder={t(locale, "contract-msg.employee-phone-placeholder")} />
                 </Stack>
               </Fade>
             )}
@@ -333,10 +335,10 @@ export const ContractCreationForm = () => {
                     <>
                       {/* 바우처 유형 선택 */}
                       <FormControl fullWidth>
-                        <InputLabel>{t("ko", "price-info-msg.voucher-type-label")}</InputLabel>
+                        <InputLabel>{t(locale, "price-info-msg.voucher-type-label")}</InputLabel>
                         <Select
                           value={voucherType}
-                          label={t("ko", "price-info-msg.voucher-type-label")}
+                          label={t(locale, "price-info-msg.voucher-type-label")}
                           onChange={(e) => handleVoucherTypeChange(e.target.value)}
                         >
                           {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
@@ -356,10 +358,10 @@ export const ContractCreationForm = () => {
                       {voucherType && voucherPriceInfos.length > 0 && (
                         <Fade in timeout={400}>
                           <FormControl fullWidth>
-                            <InputLabel>{t("ko", "price-info-msg.duration-label")}</InputLabel>
+                            <InputLabel>{t(locale, "price-info-msg.duration-label")}</InputLabel>
                             <Select
                               value={voucherDuration}
-                              label={t("ko", "price-info-msg.duration-label")}
+                              label={t(locale, "price-info-msg.duration-label")}
                               onChange={(e) => handleDurationChange(e.target.value)}
                               disabled={isVoucherPriceInfosLoading}
                             >
@@ -391,10 +393,10 @@ export const ContractCreationForm = () => {
                       <Fade in timeout={400}>
                         <TextField
                           fullWidth
-                          label={t("ko", "contract-msg.full-price-label")}
+                          label={t(locale, "contract-msg.full-price-label")}
                           value={fullPrice}
                           onChange={(e) => setFullPrice(e.target.value)}
-                          placeholder={t("ko", "contract-msg.price-placeholder")}
+                          placeholder={t(locale, "contract-msg.price-placeholder")}
                           slotProps={{
                             input: {
                               endAdornment: <InputAdornment position="end">원</InputAdornment>,
@@ -406,10 +408,10 @@ export const ContractCreationForm = () => {
                       <Fade in timeout={400} style={{ transitionDelay: "100ms" }}>
                         <TextField
                           fullWidth
-                          label={t("ko", "contract-msg.grant-label")}
+                          label={t(locale, "contract-msg.grant-label")}
                           value={grant}
                           onChange={(e) => setGrant(e.target.value)}
-                          placeholder={t("ko", "contract-msg.price-placeholder")}
+                          placeholder={t(locale, "contract-msg.price-placeholder")}
                           slotProps={{
                             input: {
                               endAdornment: <InputAdornment position="end">원</InputAdornment>,
@@ -421,10 +423,10 @@ export const ContractCreationForm = () => {
                       <Fade in timeout={400} style={{ transitionDelay: "200ms" }}>
                         <TextField
                           fullWidth
-                          label={t("ko", "contract-msg.actual-price-label")}
+                          label={t(locale, "contract-msg.actual-price-label")}
                           value={actualPrice}
                           onChange={(e) => setActualPrice(e.target.value)}
-                          placeholder={t("ko", "contract-msg.price-placeholder")}
+                          placeholder={t(locale, "contract-msg.price-placeholder")}
                           slotProps={{
                             input: {
                               endAdornment: <InputAdornment position="end">원</InputAdornment>,
@@ -436,7 +438,7 @@ export const ContractCreationForm = () => {
                       <Fade in timeout={400} style={{ transitionDelay: "300ms" }}>
                         <Box>
                           <DatePicker
-                            label={t("ko", "contract-msg.start-date-label")}
+                            label={t(locale, "contract-msg.start-date-label")}
                             value={startDate ? dayjs(startDate) : null}
                             onChange={(newValue: Dayjs | null) => {
                               setStartDate(newValue ? newValue.format("YYYY-MM-DD") : "");
@@ -464,7 +466,7 @@ export const ContractCreationForm = () => {
                       <Fade in timeout={400} style={{ transitionDelay: "400ms" }}>
                         <Box>
                           <DatePicker
-                            label={t("ko", "contract-msg.end-date-label")}
+                            label={t(locale, "contract-msg.end-date-label")}
                             value={endDate ? dayjs(endDate) : null}
                             onChange={(newValue: Dayjs | null) => {
                               setEndDate(newValue ? newValue.format("YYYY-MM-DD") : "");
@@ -492,7 +494,7 @@ export const ContractCreationForm = () => {
                       <Fade in timeout={400} style={{ transitionDelay: "500ms" }}>
                         <Box>
                           <DatePicker
-                            label={t("ko", "contract-msg.payment-date-label")}
+                            label={t(locale, "contract-msg.payment-date-label")}
                             value={paymentDate ? dayjs(paymentDate) : null}
                             onChange={(newValue: Dayjs | null) => {
                               setPaymentDate(
@@ -547,7 +549,7 @@ export const ContractCreationForm = () => {
             onClick={handleStepBack}
             disabled={activeStep === 0 || isSubmitting}
           >
-            {t("ko", "common.back")}
+            {t(locale, "common.back")}
           </Button>
 
           {activeStep === steps.length - 1 ? (
@@ -557,7 +559,7 @@ export const ContractCreationForm = () => {
               disabled={!isStep3Valid || isSubmitting || !isEformsignLoaded}
               startIcon={isSubmitting ? <CircularProgress size={20} color="inherit" /> : undefined}
             >
-              {isSubmitting ? "처리 중..." : t("ko", "contract-msg.contract-creation")}
+              {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
             </Button>
           ) : (
             <Button
@@ -565,7 +567,7 @@ export const ContractCreationForm = () => {
               onClick={handleStepNext}
               disabled={isNextDisabled()}
             >
-              {t("ko", "common.next")}
+              {t(locale, "common.next")}
             </Button>
           )}
             </Stack>

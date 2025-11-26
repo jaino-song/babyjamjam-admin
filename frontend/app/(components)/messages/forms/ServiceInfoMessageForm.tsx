@@ -14,11 +14,13 @@ import {
 import { serviceInfoMsgTemplate } from "../templates/messageTemplate/serviceInfoMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
+import { useLocale } from "@/app/(components)/LocaleProvider";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { NameInput } from "./form-components/NameInput";
 
 
 export const ServiceInfoMessageForm = () => {
+  const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const { name, setName } = useFormStore();
 
@@ -30,7 +32,7 @@ export const ServiceInfoMessageForm = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert(t("ko", "common.copy-success-message"));
+    alert(t(locale, "common.copy-success-message"));
   };
 
   return (
@@ -39,11 +41,11 @@ export const ServiceInfoMessageForm = () => {
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
           {/* title */}
           <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-            {t("ko", "msg-type.service-info")}
+            {t(locale, "msg-type.service-info")}
           </Typography>
       {/* subtitle */}
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t("ko", "service-info-msg.subtitle")}
+        {t(locale, "service-info-msg.subtitle")}
       </Typography>
 
       {/* form */}
@@ -51,7 +53,7 @@ export const ServiceInfoMessageForm = () => {
         <CardContent>
           <Stack spacing={3}>
             {/* name */}
-            <NameInput name={name} setName={setName} label={t("ko", "service-info-msg.name-label")} placeholder={t("ko", "service-info-msg.name-placeholder")} />
+            <NameInput name={name} setName={setName} label={t(locale, "service-info-msg.name-label")} placeholder={t(locale, "service-info-msg.name-placeholder")} />
             {/* generate button */}
             <Button
               variant="contained"
@@ -59,7 +61,7 @@ export const ServiceInfoMessageForm = () => {
               onClick={handleGenerate}
               disabled={!name}
             >
-              {t("ko", "common.generate-button")}
+              {t(locale, "common.generate-button")}
             </Button>
           </Stack>
         </CardContent>
@@ -67,7 +69,7 @@ export const ServiceInfoMessageForm = () => {
 
           {/* generated message */}
           {generatedMessage && (
-            <GeneratedMsg title={t("ko", "common.generated-message-title")} copyButtonText={t("ko", "common.copy-button")} handleCopy={handleCopy}>
+            <GeneratedMsg title={t(locale, "common.generated-message-title")} copyButtonText={t(locale, "common.copy-button")} handleCopy={handleCopy}>
               {generatedMessage}
             </GeneratedMsg>
           )}

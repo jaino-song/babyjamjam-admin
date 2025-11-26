@@ -9,8 +9,10 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { NavBar } from "../nav-bar/NavBar";
 import { t } from "@/app/lib/i18n/translations";
+import { useLocale } from "@/app/(components)/LocaleProvider";
 
 export const Header = () => {
+  const locale = useLocale();
   const [isNavOpen, setIsNavOpen] = useState(false);
 
   const handleNavOpen = () => {
@@ -63,11 +65,11 @@ export const Header = () => {
           {/* Company Name */}
           <Box sx={{ flexGrow: 1 }}>
             <Typography variant="h6" fontWeight={600}>
-              {t("ko", "header.companyName")}
+              {t(locale, "header.companyName")}
             </Typography>
             {/* Subtitle */}
             <Typography variant="body2" color="text.secondary">
-              {t("ko", "header.companySubtitle")}
+              {t(locale, "header.companySubtitle")}
             </Typography>
           </Box>
           {/* Notifications Icon */}

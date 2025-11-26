@@ -20,6 +20,7 @@ import bankAccountJSON from "../templates/json/bank-account.json";
 import { priceInfoMsgTemplate } from "../templates/messageTemplate/priceInfoMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
+import { useLocale } from "@/app/(components)/LocaleProvider";
 import { useBankAccountInfos, useVoucherPriceInfos } from "@/app/hooks";
 import { NameInput } from "./form-components/NameInput";
 
@@ -53,6 +54,7 @@ interface BankAccountInfo {
 }
 
 export const PriceInfoMessageForm = () => {
+  const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
 
   // Subscribe to Zustand store
@@ -140,7 +142,7 @@ export const PriceInfoMessageForm = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert(t("ko", "common.copy-success-message"));
+    alert(t(locale, "common.copy-success-message"));
   };
 
   return (
@@ -149,24 +151,24 @@ export const PriceInfoMessageForm = () => {
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
           {/* title */}
           <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-            {t("ko", "price-info-msg.title")}
+            {t(locale, "price-info-msg.title")}
           </Typography>
       {/* subtitle */}
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t("ko", "price-info-msg.subtitle")}
+        {t(locale, "price-info-msg.subtitle")}
       </Typography>
 
       {/* form */}
       <Card elevation={0}>
         <CardContent>
           <Stack spacing={3}>
-            <NameInput name={name} setName={setName} label={t("ko", "price-info-msg.name-label")} placeholder={t("ko", "price-info-msg.name-placeholder")} />
+            <NameInput name={name} setName={setName} label={t(locale, "price-info-msg.name-label")} placeholder={t(locale, "price-info-msg.name-placeholder")} />
             {/* voucher type */}
             <FormControl fullWidth>
-              <InputLabel>{t("ko", "price-info-msg.voucher-type-label")}</InputLabel>
+              <InputLabel>{t(locale, "price-info-msg.voucher-type-label")}</InputLabel>
               <Select
                 value={formData.type}
-                label={isVoucherPriceInfosLoading ? t("ko", "common.loading") : t("ko", "price-info-msg.voucher-type-label")}
+                label={isVoucherPriceInfosLoading ? t(locale, "common.loading") : t(locale, "price-info-msg.voucher-type-label")}
                 onChange={(e) => handleVoucherTypeChange(e.target.value)}
                 disabled={isVoucherPriceInfosLoading}
               >
@@ -186,10 +188,10 @@ export const PriceInfoMessageForm = () => {
             {/* voucher duration */}
             {formData.type && voucherPriceInfos.length > 0 && (
               <FormControl fullWidth>
-                <InputLabel>{t("ko", "price-info-msg.duration-label")}</InputLabel>
+                <InputLabel>{t(locale, "price-info-msg.duration-label")}</InputLabel>
                 <Select
                   value={formData.duration === "" ? "" : formData.duration}
-                  label={t("ko", "price-info-msg.duration-label")}
+                  label={t(locale, "price-info-msg.duration-label")}
                   onChange={(e) => handleDurationChange(e.target.value)}
                 >
                   {voucherPriceInfos.map((v) => (
@@ -203,10 +205,10 @@ export const PriceInfoMessageForm = () => {
 
             {/* area */}
             <FormControl fullWidth>
-              <InputLabel>{t("ko", "price-info-msg.area-label")}</InputLabel>
+              <InputLabel>{t(locale, "price-info-msg.area-label")}</InputLabel>
               <Select
                 value={formData.area}
-                label={t("ko", "price-info-msg.area-label")}
+                label={t(locale, "price-info-msg.area-label")}
                 onChange={(e) => handleAreaChange(e.target.value)}
               >
                 {Object.values(bankAccountInfos).map((bankAccountInfo: BankAccountInfo) => (
@@ -220,9 +222,9 @@ export const PriceInfoMessageForm = () => {
             {/* Price Info */}
             {formData.fullPrice && formData.grant && formData.actualPrice && (
               <Stack spacing={2}>
-                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.full-price-label")}: {formData.fullPrice}{t("ko", "common.currency-symbol")}</Typography>
-                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.grant-price-label")}: {formData.grant}{t("ko", "common.currency-symbol")}</Typography>
-                <Typography variant="body1" fontWeight={500}>{t("ko", "price-info-msg.actual-price-label")}: {formData.actualPrice}{t("ko", "common.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.full-price-label")}: {formData.fullPrice}{t(locale, "common.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.grant-price-label")}: {formData.grant}{t(locale, "common.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.actual-price-label")}: {formData.actualPrice}{t(locale, "common.currency-symbol")}</Typography>
               </Stack>
             )}
 
@@ -233,7 +235,7 @@ export const PriceInfoMessageForm = () => {
               onClick={handleGenerate}
               disabled={!formData.name || !formData.type || !formData.area || isVoucherPriceInfosLoading || isBankAccountInfosLoading}
             >
-              {isVoucherPriceInfosLoading || isBankAccountInfosLoading ? t("ko", "common.generate-button-loading") : t("ko", "common.generate-button")}
+              {isVoucherPriceInfosLoading || isBankAccountInfosLoading ? t(locale, "common.generate-button-loading") : t(locale, "common.generate-button")}
             </Button>
           </Stack>
         </CardContent>
@@ -244,7 +246,7 @@ export const PriceInfoMessageForm = () => {
             <Paper elevation={0} sx={{ p: 0 }}>
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
                 <Typography variant="h6" color="primary.main" fontWeight={600}>
-                  {t("ko", "common.generated-message-title")}
+                  {t(locale, "common.generated-message-title")}
                 </Typography>
                 <Button
                   variant="outlined"
@@ -252,7 +254,7 @@ export const PriceInfoMessageForm = () => {
                   startIcon={<ContentCopyIcon />}
                   onClick={handleCopy}
                 >
-                  {t("ko", "common.copy-button")}
+                  {t(locale, "common.copy-button")}
                 </Button>
               </Stack>
               <Paper sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto" }}>

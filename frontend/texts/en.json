@@ -7,16 +7,36 @@
     "cancel": "Cancel",
     "delete": "Delete",
     "edit": "Edit",
-    "create": "Create"
+    "create": "Create",
+    "generate-button": "Generate Message",
+    "generate-button-loading": "Loading data...",
+    "copy-button": "Copy",
+    "currency-symbol": " KRW",
+    "generated-message-title": "Generated Message",
+    "copy-success-message": "Message copied to clipboard!",
+    "next": "Next",
+    "back": "Back"
+  },
+  "header": {
+    "companyName": "Incheon Imirae",
+    "companySubtitle": "Operations Platform"
   },
   "dashboard": {
     "title": "Admin Dashboard",
     "subtitle": "Monitor operations at a glance",
     "welcome_back": "Welcome back",
-    "active_users": "Active Users",
-    "pending_approvals": "Pending Approvals",
-    "revenue": "Revenue",
-    "reports": "Reports",
+    "suffix": " 😀",
+    "active_clients": "Active Clients",
+    "pending_clients": {
+      "title": "Pending Reservations",
+      "current_month": "Pending this month",
+      "next_month": "Pending next month"
+    },
+    "contracts": {
+      "title": "Contracts",
+      "sending_pending": "Contracts to Send",
+      "completion_pending": "Pending Completion"
+    },
     "weekly_performance": "Weekly Performance",
     "quick_actions": "Quick Actions",
     "recent_activity": "Recent Activity",
@@ -37,6 +57,94 @@
     "settings": "Settings",
     "logout": "Logout",
     "login": "Login"
+  },
+  "price-info-msg": {
+    "title": "Generate Pricing Message",
+    "subtitle": "Please fill in all fields and click the generate button below",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe",
+    "voucher-type-label": "Voucher Type",
+    "area-label": "Area",
+    "duration-label": "Service Duration",
+    "duration-placeholder": "Days",
+    "full-price-label": "Total Service Amount",
+    "grant-price-label": "Government Grant",
+    "actual-price-label": "Out-of-Pocket"
+  },
+  "bank-account-info": {
+    "nonghyup": "Nonghyup Bank",
+    "namdonggu": "Namdong-gu",
+    "seogu": "Seo-gu",
+    "bupyunggu": "Bupyeong-gu",
+    "yeonsu": "Yeonsu-gu"
+  },
+  "msg-type": {
+    "greeting": "Greeting",
+    "service-info": "Service Info",
+    "price-info": "Pricing & Account",
+    "reminder": "Reminder",
+    "thanks": "Reservation Complete",
+    "survey": "Survey",
+    "contract": "E-Contract"
+  },
+  "greeting-msg": {
+    "subtitle": "Generate a greeting message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "service-info-msg": {
+    "subtitle": "Generate a service information message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "reminder-msg": {
+    "subtitle": "Generate a reminder message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "thanks-msg": {
+    "subtitle": "Generate a thank you message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "survey-msg": {
+    "subtitle": "Generate a survey request message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "contract-msg": {
+    "subtitle": "Generate an e-contract message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe",
+    "phone-label": "Mother's Phone",
+    "phone-placeholder": "010-1234-5678",
+    "start-date-label": "Contract Start Date",
+    "start-date-placeholder": "2025-01-01",
+    "end-date-label": "Contract End Date",
+    "end-date-placeholder": "2025-12-31",
+    "employee-name-label": "Provider 1 Name",
+    "employee-name-placeholder": "Jane Doe",
+    "employee-phone-label": "Provider 1 Phone",
+    "employee-phone-placeholder": "010-1234-5678",
+    "full-price-label": "Service Amount",
+    "grant-label": "Government Grant",
+    "actual-price-label": "Out-of-Pocket",
+    "payment-date-label": "Payment Date",
+    "payment-date-placeholder": "2025-01-01",
+    "contract-creation": "Create E-Contract",
+    "price-placeholder": "KRW",
+    "pagination-steps": [
+      "User Info",
+      "Provider Info",
+      "Contract Info"
+    ]
+  },
+  "nav-bar": {
+    "dashboard": "Dashboard",
+    "messages": "Messages",
+    "contracts": "Contracts",
+    "clients": "Clients",
+    "settings": "Settings"
   }
 }
 

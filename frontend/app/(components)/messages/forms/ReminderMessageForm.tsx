@@ -13,11 +13,13 @@ import {
 import { reminderMsgTemplate } from "../templates/messageTemplate/reminderMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
+import { useLocale } from "@/app/(components)/LocaleProvider";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { NameInput } from "./form-components/NameInput";
 
 
 export const ReminderMessageForm = () => {
+  const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const { name, setName } = useFormStore();
 
@@ -29,7 +31,7 @@ export const ReminderMessageForm = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert(t("ko", "common.copy-success-message"));
+    alert(t(locale, "common.copy-success-message"));
   };
 
   return (
@@ -38,11 +40,11 @@ export const ReminderMessageForm = () => {
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
           {/* title */}
           <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-            {t("ko", "msg-type.reminder")}
+            {t(locale, "msg-type.reminder")}
           </Typography>
       {/* subtitle */}
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t("ko", "reminder-msg.subtitle")}
+        {t(locale, "reminder-msg.subtitle")}
       </Typography>
 
       {/* form */}
@@ -50,7 +52,7 @@ export const ReminderMessageForm = () => {
         <CardContent>
           <Stack spacing={3}>
             {/* name */}
-            <NameInput name={name} setName={setName} label={t("ko", "reminder-msg.name-label")} placeholder={t("ko", "reminder-msg.name-placeholder")} />
+            <NameInput name={name} setName={setName} label={t(locale, "reminder-msg.name-label")} placeholder={t(locale, "reminder-msg.name-placeholder")} />
             {/* generate button */}
             <Button
               variant="contained"
@@ -58,7 +60,7 @@ export const ReminderMessageForm = () => {
               onClick={handleGenerate}
               disabled={!name}
             >
-              {t("ko", "common.generate-button")}
+              {t(locale, "common.generate-button")}
             </Button>
           </Stack>
         </CardContent>
@@ -66,7 +68,7 @@ export const ReminderMessageForm = () => {
 
           {/* generated message */}
           {generatedMessage && (
-            <GeneratedMsg title={t("ko", "common.generated-message-title")} copyButtonText={t("ko", "common.copy-button")} handleCopy={handleCopy}>
+            <GeneratedMsg title={t(locale, "common.generated-message-title")} copyButtonText={t(locale, "common.copy-button")} handleCopy={handleCopy}>
               {generatedMessage}
             </GeneratedMsg>
           )}

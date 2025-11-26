@@ -13,11 +13,13 @@ import {
 import { greetingMsgTemplate } from "../templates/messageTemplate/greetingMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
+import { useLocale } from "@/app/(components)/LocaleProvider";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { NameInput } from "./form-components/NameInput";
 
 
 export const GreetingMessageForm = () => {
+  const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const { name, setName } = useFormStore();
 
@@ -29,7 +31,7 @@ export const GreetingMessageForm = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert(t("ko", "common.copy-success-message"));
+    alert(t(locale, "common.copy-success-message"));
   };
 
   return (
@@ -38,11 +40,11 @@ export const GreetingMessageForm = () => {
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
           {/* title */}
           <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-            {t("ko", "msg-type.greeting")}
+            {t(locale, "msg-type.greeting")}
           </Typography>
       {/* subtitle */}
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t("ko", "greeting-msg.subtitle")}
+        {t(locale, "greeting-msg.subtitle")}
       </Typography>
 
       {/* form */}
@@ -50,7 +52,7 @@ export const GreetingMessageForm = () => {
         <CardContent>
           <Stack spacing={3}>
             {/* name */}
-            <NameInput name={name} setName={setName} label={t("ko", "greeting-msg.name-label")} placeholder={t("ko", "greeting-msg.name-placeholder")} />
+            <NameInput name={name} setName={setName} label={t(locale, "greeting-msg.name-label")} placeholder={t(locale, "greeting-msg.name-placeholder")} />
             {/* generate button */}
             <Button
               variant="contained"
@@ -58,7 +60,7 @@ export const GreetingMessageForm = () => {
               onClick={handleGenerate}
               disabled={!name}
             >
-              {t("ko", "common.generate-button")}
+              {t(locale, "common.generate-button")}
             </Button>
           </Stack>
         </CardContent>
@@ -66,7 +68,7 @@ export const GreetingMessageForm = () => {
 
           {/* generated message */}
           {generatedMessage && (
-            <GeneratedMsg title={t("ko", "common.generated-message-title")} copyButtonText={t("ko", "common.copy-button")} handleCopy={handleCopy}>
+            <GeneratedMsg title={t(locale, "common.generated-message-title")} copyButtonText={t(locale, "common.copy-button")} handleCopy={handleCopy}>
               {generatedMessage}
             </GeneratedMsg>
           )}

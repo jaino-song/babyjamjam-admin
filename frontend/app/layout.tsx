@@ -7,6 +7,8 @@ import EmotionRegistry from "./(components)/EmotionRegistry";
 import localFont from "next/font/local";
 import AnimatedContainer from "./(components)/root/AnimatedContainer";
 import { Box } from "@mui/material";
+import { LocaleProvider } from "./(components)/LocaleProvider";
+import { getLocale } from "./actions/locale";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",
@@ -24,18 +26,22 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getLocale();
+  
   return (
-    <html lang="ko">
+    <html lang={locale}>
       <body className={Pretendard.variable} style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' }}>
         <EmotionRegistry>
           <ThemeProvider>
             <QueryProvider>
-              <AnimatedContainer>
-                <ConditionalHeader />
-                <Box component="main" sx={{ m: 1 }}>
-                  {children}
-                </Box>
-              </AnimatedContainer>
+              <LocaleProvider locale={locale}>
+                <AnimatedContainer>
+                  <ConditionalHeader />
+                  <Box component="main" sx={{ m: 1 }}>
+                    {children}
+                  </Box>
+                </AnimatedContainer>
+              </LocaleProvider>
             </QueryProvider>
           </ThemeProvider>
         </EmotionRegistry>
