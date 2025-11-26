@@ -13,6 +13,8 @@ async function bootstrap() {
     app.enableCors({
         origin: process.env.FRONTEND_URL ?? "http://localhost:3000",
         credentials: true,
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
     });
     
     // Health check endpoint
@@ -21,6 +23,6 @@ async function bootstrap() {
     });
     
     await app.listen(3001);
-    console.log("Server is running on http://localhost:3001");
+    console.log("Server is running");
 }
 bootstrap();
