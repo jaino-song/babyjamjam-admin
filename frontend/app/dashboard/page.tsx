@@ -5,14 +5,12 @@ import { Box, Stack } from "@mui/material";
 import { HeroBanner } from "../(components)/dashboard/HeroBanner";
 import { StatsGrid, StatItem } from "../(components)/dashboard/StatsGrid";
 import { getCurrentUser } from "../lib/auth/cookies";
-import { t } from "../lib/i18n/translations";
+import { t, Locale } from "../lib/i18n/translations";
 import { getLocale } from "../actions/locale";
 import { PerformanceMetric } from "../(components)/dashboard/PerformanceOverview";
 import { ActivityItem } from "../(components)/dashboard/RecentActivity";
 
-const locale = await getLocale();
-
-const stats: StatItem[] = [
+const getStats = (locale: Locale): StatItem[] => [
   {
     title: t(locale, "dashboard.active_clients"),
     firstDataValue: "1,248",
@@ -55,7 +53,9 @@ const activity: ActivityItem[] = [
 ];
 
 export default async function Dashboard() {
+  const locale = await getLocale();
   const user = await getCurrentUser();
+  const stats = getStats(locale);
 
   return (
     <Box sx={{ bgcolor: "background.default" }}>
