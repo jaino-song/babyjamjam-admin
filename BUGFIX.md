@@ -36,3 +36,31 @@
     1.  Updated `AnimatedContainer.tsx` to use `flex-col` and correctly apply `minHeight` via style prop.
     2.  Updated `loading.tsx` to use `flexGrow: 1` to fill the available container space.
     3.  Updated all message forms (`ContractCreationForm`, `GreetingMessageForm`, etc.) to use `flexGrow: 1` to ensure they also fill the container height, providing a consistent visual experience.
+
+## 2025-11-26
+
+### 7. Backend Auth Controller - Frontend URL Fallback Bug
+- **Issue:** After Kakao login, users were always redirected to production URL even when `PRODUCTION_FRONTEND_URL` was undefined.
+- **Cause:** The code used template literals with `||` operator:
+  ```typescript
+  const frontendUrl = `${PRODUCTION_FRONTEND_URL}/dashboard` || `${DEVELOPMENT_FRONTEND_URL}/dashboard`;
+  ```
+  Template literals always produce strings, so even with `undefined`, it became `"undefined/dashboard"` (truthy), and the fallback was never used.
+- **Fix:** Applied `||` operator on the environment variables before string interpolation:
+  ```typescript
+  const frontendUrl = process.env.PRODUCTION_FRONTEND_URL || process.env.DEVELOPMENT_FRONTEND_URL;
+  res.redirect(`${frontendUrl}/dashboard`);
+  ```
+- **File:** `backend/interface/controllers/auth.controller.ts`
+
+### 8. Frontend Login Page - Undefined API_BASE_URL
+- **Issue:** `/login` page redirected to `https://...vercel.app/undefined/auth/kakao` instead of the backend API URL.
+- **Cause:** Environment variables `RAILWAY_PUBLIC_API_BASE_URL` and `DEVELOPMENT_API_BASE_URL` were not available on the client side because they lacked the `NEXT_PUBLIC_` prefix required by Next.js.
+- **Fix:** Changed environment variable to use `NEXT_PUBLIC_API_BASE_URL` which is exposed to the browser.
+- **Files:** `frontend/app/login/page.tsx`, `frontend/app/lib/axios.ts`
+
+### 9. useGetAuthUser Hook - Enabled Logic Issue
+- **Issue:** The `enabled` option in the query had confusing logic that was always truthy.
+- **Cause:** The expression `!!window.location.pathname.includes('/dashboard') || !window.location.pathname.includes('/login')` is almost always `true` due to operator precedence.
+- **Recommendation:** Simplify to `enabled: !pathname?.includes('/login')` and use `usePathname()` hook for SSR safety.
+- **File:** `frontend/app/hooks/useGetAuthUser.ts`
