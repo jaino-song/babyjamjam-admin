@@ -3,18 +3,15 @@ import { AppBar, Toolbar, IconButton, Box, Typography, Avatar, Drawer } from "@m
 import MenuIcon from "@mui/icons-material/Menu";
 import NotificationsNoneIcon from "@mui/icons-material/NotificationsNone";
 import LoginIcon from '@mui/icons-material/Login';
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@/app/lib/axios";
-import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { NavBar } from "../nav-bar/NavBar";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
+import { useGetAuthUser } from "@/app/hooks/useGetAuthUser";
 
 export const Header = () => {
   const locale = useLocale();
   const [isNavOpen, setIsNavOpen] = useState(false);
-
   const handleNavOpen = () => {
     setIsNavOpen(true);
   };
@@ -22,24 +19,8 @@ export const Header = () => {
   const handleNavClose = () => {
     setIsNavOpen(false);
   };
-  const pathname = usePathname();
-  const isLoginPage = pathname?.includes('/login');
 
-  const { data: user, isLoading } = useQuery({
-    queryKey: ['currentUser'],
-    queryFn: async () => {
-      try {
-        const { data } = await api.get('/auth/me');
-        return data;
-      } catch {
-        // If the request fails (e.g., 401), user is not logged in
-        return null;
-      }
-    },
-    retry: false,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    enabled: !isLoginPage, // Don't fetch user data on login page
-  });
+  const { data: user, isLoading } = useGetAuthUser();
 
   return (
     <>
