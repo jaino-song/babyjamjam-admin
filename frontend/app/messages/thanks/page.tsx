@@ -2,6 +2,6 @@ import { ThanksMessageForm } from "@/app/(components)/messages/forms/ThanksMessa
 import { delay } from "@/app/lib/delay";
 
 export default async function ThanksMessagePage() {
-    await delay(500);
+    await delay(300);
     return <ThanksMessageForm />;
 }

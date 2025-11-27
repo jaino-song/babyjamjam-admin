@@ -2,6 +2,6 @@ import { ServiceInfoMessageForm } from "@/app/(components)/messages/forms/Servic
 import { delay } from "@/app/lib/delay";
 
 export default async function ServiceInfoMessagePage() {
-    await delay(500);
+    await delay(300);
     return <ServiceInfoMessageForm />;
 }

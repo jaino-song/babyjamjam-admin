@@ -6,7 +6,6 @@ import {
   CardContent,
   Paper,
   Stack,
-  TextField,
   Typography,
   Fade,
   Box,
@@ -43,29 +42,29 @@ export const ServiceInfoMessageForm = () => {
           <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
             {t(locale, "msg-type.service-info")}
           </Typography>
-      {/* subtitle */}
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t(locale, "service-info-msg.subtitle")}
-      </Typography>
+          {/* subtitle */}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            {t(locale, "service-info-msg.subtitle")}
+          </Typography>
 
-      {/* form */}
-      <Card elevation={0}>
-        <CardContent>
-          <Stack spacing={3}>
-            {/* name */}
-            <NameInput name={name} setName={setName} label={t(locale, "service-info-msg.name-label")} placeholder={t(locale, "service-info-msg.name-placeholder")} />
-            {/* generate button */}
-            <Button
-              variant="contained"
-              size="large"
-              onClick={handleGenerate}
-              disabled={!name}
-            >
-              {t(locale, "common.generate-button")}
-            </Button>
-          </Stack>
-        </CardContent>
-      </Card>
+          {/* form */}
+          <Card elevation={0}>
+            <CardContent>
+              <Stack spacing={3}>
+                {/* name */}
+                <NameInput name={name} setName={setName} label={t(locale, "service-info-msg.name-label")} placeholder={t(locale, "service-info-msg.name-placeholder")} />
+                {/* generate button */}
+                <Button
+                  variant="contained"
+                  size="large"
+                  onClick={handleGenerate}
+                  disabled={!name}
+                >
+                  {t(locale, "common.generate-button")}
+                </Button>
+              </Stack>
+            </CardContent>
+          </Card>
 
           {/* generated message */}
           {generatedMessage && (

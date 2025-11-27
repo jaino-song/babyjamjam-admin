@@ -2,6 +2,6 @@ import { GreetingMessageForm } from "@/app/(components)/messages/forms/GreetingM
 import { delay } from "@/app/lib/delay";
 
 export default async function GreetingMessagePage() {
-    await delay(500);
+    await delay(300);
     return <GreetingMessageForm />;
 }

@@ -9,12 +9,15 @@ import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { useGetAuthUser } from "@/app/hooks/useGetAuthUser";
 
+
 export const Header = () => {
   const locale = useLocale();
   const [isNavOpen, setIsNavOpen] = useState(false);
   const handleNavOpen = () => {
     setIsNavOpen(true);
   };
+
+
 
   const handleNavClose = () => {
     setIsNavOpen(false);

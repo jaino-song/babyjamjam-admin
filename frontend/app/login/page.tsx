@@ -29,7 +29,7 @@ const LoginPage = () => {
                 py: 1.5,
                 "&:hover": {
                   borderColor: "#d2e3fc",
-                  bgcolor: "rgba(66, 133, 244, 0.04)",
+                  bgcolor: "#e1cb01ff",
                 },
               }}
               onClick={() => {
