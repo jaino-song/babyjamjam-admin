@@ -145,6 +145,11 @@
     "contracts": "Contracts",
     "clients": "Clients",
     "settings": "Settings"
+  },
+  "login": {
+    "title": "Get Started After Login",
+    "subtitle": "Login to get started",
+    "kakao-login": "Login with Kakao",
+    "google-login": "Login with Google"
   }
 }
-

@@ -27,12 +27,11 @@
     "welcome_back": "환영합니다",
     "suffix": "님 😀",
     "active_clients": "서비스 이용 중",
-    "pending_clients": 
-      {
-        "title": "대기 중 예약",
-        "current_month": "이번 달 대기 중인 예약",
-        "next_month": "다음 달 대기 중인 예약"
-      },
+    "pending_clients": {
+      "title": "대기 중 예약",
+      "current_month": "이번 달 대기 중인 예약",
+      "next_month": "다음 달 대기 중인 예약"
+    },
     "contracts": {
       "title": "계약서",
       "sending_pending": "발송 필요 계약서",
@@ -146,5 +145,11 @@
     "contracts": "계약서",
     "clients": "고객 관리",
     "settings": "설정"
+  },
+  "login": {
+    "title": "로그인 후 시작하기",
+    "subtitle": "아래의 소셜 로그인 방법 중 하나를 선택해서 로그인을 해주세요",
+    "kakao-login": "카카오로 로그인하기",
+    "google-login": "구글로 로그인하기"
   }
 }
