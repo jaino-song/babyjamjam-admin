@@ -11,7 +11,7 @@ export class AuthController {
     constructor(
         private readonly authService: AuthService,
         private readonly prisma: PrismaService,
-    ) {}
+    ) { }
 
     @Get("kakao")
     @UseGuards(AuthGuard("kakao"))
@@ -23,19 +23,20 @@ export class AuthController {
     @UseGuards(AuthGuard("kakao"))
     async kakaoCallback(@Req() req: any, @Res() res: Response) {
         const result: UserValidationResult = await this.authService.validateKakaoUser(req.user);
-        
+
         // Set HTTP-only cookie
+        const isProduction = process.env.NODE_ENV === 'production';
         res.cookie("auth_token", result.token, {
             httpOnly: true,
-            secure: true,
-            sameSite: "none",
+            secure: isProduction,
+            sameSite: isProduction ? "none" : "lax",
             path: "/",
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         });
-        
-        // Redirect to frontend
+
+        // Redirect to frontend callback to set cookie on frontend domain
         const frontendUrl = process.env.PRODUCTION_FRONTEND_URL || process.env.DEVELOPMENT_FRONTEND_URL;
-        res.redirect(`${frontendUrl}/dashboard`);
+        res.redirect(`${frontendUrl}/auth/callback?token=${result.token}`);
     }
 
     @Get("me")

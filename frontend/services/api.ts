@@ -4,7 +4,8 @@ import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
-        window.location.href = "http://localhost:3001/auth/kakao";
+        const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
+        window.location.href = `${API_BASE_URL}/auth/kakao`;
     },
 };
 
