@@ -64,3 +64,16 @@
 - **Cause:** The expression `!!window.location.pathname.includes('/dashboard') || !window.location.pathname.includes('/login')` is almost always `true` due to operator precedence.
 - **Recommendation:** Simplify to `enabled: !pathname?.includes('/login')` and use `usePathname()` hook for SSR safety.
 - **File:** `frontend/app/hooks/useGetAuthUser.ts`
+
+## 2025-11-27
+
+### 10. Header Rendering on Login Page
+- **Issue:** The header was visible on the login page, which should be a standalone page.
+- **Fix:** Updated `ConditionalHeader.tsx` to include `/login` in the `hiddenPaths` array, preventing the header from mounting on that route.
+- **Files:** `frontend/app/(components)/root/ConditionalHeader.tsx`, `frontend/app/(components)/root/Header.tsx` (reverted logic)
+
+### 11. Page Transition Animation Skipped on Redirect
+- **Issue:** When redirecting (e.g., from `/` to `/login`), the page transition animation defined in `AnimatedContainer` was skipped.
+- **Cause:** React was not unmounting and remounting the `AnimatedContainer` because it persisted in the `RootLayout` across route changes.
+- **Fix:** Added `key={pathname}` to the `motion.div` component in `AnimatedContainer.tsx`. This forces React to treat the component as a new instance on every route change, triggering the `initial` animation.
+- **File:** `frontend/app/(components)/root/AnimatedContainer.tsx`

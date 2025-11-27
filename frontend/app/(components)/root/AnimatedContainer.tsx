@@ -4,6 +4,8 @@ import { motion } from "framer-motion";
 import { ReactNode } from "react";
 import { Box } from "@mui/material";
 
+import { usePathname } from "next/navigation";
+
 interface AnimatedMessagesContainerProps {
     children: ReactNode;
     minHeight?: string;
@@ -15,11 +17,15 @@ export default function AnimatedMessagesContainer({
     minHeight,
     minWidth
 }: AnimatedMessagesContainerProps) {
+    const pathname = usePathname();
+
     return (
         <Box
             component={motion.div}
+            key={pathname}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1 }}
             sx={{
                 minHeight: minHeight || '100%',
                 minWidth: minWidth || '100%',

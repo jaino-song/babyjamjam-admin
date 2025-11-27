@@ -36,7 +36,7 @@ export class AuthController {
 
         // Redirect to frontend callback to set cookie on frontend domain
         const frontendUrl = process.env.PRODUCTION_FRONTEND_URL || process.env.DEVELOPMENT_FRONTEND_URL;
-        res.redirect(`${frontendUrl}/auth/callback?token=${result.token}`);
+        res.redirect(`${frontendUrl}/auth/callback?token=${result.token}&refreshToken=${result.refreshToken}`);
     }
 
     @Get("me")

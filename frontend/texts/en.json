@@ -1,5 +1,8 @@
 {
   "common": {
+    "title": "Imirae Incheon Back Office",
+    "subtitle": "Analog to Digital",
+    "start": "Get Started",
     "welcome": "Welcome",
     "loading": "Loading...",
     "error": "Error",

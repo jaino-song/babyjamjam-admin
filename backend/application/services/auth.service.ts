@@ -12,6 +12,7 @@ export interface KakaoData {
 export interface TokenPayload {
     sub: string;
     role: string | null;
+    type: 'access' | 'refresh';
 }
 
 export interface UserValidationResult {
@@ -22,11 +23,11 @@ export interface UserValidationResult {
 
 @Injectable()
 export class AuthService {
-    constructor(private prisma: PrismaService, private jwt: JwtService) {}
+    constructor(private prisma: PrismaService, private jwt: JwtService) { }
 
     async validateKakaoUser(kakaoData: KakaoData): Promise<UserValidationResult> {
         let user = await this.prisma.user.findFirst({
-            where: { 
+            where: {
                 kakaoId: kakaoData.kakaoId
             },
         });
@@ -43,17 +44,27 @@ export class AuthService {
             });
         }
 
-        const payload: TokenPayload = {
+        const payload = {
             sub: user.id,
             role: user.role,
         };
 
         const signOptions = user.role === "owner"
-            ? {}
-            : { expiresIn: "7d" };
+            ? { expiresIn: "30d" }
+            : { expiresIn: "3d" };
 
-        const refreshToken = await this.jwt.signAsync(payload, signOptions);
-        const token = await this.jwt.signAsync(payload, signOptions);
+        const refreshSignOptions = user.role === "owner"
+            ? { expiresIn: "7d" }
+            : { expiresIn: "1d" };
+
+        const refreshToken = await this.jwt.signAsync(
+            { ...payload, type: 'refresh' },
+            refreshSignOptions
+        );
+        const token = await this.jwt.signAsync(
+            { ...payload, type: 'access' },
+            signOptions
+        );
 
         return {
             user: user.id,

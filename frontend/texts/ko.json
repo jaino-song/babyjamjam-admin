@@ -1,5 +1,8 @@
 {
   "common": {
+    "title": "인천 아이미래로 백오피스",
+    "subtitle": "아날로그에서 디지털로",
+    "start": "시작하기",
     "welcome": "환영합니다",
     "loading": "로딩 중...",
     "error": "오류",
