@@ -177,71 +177,11 @@ async createAuthCode(tokens: { accessToken: string; refreshToken: string }): Pro
 
 **Route:** `/auth/callback`
 
-The frontend callback page receives the authorization code and exchanges it for tokens using a **Server Action**:
+The frontend callback page receives the authorization code and exchanges it for tokens:
 
-> **Note:** We use a Server Action instead of a client-side fetch/axios call because Safari's ITP (Intelligent Tracking Prevention) blocks client-side requests after OAuth redirects. Server Actions execute entirely on the server, bypassing these restrictions.
-
-**Server Action Implementation:**
-```typescript
-// frontend/app/auth/callback/actions.ts
-"use server"
-
-import { cookies } from "next/headers";
-import { serverAPIClient } from "@/app/lib/axios/server";
-import { jwtDecode } from "jwt-decode";
-
-export async function exchangeToken(code: string): Promise<{ success: boolean; error?: string }> {
-    try {
-        if (!code) {
-            return { success: false, error: "Authorization Code Required" };
-        }
-
-        // Exchange code for tokens with backend (server-to-server)
-        const { data } = await serverAPIClient.post("/auth/token", { code });
-
-        const cookieStore = await cookies();
-
-        // Decode token to get role for maxAge calculation
-        let role = "user";
-        try {
-            const decoded = jwtDecode<TokenPayload>(data.accessToken);
-            role = decoded.role || "user";
-        } catch {
-            console.error("Failed to decode token");
-        }
-
-        // Set HTTP-only cookies
-        cookieStore.set("auth_token", data.accessToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "lax",  // Use "lax" for same-site navigation compatibility
-            path: "/",
-            maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-        });
-
-        cookieStore.set("refresh_token", data.refreshToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "lax",
-            path: "/",
-            maxAge: 7 * 24 * 60 * 60,
-        });
-
-        return { success: true };
-    } catch (error) {
-        // Error handling...
-        return { success: false, error: "Token Exchange Failed" };
-    }
-}
-```
-
-**Frontend Page Implementation:**
+**Frontend Implementation:**
 ```typescript
 // frontend/app/auth/callback/page.tsx
-"use client"
-
-import { exchangeToken } from "./actions";
-
 export default function AuthCallbackPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -257,13 +197,8 @@ export default function AuthCallbackPage() {
             }
             
             try {
-                // Use Server Action - bypasses Safari's ITP restrictions
-                const result = await exchangeToken(code);
-                
-                if (!result.success) {
-                    setError(result.error || "Authentication Failed");
-                    return;
-                }
+                // Exchange code for tokens via server-side API route
+                await api.post("/api/auth/token", { code });
                 
                 // Redirect to dashboard on success
                 router.replace("/dashboard");
@@ -283,15 +218,55 @@ export default function AuthCallbackPage() {
 
 ### 4. Code-to-Token Exchange (Server-Side)
 
-The token exchange is handled by a **Server Action** (see step 3 above). The Server Action:
-1. Receives the authorization code from the client
-2. Exchanges it with the backend server-to-server
-3. Sets HTTP-only cookies with the tokens
-4. Returns success/failure to the client
+**API Route:** `POST /api/auth/token`
 
-> **Why Server Actions instead of API Routes?**
-> 
-> Safari's ITP (Intelligent Tracking Prevention) blocks client-side fetch/axios requests after cross-origin OAuth redirects. Server Actions execute entirely on the server, bypassing these browser restrictions. This ensures the authentication flow works reliably on all browsers, including mobile Safari.
+This Next.js server-side route handles the secure exchange:
+
+**Frontend API Route Implementation:**
+```typescript
+// frontend/app/api/auth/token/route.ts
+export async function POST(request: NextRequest) {
+    try {
+        const { code } = await request.json();
+        
+        if (!code) {
+            return NextResponse.json(
+                { error: "Authorization Code Required" }, 
+                { status: 400 }
+            );
+        }
+        
+        // Exchange code for tokens with backend
+        const { data } = await serverAPIClient.post("/auth/token", { code });
+        
+        const cookieStore = await cookies();
+        
+        // Set access token cookie
+        cookieStore.set("access-token", data.token, {
+            httpOnly: true,  // Prevents JavaScript access
+            secure: isProduction,  // HTTPS only in production
+            sameSite: "strict",  // CSRF protection
+            path: "/",
+            maxAge: data.token.role === "owner" 
+                ? 30 * 24 * 60 * 60 * 1000  // 30 days
+                : 3 * 24 * 60 * 60 * 1000,  // 3 days
+        });
+        
+        // Set refresh token cookie
+        cookieStore.set("refresh-token", data.refreshToken, {
+            httpOnly: true,
+            secure: isProduction,
+            sameSite: "strict",
+            path: "/",
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        });
+        
+        return NextResponse.json({ message: "Success" }, { status: 200 });
+    } catch (error) {
+        // Error handling...
+    }
+}
+```
 
 **Backend Token Exchange:**
 ```typescript
@@ -338,12 +313,11 @@ async exchangeCodeForTokens(code: string): Promise<{ accessToken: string; refres
 | Attack Vector | Protection Mechanism |
 |--------------|---------------------|
 | XSS (Cross-Site Scripting) | HTTP-only cookies prevent JavaScript access |
-| CSRF (Cross-Site Request Forgery) | `sameSite: "lax"` cookie attribute provides CSRF protection while allowing normal navigation |
+| CSRF (Cross-Site Request Forgery) | `sameSite: "strict"` cookie attribute |
 | Token Interception | Tokens never transmitted via URL or client-side |
 | Replay Attacks | One-time use codes with 30-second expiration |
 | Browser History Leakage | Only temporary codes appear in history |
 | Referrer Leakage | Tokens not in URL, can't leak via referrer headers |
-| Safari ITP Blocking | Server Actions bypass client-side restrictions |
 
 ### 3. **Role-Based Token Expiration**
 
@@ -410,10 +384,9 @@ NODE_ENV=development # or production
 
 ### Frontend
 - **Callback Page:** `frontend/app/auth/callback/page.tsx`
-- **Server Action:** `frontend/app/auth/callback/actions.ts`
+- **Token Exchange API:** `frontend/app/api/auth/token/route.ts`
 - **Axios Client:** `frontend/app/lib/axios/client.ts`
 - **Axios Server:** `frontend/app/lib/axios/server.ts`
-- **Next.js Config:** `frontend/next.config.ts` (rewrites configuration)
 
 ## Testing the Flow
 
@@ -471,8 +444,6 @@ http://localhost:3000/login
 
 ## Troubleshooting
 
-> **📝 Note:** For detailed information about bugs that were found and fixed during implementation, see [BUGFIX.md](./BUGFIX.md).
-
 ### Common Issues
 
 **Issue: "Authorization Code Required"**
@@ -499,12 +470,6 @@ http://localhost:3000/login
 - Verify cookie path is set to `/`
 - Ensure cookies are being read correctly by middleware
 
-**Issue: Network Error on Mobile Safari**
-- Safari's ITP (Intelligent Tracking Prevention) blocks client-side requests after OAuth redirects
-- **Solution:** Use Server Actions instead of client-side fetch/axios for token exchange
-- Server Actions execute on the server and bypass Safari's client-side restrictions
-- See bug fix #13 in [BUGFIX.md](../BUGFIX.md) for details
-
 ## Future Improvements
 
 1. **Persistent Storage:** Move authorization codes from in-memory Map to Redis for distributed systems
@@ -516,13 +481,12 @@ http://localhost:3000/login
 
 ## References
 
-- [BUGFIX.md](./BUGFIX.md) - Documented bugs found and fixed during implementation
 - [OAuth 2.0 Authorization Code Flow](https://oauth.net/2/grant-types/authorization-code/)
 - [Kakao Login API Documentation](https://developers.kakao.com/docs/latest/en/kakaologin/rest-api)
 - [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
 
 ---
 
-**Last Updated:** 2025-11-28  
+**Last Updated:** 2025-11-29  
 **Author:** Development Team  
-**Version:** 1.1.0
+**Version:** 1.0.0

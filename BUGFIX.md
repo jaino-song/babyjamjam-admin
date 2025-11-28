@@ -85,24 +85,3 @@
     1.  Implemented Next.js Rewrites in `next.config.ts` to proxy requests from `/api/*` on the frontend domain to the backend API.
     2.  Updated `axios` configuration to use the relative path `/api` for client-side requests. This ensures the browser treats the request as same-site, successfully sending the cookie to the Next.js server, which then forwards it to the backend.
 - **Files:** `frontend/next.config.ts`, `frontend/app/lib/axios.ts`
-
-## 2025-11-28
-
-### 13. Mobile Safari OAuth Callback Network Error
-- **Issue:** On mobile Safari, the OAuth callback page failed with `ERR_NETWORK` / "Network Error" when exchanging the authorization code for tokens. Mobile Chrome worked fine.
-- **Cause:** Safari's Intelligent Tracking Prevention (ITP) blocks or interferes with client-side network requests (fetch/axios) made immediately after a cross-origin OAuth redirect. When the user returns from Kakao's OAuth page, Safari treats subsequent client-side requests with heightened scrutiny, causing them to fail silently with network errors.
-- **Why Chrome worked:** Chrome does not have the same aggressive tracking prevention that Safari's ITP implements, so client-side requests after OAuth redirects succeed normally.
-- **Fix:** Replaced the client-side fetch/axios call with a **Next.js Server Action**. Server Actions execute entirely on the server, bypassing Safari's client-side restrictions completely:
-    1.  Created `actions.ts` with `exchangeToken()` server action that handles the token exchange server-to-server.
-    2.  Updated `page.tsx` to call the server action instead of making a client-side fetch request.
-    3.  Changed cookie `sameSite` from `"none"` to `"lax"` for better compatibility with same-site navigation.
-- **Files:** 
-    - `frontend/app/auth/callback/actions.ts` (new)
-    - `frontend/app/auth/callback/page.tsx`
-    - `frontend/next.config.ts` (updated rewrites to use fallback pattern)
-
-### 14. Safari Mobile Status Bar Area Color Not Changing
-- **Issue:** On Safari mobile (iOS), the status bar area color was not changing to match the app's theme, appearing with the default system color instead.
-- **Cause:** Next.js metadata configuration was missing the `statusBarStyle` property in the `appleWebApp` configuration. Without this, iOS Safari doesn't know how to style the status bar area when the app is added to the home screen or viewed in standalone mode.
-- **Fix:** Added `statusBarStyle: "black-translucent"` to the `appleWebApp` metadata object in `layout.tsx`. This property controls the appearance of the status bar area in iOS Safari and when the app is launched from the home screen.
-- **File:** `frontend/app/layout.tsx`
