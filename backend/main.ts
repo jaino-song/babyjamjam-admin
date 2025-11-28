@@ -16,19 +16,21 @@ async function bootstrap() {
         process.env.DEVELOPMENT_FRONTEND_URL,
         "http://localhost:3000", // Fallback for local development
     ].filter(Boolean); // Remove undefined values
-    
+
+    console.log("Allowed CORS origins:", allowedOrigins);
+
     app.enableCors({
         origin: allowedOrigins.length > 0 ? allowedOrigins : "http://localhost:3000",
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
     });
-    
+
     // Health check endpoint
     app.getHttpAdapter().get("/", (req, res) => {
         res.send("Server is running");
     });
-    
+
     await app.listen(3001);
     console.log("Server is running");
 }
