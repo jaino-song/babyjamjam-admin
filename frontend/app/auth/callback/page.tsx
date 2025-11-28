@@ -35,8 +35,9 @@ export default function AuthCallbackPage() {
                 if (err instanceof AxiosError) {
                     const axiosError = err as AxiosError<APIErrorReponse>;
                     setError(axiosError.response?.data.error || "Authentication Failed");
+                } else {
+                    setError("Authentication Failed");
                 }
-                setError("Authentication Failed");
             }
         }
         exchangeCodeForTokens();
