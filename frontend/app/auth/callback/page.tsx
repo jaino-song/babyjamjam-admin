@@ -31,6 +31,8 @@ export default function AuthCallbackPage() {
 
             try {
                 console.log("[Auth Callback] Calling /auth/token");
+                console.log("[Auth Callback] Current origin:", window.location.origin);
+                
                 const response = await api.post("/auth/token", { code });
                 console.log("[Auth Callback] Token exchange successful:", response.status);
                 console.log("[Auth Callback] Redirecting to dashboard");
@@ -41,7 +43,19 @@ export default function AuthCallbackPage() {
 
                 if (err instanceof AxiosError) {
                     const axiosError = err as AxiosError<APIErrorReponse>;
-                    setError(axiosError.response?.data.error || "Authentication Failed");
+                    console.error("[Auth Callback] Axios error details:", {
+                        code: axiosError.code,
+                        message: axiosError.message,
+                        status: axiosError.response?.status,
+                    });
+                    
+                    // Handle network errors specifically (common on mobile Safari)
+                    if (axiosError.code === "ERR_NETWORK") {
+                        setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+                        return;
+                    }
+                    
+                    setError(axiosError.response?.data?.error || "Authentication Failed");
                 } else {
                     setError("Authentication Failed");
                 }
