@@ -42,16 +42,16 @@ export async function POST(request: NextRequest) {
 
         cookieStore.set("auth_token", data.accessToken, {
             httpOnly: true,
-            secure: isProduction,
-            sameSite: "lax",
+            secure: true,  // Must be true with sameSite: 'none'
+            sameSite: "none",  // Required for mobile browsers during OAuth redirects
             path: "/",
             maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
         })
 
         cookieStore.set("refresh_token", data.refreshToken, {
             httpOnly: true,
-            secure: isProduction,
-            sameSite: "lax",
+            secure: true,  // Must be true with sameSite: 'none'
+            sameSite: "none",  // Required for mobile browsers during OAuth redirects
             path: "/",
             maxAge: 7 * 24 * 60 * 60,
         })

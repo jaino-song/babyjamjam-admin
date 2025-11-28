@@ -52,9 +52,18 @@ const activity: ActivityItem[] = [
   { primary: "System maintenance complete", secondary: "2 days ago · IT" },
 ];
 
+import { redirect } from "next/navigation";
+
 export default async function Dashboard() {
   const locale = await getLocale();
   const user = await getCurrentUser();
+
+  // Redirect to login if not authenticated
+  if (!user) {
+    console.log("[Dashboard] No user found, redirecting to login");
+    redirect("/login");
+  }
+
   const stats = getStats(locale);
 
   return (
@@ -70,7 +79,7 @@ export default async function Dashboard() {
         <Stack spacing={3} sx={{ width: "100%" }}>
           <HeroBanner
             subtitle={t(locale, "dashboard.welcome_back")}
-            title={`${user?.name} ${t(locale, "dashboard.suffix")}`} 
+            title={`${user?.name} ${t(locale, "dashboard.suffix")}`}
             primaryActionLabel={t(locale, "actions.price_calculator")}
             secondaryActionLabel={t(locale, "actions.write_message")}
             primaryActionDisabled={true}
