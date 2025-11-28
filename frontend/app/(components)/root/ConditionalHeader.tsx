@@ -4,7 +4,7 @@ import { Header } from "./Header";
 
 export const ConditionalHeader = () => {
   const pathname = usePathname();
-  const hiddenPaths = ["/", "/login"];
+  const hiddenPaths = ["/", "/login", "/auth/callback"];
   const shouldHide = hiddenPaths.includes(pathname);
 
   if (shouldHide) {
