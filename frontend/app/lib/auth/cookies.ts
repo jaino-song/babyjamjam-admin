@@ -1,4 +1,4 @@
-import { serverAPIClient } from "@/app/lib/axios/server";
+import { api } from "@/app/lib/axios/client";
 import { cookies } from "next/headers";
 
 export async function getCurrentUser() {
@@ -6,26 +6,18 @@ export async function getCurrentUser() {
     const cookieStore = await cookies();
     const authToken = cookieStore.get('auth_token');
 
-    console.log("[getCurrentUser] auth_token present:", !!authToken);
-
     if (!authToken) {
-      console.log("[getCurrentUser] No auth token found");
       return null;
     }
 
-    // Send token as Bearer token in Authorization header
-    const { data } = await serverAPIClient.get(`/auth/me`, {
+    const { data } = await api.get(`/auth/me`, {
       headers: {
-        Authorization: `Bearer ${authToken.value}`,
+        Cookie: `auth_token=${authToken.value}`,
       },
     });
-
-    console.log("[getCurrentUser] User fetched successfully:", data?.name);
     return data;
-  } catch (error: any) {
-    console.error('[getCurrentUser] Failed to fetch user:', error.message);
-    console.error('[getCurrentUser] Error status:', error.response?.status);
-    console.error('[getCurrentUser] Error data:', error.response?.data);
+  } catch (error) {
+    console.error('Failed to fetch user:', error);
     return null;
   }
 }
