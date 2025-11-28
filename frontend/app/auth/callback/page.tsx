@@ -32,8 +32,9 @@ export default function AuthCallbackPage() {
             catch (err) {
                 console.error("Token Exchange Error: ", err);
 
-                if (err instanceof AxiosError<APIErrorReponse>) {
-                    setError(err.response?.data.error || "Authentication Failed");
+                if (err instanceof AxiosError) {
+                    const axiosError = err as AxiosError<APIErrorReponse>;
+                    setError(axiosError.response?.data.error || "Authentication Failed");
                 }
                 setError("Authentication Failed");
             }
