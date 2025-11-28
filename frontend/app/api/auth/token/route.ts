@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
         const { code } = await request.json();
 
         if (!code) {
+            console.error("[Token Exchange] No code provided");
             return NextResponse.json({ error: "Authorization Code Required" }, { status: 400 });
         }
 
@@ -61,20 +62,46 @@ export async function POST(request: NextRequest) {
         console.error("Backend URL:", serverAPIClient.defaults.baseURL);
         console.error("Environment:", process.env.NODE_ENV);
 
+        // Log network error details
+        if (error instanceof Error) {
+            console.error("Error Name:", error.name);
+            console.error("Error Message:", error.message);
+            if ('code' in error) {
+                console.error("Error Code:", (error as any).code);
+            }
+        }
+
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
             console.error("Axios Error Details:", {
+                message: axiosError.message,
+                code: axiosError.code,
                 status: axiosError.response?.status,
                 statusText: axiosError.response?.statusText,
                 data: axiosError.response?.data,
                 url: axiosError.config?.url,
                 baseURL: axiosError.config?.baseURL,
+                timeout: axiosError.config?.timeout,
             });
+
+            // Network error - backend unreachable
+            if (axiosError.code === 'ECONNABORTED' || axiosError.message === 'Network Error') {
+                console.error("[Token Exchange] Cannot reach backend server");
+                console.error("[Token Exchange] Backend might be down or unreachable from Vercel");
+                return NextResponse.json({
+                    error: "Backend server unreachable. Please try again later.",
+                    details: "The authentication server is currently unavailable."
+                }, { status: 503 });
+            }
 
             const status = axiosError.response?.status || 500;
             const message = axiosError.response?.data?.message || "Token Exchange Failed";
             return NextResponse.json({ error: message }, { status });
         }
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+
+        return NextResponse.json({
+            error: "Internal Server Error",
+            details: error instanceof Error ? error.message : "Unknown error"
+        }, { status: 500 });
     }
 }
