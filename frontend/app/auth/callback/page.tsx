@@ -2,14 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api } from "@/app/lib/axios/client";
-import { AxiosError } from "axios";
 import { Box, Typography } from "@mui/material";
 import { MoonLoader } from "react-spinners";
-
-type APIErrorReponse = {
-    error: string;
-}
+import { exchangeToken } from "./actions";
 
 export default function AuthCallbackPage() {
     const router = useRouter();
@@ -30,19 +25,25 @@ export default function AuthCallbackPage() {
             }
 
             try {
-                console.log("[Auth Callback] Calling /auth/token");
-                const response = await api.post("/auth/token", { code });
-                console.log("[Auth Callback] Token exchange successful:", response.status);
+                console.log("[Auth Callback] Using server action for token exchange");
+                
+                // Use server action - bypasses Safari's client-side restrictions
+                const result = await exchangeToken(code);
+                
+                if (!result.success) {
+                    console.error("[Auth Callback] Token exchange failed:", result.error);
+                    setError(result.error || "Authentication Failed");
+                    return;
+                }
+
+                console.log("[Auth Callback] Token exchange successful");
                 console.log("[Auth Callback] Redirecting to dashboard");
                 router.replace("/dashboard");
             }
             catch (err) {
-                console.error("Token Exchange Error: ", err);
-
-                if (err instanceof AxiosError<APIErrorReponse>) {
-                    setError(err.response?.data.error || "Authentication Failed");
-                }
-                setError("Authentication Failed");
+                console.error("[Auth Callback] Token Exchange Error:", err);
+                console.error("[Auth Callback] Error message:", err instanceof Error ? err.message : String(err));
+                setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
             }
         }
         exchangeCodeForTokens();
