@@ -198,13 +198,20 @@ export default function AuthCallbackPage() {
             
             try {
                 // Exchange code for tokens via server-side API route
-                await api.post("/api/auth/token", { code });
+                // Note: axios client has '/api' as baseURL, so path is '/auth/token'
+                await api.post("/auth/token", { code });
                 
                 // Redirect to dashboard on success
                 router.replace("/dashboard");
             } catch (err) {
                 console.error("Token Exchange Error: ", err);
-                setError("Authentication Failed");
+                
+                if (err instanceof AxiosError) {
+                    const axiosError = err as AxiosError<APIErrorReponse>;
+                    setError(axiosError.response?.data.error || "Authentication Failed");
+                } else {
+                    setError("Authentication Failed");
+                }
             }
         };
         
@@ -322,7 +329,7 @@ async exchangeCodeForTokens(code: string): Promise<{ accessToken: string; refres
 | Attack Vector | Protection Mechanism |
 |--------------|---------------------|
 | XSS (Cross-Site Scripting) | HTTP-only cookies prevent JavaScript access |
-| CSRF (Cross-Site Request Forgery) | `sameSite: "strict"` cookie attribute |
+| CSRF (Cross-Site Request Forgery) | `sameSite: "lax"` cookie attribute provides CSRF protection while allowing normal navigation |
 | Token Interception | Tokens never transmitted via URL or client-side |
 | Replay Attacks | One-time use codes with 30-second expiration |
 | Browser History Leakage | Only temporary codes appear in history |
@@ -453,6 +460,8 @@ http://localhost:3000/login
 
 ## Troubleshooting
 
+> **📝 Note:** For detailed information about bugs that were found and fixed during implementation, see [BUGFIX.md](./BUGFIX.md).
+
 ### Common Issues
 
 **Issue: "Authorization Code Required"**
@@ -490,6 +499,7 @@ http://localhost:3000/login
 
 ## References
 
+- [BUGFIX.md](./BUGFIX.md) - Documented bugs found and fixed during implementation
 - [OAuth 2.0 Authorization Code Flow](https://oauth.net/2/grant-types/authorization-code/)
 - [Kakao Login API Documentation](https://developers.kakao.com/docs/latest/en/kakaologin/rest-api)
 - [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
