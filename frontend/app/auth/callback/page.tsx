@@ -20,13 +20,20 @@ export default function AuthCallbackPage() {
         const exchangeCodeForTokens = async () => {
             const code = searchParams.get("code");
 
+            console.log("[Auth Callback] Starting token exchange");
+            console.log("[Auth Callback] Code present:", !!code);
+
             if (!code) {
+                console.error("[Auth Callback] No code in URL");
                 setError("Authorization Code Required");
                 return;
             }
 
             try {
-                await api.post("/auth/token", { code });
+                console.log("[Auth Callback] Calling /auth/token");
+                const response = await api.post("/auth/token", { code });
+                console.log("[Auth Callback] Token exchange successful:", response.status);
+                console.log("[Auth Callback] Redirecting to dashboard");
                 router.replace("/dashboard");
             }
             catch (err) {
