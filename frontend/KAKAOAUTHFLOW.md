@@ -241,24 +241,33 @@ export async function POST(request: NextRequest) {
         
         const cookieStore = await cookies();
         
+        // Decode token to get role for maxAge calculation
+        let role = "user";
+        try {
+            const decoded = jwtDecode<TokenPayload>(data.accessToken);
+            role = decoded.role || "user";
+        } catch {
+            console.error("Failed to decode token");
+        }
+        
         // Set access token cookie
-        cookieStore.set("access-token", data.token, {
+        cookieStore.set("auth_token", data.accessToken, {
             httpOnly: true,  // Prevents JavaScript access
             secure: isProduction,  // HTTPS only in production
-            sameSite: "strict",  // CSRF protection
+            sameSite: "lax",  // Allow same-site redirects
             path: "/",
-            maxAge: data.token.role === "owner" 
-                ? 30 * 24 * 60 * 60 * 1000  // 30 days
-                : 3 * 24 * 60 * 60 * 1000,  // 3 days
+            maxAge: role === "owner" 
+                ? 30 * 24 * 60 * 60  // 30 days
+                : 3 * 24 * 60 * 60,  // 3 days
         });
         
         // Set refresh token cookie
-        cookieStore.set("refresh-token", data.refreshToken, {
+        cookieStore.set("refresh_token", data.refreshToken, {
             httpOnly: true,
             secure: isProduction,
-            sameSite: "strict",
+            sameSite: "lax",
             path: "/",
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+            maxAge: 7 * 24 * 60 * 60, // 7 days
         });
         
         return NextResponse.json({ message: "Success" }, { status: 200 });

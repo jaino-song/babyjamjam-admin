@@ -11,6 +11,8 @@ interface TokenPayload {
 }
 
 interface APIErrorResponse {
+    statusCode: number;
+    message: string;
     error: string;
 }
 
@@ -38,12 +40,12 @@ export async function POST(request: NextRequest) {
             console.error("Failed to decode token");
         }
 
-        cookieStore.set("access_token", data.accessToken, {
+        cookieStore.set("auth_token", data.accessToken, {
             httpOnly: true,
             secure: isProduction,
             sameSite: "lax",
             path: "/",
-            maxAge: data.token.role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60, // 7 days
+            maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
         })
 
         cookieStore.set("refresh_token", data.refreshToken, {
@@ -51,7 +53,7 @@ export async function POST(request: NextRequest) {
             secure: isProduction,
             sameSite: "lax",
             path: "/",
-            maxAge: 7 * 24 * 60 * 60, // 7 days
+            maxAge: 7 * 24 * 60 * 60,
         })
         return NextResponse.json({ message: "Success" }, { status: 200 });
     } catch (error) {
@@ -60,7 +62,7 @@ export async function POST(request: NextRequest) {
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
             const status = axiosError.response?.status || 500;
-            const message = axiosError.response?.data?.error || "Token Exchange Failed";
+            const message = axiosError.response?.data?.message || "Token Exchange Failed";
             return NextResponse.json({ error: message }, { status });
         }
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
