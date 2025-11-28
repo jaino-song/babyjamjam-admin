@@ -32,6 +32,9 @@ export async function GET(request: Request) {
             cookieStore.set("auth_token", token, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === "production",
+                // 'lax' is sufficient because we use a Next.js Rewrite proxy (/api/...)
+                // to forward client-side requests. This treats API calls as same-site,
+                // allowing the cookie to be sent securely.
                 sameSite: "lax",
                 path: "/",
                 maxAge: maxAge,
@@ -52,6 +55,9 @@ export async function GET(request: Request) {
             cookieStore.set("auth_token", token, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === "production",
+                // 'lax' is sufficient because we use a Next.js Rewrite proxy (/api/...)
+                // to forward client-side requests. This treats API calls as same-site,
+                // allowing the cookie to be sent securely.
                 sameSite: "lax",
                 path: "/",
                 maxAge: 3 * 24 * 60 * 60,

@@ -77,3 +77,11 @@
 - **Cause:** React was not unmounting and remounting the `AnimatedContainer` because it persisted in the `RootLayout` across route changes.
 - **Fix:** Added `key={pathname}` to the `motion.div` component in `AnimatedContainer.tsx`. This forces React to treat the component as a new instance on every route change, triggering the `initial` animation.
 - **File:** `frontend/app/(components)/root/AnimatedContainer.tsx`
+
+### 12. Mobile Web Login Header Token Fetch Issue
+- **Issue:** On mobile web, the header was failing to fetch the user token, causing a redirect loop to `/login`, even though server components had access to the token.
+- **Cause:** Cross-site cookie restrictions (ITP) prevented the browser from sending the `auth_token` cookie (set by the backend domain) when the frontend client-side code made direct requests to the backend API.
+- **Fix:**
+    1.  Implemented Next.js Rewrites in `next.config.ts` to proxy requests from `/api/*` on the frontend domain to the backend API.
+    2.  Updated `axios` configuration to use the relative path `/api` for client-side requests. This ensures the browser treats the request as same-site, successfully sending the cookie to the Next.js server, which then forwards it to the backend.
+- **Files:** `frontend/next.config.ts`, `frontend/app/lib/axios.ts`
