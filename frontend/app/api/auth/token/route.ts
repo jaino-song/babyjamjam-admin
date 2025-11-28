@@ -17,7 +17,7 @@ interface APIErrorResponse {
 }
 
 const isProduction = process.env.NODE_ENV === "production";
-const API_URL = isProduction ? process.env.NEXT_PUBLIC_API_URL : process.env.DEVELOPMENT_API_URL;
+const API_URL = isProduction ? process.env.NEXT_PUBLIC_API_BASE_URL : process.env.DEVELOPMENT_API_BASE_URL;
 
 export async function POST(request: NextRequest) {
     try {
@@ -57,10 +57,20 @@ export async function POST(request: NextRequest) {
         })
         return NextResponse.json({ message: "Success" }, { status: 200 });
     } catch (error) {
-        console.error("Token Exchange Error: ", error);
+        console.error("Token Exchange Error:", error);
+        console.error("Backend URL:", serverAPIClient.defaults.baseURL);
+        console.error("Environment:", process.env.NODE_ENV);
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
+            console.error("Axios Error Details:", {
+                status: axiosError.response?.status,
+                statusText: axiosError.response?.statusText,
+                data: axiosError.response?.data,
+                url: axiosError.config?.url,
+                baseURL: axiosError.config?.baseURL,
+            });
+
             const status = axiosError.response?.status || 500;
             const message = axiosError.response?.data?.message || "Token Exchange Failed";
             return NextResponse.json({ error: message }, { status });
