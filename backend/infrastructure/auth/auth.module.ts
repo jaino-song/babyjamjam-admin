@@ -17,5 +17,5 @@ import { PrismaService } from "../database/prisma.service";
     controllers: [AuthController],
     providers: [AuthService, KakaoStrategy, PrismaService],
 })
-export class AuthModule {}
+export class AuthModule { }
 

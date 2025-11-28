@@ -1,4 +1,4 @@
-import { api } from "../app/lib/axios";
+import { api } from "../app/lib/axios/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 
 // Auth API

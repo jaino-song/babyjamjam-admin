@@ -1,10 +1,10 @@
-import { Controller, Get, Req, Res, UseGuards, Request } from "@nestjs/common";
+import { Controller, Get, Req, Res, UseGuards, Request, Body, Post } from "@nestjs/common";
 import { Response } from "express";
 import { AuthGuard } from "@nestjs/passport";
-import { AuthService, KakaoData } from "../../application/services/auth.service";
-import { UserValidationResult } from "../../application/services/auth.service";
+import { AuthService } from "../../application/services/auth.service";
 import { JwtGuard } from "../../infrastructure/auth/jwt.guard";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
+import { TokenExchangeDto } from "interface/dto/token-exchange.dto";
 
 @Controller("auth")
 export class AuthController {
@@ -22,21 +22,12 @@ export class AuthController {
     @Get("kakao/callback")
     @UseGuards(AuthGuard("kakao"))
     async kakaoCallback(@Req() req: any, @Res() res: Response) {
-        const result: UserValidationResult = await this.authService.validateKakaoUser(req.user);
+        const tokens = await this.authService.validateKakaoUser(req.user);
+        const code = await this.authService.createAuthCode(tokens);
 
-        // Set HTTP-only cookie
-        const isProduction = process.env.NODE_ENV === 'production';
-        res.cookie("auth_token", result.token, {
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? "none" : "lax",
-            path: "/",
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-        });
+        const frontendURL = process.env.NODE_ENV === "production" ? process.env.PRODUCTION_FRONTEND_URL : process.env.DEVELOPMENT_FRONTEND_URL;
 
-        // Redirect to frontend callback to set cookie on frontend domain
-        const frontendUrl = process.env.PRODUCTION_FRONTEND_URL || process.env.DEVELOPMENT_FRONTEND_URL;
-        res.redirect(`${frontendUrl}/auth/callback?token=${result.token}&refreshToken=${result.refreshToken}`);
+        res.redirect(`${frontendURL}/auth/callback?code=${code}`);
     }
 
     @Get("me")
@@ -53,5 +44,11 @@ export class AuthController {
             },
         });
         return user;
+    }
+
+    @Post("token")
+    async exchangeToken(@Body() body: TokenExchangeDto) {
+        const tokens = await this.authService.exchangeCodeForTokens(body.code);
+        return tokens;
     }
 }

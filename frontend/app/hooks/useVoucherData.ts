@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/app/lib/axios";
+import { api } from "@/app/lib/axios/client";
 
 // Types
 export interface BankAccountInfo {
