@@ -26,7 +26,7 @@ export default function AuthCallbackPage() {
             }
 
             try {
-                await api.post("/api/auth/token", { code });
+                await api.post("/auth/token", { code });
                 router.replace("/dashboard");
             }
             catch (err) {
