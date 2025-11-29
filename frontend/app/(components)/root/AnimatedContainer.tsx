@@ -6,22 +6,22 @@ import { Box } from "@mui/material";
 
 import { usePathname } from "next/navigation";
 
-interface AnimatedMessagesContainerProps {
+interface AnimatedContainerProps {
     children: ReactNode;
     minHeight?: string;
     minWidth?: string;
 }
 
-export default function AnimatedMessagesContainer({
+export default function AnimatedContainer({
     children,
     minHeight,
     minWidth
-}: AnimatedMessagesContainerProps) {
+}: AnimatedContainerProps) {
     const pathname = usePathname();
 
     return (
         <Box
-            component={motion.main}
+            component={motion.article}
             key={pathname}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -35,7 +35,7 @@ export default function AnimatedMessagesContainer({
                 alignItems: 'center',
                 height: '100%',
                 width: '100%',
-                backgroundColor: '#f6f7fb',
+                backgroundColor: 'background.default',
             }}
         >
             {children}
