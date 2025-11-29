@@ -67,7 +67,7 @@ export default async function Dashboard() {
   const stats = getStats(locale);
 
   return (
-    <Box sx={{ bgcolor: "background.default" }}>
+    <Box sx={{ bgcolor: "background.paper" }}>
       <Box
         component="main"
         sx={{
