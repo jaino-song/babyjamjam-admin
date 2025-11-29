@@ -19,10 +19,6 @@ const Pretendard = localFont({
 export const metadata: Metadata = {
   title: "Incheon Imirae Back Office",
   description: "Incheon Imirae Back Office",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default"
-  },
 };
 
 export const viewport: Viewport = {
@@ -39,14 +35,14 @@ export default async function RootLayout({
 
   return (
     <html lang={locale}>
-      <body className={Pretendard.variable} style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <body className={Pretendard.variable} style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' }}>
         <EmotionRegistry>
           <ThemeProvider>
             <QueryProvider>
               <LocaleProvider locale={locale}>
                 <ConditionalHeader />
                 <AnimatedContainer>
-                  <Box component="main" data-component="main-content" sx={{ m: 1 }}>
+                  <Box component="main" sx={{ m: 1 }}>
                     {children}
                   </Box>
                 </AnimatedContainer>
