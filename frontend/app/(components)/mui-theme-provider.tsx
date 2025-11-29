@@ -3,12 +3,7 @@
 import { ThemeProvider } from "@mui/material/styles";
 import { createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
-import GlobalStyles from "@mui/material/GlobalStyles";
 
-const HEADER_COLOR = "#ffffff";
-const BACKGROUND_COLOR = "#f6f7fb";
-const PRIMARY_COLOR = "#1e88e5";
-const SECONDARY_COLOR = "#1b5e20";
 
 const theme = createTheme({ 
     typography: {
@@ -16,13 +11,13 @@ const theme = createTheme({
     },
     palette: {
       background: {
-        default: BACKGROUND_COLOR,
+        default: "#f6f7fb",
       },
       primary: {
-        main: PRIMARY_COLOR,
+        main: "#1e88e5",
       },
       secondary: {
-        main: SECONDARY_COLOR,
+        main: "#1b5e20",
       },
     },
     shape: { borderRadius: 14 },
@@ -32,14 +27,6 @@ export const MuiThemeProvider = ({ children }: { children: React.ReactNode }) =>
     return (
         <ThemeProvider theme={theme}>
             <CssBaseline />
-            <GlobalStyles styles={{
-              html: {
-                backgroundColor: HEADER_COLOR,
-              },
-              body: {
-                backgroundColor: BACKGROUND_COLOR,
-              },
-            }} />
             {children}
         </ThemeProvider>
     );
