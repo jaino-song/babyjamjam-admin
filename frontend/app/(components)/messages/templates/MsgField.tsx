@@ -1,15 +1,35 @@
-import { Paper, Typography } from "@mui/material"
+import { TextField } from "@mui/material"
 
-export const MsgField = ({ children }: { children: React.ReactNode }) => {
+interface MsgFieldProps {
+  defaultValue: string;
+  onChange?: (value: string) => void;
+}
+
+export const MsgField = ({ defaultValue, onChange }: MsgFieldProps) => {
   return (
-    <Paper elevation={0} sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto"  }}>
-      <Typography
-        variant="body2"
-        component="pre"
-        sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "1rem" }}
-      >
-        {children}
-      </Typography>
-    </Paper>
+    <TextField
+      multiline
+      fullWidth
+      defaultValue={defaultValue}
+      onChange={(e) => onChange?.(e.target.value)}
+      rows={12}
+      slotProps={{
+        input: {
+          sx: {
+            fontFamily: "inherit",
+            fontSize: "1rem",
+            lineHeight: 1.6,
+            
+          },
+        },
+      }}
+      sx={{
+        "& .MuiOutlinedInput-root": {
+          maxHeight: "50vh",
+          overflowY: "auto",
+          alignItems: "flex-start",
+        },
+      }}
+    />
   )
 }

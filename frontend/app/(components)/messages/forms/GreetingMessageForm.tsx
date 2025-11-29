@@ -42,9 +42,13 @@ export const GreetingMessageForm = () => {
 
           {/* generated message */}
           {generatedMessage && (
-            <GeneratedMsg title={t(locale, "common.generated-message-title")} copyButtonText={t(locale, "common.copy-button")} handleCopy={handleCopy}>
-              {generatedMessage}
-            </GeneratedMsg>
+            <GeneratedMsg 
+              title={t(locale, "common.generated-message-title")} 
+              copyButtonText={t(locale, "common.copy-button")} 
+              message={generatedMessage}
+              onMessageChange={setGeneratedMessage}
+              handleCopy={handleCopy}
+            />
           )}
         </Box>
       </Fade>
