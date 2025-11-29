@@ -28,7 +28,7 @@ export const GreetingMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} data-component="greeting-message-form" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", bgcolor: "background.default" }}>
+    <Paper elevation={2} data-component="greeting-message-form" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%", bgcolor: "background.default" }}>
       <Fade in appear timeout={500}>
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
           {/* title */}
@@ -42,13 +42,9 @@ export const GreetingMessageForm = () => {
 
           {/* generated message */}
           {generatedMessage && (
-            <GeneratedMsg 
-              title={t(locale, "common.generated-message-title")} 
-              copyButtonText={t(locale, "common.copy-button")} 
-              message={generatedMessage}
-              onMessageChange={setGeneratedMessage}
-              handleCopy={handleCopy}
-            />
+            <GeneratedMsg title={t(locale, "common.generated-message-title")} copyButtonText={t(locale, "common.copy-button")} handleCopy={handleCopy}>
+              {generatedMessage}
+            </GeneratedMsg>
           )}
         </Box>
       </Fade>

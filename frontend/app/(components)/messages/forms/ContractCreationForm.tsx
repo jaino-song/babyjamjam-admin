@@ -273,7 +273,7 @@ export const ContractCreationForm = () => {
           p: 3,
           flexGrow: 1,
           width: "100%",
-          bgcolor: "background.default",
+          height: "100%",
         }}
       >
         <Fade in appear timeout={500}>
@@ -302,8 +302,8 @@ export const ContractCreationForm = () => {
             </Stepper>
 
             {/* form */}
-            <Card elevation={0} data-component="contract-creation-form-card" sx={{  overflow: "auto" }}>
-              <CardContent sx={{ bgcolor: "background.default" }}>
+            <Card elevation={0} data-component="contract-creation-form-card" sx={{ flexGrow: 1, overflow: "auto" }}>
+              <CardContent>
                 {/* Step 0: User Info */}
                 {activeStep === 0 && (
                   <Fade in appear timeout={300}>
@@ -335,16 +335,15 @@ export const ContractCreationForm = () => {
                       {(!fullPrice || !grant || !actualPrice) ? (
                         <>
                           {/* 바우처 유형 선택 */}
-                          <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
+                          <FormControl fullWidth>
                             <InputLabel>{t(locale, "price-info-msg.voucher-type-label")}</InputLabel>
                             <Select
                               value={voucherType}
                               label={t(locale, "price-info-msg.voucher-type-label")}
                               onChange={(e) => handleVoucherTypeChange(e.target.value)}
-                              sx={{ bgcolor: "background.default" }}
                             >
                               {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
-                                <MenuItem key={groupName} disabled sx={{ fontWeight: 600, bgcolor: "background.default" }}>
+                                <MenuItem key={groupName} disabled sx={{ fontWeight: 600 }}>
                                   {groupName}
                                 </MenuItem>,
                                 ...Object.entries(types).map(([typeValue, typeData]) => (
@@ -359,17 +358,16 @@ export const ContractCreationForm = () => {
                           {/* 바우처 기간 선택 - 유형 선택 후에만 표시 */}
                           {voucherType && voucherPriceInfos.length > 0 && (
                             <Fade in timeout={400}>
-                              <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
+                              <FormControl fullWidth>
                                 <InputLabel>{t(locale, "price-info-msg.duration-label")}</InputLabel>
                                 <Select
                                   value={voucherDuration}
                                   label={t(locale, "price-info-msg.duration-label")}
                                   onChange={(e) => handleDurationChange(e.target.value)}
                                   disabled={isVoucherPriceInfosLoading}
-                                  sx={{ bgcolor: "background.default" }}
                                 >
                                   {voucherPriceInfos.map((v) => (
-                                    <MenuItem key={v.duration} value={v.duration} sx={{ bgcolor: "background.default" }}>
+                                    <MenuItem key={v.duration} value={v.duration}>
                                       {v.duration}일
                                     </MenuItem>
                                   ))}
