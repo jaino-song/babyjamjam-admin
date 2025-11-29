@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { QueryProvider } from "./query-provider";
 import { ConditionalHeader } from "./(components)/root/ConditionalHeader";
@@ -21,13 +21,18 @@ export const metadata: Metadata = {
   description: "Incheon Imirae Back Office",
 };
 
+export const viewport: Viewport = {
+  themeColor: "#ffffff",
+  width: "device-width",
+};
+
 export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   const locale = await getLocale();
-  
+
   return (
     <html lang={locale}>
       <body className={Pretendard.variable} style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' }}>
@@ -35,8 +40,8 @@ export default async function RootLayout({
           <ThemeProvider>
             <QueryProvider>
               <LocaleProvider locale={locale}>
+                <ConditionalHeader />
                 <AnimatedContainer>
-                  <ConditionalHeader />
                   <Box component="main" sx={{ m: 1 }}>
                     {children}
                   </Box>
