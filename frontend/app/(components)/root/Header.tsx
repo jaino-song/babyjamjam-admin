@@ -36,7 +36,7 @@ export const Header = () => {
         position="static"
         elevation={0}
         sx={{
-          bgcolor: "background.paper",
+          bgcolor: "background.default",
           borderBottom: (theme) => `1px solid ${theme.palette.divider}`,
           color: "text.primary",
         }}
