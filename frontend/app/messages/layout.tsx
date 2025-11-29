@@ -14,7 +14,7 @@ export default function MessagesLayout({
     children: React.ReactNode;
 }) {
     return (
-        <Container sx={{ p: 2 }}>
+        <Container component="section" sx={{ p: 2, bgcolor: "background.paper" }}>
             <AnimatedContainer minHeight="50vh">
                 <MsgNav />
                 {children}
