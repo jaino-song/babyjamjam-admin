@@ -34,6 +34,7 @@ export const Header = () => {
       {/* Header */}
       <AppBar
         position="static"
+        data-component="header"
         elevation={0}
         sx={{
           bgcolor: "background.default",

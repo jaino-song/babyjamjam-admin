@@ -5,7 +5,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 export const GeneratedMsg = ({ title, copyButtonText, children, handleCopy }: { title: string, copyButtonText: string, children: React.ReactNode, handleCopy: () => void }) => {
 
     return (
-        <Paper elevation={0}>
+        <Paper elevation={0} data-component="generated-msg" sx={{ bgcolor: "background.default" }}>
           <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
             {/* title */}
             <Typography variant="h6" color="primary.main" fontWeight={600}>
@@ -17,6 +17,7 @@ export const GeneratedMsg = ({ title, copyButtonText, children, handleCopy }: { 
               size="medium"
               startIcon={<ContentCopyIcon />}
               onClick={handleCopy}
+              data-component="generated-msg-copy-button"
             >
               {copyButtonText}
             </Button>

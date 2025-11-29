@@ -18,6 +18,14 @@ out/
 # production
 build/
 
+# backend
+backend/dist/
+backend/node_modules/
+backend/prisma/migrations/
+backend/prisma/generated/
+backend/prisma/schema.prisma
+backend/prisma/seed.ts
+
 # misc
 .DS_Store
 *.pem

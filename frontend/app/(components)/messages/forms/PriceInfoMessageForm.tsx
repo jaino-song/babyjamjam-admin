@@ -146,7 +146,7 @@ export const PriceInfoMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%" }}>
+    <Paper elevation={2} data-component="price-info-message-form" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%", bgcolor: "background.default" }}>
       <Fade in appear timeout={500}>
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
           {/* title */}
@@ -159,7 +159,7 @@ export const PriceInfoMessageForm = () => {
       </Typography>
 
       {/* form */}
-      <Card elevation={0}>
+      <Card elevation={0} data-component="price-info-message-form-card" sx={{ bgcolor: "background.default" }}>
         <CardContent>
           <Stack spacing={3}>
             <NameInput name={name} setName={setName} label={t(locale, "price-info-msg.name-label")} placeholder={t(locale, "price-info-msg.name-placeholder")} />
@@ -234,6 +234,7 @@ export const PriceInfoMessageForm = () => {
               size="large"
               onClick={handleGenerate}
               disabled={!formData.name || !formData.type || !formData.area || isVoucherPriceInfosLoading || isBankAccountInfosLoading}
+              data-component="price-info-message-form-generate-button"
             >
               {isVoucherPriceInfosLoading || isBankAccountInfosLoading ? t(locale, "common.generate-button-loading") : t(locale, "common.generate-button")}
             </Button>
@@ -243,7 +244,7 @@ export const PriceInfoMessageForm = () => {
 
           {/* generated message */}
           {generatedMessage && (
-            <Paper elevation={0} sx={{ p: 0 }}>
+            <Paper elevation={0} data-component="price-info-message-form-generated-message" sx={{ p: 0 }}>
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
                 <Typography variant="h6" color="primary.main" fontWeight={600}>
                   {t(locale, "common.generated-message-title")}
@@ -257,7 +258,7 @@ export const PriceInfoMessageForm = () => {
                   {t(locale, "common.copy-button")}
                 </Button>
               </Stack>
-              <Paper sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto" }}>
+              <Paper data-component="price-info-message-form-generated-message-paper" sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto" }}>
                 <Typography
                   variant="body2"
                   component="pre"

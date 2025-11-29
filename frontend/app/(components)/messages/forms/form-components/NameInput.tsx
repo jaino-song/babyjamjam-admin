@@ -30,12 +30,14 @@ export const NameInput = ({ name, setName, label, placeholder }: { name: string,
     return (
         <TextField
             fullWidth
+            data-component="name-input"
             label={label}
             value={name}
             onChange={handleChange}
             placeholder={placeholder}
             error={error}
             helperText={error ? "숫자나 특수문자는 입력할 수 없습니다" : ""}
+            sx={{ bgcolor: "background.default" }}
         />
     );
 };
