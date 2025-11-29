@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   title: "Incheon Imirae Back Office",
   description: "Incheon Imirae Back Office",
   appleWebApp: {
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default"
   },
 };
 
