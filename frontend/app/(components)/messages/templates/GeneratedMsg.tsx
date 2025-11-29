@@ -2,7 +2,15 @@ import { Button, Paper, Stack, Typography } from "@mui/material"
 import { MsgField } from "./MsgField"
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 
-export const GeneratedMsg = ({ title, copyButtonText, children, handleCopy }: { title: string, copyButtonText: string, children: React.ReactNode, handleCopy: () => void }) => {
+interface GeneratedMsgProps {
+  title: string;
+  copyButtonText: string;
+  message: string;
+  onMessageChange?: (value: string) => void;
+  handleCopy: () => void;
+}
+
+export const GeneratedMsg = ({ title, copyButtonText, message, onMessageChange, handleCopy }: GeneratedMsgProps) => {
 
     return (
         <Paper elevation={0} data-component="generated-msg" sx={{ bgcolor: "background.default" }}>
@@ -23,7 +31,7 @@ export const GeneratedMsg = ({ title, copyButtonText, children, handleCopy }: { 
             </Button>
           </Stack>
           {/* message */}
-          <MsgField>{children}</MsgField>
+          <MsgField defaultValue={message} onChange={onMessageChange} />
         </Paper>    
     )
 }
