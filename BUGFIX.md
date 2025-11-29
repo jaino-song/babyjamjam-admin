@@ -100,3 +100,9 @@
     - `frontend/app/auth/callback/actions.ts` (new)
     - `frontend/app/auth/callback/page.tsx`
     - `frontend/next.config.ts` (updated rewrites to use fallback pattern)
+
+### 14. Safari Mobile Status Bar Area Color Not Changing
+- **Issue:** On Safari mobile (iOS), the status bar area color was not changing to match the app's theme, appearing with the default system color instead.
+- **Cause:** Next.js metadata configuration was missing the `statusBarStyle` property in the `appleWebApp` configuration. Without this, iOS Safari doesn't know how to style the status bar area when the app is added to the home screen or viewed in standalone mode.
+- **Fix:** Added `statusBarStyle: "black-translucent"` to the `appleWebApp` metadata object in `layout.tsx`. This property controls the appearance of the status bar area in iOS Safari and when the app is launched from the home screen.
+- **File:** `frontend/app/layout.tsx`
