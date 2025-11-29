@@ -28,14 +28,11 @@ export default function AnimatedContainer({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1 }}
             sx={{
-                minHeight: minHeight || '100%',
-                minWidth: minWidth || '100%',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'flex-start',
                 alignItems: 'center',
-                height: '100%',
-                width: '100%',
+                flexGrow: 1,
                 bgcolor: 'background.paper',
             }}
         >
