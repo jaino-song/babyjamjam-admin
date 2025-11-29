@@ -35,11 +35,13 @@ export const MsgNav = () => {
   return (
     <Paper
       elevation={2}
+      data-component="messages-nav"
       sx={{
         borderBottomLeftRadius: 0,
         borderBottomRightRadius: 0,
         borderRadius: "20px 20px 0 0",
         overflow: "hidden",
+        bgcolor: "background.default",
       }}
     >
       <Stack

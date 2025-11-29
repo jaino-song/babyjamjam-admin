@@ -264,6 +264,7 @@ export const ContractCreationForm = () => {
 
       <Paper
         elevation={2}
+        data-component="contract-creation-form"
         sx={{
           display: "flex",
           flexDirection: "column",
@@ -301,7 +302,7 @@ export const ContractCreationForm = () => {
             </Stepper>
 
             {/* form */}
-            <Card elevation={0} sx={{ flexGrow: 1, overflow: "auto" }}>
+            <Card elevation={0} data-component="contract-creation-form-card" sx={{ flexGrow: 1, overflow: "auto" }}>
               <CardContent>
                 {/* Step 0: User Info */}
                 {activeStep === 0 && (
@@ -548,6 +549,7 @@ export const ContractCreationForm = () => {
                 variant="outlined"
                 onClick={handleStepBack}
                 disabled={activeStep === 0 || isSubmitting}
+                data-component="contract-creation-form-back-button"
               >
                 {t(locale, "common.back")}
               </Button>
@@ -566,6 +568,7 @@ export const ContractCreationForm = () => {
                   variant="contained"
                   onClick={handleStepNext}
                   disabled={isNextDisabled()}
+                  data-component="contract-creation-form-next-button"
                 >
                   {t(locale, "common.next")}
                 </Button>
@@ -579,6 +582,7 @@ export const ContractCreationForm = () => {
       <Dialog
         open={isDialogOpen}
         onClose={handleDialogClose}
+        data-component="contract-creation-form-dialog"
         fullScreen
       >
         <DialogTitle sx={{ px: 2, py: 1, display: "flex", justifyContent: "space-between", alignItems: "center" }}>

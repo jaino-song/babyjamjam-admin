@@ -30,6 +30,9 @@ let JwtStrategy = class JwtStrategy extends (0, passport_1.PassportStrategy)(pas
         });
     }
     async validate(payload) {
+        if (payload.type !== 'access') {
+            throw new Error('Invalid token type');
+        }
         return {
             userId: payload.sub,
             role: payload.role,

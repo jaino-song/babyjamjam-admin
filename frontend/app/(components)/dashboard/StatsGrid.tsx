@@ -24,9 +24,9 @@ export const StatsGrid = ({ stats, disabled=false }: StatsGridProps) => {
         const Icon = item.icon;
         return (
           /* Grid Item */
-          <Grid key={item.title} size={{ xs: 6, sm: 6, lg: 3 }} sx={{ opacity: disabled ? 0.5 : 1 }}>
+          <Grid key={item.title} data-component="stats-grid-item" size={{ xs: 6, sm: 6, lg: 3 }} sx={{ opacity: disabled ? 0.5 : 1 }}>
             {/* Card */}
-            <Card elevation={2} sx={{ py: 2.5, px: 3, display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 2, bgcolor: "background.default" }}>
+            <Card elevation={2} data-component="stats-grid-card" sx={{ py: 2.5, px: 3, display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 2, bgcolor: "background.default" }}>
               <Box sx={{ display: "flex", justifyContent: "center" }}>
                 <Typography variant="body1" fontWeight={600} color="text.secondary">
                   {item.title}

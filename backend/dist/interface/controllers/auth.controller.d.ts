@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { AuthService } from "../../application/services/auth.service";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
+import { TokenExchangeDto } from "interface/dto/token-exchange.dto";
 export declare class AuthController {
     private readonly authService;
     private readonly prisma;
@@ -13,5 +14,9 @@ export declare class AuthController {
         name: string;
         profile_image: string;
         role: string;
+    }>;
+    exchangeToken(body: TokenExchangeDto): Promise<{
+        accessToken: string;
+        refreshToken: string;
     }>;
 }

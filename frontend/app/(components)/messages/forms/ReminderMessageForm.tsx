@@ -35,7 +35,7 @@ export const ReminderMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%" }}>
+    <Paper elevation={2} data-component="reminder-message-form" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%", bgcolor: "background.default" }}>
       <Fade in appear timeout={500}>
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
           {/* title */}
@@ -48,7 +48,7 @@ export const ReminderMessageForm = () => {
       </Typography>
 
       {/* form */}
-      <Card elevation={0}>
+      <Card elevation={0} data-component="reminder-message-form-card" sx={{ bgcolor: "background.default" }}>
         <CardContent>
           <Stack spacing={3}>
             {/* name */}
@@ -59,6 +59,7 @@ export const ReminderMessageForm = () => {
               size="large"
               onClick={handleGenerate}
               disabled={!name}
+              data-component="reminder-message-form-generate-button"
             >
               {t(locale, "common.generate-button")}
             </Button>

@@ -1,33 +1,26 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Button,
-  Card,
-  CardContent,
   Paper,
-  Stack,
   Typography,
   Fade,
   Box,
 } from "@mui/material";
 import { greetingMsgTemplate } from "../templates/messageTemplate/greetingMsg";
 import { t } from "@/app/lib/i18n/translations";
-import { useFormStore } from "@/app/store/form-store";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
-import { NameInput } from "./form-components/NameInput";
 
 
 export const GreetingMessageForm = () => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
-  const { name, setName } = useFormStore();
 
 
-  const handleGenerate = () => {
+  useEffect(() => {
     const message = greetingMsgTemplate();
     setGeneratedMessage(message);
-  };
+  }, []);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
@@ -35,36 +28,17 @@ export const GreetingMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%" }}>
+    <Paper elevation={2} data-component="greeting-message-form" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%", bgcolor: "background.default" }}>
       <Fade in appear timeout={500}>
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
           {/* title */}
           <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
             {t(locale, "msg-type.greeting")}
           </Typography>
-      {/* subtitle */}
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t(locale, "greeting-msg.subtitle")}
-      </Typography>
-
-      {/* form */}
-      <Card elevation={0}>
-        <CardContent>
-          <Stack spacing={3}>
-            {/* name */}
-            <NameInput name={name} setName={setName} label={t(locale, "greeting-msg.name-label")} placeholder={t(locale, "greeting-msg.name-placeholder")} />
-            {/* generate button */}
-            <Button
-              variant="contained"
-              size="large"
-              onClick={handleGenerate}
-              disabled={!name}
-            >
-              {t(locale, "common.generate-button")}
-            </Button>
-          </Stack>
-        </CardContent>
-      </Card>
+          {/* subtitle */}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            {t(locale, "greeting-msg.subtitle")}
+          </Typography>
 
           {/* generated message */}
           {generatedMessage && (

@@ -22,6 +22,7 @@ export default function AnimatedContainer({
     return (
         <Box
             component={motion.article}
+            data-component="animated-container"
             key={pathname}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -35,7 +36,7 @@ export default function AnimatedContainer({
                 alignItems: 'center',
                 height: '100%',
                 width: '100%',
-                backgroundColor: 'background.default',
+                bgcolor: 'background.paper',
             }}
         >
             {children}
