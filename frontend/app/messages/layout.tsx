@@ -1,7 +1,6 @@
 import { Metadata } from "next";
 import { Container } from "@mui/material";
 import { MsgNav } from "../(components)/messages/MsgNav";
-import AnimatedContainer from "../(components)/root/AnimatedContainer";
 
 export const metadata: Metadata = {
     title: "Incheon Imirae Back Office - Messages",
@@ -14,11 +13,9 @@ export default function MessagesLayout({
     children: React.ReactNode;
 }) {
     return (
-        <Container component="section" sx={{ p: 2, bgcolor: "background.paper" }}>
-            <AnimatedContainer minHeight="50vh">
+        <Container component="section" data-component="messages-content" sx={{ p: 2 }}>
                 <MsgNav />
                 {children}
-            </AnimatedContainer>
         </Container>
     );
 }

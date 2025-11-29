@@ -25,7 +25,12 @@ export class AuthController {
         const tokens = await this.authService.validateKakaoUser(req.user);
         const code = await this.authService.createAuthCode(tokens);
 
-        const frontendURL = process.env.NODE_ENV === "production" ? process.env.PRODUCTION_FRONTEND_URL : process.env.DEVELOPMENT_FRONTEND_URL;
+        const isProduction = process.env.NODE_ENV === "production";
+        const frontendURL = isProduction 
+            ? process.env.PRODUCTION_FRONTEND_URL 
+            : (process.env.DEVELOPMENT_FRONTEND_URL || "http://localhost:3000");
+
+        console.log(`[Auth] Redirecting to ${frontendURL}/auth/callback (NODE_ENV: ${process.env.NODE_ENV})`);
 
         res.redirect(`${frontendURL}/auth/callback?code=${code}`);
     }

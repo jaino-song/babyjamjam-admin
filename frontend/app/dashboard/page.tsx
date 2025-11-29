@@ -70,6 +70,7 @@ export default async function Dashboard() {
     <Box sx={{ bgcolor: "background.paper" }}>
       <Box
         component="section"
+        data-component="dashboard"
         sx={{
           px: { xs: 2, sm: 3, md: 6 },
           py: { xs: 3, sm: 4 },
@@ -78,6 +79,7 @@ export default async function Dashboard() {
       >
         <Stack spacing={3} sx={{ width: "100%" }}>
           <HeroBanner
+            data-component="hero-banner"
             subtitle={t(locale, "dashboard.welcome_back")}
             title={`${user?.name} ${t(locale, "dashboard.suffix")}`}
             primaryActionLabel={t(locale, "actions.price_calculator")}
