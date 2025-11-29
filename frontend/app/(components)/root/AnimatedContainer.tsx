@@ -21,7 +21,7 @@ export default function AnimatedMessagesContainer({
 
     return (
         <Box
-            component={motion.div}
+            component={motion.main}
             key={pathname}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -31,7 +31,7 @@ export default function AnimatedMessagesContainer({
                 minWidth: minWidth || '100%',
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'center',
+                justifyContent: 'flex-start',
                 alignItems: 'center',
                 height: '100%',
                 width: '100%',

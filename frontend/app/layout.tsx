@@ -35,7 +35,7 @@ export default async function RootLayout({
 
   return (
     <html lang={locale}>
-      <body className={Pretendard.variable} style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' }}>
+      <body className={Pretendard.variable} style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale', height: '100vh' }}>
         <EmotionRegistry>
           <ThemeProvider>
             <QueryProvider>
