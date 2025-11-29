@@ -175,5 +175,22 @@ export class EformsignService {
             return_fields: [contractData.customerName],
         };
     }
+
+    async getDocumentsList(accessToken: string): Promise<any> {
+        const response = await fetch(`${this.EFORMSIGN_API_URL}/v2.0/api/documents`, {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+            },
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to fetch documents: ${response.status} - ${errorData}`);
+        }
+
+        return await response.json();
+    }
 }
 

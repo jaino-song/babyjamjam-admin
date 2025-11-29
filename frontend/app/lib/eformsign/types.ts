@@ -111,3 +111,25 @@ declare global {
   }
 }
 
+// Document list types
+export interface EformsignDocument {
+  doc_id: string; // Document ID
+  doc_title: string; // Document title
+  doc_status: string; // Document status code
+  doc_status_name: string; // Document status name (e.g., "완료", "대기 중")
+  workflow_seq: number; // Current workflow sequence
+  workflow_name: string; // Workflow step name
+  created_date: number; // Creation timestamp
+  updated_date: number; // Last update timestamp
+  template_id: string; // Template ID
+  template_name: string; // Template name
+  template_version: string; // Template version
+  history_id: string; // History ID
+  mass_send_id?: string; // Mass send ID (optional)
+}
+
+export interface EformsignDocumentsResponse {
+  total_count: number; // Total number of documents
+  documents: EformsignDocument[]; // Array of documents
+}
+

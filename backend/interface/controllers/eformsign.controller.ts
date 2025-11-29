@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpException, HttpStatus } from "@nestjs/common";
+import { Controller, Post, Get, Body, Query, HttpException, HttpStatus } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { ContractDataDto } from "../../application/dto/contract.dto";
 
@@ -62,6 +62,25 @@ export class EformsignController {
                 body.refreshToken
             );
             return documentOptions;
+        } catch (error) {
+            throw new HttpException(
+                { error: error.message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    @Get("documents")
+    async getDocuments(@Query("accessToken") accessToken: string) {
+        try {
+            if (!accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+            const documents = await this.eformsignService.getDocumentsList(accessToken);
+            return documents;
         } catch (error) {
             throw new HttpException(
                 { error: error.message },

@@ -1,5 +1,6 @@
 import { api } from "../app/lib/axios";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
+import { EformsignDocumentsResponse } from '@/app/lib/eformsign/types';
 
 // Auth API
 export const authApi = {
@@ -25,6 +26,10 @@ export const eformsignApi = {
     },
     generateDocument: async (contractData: ContractDataDto, accessToken: string, refreshToken: string) => {
         const { data } = await api.post('api/generate-document', { contractData, accessToken, refreshToken });
+        return data;
+    },
+    getDocuments: async (accessToken: string): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('api/documents', { params: { accessToken } });
         return data;
     },
 }
