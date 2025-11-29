@@ -60,4 +60,5 @@ export declare class EformsignController {
         };
         return_fields: string[];
     }>;
+    getDocuments(accessToken: string): Promise<any>;
 }

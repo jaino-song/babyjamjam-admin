@@ -55,6 +55,18 @@ let EformsignController = class EformsignController {
             throw new common_1.HttpException({ error: error.message }, common_1.HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
+    async getDocuments(accessToken) {
+        try {
+            if (!accessToken) {
+                throw new common_1.HttpException({ error: "Access token is required" }, common_1.HttpStatus.BAD_REQUEST);
+            }
+            const documents = await this.eformsignService.getDocumentsList(accessToken);
+            return documents;
+        }
+        catch (error) {
+            throw new common_1.HttpException({ error: error.message }, common_1.HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
 };
 exports.EformsignController = EformsignController;
 __decorate([
@@ -85,6 +97,13 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], EformsignController.prototype, "generateDocument", null);
+__decorate([
+    (0, common_1.Get)("documents"),
+    __param(0, (0, common_1.Query)("accessToken")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], EformsignController.prototype, "getDocuments", null);
 exports.EformsignController = EformsignController = __decorate([
     (0, common_1.Controller)("api"),
     __metadata("design:paramtypes", [eformsign_service_1.EformsignService])

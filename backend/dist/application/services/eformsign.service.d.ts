@@ -58,4 +58,5 @@ export declare class EformsignService {
         };
         return_fields: string[];
     };
+    getDocumentsList(accessToken: string): Promise<any>;
 }
