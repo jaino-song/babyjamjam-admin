@@ -35,6 +35,7 @@ export default function AnimatedContainer({
                 flexGrow: 1,
                 bgcolor: 'background.paper',
                 width: '100%',
+                backgroundColor: '#f6f7fb',
             }}
         >
             {children}
