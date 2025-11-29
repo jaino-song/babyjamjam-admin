@@ -35,6 +35,7 @@ export default function AnimatedMessagesContainer({
                 alignItems: 'center',
                 height: '100%',
                 width: '100%',
+                backgroundColor: '#f6f7fb',
             }}
         >
             {children}
