@@ -69,7 +69,7 @@ export default async function Dashboard() {
   return (
     <Box sx={{ bgcolor: "background.paper" }}>
       <Box
-        component="main"
+        component="section"
         sx={{
           px: { xs: 2, sm: 3, md: 6 },
           py: { xs: 3, sm: 4 },
