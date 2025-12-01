@@ -26,6 +26,7 @@ export function DocumentsList() {
   const [isLoadingToken, setIsLoadingToken] = useState(true);
 
   const { data, isLoading, error, refetch } = useEformsignDocuments(accessToken);
+  console.log("data", data);
 
   useEffect(() => {
     const fetchToken = async () => {
@@ -34,6 +35,7 @@ export function DocumentsList() {
         const executionTime = Date.now();
         const tokenResponse = await eformsignApi.getAccessToken(executionTime);
         setAccessToken(tokenResponse.oauth_token.access_token);
+        console.log("tokenResponse", tokenResponse);
       } catch (err) {
         console.error("Failed to fetch access token:", err);
       } finally {
