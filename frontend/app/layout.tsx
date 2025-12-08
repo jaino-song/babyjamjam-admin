@@ -19,10 +19,6 @@ const Pretendard = localFont({
 export const metadata: Metadata = {
   title: "Incheon Imirae Back Office",
   description: "Incheon Imirae Back Office",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default"
-  },
 };
 
 export const viewport: Viewport = {

@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
+import * as https from "https";
 import { ContractDataDto } from "../dto/contract.dto";
 
 export interface EformsignTokenResponse {
@@ -38,25 +39,25 @@ export class EformsignService {
      */
     generateSignature(executionTime: number): string {
         const message = String(executionTime);
-        
+
         // Convert hex private key to DER format for crypto.sign
         const privateKeyHex = this.EFORMSIGN_PRIVATE_KEY;
         const privateKeyDer = Buffer.from(privateKeyHex, "hex");
-        
+
         // Create private key object from DER format
         const privateKey = crypto.createPrivateKey({
             key: privateKeyDer,
             format: "der",
             type: "pkcs8",
         });
-        
+
         // Sign with SHA256 and ECDSA
         const signature = crypto.sign(
             "sha256",
             Buffer.from(message, "utf-8"),
             privateKey
         );
-        
+
         // Return as hex string
         return signature.toString("hex");
     }
@@ -64,7 +65,7 @@ export class EformsignService {
     async getAccessToken(executionTime: number, memberEmail?: string): Promise<EformsignTokenResponse> {
         const signature = this.generateSignature(executionTime);
         const email = memberEmail || this.USER_EMAIL;
-        
+
         // API key must be Base64 encoded according to eformsign docs
         const encodedApiKey = Buffer.from(this.EFORMSIGN_API_KEY).toString("base64");
 
@@ -121,8 +122,8 @@ export class EformsignService {
                 user_key: this.USER_EMAIL,
             },
             layout: {
-                "zoom" : "0.75",
-                "viewer_toolbar" : {"toolbar.save" : "false", "toolbar.print" : "false"}
+                "zoom": "0.75",
+                "viewer_toolbar": { "toolbar.save": "false", "toolbar.print": "false" }
             },
             user: {
                 type: "01",
@@ -175,5 +176,29 @@ export class EformsignService {
             return_fields: [contractData.customerName],
         };
     }
-}
 
+    async getDocumentsList(accessToken: string): Promise<any> {
+        const response = await fetch(`${process.env.EFORMSIGN_API_URL}/v2.0/api/list_document`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                type: "01",
+                title_and_content: "",
+                title: "",
+                content: "",
+                limit: "20",
+                skip: "0"
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to get documents list: ${response.status} - ${errorData}`);
+        }
+
+        return await response.json();
+    }
+}

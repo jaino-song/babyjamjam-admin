@@ -1,5 +1,6 @@
 import { api } from "../app/lib/axios/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
+import { EformsignDocumentsResponse } from '@/app/lib/eformsign/types';
 
 // Auth API
 export const authApi = {
@@ -12,19 +13,23 @@ export const authApi = {
 // eformsign APIs
 export const eformsignApi = {
     generateSignature: async (executionTime: number) => {
-        const { data } = await api.post('api/generate-signature', { executionTime });
+        const { data } = await api.post('/generate-signature', { executionTime });
         return data;
     },
     getAccessToken: async (executionTime: number, memberEmail?: string) => {
-        const { data } = await api.post('api/access-token', { executionTime, memberEmail });
+        const { data } = await api.post('/access-token', { executionTime, memberEmail });
         return data;
     },
     refreshAccessToken: async (executionTime: number, refreshToken: string) => {
-        const { data } = await api.post('api/refresh-access-token', { executionTime, refreshToken });
+        const { data } = await api.post('/refresh-access-token', { executionTime, refreshToken });
         return data;
     },
     generateDocument: async (contractData: ContractDataDto, accessToken: string, refreshToken: string) => {
-        const { data } = await api.post('api/generate-document', { contractData, accessToken, refreshToken });
+        const { data } = await api.post('/generate-document', { contractData, accessToken, refreshToken });
+        return data;
+    },
+    getDocuments: async (accessToken: string): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/documents', { params: { accessToken } });
         return data;
     },
 }
