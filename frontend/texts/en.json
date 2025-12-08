@@ -154,5 +154,13 @@
     "subtitle": "Login to get started",
     "kakao-login": "Login with Kakao",
     "google-login": "Login with Google"
+  },
+  "documents-list": {
+    "title": "Documents",
+    "subtitle": "You can view the list of sorted documents based on the options.",
+    "document-title": "Document Title",
+    "created-date": "Created Date",
+    "status": "Status",
+    "new-document": "New Document"
   }
 }

@@ -34,6 +34,7 @@ export default function AnimatedContainer({
                 alignItems: 'center',
                 flexGrow: 1,
                 bgcolor: 'background.paper',
+                width: '100%',
             }}
         >
             {children}

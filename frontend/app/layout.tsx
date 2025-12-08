@@ -46,7 +46,7 @@ export default async function RootLayout({
               <LocaleProvider locale={locale}>
                 <ConditionalHeader />
                 <AnimatedContainer>
-                  <Box component="main" data-component="main-content" sx={{ m: 1 }}>
+                  <Box component="main" data-component="main-content" sx={{ p: 3, width: "100%", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
                     {children}
                   </Box>
                 </AnimatedContainer>

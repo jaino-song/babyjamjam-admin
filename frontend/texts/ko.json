@@ -154,5 +154,13 @@
     "subtitle": "아래의 소셜 로그인 방법 중 하나를 선택해서 로그인을 해주세요",
     "kakao-login": "카카오로 로그인하기",
     "google-login": "구글로 로그인하기"
+  },
+  "documents-list": {
+    "title": "계약서",
+    "subtitle": "조건에 따른 계약서 목록을 조회할 수 있어요.",
+    "document-title": "문서 제목",
+    "created-date": "생성일",
+    "status": "상태",
+    "new-document": "새 계약서"
   }
 }

@@ -133,3 +133,9 @@ export interface EformsignDocumentsResponse {
   documents: EformsignDocument[]; // Array of documents
 }
 
+export interface EformsignDocumentView {
+  doc_id: string;
+  customer_name: string;
+  sent_date: string;
+  status: string;
+}

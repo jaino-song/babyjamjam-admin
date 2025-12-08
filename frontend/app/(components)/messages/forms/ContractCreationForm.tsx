@@ -273,7 +273,6 @@ export const ContractCreationForm = () => {
           p: 3,
           flexGrow: 1,
           width: "100%",
-          height: "100%",
           bgcolor: "background.default",
         }}
       >
@@ -303,7 +302,7 @@ export const ContractCreationForm = () => {
             </Stepper>
 
             {/* form */}
-            <Card elevation={0} data-component="contract-creation-form-card" sx={{ flexGrow: 1, overflow: "auto" }}>
+            <Card elevation={0} data-component="contract-creation-form-card" sx={{  overflow: "auto" }}>
               <CardContent sx={{ bgcolor: "background.default" }}>
                 {/* Step 0: User Info */}
                 {activeStep === 0 && (
