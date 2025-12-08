@@ -15,7 +15,7 @@ export const ComponentContainer = ({ textJSON, borderTopLeftRadius, borderTopRig
   const localeFile = `${textJSON}`;
 
   return (
-    <Paper elevation={2} data-component="component-container" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", p: 3, flexGrow: 1, width: "100%", minHeight: "70vh", bgcolor: "background.default" }}>
+    <Paper elevation={2} data-component="component-container" sx={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", p: 3, flexGrow: 1, width: "100%", minHeight: "70vh", bgcolor: "background.default" }}>
       <Fade in appear timeout={500}>
         <Box data-component="component-container-content" sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
           {/* title */}
