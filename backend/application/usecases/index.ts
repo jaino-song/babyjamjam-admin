@@ -5,4 +5,5 @@ export * from "./user";
 export * from "./voucher-price-info";
 export * from "./client";
 export * from "./employee-schedule";
+export * from "./eformsign-doc";
 
