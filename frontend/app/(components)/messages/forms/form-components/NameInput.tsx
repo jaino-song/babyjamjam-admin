@@ -9,7 +9,7 @@ import { useState } from "react";
 // - 가-힣: Complete Korean syllables (Hangul)
 // - ᄀ-ᇿ: Hangul compatibility Jamo (for IME composition)
 // - \s: Whitespace
-const NAME_REGEX = /^[a-zA-Zㄱ-ㅎㅏ-ㅣ가-힣ᄀ-ᇿ\s]*$/;
+const NAME_REGEX = /^[a-zA-Z\u1100-\u11FF\u3130-\u318F\uAC00-\uD7A3·\s]*$/;
 
 export const NameInput = ({ name, setName, label, placeholder }: { name: string, setName: (name: string) => void, label: string, placeholder: string }) => {
     const [error, setError] = useState(false);

@@ -131,8 +131,8 @@ export function DocumentsList() {
   const filterOpen = Boolean(filterAnchorEl);
   const currentFilterLabel = STATUS_OPTIONS.find(opt => opt.value === selectedFilter)?.label || "전체";
 
-  // Loading state
-  if (isLoadingAuth || isLoading) {
+  // Initial auth loading state only (not filter changes)
+  if (isLoadingAuth) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
         <CircularProgress />
@@ -164,27 +164,7 @@ export function DocumentsList() {
 
   return (
     <ComponentContainer textJSON="documents-list">
-      <Box data-component="documents-list-container" sx={{ position: "relative" }}>
-        {/* Loading overlay when fetching data */}
-        {isFetching && (
-          <Box
-            sx={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              bgcolor: "rgba(255, 255, 255, 0.7)",
-              zIndex: 10,
-            }}
-          >
-            <CircularProgress size={40} />
-          </Box>
-        )}
-
+      <Box data-component="documents-list-container">
         {/* Toolbar */}
         <Box
           data-component="documents-list-toolbar"
@@ -256,8 +236,8 @@ export function DocumentsList() {
             {/* New Document Button */}
             <IconButton 
               size="medium" 
-              sx={{ color: "grey.600" }} 
-              LinkComponent={Link} 
+              sx={{ color: "#1e88e5" }} 
+              LinkComponent={Link}
               href="/messages/contract"
             >
               <Plus size={30} strokeWidth={2} />
@@ -268,34 +248,67 @@ export function DocumentsList() {
         <Divider />
 
         {/* Table */}
-        {documents.length > 0 ? (
+        <Box sx={{ minHeight: 200, width: "100%" }}>
+          {documents.length > 0 || isFetching ? (
           <>
             <TableContainer>
-              <Table>
+              <Table sx={{ tableLayout: "fixed", width: "100%" }}>
                 <TableHead>
                   <TableRow>
                     <TableCell
                       align="center"
-                      sx={{ fontWeight: 500, color: "rgba(0, 0, 0, 0.6)", fontSize: "0.875rem" }}
+                      sx={{ 
+                        fontWeight: 500, 
+                        color: "rgba(0, 0, 0, 0.6)", 
+                        fontSize: "0.875rem",
+                        width: "30%",
+                      }}
                     >
                       {t(locale, "documents-list.document-title")}
                     </TableCell>
                     <TableCell
                       align="center"
-                      sx={{ fontWeight: 500, color: "rgba(0, 0, 0, 0.6)", fontSize: "0.875rem" }}
+                      sx={{ 
+                        fontWeight: 500, 
+                        color: "rgba(0, 0, 0, 0.6)", 
+                        fontSize: "0.875rem",
+                        width: "40%",
+                      }}
                     >
                       {t(locale, "documents-list.created-date")}
                     </TableCell>
                     <TableCell
                       align="center"
-                      sx={{ fontWeight: 500, color: "rgba(0, 0, 0, 0.6)", fontSize: "0.875rem", pr: 3 }}
+                      sx={{ 
+                        fontWeight: 500, 
+                        color: "rgba(0, 0, 0, 0.6)", 
+                        fontSize: "0.875rem",
+                        width: "30%",
+                      }}
                     >
                       {t(locale, "documents-list.status")}
                     </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {paginatedDocuments.map((doc, index) => (
+                  {/* Loading spinner - only covers table body */}
+                  {isFetching && (
+                    <TableRow>
+                      <TableCell colSpan={3} sx={{ border: 0, p: 0 }}>
+                        <Box
+                          sx={{
+                            display: "flex",
+                            justifyContent: "center",
+                            alignItems: "center",
+                            py: 8,
+                          }}
+                        >
+                          <CircularProgress size={40} />
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {!isFetching && paginatedDocuments.map((doc, index) => (
                     <TableRow
                       key={`${doc.doc_id}-${index}`}
                       hover
@@ -313,7 +326,7 @@ export function DocumentsList() {
                       >
                         {formatDate(doc.created_date)}
                       </TableCell>
-                      <TableCell align="center" sx={{ pr: 3 }}>
+                      <TableCell align="center">
                         <Chip
                           label={doc.status}
                           color={getStatusColor(doc.status)}
@@ -326,28 +339,31 @@ export function DocumentsList() {
               </Table>
             </TableContainer>
 
-            {/* Pagination */}
-            <TablePagination
-              component="div"
-              count={documents.length}
-              rowsPerPage={rowsPerPage}
-              page={page}
-              onPageChange={handleChangePage}
-              rowsPerPageOptions={[]}
-              labelRowsPerPage=""
-              sx={{
-                "& .MuiTablePagination-selectLabel": { display: "none" },
-                "& .MuiTablePagination-select": { display: "none" },
-                "& .MuiTablePagination-spacer": { display: "none" },
-                "& .MuiTablePagination-displayedRows": { margin: 0 },
-              }}
-            />
+            {/* Pagination - hidden during loading */}
+            {!isFetching && (
+              <TablePagination
+                component="div"
+                count={documents.length}
+                rowsPerPage={rowsPerPage}
+                page={page}
+                onPageChange={handleChangePage}
+                rowsPerPageOptions={[]}
+                labelRowsPerPage=""
+                sx={{
+                  "& .MuiTablePagination-selectLabel": { display: "none" },
+                  "& .MuiTablePagination-select": { display: "none" },
+                  "& .MuiTablePagination-spacer": { display: "none" },
+                  "& .MuiTablePagination-displayedRows": { margin: 0 },
+                }}
+              />
+            )}
           </>
         ) : (
           <Box sx={{ py: 3 }}>
             <Alert severity="info">문서가 없습니다</Alert>
           </Box>
-        )}
+          )}
+        </Box>
       </Box>
     </ComponentContainer>
   );
