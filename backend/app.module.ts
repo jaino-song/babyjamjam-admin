@@ -15,6 +15,7 @@ import { VoucherPriceInfoModule } from "module/voucher-price-info.module";
 import { EmployeeModule } from "module/employee.module";
 import { ClientModule } from "module/client.module";
 import { EmployeeScheduleModule } from "module/employee-schedule.module";
+import { EformsignDocModule } from "module/eformsign-doc.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 @Module({
@@ -34,6 +35,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         EmployeeModule,
         ClientModule,
         EmployeeScheduleModule,
+        EformsignDocModule,
     ],
     controllers: [AuthController, EformsignController],
     providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],

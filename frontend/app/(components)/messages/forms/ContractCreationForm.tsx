@@ -165,14 +165,13 @@ export const ContractCreationForm = () => {
     setSubmitError(null);
 
     try {
+      // Authenticate first - tokens are stored in httpOnly cookies
       const executionTime = Date.now();
-      const { oauth_token } = await eformsignApi.getAccessToken(executionTime);
+      const authResult = await eformsignApi.authenticate(executionTime);
 
-      if (!oauth_token) {
-        throw new Error("Failed to get access token");
+      if (!authResult.success) {
+        throw new Error("Failed to authenticate");
       }
-
-      const { access_token, refresh_token } = oauth_token;
 
       const start = dayjs(startDate);
       const end = dayjs(endDate);
@@ -209,11 +208,9 @@ export const ContractCreationForm = () => {
         actualPrice: actualPrice,
       };
 
-      // Get document options from backend
+      // Get document options from backend (tokens are read from cookies)
       const documentOption: EformsignDocumentOption = await eformsignApi.generateDocument(
-        contractData,
-        access_token,
-        refresh_token
+        contractData
       );
 
       console.log("Document option generated:", documentOption);

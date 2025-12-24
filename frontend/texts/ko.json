@@ -158,7 +158,7 @@
   "documents-list": {
     "title": "계약서",
     "subtitle": "조건에 따른 계약서 목록을 조회할 수 있어요.",
-    "document-title": "문서 제목",
+    "document-title": "계약자",
     "created-date": "생성일",
     "status": "상태",
     "new-document": "새 계약서"

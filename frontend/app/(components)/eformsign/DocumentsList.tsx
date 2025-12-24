@@ -1,20 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Box,
-  Paper,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Typography,
   Chip,
   CircularProgress,
   Alert,
-  Button,
   IconButton,
   TablePagination,
   Divider,
@@ -22,122 +19,100 @@ import {
   MenuItem,
   ListItemIcon,
   ListItemText,
-  Checkbox,
+  Radio,
 } from "@mui/material";
 import { Search, Filter, Plus } from "lucide-react";
-import { useEformsignDocuments } from "@/app/hooks";
-import { eformsignApi } from "@/services/api";
-import { EformsignDocumentView } from "@/app/lib/eformsign/types";
+import { useEformsignDocumentsByType } from "@/app/hooks/useEformsignDocuments";
+import { useEformsignAuth } from "@/app/hooks/useEformsignAuth";
+import { EformsignDocument, EformsignDocumentView } from "@/app/lib/eformsign/types";
+import { 
+  DocumentFilterType, 
+  mapStatusToLabel, 
+  getStatusColor 
+} from "@/app/lib/eformsign/status-codes";
 import { ComponentContainer } from "../root/ComponentContainer";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "../LocaleProvider";
 import Link from "next/link";
 
-type DocumentStatus = "대기" | "거부" | "완료";
+type FilterOption = { label: string; value: DocumentFilterType };
 
-const STATUS_OPTIONS: DocumentStatus[] = ["대기", "거부", "완료"];
-
-const documents: EformsignDocumentView[] = [
-  {
-    doc_id: '1',
-    customer_name: '송진호',
-    sent_date: '2023-10-24',
-    status: '대기',
-  },
-  {
-    doc_id: '2',
-    customer_name: '김동현',
-    sent_date: '2023-10-25',
-    status: '대기',
-  },
-  {
-    doc_id: '3',
-    customer_name: '이민우',
-    sent_date: '2023-10-26',
-    status: '거부',
-  },
-  {
-    doc_id: '4',
-    customer_name: '이민서',
-    sent_date: '2023-10-22',
-    status: '완료',
-  },
-  {
-    doc_id: '5',
-    customer_name: '김민지',
-    sent_date: '2023-10-27',
-    status: '완료',
-  },
-  {
-    doc_id: '6',
-    customer_name: '이민우',
-    sent_date: '2023-10-28',
-    status: '완료',
-  },
+const STATUS_OPTIONS: FilterOption[] = [
+  { label: "전체", value: null },
+  { label: "대기", value: "in-progress" },
+  { label: "완료", value: "completed" },
+  { label: "거부", value: "rejected" },
 ];
+
+// Customer names to filter out (internal/test accounts)
+const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
+
+// Transform API document to view model
+const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null => {
+  const stepRecipients = doc.current_status?.step_recipients;
+
+  // Get customer name from multiple possible sources:
+  // 1. step_recipients[0].name (when document is in-progress)
+  // 2. last_editor.name (when document is completed/rejected)
+  // 3. creator.name (fallback)
+  let customerName: string | null = null;
+  
+  if (stepRecipients && stepRecipients.length > 0 && stepRecipients[0]?.name) {
+    customerName = stepRecipients[0].name;
+  } else if (doc.last_editor?.name) {
+    customerName = doc.last_editor.name;
+  } else if (doc.creator?.name) {
+    customerName = doc.creator.name;
+  }
+
+  // Skip documents without a customer name
+  if (!customerName) {
+    return null;
+  }
+
+  // Skip internal/test accounts
+  if (EXCLUDED_CUSTOMER_NAMES.includes(customerName)) {
+    return null;
+  }
+
+  return {
+    doc_id: doc.id,
+    customer_name: customerName,
+    created_date: doc.created_date,
+    status: mapStatusToLabel(doc.current_status?.status_type),
+  };
+};
+
+// Date formatting helper
+const formatDate = (timestamp: number): string => {
+  return new Date(timestamp).toLocaleDateString("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+};
 
 export function DocumentsList() {
   const locale = useLocale();
-  const [accessToken, setAccessToken] = useState<string>("");
-  const [isLoadingToken, setIsLoadingToken] = useState(true);
   const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(5);
   const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
-  const [selectedStatuses, setSelectedStatuses] = useState<DocumentStatus[]>([]);
+  const [selectedFilter, setSelectedFilter] = useState<DocumentFilterType>(null);
 
-  const { data, isLoading, error } = useEformsignDocuments(accessToken);
+  // Auth hook - checks existing token before making API call
+  const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth();
+  
+  // Documents hook
+  const { data, isLoading, error, isFetching } = useEformsignDocumentsByType(
+    isAuthenticated, 
+    selectedFilter
+  );
 
-  useEffect(() => {
-    const fetchToken = async () => {
-      try {
-        setIsLoadingToken(true);
-        const executionTime = Date.now();
-        const tokenResponse = await eformsignApi.getAccessToken(executionTime);
-        setAccessToken(tokenResponse.oauth_token.access_token);
-      } catch (err) {
-        console.error("Failed to fetch access token:", err);
-      } finally {
-        setIsLoadingToken(false);
-      }
-    };
-
-    fetchToken();
-  }, []);
-
-  const getStatusColor = (
-    statusName: string
-  ): "success" | "warning" | "error" | "info" => {
-    const lowerStatusName = statusName.toLowerCase();
-    if (lowerStatusName.includes("완료") || lowerStatusName.includes("complete") || lowerStatusName.includes("signed")) {
-      return "success";
-    }
-    if (lowerStatusName.includes("대기") || lowerStatusName.includes("pending") || lowerStatusName.includes("진행")) {
-      return "warning";
-    }
-    if (lowerStatusName.includes("거부") || lowerStatusName.includes("reject")) {
-      return "error";
-    }
-    return "info";
-  };
-
-  const formatDate = (timestamp: number): string => {
-    return new Date(timestamp).toLocaleDateString("ko-KR", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-  };
+  // Dynamic rows per page: 10 for all, 5 for filtered
+  const rowsPerPage = selectedFilter === null ? 10 : 5;
 
   const handleChangePage = (_event: unknown, newPage: number) => {
     setPage(newPage);
   };
-
-  // const handleChangeRowsPerPage = (
-  //   event: React.ChangeEvent<HTMLInputElement>
-  // ) => {
-  //   setRowsPerPage(parseInt(event.target.value, 10));
-  //   setPage(0);
-  // };
 
   const handleFilterClick = (event: React.MouseEvent<HTMLElement>) => {
     setFilterAnchorEl(event.currentTarget);
@@ -147,54 +122,69 @@ export function DocumentsList() {
     setFilterAnchorEl(null);
   };
 
-  const handleStatusToggle = (status: DocumentStatus) => {
-    setSelectedStatuses((prev) =>
-      prev.includes(status)
-        ? prev.filter((s) => s !== status)
-        : [...prev, status]
-    );
+  const handleFilterSelect = (filterType: DocumentFilterType) => {
+    setSelectedFilter(filterType);
     setPage(0);
+    handleFilterClose();
   };
 
   const filterOpen = Boolean(filterAnchorEl);
+  const currentFilterLabel = STATUS_OPTIONS.find(opt => opt.value === selectedFilter)?.label || "전체";
 
-  const filteredDocuments = selectedStatuses.length === 0
-    ? documents
-    : documents.filter((doc) => selectedStatuses.includes(doc.status as DocumentStatus));
-
-  if (isLoadingToken || isLoading) {
+  // Loading state
+  if (isLoadingAuth || isLoading) {
     return (
-      <Box
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-        minHeight="400px"
-      >
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
         <CircularProgress />
       </Box>
     );
   }
 
-  if (error) {
+  // Error state
+  if (authError || error) {
+    const errorMessage = authError?.message || (error instanceof Error ? error.message : "Unknown error");
     return (
       <Box p={3}>
         <Alert severity="error">
-          Failed to load documents:{" "}
-          {error instanceof Error ? error.message : "Unknown error"}
+          {authError ? "인증에 실패했습니다. 페이지를 새로고침 해주세요." : `문서를 불러오는데 실패했습니다: ${errorMessage}`}
         </Alert>
       </Box>
     );
   }
 
-  // const documents = data?.documents || [];
-  const paginatedDocuments = filteredDocuments.slice(
+  // Transform and filter documents
+  const documents: EformsignDocumentView[] = (data?.documents || [])
+    .map(transformDocument)
+    .filter((doc): doc is EformsignDocumentView => doc !== null);
+
+  const paginatedDocuments = documents.slice(
     page * rowsPerPage,
     page * rowsPerPage + rowsPerPage
   );
 
   return (
     <ComponentContainer textJSON="documents-list">
-      <Box data-component="documents-list-container">
+      <Box data-component="documents-list-container" sx={{ position: "relative" }}>
+        {/* Loading overlay when fetching data */}
+        {isFetching && (
+          <Box
+            sx={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              bgcolor: "rgba(255, 255, 255, 0.7)",
+              zIndex: 10,
+            }}
+          >
+            <CircularProgress size={40} />
+          </Box>
+        )}
+
         {/* Toolbar */}
         <Box
           data-component="documents-list-toolbar"
@@ -204,50 +194,72 @@ export function DocumentsList() {
             justifyContent: "space-around",
           }}
         >
-          {/* Toolbar Buttons */}
-          <Box data-component="documents-list-toolbar-buttons" sx={{ display: "flex", justifyContent: "space-around", alignItems: "center", gap: 1, width: "100%" }}>
+          <Box 
+            data-component="documents-list-toolbar-buttons" 
+            sx={{ 
+              display: "flex", 
+              justifyContent: "space-around", 
+              alignItems: "center", 
+              gap: 1, 
+              width: "100%" 
+            }}
+          >
             {/* Search Button */}
             <IconButton size="medium" sx={{ color: "grey.600" }}>
               <Search size={24} strokeWidth={2} />
             </IconButton>
+
             {/* Filter Button */}
-            <IconButton
-              size="medium"
-              sx={{ color: selectedStatuses.length > 0 ? "primary.main" : "grey.600" }}
-              onClick={handleFilterClick}
-            >
-              <Filter size={24} strokeWidth={2} />
-            </IconButton>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <IconButton
+                size="medium"
+                sx={{ color: "primary.main" }}
+                onClick={handleFilterClick}
+              >
+                <Filter size={24} strokeWidth={2} />
+              </IconButton>
+              <Chip
+                label={currentFilterLabel}
+                color={getStatusColor(currentFilterLabel)}
+                size="small"
+                onClick={handleFilterClick}
+                sx={{ cursor: "pointer" }}
+              />
+            </Box>
+
             {/* Filter Menu */}
             <Menu
               anchorEl={filterAnchorEl}
               open={filterOpen}
               onClose={handleFilterClose}
-              anchorOrigin={{
-                vertical: "bottom",
-                horizontal: "left",
-              }}
+              anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
             >
-              {STATUS_OPTIONS.map((status) => (
-                <MenuItem key={status} onClick={() => handleStatusToggle(status)}>
+              {STATUS_OPTIONS.map((option) => (
+                <MenuItem 
+                  key={option.value ?? "all"} 
+                  onClick={() => handleFilterSelect(option.value)}
+                >
                   <ListItemIcon>
-                    <Checkbox
-                      checked={selectedStatuses.includes(status)}
-                      size="small"
-                    />
+                    <Radio checked={selectedFilter === option.value} size="small" />
                   </ListItemIcon>
                   <ListItemText>
                     <Chip
-                      label={status}
-                      color={getStatusColor(status)}
+                      label={option.label}
+                      color={getStatusColor(option.label)}
                       size="small"
                     />
                   </ListItemText>
                 </MenuItem>
               ))}
             </Menu>
+
             {/* New Document Button */}
-            <IconButton size="medium" sx={{ color: "grey.600" }} LinkComponent={Link} href="/messages/contract">
+            <IconButton 
+              size="medium" 
+              sx={{ color: "grey.600" }} 
+              LinkComponent={Link} 
+              href="/messages/contract"
+            >
               <Plus size={30} strokeWidth={2} />
             </IconButton>
           </Box>
@@ -256,78 +268,50 @@ export function DocumentsList() {
         <Divider />
 
         {/* Table */}
-        {filteredDocuments.length > 0 ? (
+        {documents.length > 0 ? (
           <>
             <TableContainer>
               <Table>
-                {/* Table Header */}
                 <TableHead>
                   <TableRow>
-                    {/* Document Title */}
                     <TableCell
                       align="center"
-                      sx={{
-                        fontWeight: 500,
-                        color: "rgba(0, 0, 0, 0.6)",
-                        fontSize: "0.875rem",
-                      }}
+                      sx={{ fontWeight: 500, color: "rgba(0, 0, 0, 0.6)", fontSize: "0.875rem" }}
                     >
                       {t(locale, "documents-list.document-title")}
                     </TableCell>
-                    {/* Created Date */}
                     <TableCell
                       align="center"
-                      sx={{
-                        fontWeight: 500,
-                        color: "rgba(0, 0, 0, 0.6)",
-                        fontSize: "0.875rem",
-                      }}
+                      sx={{ fontWeight: 500, color: "rgba(0, 0, 0, 0.6)", fontSize: "0.875rem" }}
                     >
                       {t(locale, "documents-list.created-date")}
                     </TableCell>
-                    {/* Status */}
                     <TableCell
                       align="center"
-                      sx={{
-                        fontWeight: 500,
-                        color: "rgba(0, 0, 0, 0.6)",
-                        fontSize: "0.875rem",
-                        pr: 3,
-                      }}
+                      sx={{ fontWeight: 500, color: "rgba(0, 0, 0, 0.6)", fontSize: "0.875rem", pr: 3 }}
                     >
                       {t(locale, "documents-list.status")}
                     </TableCell>
                   </TableRow>
                 </TableHead>
-                {/* Table Body */}
                 <TableBody>
-                  {paginatedDocuments.map((doc: EformsignDocumentView) => (
+                  {paginatedDocuments.map((doc, index) => (
                     <TableRow
-                      key={doc.doc_id}
+                      key={`${doc.doc_id}-${index}`}
                       hover
-                      sx={{
-                        "&:hover": {
-                          bgcolor: "rgba(0, 0, 0, 0.04)",
-                        },
-                      }}
+                      sx={{ "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
                     >
                       <TableCell
                         align="center"
-                        sx={{
-                          fontSize: "0.875rem",
-                          color: "rgba(0, 0, 0, 0.87)",
-                        }}
+                        sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
                       >
                         {doc.customer_name}
                       </TableCell>
                       <TableCell
                         align="center"
-                        sx={{
-                          fontSize: "0.875rem",
-                          color: "rgba(0, 0, 0, 0.87)",
-                        }}
+                        sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
                       >
-                        {formatDate(new Date(doc.sent_date).getTime())}
+                        {formatDate(doc.created_date)}
                       </TableCell>
                       <TableCell align="center" sx={{ pr: 3 }}>
                         <Chip
@@ -344,34 +328,24 @@ export function DocumentsList() {
 
             {/* Pagination */}
             <TablePagination
-              // rowsPerPageOptions={[5, 10, 25]}
               component="div"
-              count={filteredDocuments.length}
+              count={documents.length}
               rowsPerPage={rowsPerPage}
               page={page}
               onPageChange={handleChangePage}
               rowsPerPageOptions={[]}
               labelRowsPerPage=""
               sx={{
-                '& .MuiTablePagination-selectLabel': {
-                  display: 'none',
-                },
-                '& .MuiTablePagination-select': {
-                  display: 'none',
-                },
-                '& .MuiTablePagination-spacer': {
-                  display: 'none', // spacer 제거
-                },
-                '& .MuiTablePagination-displayedRows': {
-                  margin: 0,
-                },
+                "& .MuiTablePagination-selectLabel": { display: "none" },
+                "& .MuiTablePagination-select": { display: "none" },
+                "& .MuiTablePagination-spacer": { display: "none" },
+                "& .MuiTablePagination-displayedRows": { margin: 0 },
               }}
-            // onRowsPerPageChange={handleChangeRowsPerPage}
             />
           </>
         ) : (
           <Box sx={{ py: 3 }}>
-            <Alert severity="info">No documents found</Alert>
+            <Alert severity="info">문서가 없습니다</Alert>
           </Box>
         )}
       </Box>

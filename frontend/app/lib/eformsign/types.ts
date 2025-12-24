@@ -111,31 +111,68 @@ declare global {
   }
 }
 
-// Document list types
+// Document list types (from list_document API)
+export interface EformsignStepRecipient {
+  recipient_type: string;
+  name: string;
+  sms?: string;
+  id?: string;
+}
+
+export interface EformsignCurrentStatus {
+  // 3-digit codes: 003=완료, 062=참여자승인, 060=참여자요청, 061=참여자반려, etc.
+  status_type: string;
+  status_doc_type: string;
+  status_doc_detail: string;
+  step_type: string;
+  step_index: string;
+  step_name: string;
+  step_recipients: EformsignStepRecipient[];
+  step_group: number;
+  expired_date: number;
+  _expired: boolean;
+}
+
+export interface EformsignTemplate {
+  id: string;
+  name: string;
+}
+
+export interface EformsignCreator {
+  recipient_type: string;
+  id: string;
+  name: string;
+}
+
 export interface EformsignDocument {
-  doc_id: string; // Document ID
-  doc_title: string; // Document title
-  doc_status: string; // Document status code
-  doc_status_name: string; // Document status name (e.g., "완료", "대기 중")
-  workflow_seq: number; // Current workflow sequence
-  workflow_name: string; // Workflow step name
-  created_date: number; // Creation timestamp
-  updated_date: number; // Last update timestamp
-  template_id: string; // Template ID
-  template_name: string; // Template name
-  template_version: string; // Template version
-  history_id: string; // History ID
-  mass_send_id?: string; // Mass send ID (optional)
+  id: string;
+  document_number: string;
+  template: EformsignTemplate;
+  document_name: string;
+  creator: EformsignCreator;
+  created_date: number;
+  last_editor: EformsignCreator;
+  updated_date: number;
+  current_status: EformsignCurrentStatus;
+  fields: unknown[];
+  next_status: unknown[];
+  previous_status: unknown[];
+  histories: unknown[];
+  recipients: unknown[];
+  detail_template_info: unknown[];
 }
 
 export interface EformsignDocumentsResponse {
-  total_count: number; // Total number of documents
-  documents: EformsignDocument[]; // Array of documents
+  documents: EformsignDocument[];
+  total_rows: number;
+  limit: number;
+  skip: number;
 }
 
+// View model for displaying documents
 export interface EformsignDocumentView {
   doc_id: string;
   customer_name: string;
-  sent_date: string;
-  status: string;
+  created_date: number;
+  status: "대기" | "완료" | "거부";
 }

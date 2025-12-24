@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/app/lib/axios/server";
+import { errorResponse } from "@/app/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
@@ -11,11 +12,7 @@ export async function POST(request: NextRequest) {
         });
 
         return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[Generate Signature API] Error:", error.message);
-        return NextResponse.json(
-            { error: error.message || "Failed to generate signature" },
-            { status: error.response?.status || 500 }
-        );
+    } catch (error) {
+        return errorResponse(error, "generate signature");
     }
 }

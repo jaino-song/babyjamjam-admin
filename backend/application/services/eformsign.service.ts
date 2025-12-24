@@ -15,6 +15,7 @@ export interface EformsignTokenResponse {
 export class EformsignService {
     private readonly USER_EMAIL: string;
     private readonly EFORMSIGN_API_URL: string;
+    private readonly EFORMSIGN_DOC_API_URL: string;
     private readonly EFORMSIGN_API_KEY: string;
     private readonly EFORMSIGN_PRIVATE_KEY: string;
     private readonly EFORMSIGN_COMPANY_ID: string;
@@ -23,6 +24,7 @@ export class EformsignService {
     constructor(private configService: ConfigService) {
         this.USER_EMAIL = this.configService.get("EFORMSIGN_USER_EMAIL");
         this.EFORMSIGN_API_URL = this.configService.get("EFORMSIGN_API_URL");
+        this.EFORMSIGN_DOC_API_URL = this.configService.get("EFORMSIGN_DOC_API_URL");
         this.EFORMSIGN_API_KEY = this.configService.get("EFORMSIGN_API_KEY");
         this.EFORMSIGN_PRIVATE_KEY = this.configService.get("EFORMSIGN_PRIVATE_KEY");
         this.EFORMSIGN_COMPANY_ID = this.configService.get("EFORMSIGN_COMPANY_ID");
@@ -177,8 +179,12 @@ export class EformsignService {
         };
     }
 
-    async getDocumentsList(accessToken: string): Promise<any> {
-        const response = await fetch(`${process.env.EFORMSIGN_API_URL}/v2.0/api/list_document`, {
+    /**
+     * Get in-progress documents (진행 중)
+     * type: "01"
+     */
+    async getInProgressDocuments(accessToken: string): Promise<any> {
+        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -189,16 +195,139 @@ export class EformsignService {
                 title_and_content: "",
                 title: "",
                 content: "",
-                limit: "20",
+                limit: "100",
                 skip: "0"
             }),
         });
 
         if (!response.ok) {
             const errorData = await response.text();
-            throw new Error(`Failed to get documents list: ${response.status} - ${errorData}`);
+            throw new Error(`Failed to get in-progress documents: ${response.status} - ${errorData}`);
         }
 
         return await response.json();
+    }
+
+    /**
+     * Get completed documents (완료)
+     * type: "03"
+     */
+    async getCompletedDocuments(accessToken: string): Promise<any> {
+        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                type: "03",
+                title_and_content: "",
+                title: "",
+                content: "",
+                limit: "100",
+                skip: "0"
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to get completed documents: ${response.status} - ${errorData}`);
+        }
+
+        return await response.json();
+    }
+
+    /**
+     * Get rejected documents (반려/거부)
+     * type: "04"
+     */
+    async getRejectedDocuments(accessToken: string): Promise<any> {
+        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                type: "04",
+                title_and_content: "",
+                title: "",
+                content: "",
+                limit: "100",
+                skip: "0"
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to get rejected documents: ${response.status} - ${errorData}`);
+        }
+
+        return await response.json();
+    }
+
+    /**
+     * Get single document by ID
+     * GET /v2.0/api/documents/{documentId}
+     */
+    async getDocumentById(accessToken: string, documentId: string): Promise<any> {
+        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}`, {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+            },
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to get document: ${response.status} - ${errorData}`);
+        }
+
+        return await response.json();
+    }
+
+    /**
+     * Get all documents (combines in-progress, completed, and rejected)
+     * Makes parallel requests for performance
+     */
+    async getAllDocuments(accessToken: string): Promise<{
+        documents: any[];
+        total_rows: number;
+        limit: number;
+        skip: number;
+    }> {
+        const [inProgress, completed, rejected] = await Promise.all([
+            this.getInProgressDocuments(accessToken),
+            this.getCompletedDocuments(accessToken),
+            this.getRejectedDocuments(accessToken),
+        ]);
+
+        // Combine all documents
+        const allDocuments = [
+            ...(inProgress.documents || []),
+            ...(completed.documents || []),
+            ...(rejected.documents || []),
+        ];
+
+        // Remove duplicates by document id
+        const seenIds = new Set<string>();
+        const uniqueDocuments: any[] = [];
+        for (const doc of allDocuments) {
+            if (!seenIds.has(doc.id)) {
+                seenIds.add(doc.id);
+                uniqueDocuments.push(doc);
+            }
+        }
+
+        // Sort by created_date descending (newest first)
+        uniqueDocuments.sort((a, b) => b.created_date - a.created_date);
+
+        return {
+            documents: uniqueDocuments,
+            total_rows: uniqueDocuments.length,
+            limit: 100,
+            skip: 0,
+        };
     }
 }
