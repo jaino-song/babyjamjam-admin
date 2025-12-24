@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/app/lib/axios/server";
+import { getAccessToken, getRefreshToken, unauthorizedResponse, errorResponse } from "@/app/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { contractData, accessToken, refreshToken } = body;
+        const { contractData } = body;
+
+        const accessToken = getAccessToken(request);
+        const refreshToken = getRefreshToken(request);
+
+        if (!accessToken || !refreshToken) {
+            return unauthorizedResponse("Authentication required. Please authenticate first.");
+        }
 
         const response = await serverAPIClient.post("/api/generate-document", {
             contractData,
@@ -13,11 +21,7 @@ export async function POST(request: NextRequest) {
         });
 
         return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[Generate Document API] Error:", error.message);
-        return NextResponse.json(
-            { error: error.message || "Failed to generate document" },
-            { status: error.response?.status || 500 }
-        );
+    } catch (error) {
+        return errorResponse(error, "generate document");
     }
 }

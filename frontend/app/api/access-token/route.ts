@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/app/lib/axios/server";
+import { setAuthCookies, errorResponse } from "@/app/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
@@ -11,12 +12,12 @@ export async function POST(request: NextRequest) {
             memberEmail,
         });
 
-        return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[Access Token API] Error:", error.message);
-        return NextResponse.json(
-            { error: error.message || "Failed to get access token" },
-            { status: error.response?.status || 500 }
-        );
+        const { oauth_token } = response.data;
+
+        // Create response and set tokens in httpOnly cookies
+        const res = NextResponse.json({ success: true });
+        return setAuthCookies(res, oauth_token.access_token, oauth_token.refresh_token);
+    } catch (error) {
+        return errorResponse(error, "get access token");
     }
 }

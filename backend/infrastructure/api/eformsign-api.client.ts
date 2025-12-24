@@ -111,30 +111,74 @@ export class EformsignApiClient implements IEformsignClientRepository {
     }
 
     /**
-     * Get all documents from eformsign API (uses DOC API URL)
-     * POST /v2.0/api/list_documents
+     * Get in-progress documents from eformsign API (uses DOC API URL)
+     * POST /v2.0/api/list_document with type: "01"
      */
-    async getAllDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]> {
-        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_documents`, {
+    async getInProgressDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]> {
+        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${accessToken}`,
             },
             body: JSON.stringify({
-                type: "all", // get all document types
-                limit: 100,
-                skip: 0,
+                type: "01",
+                title_and_content: "",
+                title: "",
+                content: "",
+                limit: "100",
+                skip: "0",
             }),
         });
 
         if (!response.ok) {
             const errorData = await response.text();
-            throw new Error(`Failed to get documents list: ${response.status} - ${errorData}`);
+            throw new Error(`Failed to get in-progress documents: ${response.status} - ${errorData}`);
         }
 
         const data: EformsignApiListResponse = await response.json();
         return data.documents || [];
+    }
+
+    /**
+     * Get completed documents from eformsign API (uses DOC API URL)
+     * POST /v2.0/api/list_document with type: "03"
+     */
+    async getCompletedDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]> {
+        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                type: "03",
+                title_and_content: "",
+                title: "",
+                content: "",
+                limit: "100",
+                skip: "0",
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to get completed documents: ${response.status} - ${errorData}`);
+        }
+
+        const data: EformsignApiListResponse = await response.json();
+        return data.documents || [];
+    }
+
+    /**
+     * Get all documents (both in-progress and completed)
+     */
+    async getAllDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]> {
+        const [inProgress, completed] = await Promise.all([
+            this.getInProgressDocuments(accessToken),
+            this.getCompletedDocuments(accessToken),
+        ]);
+        return [...inProgress, ...completed];
     }
 
     /**

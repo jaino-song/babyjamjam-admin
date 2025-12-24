@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Query, HttpException, HttpStatus } from "@nestjs/common";
+import { Controller, Post, Get, Body, Query, Param, HttpException, HttpStatus } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { ContractDataDto } from "../../application/dto/contract.dto";
 
@@ -70,8 +70,12 @@ export class EformsignController {
         }
     }
 
+    /**
+     * Get all documents (combines in-progress, completed, rejected in single request)
+     * More efficient than making 3 separate requests from frontend
+     */
     @Get("documents")
-    async getDocuments(@Query("accessToken") accessToken: string) {
+    async getAllDocuments(@Query("accessToken") accessToken: string) {
         try {
             if (!accessToken) {
                 throw new HttpException(
@@ -79,8 +83,99 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getDocumentsList(accessToken);
+            const documents = await this.eformsignService.getAllDocuments(accessToken);
             return documents;
+        } catch (error) {
+            throw new HttpException(
+                { error: error.message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    /**
+     * Get in-progress documents (진행 중 - type: 01)
+     */
+    @Get("documents/in-progress")
+    async getInProgressDocuments(@Query("accessToken") accessToken: string) {
+        try {
+            if (!accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+            const documents = await this.eformsignService.getInProgressDocuments(accessToken);
+            return documents;
+        } catch (error) {
+            throw new HttpException(
+                { error: error.message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    /**
+     * Get completed documents (완료 - type: 03)
+     */
+    @Get("documents/completed")
+    async getCompletedDocuments(@Query("accessToken") accessToken: string) {
+        try {
+            if (!accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+            const documents = await this.eformsignService.getCompletedDocuments(accessToken);
+            return documents;
+        } catch (error) {
+            throw new HttpException(
+                { error: error.message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    /**
+     * Get rejected documents (거부/반려 - type: 04)
+     */
+    @Get("documents/rejected")
+    async getRejectedDocuments(@Query("accessToken") accessToken: string) {
+        try {
+            if (!accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+            const documents = await this.eformsignService.getRejectedDocuments(accessToken);
+            return documents;
+        } catch (error) {
+            throw new HttpException(
+                { error: error.message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    /**
+     * Get single document by ID
+     */
+    @Get("documents/:documentId")
+    async getDocumentById(
+        @Param("documentId") documentId: string,
+        @Query("accessToken") accessToken: string
+    ) {
+        try {
+            if (!accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+            const document = await this.eformsignService.getDocumentById(accessToken, documentId);
+            return document;
         } catch (error) {
             throw new HttpException(
                 { error: error.message },

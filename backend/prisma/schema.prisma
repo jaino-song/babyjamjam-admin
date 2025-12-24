@@ -96,6 +96,7 @@ model eformsign_doc {
   status_type String
   status_detail String
   step_type String
+  
   step_index String
   step_name String
   step_recipient_type String

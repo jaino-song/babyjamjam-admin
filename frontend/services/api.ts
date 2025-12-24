@@ -11,25 +11,46 @@ export const authApi = {
 };
 
 // eformsign APIs
+// Note: axios client baseURL is '/api', so paths here should NOT include '/api/' prefix
 export const eformsignApi = {
     generateSignature: async (executionTime: number) => {
         const { data } = await api.post('/generate-signature', { executionTime });
         return data;
     },
-    getAccessToken: async (executionTime: number, memberEmail?: string) => {
+    // Authenticates and stores token in httpOnly cookie (returns { success: true })
+    authenticate: async (executionTime: number, memberEmail?: string): Promise<{ success: boolean }> => {
         const { data } = await api.post('/access-token', { executionTime, memberEmail });
         return data;
     },
-    refreshAccessToken: async (executionTime: number, refreshToken: string) => {
-        const { data } = await api.post('/refresh-access-token', { executionTime, refreshToken });
+    refreshAccessToken: async (executionTime: number) => {
+        const { data } = await api.post('/refresh-access-token', { executionTime });
         return data;
     },
-    generateDocument: async (contractData: ContractDataDto, accessToken: string, refreshToken: string) => {
-        const { data } = await api.post('/generate-document', { contractData, accessToken, refreshToken });
+    generateDocument: async (contractData: ContractDataDto) => {
+        const { data } = await api.post('/generate-document', { contractData });
         return data;
     },
-    getDocuments: async (accessToken: string): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents', { params: { accessToken } });
+    // Documents APIs - token is read from httpOnly cookie on server
+    // Unified endpoint - fetches all documents in single request (more efficient)
+    getAllDocuments: async (): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/documents');
+        return data;
+    },
+    getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/documents/in-progress');
+        return data;
+    },
+    getCompletedDocuments: async (): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/documents/completed');
+        return data;
+    },
+    getRejectedDocuments: async (): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/documents/rejected');
+        return data;
+    },
+    // Legacy alias
+    getDocuments: async (): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/documents');
         return data;
     },
 }
