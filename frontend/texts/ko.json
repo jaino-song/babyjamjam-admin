@@ -88,12 +88,16 @@
     "reminder": "상담 후 리마인더",
     "thanks": "예약 완료",
     "survey": "모니터링 설문",
-    "contract": "전자계약서"
+    "contract": "전자계약서",
+    "info": "정보 수집"
   },
   "greeting-msg": {
     "subtitle": "첫 인사 문자 메시지를 생성합니다",
     "name-label": "산모님 성함",
     "name-placeholder": "홍길동"
+  },
+  "info-msg": {
+    "subtitle": "서비스 진행을 위한 정보 수집 문자 메시지를 생성합니다"
   },
   "service-info-msg": {
     "subtitle": "서비스 소개 문자 메시지를 생성합니다",

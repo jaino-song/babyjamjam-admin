@@ -19,6 +19,7 @@ const navButtonConfigs: NavButton[] = [
   { id: "thanks", labelKey: "msg-type.thanks", href: "/messages/thanks" },
   { id: "survey", labelKey: "msg-type.survey", href: "/messages/survey" },
   { id: "contract", labelKey: "msg-type.contract", href: "/messages/contract" },
+  { id: "info", labelKey: "msg-type.info", href: "/messages/info" },
 ];
 
 const getNavButtons = (locale: Locale) =>
