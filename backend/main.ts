@@ -1,6 +1,8 @@
 import { NestFactory } from "@nestjs/core";
+import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
+// Force restart to pick up Prisma client changes
 
 // Add BigInt serialization support
 (BigInt.prototype as any).toJSON = function () {
@@ -10,6 +12,7 @@ import cookieParser from "cookie-parser";
 async function bootstrap() {
     const app = await NestFactory.create(AppModule);
     app.use(cookieParser());
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     // CORS configuration - support both production and development origins
     const allowedOrigins = [
         process.env.PRODUCTION_FRONTEND_URL,
@@ -22,7 +25,7 @@ async function bootstrap() {
     app.enableCors({
         origin: allowedOrigins.length > 0 ? allowedOrigins : "http://localhost:3000",
         credentials: true,
-        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
     });
 

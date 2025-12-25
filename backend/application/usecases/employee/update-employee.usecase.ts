@@ -4,7 +4,7 @@ import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/em
 
 export type UpdateEmployeeParams = {
     name?: string;
-    workArea?: string;
+    workArea?: string[];
     phone?: string;
     grade?: string;
     openToNextWork?: boolean;

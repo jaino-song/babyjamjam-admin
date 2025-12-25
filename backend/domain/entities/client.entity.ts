@@ -1,7 +1,7 @@
 interface UpdateClientProps {
     name?: string;
-    primaryEmployeeId?: number;
-    secondaryEmployeeId?: number | null;
+    primaryScheduleId?: number | null;
+    secondaryScheduleId?: number | null;
     address?: string | null;
     phone?: string | null;
     type?: string | null;
@@ -13,13 +13,15 @@ interface UpdateClientProps {
     endDate?: Date | null;
     careCenter?: boolean;
     voucherClient?: boolean;
+    birthday?: string | null;
+    contractStatus?: string | null;
+    breastPump?: boolean;
 }
 
 interface CreateClientProps {
-
     name: string;
-    primaryEmployeeId: number;
-    secondaryEmployeeId: number | null;
+    primaryScheduleId: number | null;
+    secondaryScheduleId: number | null;
     address: string | null;
     phone: string | null;
     type: string | null;
@@ -31,14 +33,17 @@ interface CreateClientProps {
     endDate: Date | null;
     careCenter: boolean;
     voucherClient: boolean;
+    birthday: string | null;
+    contractStatus: string | null;
+    breastPump: boolean;
 }
 
 export class ClientEntity {
     constructor(
         public readonly id: number,
         public name: string,
-        public primaryEmployeeId: number,
-        public secondaryEmployeeId: number | null,
+        public primaryScheduleId: number | null,
+        public secondaryScheduleId: number | null,
         public address: string | null,
         public phone: string | null,
         public type: string | null,
@@ -50,6 +55,9 @@ export class ClientEntity {
         public endDate: Date | null,
         public careCenter: boolean,
         public voucherClient: boolean,
+        public birthday: string | null,
+        public contractStatus: string | null,
+        public breastPump: boolean,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -66,8 +74,8 @@ export class ClientEntity {
         return new ClientEntity(
             0,
             props.name,
-            props.primaryEmployeeId,
-            props.secondaryEmployeeId,
+            props.primaryScheduleId,
+            props.secondaryScheduleId,
             props.address,
             props.phone,
             props.type,
@@ -79,13 +87,16 @@ export class ClientEntity {
             props.endDate,
             props.careCenter,
             props.voucherClient,
+            props.birthday,
+            props.contractStatus,
+            props.breastPump,
         );
     }
 
     update(props: UpdateClientProps): void {
         this.name = props.name ?? this.name;
-        this.primaryEmployeeId = props.primaryEmployeeId ?? this.primaryEmployeeId;
-        this.secondaryEmployeeId = props.secondaryEmployeeId ?? this.secondaryEmployeeId;
+        this.primaryScheduleId = props.primaryScheduleId !== undefined ? props.primaryScheduleId : this.primaryScheduleId;
+        this.secondaryScheduleId = props.secondaryScheduleId !== undefined ? props.secondaryScheduleId : this.secondaryScheduleId;
         this.address = props.address ?? this.address;
         this.phone = props.phone ?? this.phone;
         this.type = props.type ?? this.type;
@@ -97,14 +108,17 @@ export class ClientEntity {
         this.endDate = props.endDate ?? this.endDate;
         this.careCenter = props.careCenter ?? this.careCenter;
         this.voucherClient = props.voucherClient ?? this.voucherClient;
+        this.birthday = props.birthday ?? this.birthday;
+        this.contractStatus = props.contractStatus ?? this.contractStatus;
+        this.breastPump = props.breastPump ?? this.breastPump;
     }
 
-    static fromPrisma(prismaData: { id: number, name: string, primaryEmployeeId: number, secondaryEmployeeId: number | null, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean }): ClientEntity {
+    static fromPrisma(prismaData: { id: number, name: string, primaryScheduleId: number | null, secondaryScheduleId: number | null, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean }): ClientEntity {
         return new ClientEntity(
             prismaData.id,
             prismaData.name,
-            prismaData.primaryEmployeeId,
-            prismaData.secondaryEmployeeId,
+            prismaData.primaryScheduleId,
+            prismaData.secondaryScheduleId,
             prismaData.address,
             prismaData.phone,
             prismaData.type,
@@ -116,16 +130,19 @@ export class ClientEntity {
             prismaData.endDate,
             prismaData.careCenter,
             prismaData.voucherClient,
+            prismaData.birthday,
+            prismaData.contractStatus,
+            prismaData.breastPump,
         );
     }
 
     // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { id: number, name: string, primaryEmployeeId: number, secondaryEmployeeId: number | null, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean } {
+    toPersistence(): { id: number, name: string, primaryScheduleId: number | null, secondaryScheduleId: number | null, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean } {
         return {
             id: this.id,
             name: this.name,
-            primaryEmployeeId: this.primaryEmployeeId,
-            secondaryEmployeeId: this.secondaryEmployeeId,
+            primaryScheduleId: this.primaryScheduleId,
+            secondaryScheduleId: this.secondaryScheduleId,
             address: this.address,
             phone: this.phone,
             type: this.type,
@@ -137,6 +154,9 @@ export class ClientEntity {
             endDate: this.endDate,
             careCenter: this.careCenter,
             voucherClient: this.voucherClient,
+            birthday: this.birthday,
+            contractStatus: this.contractStatus,
+            breastPump: this.breastPump,
         };
     }
 }

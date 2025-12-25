@@ -1,11 +1,12 @@
-import { IsBoolean, IsDateString, IsOptional, IsString } from "class-validator";
+import { IsArray, IsBoolean, IsDateString, IsOptional, IsString } from "class-validator";
 
 export class CreateEmployeeDto {
     @IsString()
     name!: string;
 
-    @IsString()
-    workArea!: string;
+    @IsArray()
+    @IsString({ each: true })
+    workArea!: string[];
 
     @IsString()
     phone!: string;
@@ -16,8 +17,9 @@ export class CreateEmployeeDto {
     @IsBoolean()
     openToNextWork!: boolean;
 
+    @IsOptional()
     @IsDateString()
-    registeredDate!: string;
+    registeredDate?: string;
 }
 
 export class UpdateEmployeeDto {
@@ -26,8 +28,9 @@ export class UpdateEmployeeDto {
     name?: string;
 
     @IsOptional()
-    @IsString()
-    workArea?: string;
+    @IsArray()
+    @IsString({ each: true })
+    workArea?: string[];
 
     @IsOptional()
     @IsString()

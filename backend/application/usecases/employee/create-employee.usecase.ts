@@ -11,7 +11,7 @@ export class CreateEmployeeUsecase {
 
     execute(
         name: string,
-        workArea: string,
+        workArea: string[],
         phone: string,
         grade: string,
         openToNextWork: boolean,

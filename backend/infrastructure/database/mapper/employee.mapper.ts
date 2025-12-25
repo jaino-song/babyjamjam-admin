@@ -3,7 +3,7 @@ import { EmployeeEntity } from "domain/entities/employee.entity";
 type EmployeeRow = {
     id: number;
     name: string;
-    work_area: string;
+    work_area: string[];
     phone: string;
     grade: string;
     open_to_next_work: boolean;
