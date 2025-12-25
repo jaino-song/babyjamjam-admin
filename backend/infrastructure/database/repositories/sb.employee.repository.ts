@@ -43,7 +43,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async findByWorkArea(workArea: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { work_area: workArea },
+            where: { work_area: { has: workArea } },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }

@@ -1,8 +1,10 @@
-import { Body, Controller, Delete, Get, Query, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import { CreateClientDto, UpdateClientDto } from "interface/dto/client.dto";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
 @Controller("clients")
+@UseGuards(JwtGuard)
 export class ClientController {
     constructor(private readonly clientService: ClientService) {}
 
@@ -23,21 +25,37 @@ export class ClientController {
             endDate: dto.endDate ?? null,
             careCenter: dto.careCenter,
             voucherClient: dto.voucherClient,
+            birthday: dto.birthday ?? null,
+            contractStatus: dto.contractStatus ?? null,
+            breastPump: dto.breastPump,
         });
     }
 
     @Get()
-    findAll() {
+    findAll(
+        @Query("page") page?: string,
+        @Query("limit") limit?: string,
+        @Query("search") search?: string,
+    ) {
+        // If pagination params provided, use paginated query
+        if (page && limit) {
+            return this.clientService.findAllPaginated(
+                Number(page),
+                Number(limit),
+                search,
+            );
+        }
+        // Otherwise return all (for backwards compatibility)
         return this.clientService.findAll();
     }
 
-    @Get("id")
-    findById(@Query("id") id: string) {
+    @Get(":id")
+    findById(@Param("id") id: string) {
         return this.clientService.findById(Number(id));
     }
 
-    @Patch()
-    update(@Query("id") id: string, @Body() dto: UpdateClientDto) {
+    @Patch(":id")
+    update(@Param("id") id: string, @Body() dto: UpdateClientDto) {
         return this.clientService.update(Number(id), {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
@@ -53,11 +71,14 @@ export class ClientController {
             endDate: dto.endDate,
             careCenter: dto.careCenter,
             voucherClient: dto.voucherClient,
+            birthday: dto.birthday,
+            contractStatus: dto.contractStatus,
+            breastPump: dto.breastPump,
         });
     }
 
-    @Delete()
-    delete(@Query("id") id: string) {
+    @Delete(":id")
+    delete(@Param("id") id: string) {
         return this.clientService.delete(Number(id));
     }
 }

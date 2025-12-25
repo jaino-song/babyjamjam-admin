@@ -18,7 +18,10 @@
     "generated-message-title": "생성된 문자",
     "copy-success-message": "메시지가 클립보드에 복사되었습니다!",
     "next": "다음",
-    "back": "이전"
+    "back": "이전",
+    "saving": "저장 중...",
+    "deleting": "삭제 중...",
+    "close": "닫기"
   },
   "header": {
     "companyName": "인천 아이미래로",
@@ -152,6 +155,7 @@
     "messages": "메시지",
     "contracts": "계약서",
     "clients": "고객 관리",
+    "employees": "제공인력 관리",
     "settings": "설정"
   },
   "login": {
@@ -167,5 +171,105 @@
     "created-date": "생성일",
     "status": "상태",
     "new-document": "새 계약서"
+  },
+  "clients": {
+    "title": "고객 관리",
+    "subtitle": "등록된 고객 정보를 관리하고 새로운 고객을 등록할 수 있습니다.",
+    "search-placeholder": "이름, 연락처, 주소 검색",
+    "no-data": "등록된 고객이 없습니다.",
+    "load-error": "고객 목록을 불러오는데 실패했습니다.",
+    "delete-confirm": "정말로 이 고객을 삭제하시겠습니까?",
+    "table": {
+      "name": "이름",
+      "phone": "연락처",
+      "type": "바우처 유형",
+      "duration": "서비스 기간",
+      "status": "계약 상태",
+      "start-date": "시작일",
+      "actions": "관리"
+    },
+    "form": {
+      "add-title": "새 고객 등록",
+      "edit-title": "고객 정보 수정",
+      "section-basic": "기본 정보",
+      "section-employee": "담당 제공인력",
+      "section-service": "서비스 정보",
+      "section-pricing": "요금 정보",
+      "section-contract": "계약 정보",
+      "section-flags": "추가 옵션",
+      "name": "이름",
+      "birthday": "생년월일",
+      "birthday-helper": "YYMMDD 형식 (예: 990315)",
+      "phone": "연락처",
+      "address": "주소",
+      "primary-employee": "주 담당 인력",
+      "secondary-employee": "보조 담당 인력",
+      "none": "없음",
+      "voucher-type": "바우처 유형",
+      "duration": "서비스 기간",
+      "full-price": "총 서비스 금액",
+      "grant": "정부지원금",
+      "actual-price": "본인부담금",
+      "contract-status": "계약 상태",
+      "start-date": "시작일",
+      "end-date": "종료일",
+      "voucher-client": "바우처 고객",
+      "care-center": "산후조리원",
+      "breast-pump": "유축기 대여",
+      "error-name-required": "이름을 입력해주세요.",
+      "error-birthday-required": "생년월일을 입력해주세요.",
+      "error-address-required": "주소를 입력해주세요.",
+      "error-phone-required": "연락처를 입력해주세요.",
+      "error-employee-required": "주 담당 인력을 선택해주세요.",
+      "error-type-required": "바우처 유형을 선택해주세요.",
+      "error-duration-required": "서비스 기간을 선택해주세요.",
+      "error-price-required": "요금 정보를 입력해주세요.",
+      "error-start-date-required": "시작일을 입력해주세요.",
+      "error-end-date-required": "종료일을 입력해주세요.",
+      "error-save-failed": "저장에 실패했습니다. 다시 시도해주세요.",
+      "employee-search-placeholder": "이름으로 검색...",
+      "no-employee-found": "일치하는 제공인력이 없습니다.",
+      "add-new-employee": "새 제공인력 추가",
+      "add-employee-coming-soon": "제공인력 추가 기능은 곧 제공될 예정입니다.",
+      "type-to-search": "검색어를 입력하세요",
+      "auto-filled": "자동 반영"
+    }
+  },
+  "employees": {
+    "title": "제공인력 관리",
+    "subtitle": "등록된 제공인력 정보를 관리하고 새로운 제공인력을 등록할 수 있습니다.",
+    "add-employee": "새 제공인력 등록",
+    "search-placeholder": "이름, 연락처, 근무지역 검색",
+    "no-employees": "등록된 제공인력이 없습니다.",
+    "schedule-not-implemented": "스케줄 기능 준비 중",
+    "table": {
+      "name": "이름",
+      "open-status": "근무 가능",
+      "assigned-client": "배당된 고객"
+    },
+    "status": {
+      "available": "가능",
+      "unavailable": "불가능"
+    },
+    "form": {
+      "create-title": "새 제공인력 등록",
+      "edit-title": "제공인력 정보 수정",
+      "section-basic": "기본 정보",
+      "section-work": "근무 정보",
+      "section-registration": "등록 정보",
+      "name": "이름",
+      "phone": "연락처",
+      "work-area": "근무 지역",
+      "grade": "등급",
+      "open-to-next-work": "근무 가능 여부",
+      "registered-date": "등록일"
+    },
+    "detail": {
+      "title": "제공인력 상세 정보"
+    },
+    "delete-confirm": {
+      "title": "제공인력 삭제",
+      "message": "정말로 이 제공인력을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다."
+    }
   }
 }

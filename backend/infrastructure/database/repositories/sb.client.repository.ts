@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ClientEntity } from "domain/entities/client.entity";
-import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 
@@ -18,6 +18,41 @@ export class SbClientRepository implements IClientRepository {
     async findAll(): Promise<ClientEntity[]> {
         const clients = await this.prismaService.client.findMany();
         return clients.map(ClientMapper.toDomain);
+    }
+
+    async findAllPaginated(page: number, limit: number, search?: string): Promise<PaginatedResult<ClientEntity>> {
+        const skip = (page - 1) * limit;
+        
+        const where = search ? {
+            OR: [
+                { name: { contains: search, mode: 'insensitive' as const } },
+                { address: { contains: search, mode: 'insensitive' as const } },
+                { phone: { contains: search, mode: 'insensitive' as const } },
+            ],
+        } : {};
+
+        try {
+            const [clients, total] = await Promise.all([
+                this.prismaService.client.findMany({
+                    where,
+                    skip,
+                    take: limit,
+                    orderBy: { id: 'desc' },
+                }),
+                this.prismaService.client.count({ where }),
+            ]);
+
+            return {
+                data: clients.map(ClientMapper.toDomain),
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+            };
+        } catch (error) {
+            console.error('[ClientRepository] findAllPaginated error:', error);
+            throw error;
+        }
     }
 
     async create(client: ClientEntity): Promise<ClientEntity> {

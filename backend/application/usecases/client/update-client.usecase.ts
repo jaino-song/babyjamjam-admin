@@ -4,8 +4,8 @@ import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client
 
 type UpdateClientParams = {
     name?: string;
-    primaryEmployeeId?: number;
-    secondaryEmployeeId?: number | null;
+    primaryScheduleId?: number | null;
+    secondaryScheduleId?: number | null;
     address?: string | null;
     phone?: string | null;
     type?: string | null;
@@ -17,6 +17,9 @@ type UpdateClientParams = {
     endDate?: Date | null;
     careCenter?: boolean;
     voucherClient?: boolean;
+    birthday?: string | null;
+    contractStatus?: string | null;
+    breastPump?: boolean;
 };
 
 @Injectable()
