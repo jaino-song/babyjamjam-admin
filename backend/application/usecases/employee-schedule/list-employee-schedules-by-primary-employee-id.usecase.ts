@@ -3,13 +3,14 @@ import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 
 @Injectable()
-export class ListEmployeeSchedulesByEmployeeIdUsecase {
+export class ListEmployeeSchedulesByPrimaryEmployeeIdUsecase {
     constructor(
         @Inject(EMPLOYEE_SCHEDULE_REPOSITORY)
         private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
     ) {}
 
-    execute(employeeId: number): Promise<EmployeeScheduleEntity[]> {
-        return this.employeeScheduleRepository.findByEmployeeId(employeeId);
+    execute(primaryEmployeeId: number): Promise<EmployeeScheduleEntity[]> {
+        return this.employeeScheduleRepository.findByPrimaryEmployeeId(primaryEmployeeId);
     }
 }
+

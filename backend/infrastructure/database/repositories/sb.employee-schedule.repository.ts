@@ -15,9 +15,24 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
         return schedule ? EmployeeScheduleMapper.toDomain(schedule) : null;
     }
 
-    async findByEmployeeId(employeeId: number): Promise<EmployeeScheduleEntity[]> {
+    async findByClientId(clientId: number): Promise<EmployeeScheduleEntity[]> {
         const schedules = await this.prismaService.employee_schedule.findMany({
-            where: { employee_id: employeeId },
+            where: { client_id: clientId },
+            orderBy: { id: 'desc' },
+        });
+        return schedules.map(EmployeeScheduleMapper.toDomain);
+    }
+
+    async findByPrimaryEmployeeId(primaryEmployeeId: number): Promise<EmployeeScheduleEntity[]> {
+        const schedules = await this.prismaService.employee_schedule.findMany({
+            where: { primary_employee_id: primaryEmployeeId },
+        });
+        return schedules.map(EmployeeScheduleMapper.toDomain);
+    }
+
+    async findBySecondaryEmployeeId(secondaryEmployeeId: number): Promise<EmployeeScheduleEntity[]> {
+        const schedules = await this.prismaService.employee_schedule.findMany({
+            where: { secondary_employee_id: secondaryEmployeeId },
         });
         return schedules.map(EmployeeScheduleMapper.toDomain);
     }

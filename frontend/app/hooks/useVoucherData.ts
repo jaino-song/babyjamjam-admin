@@ -12,11 +12,11 @@ export interface BankAccountInfo {
 
 export interface VoucherPriceInfo {
   id: number;
-  type: string;
+  type: string | null;
   duration: string;
-  fullPrice: number;
-  grant: number;
-  actualPrice: number;
+  fullPrice: string | null;
+  grant: string | null;
+  actualPrice: string | null;
 }
 
 export interface AreaTemplate {

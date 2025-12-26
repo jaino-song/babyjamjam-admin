@@ -4,6 +4,7 @@ import {
     DeleteClientUsecase,
     FindClientByIdUsecase,
     ListClientsUsecase,
+    ListClientsPaginatedUsecase,
     UpdateClientUsecase,
 } from "application/usecases/client";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
@@ -19,6 +20,7 @@ import { ClientController } from "interface/controllers/client.controller";
         DeleteClientUsecase,
         FindClientByIdUsecase,
         ListClientsUsecase,
+        ListClientsPaginatedUsecase,
         UpdateClientUsecase,
         ClientService,
         PrismaService,

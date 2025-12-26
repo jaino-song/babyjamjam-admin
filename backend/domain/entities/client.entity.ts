@@ -1,7 +1,5 @@
 interface UpdateClientProps {
     name?: string;
-    primaryScheduleId?: number | null;
-    secondaryScheduleId?: number | null;
     address?: string | null;
     phone?: string | null;
     type?: string | null;
@@ -20,8 +18,6 @@ interface UpdateClientProps {
 
 interface CreateClientProps {
     name: string;
-    primaryScheduleId: number | null;
-    secondaryScheduleId: number | null;
     address: string | null;
     phone: string | null;
     type: string | null;
@@ -42,8 +38,6 @@ export class ClientEntity {
     constructor(
         public readonly id: number,
         public name: string,
-        public primaryScheduleId: number | null,
-        public secondaryScheduleId: number | null,
         public address: string | null,
         public phone: string | null,
         public type: string | null,
@@ -74,8 +68,6 @@ export class ClientEntity {
         return new ClientEntity(
             0,
             props.name,
-            props.primaryScheduleId,
-            props.secondaryScheduleId,
             props.address,
             props.phone,
             props.type,
@@ -95,8 +87,6 @@ export class ClientEntity {
 
     update(props: UpdateClientProps): void {
         this.name = props.name ?? this.name;
-        this.primaryScheduleId = props.primaryScheduleId !== undefined ? props.primaryScheduleId : this.primaryScheduleId;
-        this.secondaryScheduleId = props.secondaryScheduleId !== undefined ? props.secondaryScheduleId : this.secondaryScheduleId;
         this.address = props.address ?? this.address;
         this.phone = props.phone ?? this.phone;
         this.type = props.type ?? this.type;
@@ -113,12 +103,10 @@ export class ClientEntity {
         this.breastPump = props.breastPump ?? this.breastPump;
     }
 
-    static fromPrisma(prismaData: { id: number, name: string, primaryScheduleId: number | null, secondaryScheduleId: number | null, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean }): ClientEntity {
+    static fromPrisma(prismaData: { id: number, name: string, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean }): ClientEntity {
         return new ClientEntity(
             prismaData.id,
             prismaData.name,
-            prismaData.primaryScheduleId,
-            prismaData.secondaryScheduleId,
             prismaData.address,
             prismaData.phone,
             prismaData.type,
@@ -137,12 +125,10 @@ export class ClientEntity {
     }
 
     // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { id: number, name: string, primaryScheduleId: number | null, secondaryScheduleId: number | null, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean } {
+    toPersistence(): { id: number, name: string, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean } {
         return {
             id: this.id,
             name: this.name,
-            primaryScheduleId: this.primaryScheduleId,
-            secondaryScheduleId: this.secondaryScheduleId,
             address: this.address,
             phone: this.phone,
             type: this.type,

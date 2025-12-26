@@ -52,6 +52,17 @@ export class CreateClientDto {
 
     @IsBoolean()
     voucherClient!: boolean;
+
+    @IsOptional()
+    @IsString()
+    birthday?: string | null;
+
+    @IsOptional()
+    @IsString()
+    contractStatus?: string | null;
+
+    @IsBoolean()
+    breastPump!: boolean;
 }
 
 export class UpdateClientDto {
@@ -110,4 +121,16 @@ export class UpdateClientDto {
     @IsOptional()
     @IsBoolean()
     voucherClient?: boolean;
+
+    @IsOptional()
+    @IsString()
+    birthday?: string | null;
+
+    @IsOptional()
+    @IsString()
+    contractStatus?: string | null;
+
+    @IsOptional()
+    @IsBoolean()
+    breastPump?: boolean;
 }

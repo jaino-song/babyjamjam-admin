@@ -9,7 +9,9 @@ export class EmployeeScheduleController {
     @Post()
     create(@Body() dto: CreateEmployeeScheduleDto) {
         return this.employeeScheduleService.create({
-            employeeId: dto.employeeId,
+            clientId: dto.clientId,
+            primaryEmployeeId: dto.primaryEmployeeId,
+            secondaryEmployeeId: dto.secondaryEmployeeId ?? null,
             workAddress: dto.workAddress,
             startDate: dto.startDate,
             endDate: dto.endDate,
@@ -22,9 +24,14 @@ export class EmployeeScheduleController {
         return this.employeeScheduleService.findAll();
     }
 
-    @Get("employee")
-    findByEmployee(@Query("employeeId") employeeId: string) {
-        return this.employeeScheduleService.findByEmployeeId(Number(employeeId));
+    @Get("primary-employee")
+    findByPrimaryEmployee(@Query("primaryEmployeeId") primaryEmployeeId: string) {
+        return this.employeeScheduleService.findByPrimaryEmployeeId(Number(primaryEmployeeId));
+    }
+
+    @Get("secondary-employee")
+    findBySecondaryEmployee(@Query("secondaryEmployeeId") secondaryEmployeeId: string) {
+        return this.employeeScheduleService.findBySecondaryEmployeeId(Number(secondaryEmployeeId));
     }
 
     @Get("id")

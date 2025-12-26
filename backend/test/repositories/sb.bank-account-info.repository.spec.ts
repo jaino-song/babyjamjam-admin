@@ -3,95 +3,256 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity";
 
 describe("SbBankAccountInfoRepository", () => {
-    const bankAccountModel = {
+    // ============================================
+    // Test Fixtures & Setup
+    // ============================================
+
+    const createMockPrismaBankAccount = () => ({
         findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
         delete: jest.fn(),
-    };
+    });
 
-    const prisma = { bankAccountInfo: bankAccountModel } as unknown as PrismaService;
+    const createBankAccountRow = (overrides = {}) => ({
+        area: "Seoul",
+        bankName: "K-Bank",
+        accNum: "123-456-7890",
+        ...overrides,
+    });
 
-    const repository = new SbBankAccountInfoRepository(prisma);
+    let bankAccountModel: ReturnType<typeof createMockPrismaBankAccount>;
+    let prisma: PrismaService;
+    let repository: SbBankAccountInfoRepository;
 
     beforeEach(() => {
+        bankAccountModel = createMockPrismaBankAccount();
+        prisma = { bankAccountInfo: bankAccountModel } as unknown as PrismaService;
+        repository = new SbBankAccountInfoRepository(prisma);
+    });
+
+    afterEach(() => {
         jest.clearAllMocks();
     });
 
-    it("returns a bank account info when findByArea finds a match", async () => {
-        const row = {
-            area: "Seoul",
-            bankName: "K-Bank",
-            accNum: "123-456-7890",
-        };
-        bankAccountModel.findUnique.mockResolvedValue(row);
+    // ============================================
+    // findByArea
+    // ============================================
+    describe("findByArea", () => {
+        describe("given a bank account exists for the specified area", () => {
+            it("should return the mapped BankAccountInfoEntity", async () => {
+                // Arrange
+                const row = createBankAccountRow();
+                bankAccountModel.findUnique.mockResolvedValue(row);
 
-        const result = await repository.findByArea("Seoul");
+                // Act
+                const result = await repository.findByArea("Seoul");
 
-        expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { area: "Seoul" } });
-        expect(result).toBeInstanceOf(BankAccountInfoEntity);
-        expect(result).toMatchObject(row);
-    });
-
-    it("returns null when findByArea finds nothing", async () => {
-        bankAccountModel.findUnique.mockResolvedValue(null);
-
-        const result = await repository.findByArea("Busan");
-
-        expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { area: "Busan" } });
-        expect(result).toBeNull();
-    });
-
-    it("creates a bank account info using Prisma", async () => {
-        const entity = BankAccountInfoEntity.create("Incheon", "IBK", "987-654-3210");
-        const createdRow = {
-            area: entity.area,
-            bankName: entity.bankName,
-            accNum: entity.accNum,
-        };
-        bankAccountModel.create.mockResolvedValue(createdRow);
-
-        const result = await repository.create(entity);
-
-        expect(bankAccountModel.create).toHaveBeenCalledWith({
-            data: {
-                area: "Incheon",
-                bankName: "IBK",
-                accNum: "987-654-3210",
-            },
+                // Assert
+                expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { area: "Seoul" } });
+                expect(result).toBeInstanceOf(BankAccountInfoEntity);
+                expect(result).toMatchObject({
+                    area: "Seoul",
+                    bankName: "K-Bank",
+                    accNum: "123-456-7890",
+                });
+            });
         });
-        expect(result).toMatchObject(createdRow);
-    });
 
-    it("updates a bank account info using Prisma", async () => {
-        const entity = new BankAccountInfoEntity("Daegu", "Hana Bank", "111-222-3333");
-        const updatedRow = {
-            area: entity.area,
-            bankName: "Shinhan",
-            accNum: "444-555-6666",
-        };
-        entity.bankName = updatedRow.bankName;
-        entity.accNum = updatedRow.accNum;
-        bankAccountModel.update.mockResolvedValue(updatedRow);
+        describe("given no bank account exists for the specified area", () => {
+            it("should return null", async () => {
+                // Arrange
+                bankAccountModel.findUnique.mockResolvedValue(null);
 
-        const result = await repository.update(entity);
+                // Act
+                const result = await repository.findByArea("Busan");
 
-        expect(bankAccountModel.update).toHaveBeenCalledWith({
-            where: { area: "Daegu" },
-            data: {
-                bankName: "Shinhan",
-                accNum: "444-555-6666",
-            },
+                // Assert
+                expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { area: "Busan" } });
+                expect(result).toBeNull();
+            });
         });
-        expect(result).toMatchObject(updatedRow);
+
+        describe("given different area names", () => {
+            it.each(["Seoul", "Incheon", "Busan", "Daegu", "Daejeon"])(
+                "should query with area %s",
+                async (area) => {
+                    // Arrange
+                    bankAccountModel.findUnique.mockResolvedValue(null);
+
+                    // Act
+                    await repository.findByArea(area);
+
+                    // Assert
+                    expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { area } });
+                }
+            );
+        });
     });
 
-    it("deletes bank account info by area", async () => {
-        bankAccountModel.delete.mockResolvedValue(undefined);
+    // ============================================
+    // create
+    // ============================================
+    describe("create", () => {
+        describe("given a valid BankAccountInfoEntity", () => {
+            it("should persist bank account and return created entity", async () => {
+                // Arrange
+                const entity = BankAccountInfoEntity.create("Incheon", "IBK", "987-654-3210");
+                const createdRow = createBankAccountRow({
+                    area: "Incheon",
+                    bankName: "IBK",
+                    accNum: "987-654-3210",
+                });
+                bankAccountModel.create.mockResolvedValue(createdRow);
 
-        await repository.delete("Daejeon");
+                // Act
+                const result = await repository.create(entity);
 
-        expect(bankAccountModel.delete).toHaveBeenCalledWith({ where: { area: "Daejeon" } });
+                // Assert
+                expect(bankAccountModel.create).toHaveBeenCalledWith({
+                    data: {
+                        area: "Incheon",
+                        bankName: "IBK",
+                        accNum: "987-654-3210",
+                    },
+                });
+                expect(result).toMatchObject(createdRow);
+            });
+        });
+
+        describe("given different bank names", () => {
+            it.each([
+                ["K-Bank", "111-222-3333"],
+                ["IBK", "444-555-6666"],
+                ["Shinhan", "777-888-9999"],
+                ["Hana Bank", "000-111-2222"],
+            ])("should create with bankName %s and accNum %s", async (bankName, accNum) => {
+                // Arrange
+                const entity = BankAccountInfoEntity.create("TestArea", bankName, accNum);
+                const createdRow = createBankAccountRow({
+                    area: "TestArea",
+                    bankName,
+                    accNum,
+                });
+                bankAccountModel.create.mockResolvedValue(createdRow);
+
+                // Act
+                const result = await repository.create(entity);
+
+                // Assert
+                expect(bankAccountModel.create).toHaveBeenCalledWith({
+                    data: {
+                        area: "TestArea",
+                        bankName,
+                        accNum,
+                    },
+                });
+                expect(result.bankName).toBe(bankName);
+                expect(result.accNum).toBe(accNum);
+            });
+        });
+    });
+
+    // ============================================
+    // update
+    // ============================================
+    describe("update", () => {
+        describe("given an existing BankAccountInfoEntity with changes", () => {
+            it("should update bank account with correct data", async () => {
+                // Arrange
+                const entity = new BankAccountInfoEntity("Daegu", "Shinhan", "444-555-6666");
+                const updatedRow = createBankAccountRow({
+                    area: "Daegu",
+                    bankName: "Shinhan",
+                    accNum: "444-555-6666",
+                });
+                bankAccountModel.update.mockResolvedValue(updatedRow);
+
+                // Act
+                const result = await repository.update(entity);
+
+                // Assert
+                expect(bankAccountModel.update).toHaveBeenCalledWith({
+                    where: { area: "Daegu" },
+                    data: {
+                        bankName: "Shinhan",
+                        accNum: "444-555-6666",
+                    },
+                });
+                expect(result).toMatchObject(updatedRow);
+            });
+        });
+
+        describe("given only bankName is changed", () => {
+            it("should update with new bank name", async () => {
+                // Arrange
+                const entity = new BankAccountInfoEntity("Seoul", "Woori", "123-456-7890");
+                const updatedRow = createBankAccountRow({
+                    area: "Seoul",
+                    bankName: "Woori",
+                    accNum: "123-456-7890",
+                });
+                bankAccountModel.update.mockResolvedValue(updatedRow);
+
+                // Act
+                const result = await repository.update(entity);
+
+                // Assert
+                expect(result.bankName).toBe("Woori");
+            });
+        });
+
+        describe("given only accNum is changed", () => {
+            it("should update with new account number", async () => {
+                // Arrange
+                const entity = new BankAccountInfoEntity("Seoul", "K-Bank", "999-888-7777");
+                const updatedRow = createBankAccountRow({
+                    area: "Seoul",
+                    bankName: "K-Bank",
+                    accNum: "999-888-7777",
+                });
+                bankAccountModel.update.mockResolvedValue(updatedRow);
+
+                // Act
+                const result = await repository.update(entity);
+
+                // Assert
+                expect(result.accNum).toBe("999-888-7777");
+            });
+        });
+    });
+
+    // ============================================
+    // delete
+    // ============================================
+    describe("delete", () => {
+        describe("given a valid area", () => {
+            it("should delete the bank account info", async () => {
+                // Arrange
+                bankAccountModel.delete.mockResolvedValue(undefined);
+
+                // Act
+                await repository.delete("Daejeon");
+
+                // Assert
+                expect(bankAccountModel.delete).toHaveBeenCalledWith({ where: { area: "Daejeon" } });
+            });
+        });
+
+        describe("given different areas", () => {
+            it.each(["Seoul", "Incheon", "Busan", "Daegu"])(
+                "should delete bank account for area %s",
+                async (area) => {
+                    // Arrange
+                    bankAccountModel.delete.mockResolvedValue(undefined);
+
+                    // Act
+                    await repository.delete(area);
+
+                    // Assert
+                    expect(bankAccountModel.delete).toHaveBeenCalledWith({ where: { area } });
+                }
+            );
+        });
     });
 });
-
