@@ -165,16 +165,14 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
         if (open) {
             setPricesManuallyEdited(false); // Reset manual edit flag
             if (client) {
-                // Note: Client now uses scheduleId instead of employeeId
-                // For editing, we set employeeId to null since we need backend support
-                // to resolve employee from schedule. This is a temporary limitation.
+                // Employee info now comes directly from client (via backend schedule lookup)
                 setFormData({
                     name: client.name,
                     birthday: client.birthday || "",
                     address: client.address || "",
                     phone: client.phone || "",
-                    primaryEmployeeId: null, // TODO: Resolve employee from schedule via backend
-                    secondaryEmployeeId: null, // TODO: Resolve employee from schedule via backend
+                    primaryEmployeeId: client.primaryEmployee?.id ?? null,
+                    secondaryEmployeeId: client.secondaryEmployee?.id ?? null,
                     type: client.type || "",
                     duration: client.duration,
                     fullPrice: client.fullPrice || "",

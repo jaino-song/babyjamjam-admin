@@ -4,8 +4,6 @@ import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client
 
 type CreateClientParams = {
     name: string;
-    primaryScheduleId: number | null;
-    secondaryScheduleId: number | null;
     address: string | null;
     phone: string | null;
     type: string | null;

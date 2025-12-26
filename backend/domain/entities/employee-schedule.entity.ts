@@ -1,7 +1,9 @@
 export class EmployeeScheduleEntity {
     constructor(
         public readonly id: number,
-        public readonly employeeId: number,
+        public readonly clientId: number,
+        public readonly primaryEmployeeId: number,
+        public readonly secondaryEmployeeId: number | null,
         public readonly workAddress: string,
         public startDate: Date,
         public endDate: Date,
@@ -9,12 +11,14 @@ export class EmployeeScheduleEntity {
     ) {}
 
     static create(
-        employeeId: number,
+        clientId: number,
+        primaryEmployeeId: number,
+        secondaryEmployeeId: number | null,
         workAddress: string,
         startDate: Date,
         endDate: Date,
         replaced = false,
     ): EmployeeScheduleEntity {
-        return new EmployeeScheduleEntity(0, employeeId, workAddress, startDate, endDate, replaced);
+        return new EmployeeScheduleEntity(0, clientId, primaryEmployeeId, secondaryEmployeeId, workAddress, startDate, endDate, replaced);
     }
 }

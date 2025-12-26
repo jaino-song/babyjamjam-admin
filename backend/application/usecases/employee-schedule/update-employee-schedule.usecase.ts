@@ -3,6 +3,8 @@ import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 
 type UpdateEmployeeScheduleParams = {
+    primaryEmployeeId?: number;
+    secondaryEmployeeId?: number | null;
     workAddress?: string;
     startDate?: Date;
     endDate?: Date;
@@ -24,7 +26,9 @@ export class UpdateEmployeeScheduleUsecase {
 
         const updated = new EmployeeScheduleEntity(
             schedule.id,
-            schedule.employeeId,
+            schedule.clientId, // Client cannot be changed
+            updates.primaryEmployeeId ?? schedule.primaryEmployeeId,
+            updates.secondaryEmployeeId !== undefined ? updates.secondaryEmployeeId : schedule.secondaryEmployeeId,
             updates.workAddress ?? schedule.workAddress,
             updates.startDate ?? schedule.startDate,
             updates.endDate ?? schedule.endDate,

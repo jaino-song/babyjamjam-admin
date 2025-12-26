@@ -1,3 +1,9 @@
+// Employee summary for client responses
+export interface EmployeeSummary {
+    id: number;
+    name: string;
+}
+
 // Client entity types
 export interface Client {
     id: number;
@@ -5,8 +11,8 @@ export interface Client {
     birthday: string | null;           // YYMMDD format
     address: string | null;
     phone: string | null;
-    primaryScheduleId: number | null;  // Reference to employee_schedule
-    secondaryScheduleId: number | null; // Reference to employee_schedule
+    primaryEmployee: EmployeeSummary | null;  // Primary employee info from active schedule
+    secondaryEmployee: EmployeeSummary | null; // Secondary employee info from active schedule
     type: string | null;               // voucher type
     duration: number | null;
     fullPrice: string | null;

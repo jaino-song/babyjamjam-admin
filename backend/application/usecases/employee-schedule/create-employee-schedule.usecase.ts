@@ -3,7 +3,9 @@ import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 
 type CreateEmployeeScheduleParams = {
-    employeeId: number;
+    clientId: number;
+    primaryEmployeeId: number;
+    secondaryEmployeeId: number | null;
     workAddress: string;
     startDate: Date;
     endDate: Date;
@@ -19,7 +21,9 @@ export class CreateEmployeeScheduleUsecase {
 
     execute(params: CreateEmployeeScheduleParams): Promise<EmployeeScheduleEntity> {
         const schedule = EmployeeScheduleEntity.create(
-            params.employeeId,
+            params.clientId,
+            params.primaryEmployeeId,
+            params.secondaryEmployeeId,
             params.workAddress,
             params.startDate,
             params.endDate,

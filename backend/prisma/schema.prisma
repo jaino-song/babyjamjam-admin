@@ -46,50 +46,50 @@ model voucherPriceInfo {
 }
 
 model employee {
-  id                      Int                 @id @db.SmallInt
-  name                    String
-  work_area               String[]
-  phone                   String              @unique
-  grade                   String
-  open_to_next_work       Boolean             @default(true)
-  company_registered_date DateTime?           @db.Date
-  employee_schedule       employee_schedule[]
+  id                              Int                 @id @db.SmallInt
+  name                            String
+  work_area                       String[]
+  phone                           String              @unique
+  grade                           String
+  open_to_next_work               Boolean             @default(true)
+  company_registered_date         DateTime?           @db.Date
+  schedules_as_primary            employee_schedule[] @relation("schedule_primary_employee")
+  schedules_as_secondary          employee_schedule[] @relation("schedule_secondary_employee")
 }
 
 model employee_schedule {
-  id                     Int      @id @default(autoincrement())
-  employee_id            Int      @db.SmallInt
+  id                     Int       @id @default(autoincrement())
+  client_id              Int
+  primary_employee_id    Int       @db.SmallInt
+  secondary_employee_id  Int?      @db.SmallInt
   work_address           String
-  start_date             DateTime @db.Date
-  end_date               DateTime @db.Date
-  replaced               Boolean  @default(false)
-  employee               employee @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  clients_as_primary     client[] @relation("client_primary_employee_schedule")
-  clients_as_secondary   client[] @relation("client_secondary_employee_schedule")
+  start_date             DateTime  @db.Date
+  end_date               DateTime  @db.Date
+  replaced               Boolean   @default(false)
+  client                 client    @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  primary_employee       employee  @relation("schedule_primary_employee", fields: [primary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  secondary_employee     employee? @relation("schedule_secondary_employee", fields: [secondary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model client {
-  id                       Int                @id @default(autoincrement())
+  id                       Int                 @id @default(autoincrement())
   name                     String
-  primary_schedule_id      Int?
-  secondary_schedule_id    Int?
   address                  String?
   phone                    String?
   type                     String?
-  duration                 Int?               @db.SmallInt
+  duration                 Int?                @db.SmallInt
   full_price               String?
   grant                    String?
   actual_price             String?
-  start_date               DateTime?          @db.Date
-  end_date                 DateTime?          @db.Date
+  start_date               DateTime?           @db.Date
+  end_date                 DateTime?           @db.Date
   care_center              Boolean
   voucher_client           Boolean
-  birthday                 String?            @db.VarChar(6)
+  birthday                 String?             @db.VarChar(6)
   contract_status          String?
-  breast_pump              Boolean            @default(false)
-  eformsign_docs           eformsign_doc[]    @relation("eformsign_doc_client")
-  primary_schedule         employee_schedule? @relation("client_primary_employee_schedule", fields: [primary_schedule_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  secondary_schedule       employee_schedule? @relation("client_secondary_employee_schedule", fields: [secondary_schedule_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  breast_pump              Boolean             @default(false)
+  eformsign_docs           eformsign_doc[]     @relation("eformsign_doc_client")
+  employee_schedules       employee_schedule[]
 }
 
 model eformsign_doc {

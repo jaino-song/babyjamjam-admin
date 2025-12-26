@@ -19,8 +19,6 @@ describe("SbClientRepository", () => {
     const createClientRow = (overrides = {}) => ({
         id: 1,
         name: "John Doe",
-        primary_schedule_id: 10,
-        secondary_schedule_id: 11,
         address: "Incheon",
         phone: "010-1111-2222",
         type: "A",
@@ -40,8 +38,6 @@ describe("SbClientRepository", () => {
 
     const createClientEntity = (overrides = {}) => ClientEntity.create({
         name: "Test Client",
-        primaryScheduleId: 1,
-        secondaryScheduleId: 2,
         address: "Test Address",
         phone: "010-0000-1111",
         type: "B",
@@ -93,8 +89,6 @@ describe("SbClientRepository", () => {
                 expect(result).toMatchObject({
                     id: 1,
                     name: "John Doe",
-                    primaryScheduleId: 10,
-                    secondaryScheduleId: 11,
                     address: "Incheon",
                     careCenter: true,
                     birthday: "900101",
@@ -324,8 +318,6 @@ describe("SbClientRepository", () => {
                 const createdRow = createClientRow({
                     id: 5,
                     name: "Test Client",
-                    primary_schedule_id: 1,
-                    secondary_schedule_id: 2,
                 });
                 clientModel.create.mockResolvedValue(createdRow);
 
@@ -336,8 +328,6 @@ describe("SbClientRepository", () => {
                 expect(clientModel.create).toHaveBeenCalledWith({
                     data: {
                         name: "Test Client",
-                        primary_schedule_id: 1,
-                        secondary_schedule_id: 2,
                         address: "Test Address",
                         phone: "010-0000-1111",
                         type: "B",
@@ -363,7 +353,6 @@ describe("SbClientRepository", () => {
             it("should handle null values correctly", async () => {
                 // Arrange
                 const entity = createClientEntity({
-                    secondaryScheduleId: null,
                     address: null,
                     phone: null,
                     type: null,
@@ -372,7 +361,6 @@ describe("SbClientRepository", () => {
                 });
                 const createdRow = createClientRow({
                     id: 6,
-                    secondary_schedule_id: null,
                     address: null,
                     phone: null,
                     type: null,
@@ -387,7 +375,6 @@ describe("SbClientRepository", () => {
                 // Assert
                 expect(clientModel.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
-                        secondary_schedule_id: null,
                         address: null,
                         phone: null,
                         type: null,
@@ -395,7 +382,7 @@ describe("SbClientRepository", () => {
                         contract_status: null,
                     }),
                 });
-                expect(result.secondaryScheduleId).toBeNull();
+                expect(result.address).toBeNull();
             });
         });
     });
@@ -410,8 +397,6 @@ describe("SbClientRepository", () => {
                 const entity = new ClientEntity(
                     7,
                     "Updated Name",
-                    3,
-                    null,
                     "Updated Address",
                     "010-3333-4444",
                     "C",
@@ -430,8 +415,6 @@ describe("SbClientRepository", () => {
                 const updatedRow = createClientRow({
                     id: 7,
                     name: "Updated Name",
-                    primary_schedule_id: 3,
-                    secondary_schedule_id: null,
                 });
                 clientModel.update.mockResolvedValue(updatedRow);
 
@@ -443,8 +426,6 @@ describe("SbClientRepository", () => {
                     where: { id: 7 },
                     data: {
                         name: "Updated Name",
-                        primary_schedule_id: 3,
-                        secondary_schedule_id: null,
                         address: "Updated Address",
                         phone: "010-3333-4444",
                         type: "C",
@@ -470,7 +451,7 @@ describe("SbClientRepository", () => {
             it("should correctly update breast_pump field", async () => {
                 // Arrange
                 const entity = new ClientEntity(
-                    8, "Client", 1, null, null, null, null, null,
+                    8, "Client", null, null, null, null,
                     null, null, null, null, null, false, false,
                     null, null, true, // breastPump = true
                 );

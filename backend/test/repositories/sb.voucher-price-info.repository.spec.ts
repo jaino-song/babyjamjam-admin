@@ -3,147 +3,347 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { VoucherPriceInfoEntity } from "domain/entities/voucher-price-info.entity";
 
 describe("SbVoucherPriceInfoRepository", () => {
-    const voucherModel = {
+    // ============================================
+    // Test Fixtures & Setup
+    // ============================================
+
+    const createMockPrismaVoucher = () => ({
         findUnique: jest.fn(),
         findFirst: jest.fn(),
         findMany: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
         delete: jest.fn(),
-    };
+    });
 
-    const prisma = { voucherPriceInfo: voucherModel } as unknown as PrismaService;
-
-    const repository = new SbVoucherPriceInfoRepository(prisma);
-
-    const sampleRow = {
+    const createVoucherRow = (overrides = {}) => ({
         id: 10,
         type: "standard",
         duration: BigInt(30),
         fullPrice: "100000",
         grant: "50000",
         actualPrice: "50000",
-    };
+        ...overrides,
+    });
+
+    let voucherModel: ReturnType<typeof createMockPrismaVoucher>;
+    let prisma: PrismaService;
+    let repository: SbVoucherPriceInfoRepository;
 
     beforeEach(() => {
+        voucherModel = createMockPrismaVoucher();
+        prisma = { voucherPriceInfo: voucherModel } as unknown as PrismaService;
+        repository = new SbVoucherPriceInfoRepository(prisma);
+    });
+
+    afterEach(() => {
         jest.clearAllMocks();
     });
 
-    it("returns a voucher price info when findById finds a match", async () => {
-        voucherModel.findUnique.mockResolvedValue(sampleRow);
+    // ============================================
+    // findById
+    // ============================================
+    describe("findById", () => {
+        describe("given a voucher price info exists with the specified id", () => {
+            it("should return the mapped VoucherPriceInfoEntity", async () => {
+                // Arrange
+                const row = createVoucherRow();
+                voucherModel.findUnique.mockResolvedValue(row);
 
-        const result = await repository.findById(10);
+                // Act
+                const result = await repository.findById(10);
 
-        expect(voucherModel.findUnique).toHaveBeenCalledWith({ where: { id: 10 } });
-        expect(result).toBeInstanceOf(VoucherPriceInfoEntity);
-        expect(result).toMatchObject(sampleRow);
-    });
-
-    it("returns null when findById does not find a record", async () => {
-        voucherModel.findUnique.mockResolvedValue(null);
-
-        const result = await repository.findById(999);
-
-        expect(voucherModel.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
-        expect(result).toBeNull();
-    });
-
-    it("returns voucher price infos when findByType finds matches", async () => {
-        voucherModel.findMany.mockResolvedValue([sampleRow, { ...sampleRow, id: 11 }]);
-
-        const result = await repository.findByType("standard");
-
-        expect(voucherModel.findMany).toHaveBeenCalledWith({ where: { type: "standard" } });
-        expect(result).toHaveLength(2);
-        expect(result[0]).toMatchObject({ id: 10, type: "standard" });
-    });
-
-    it("returns empty array when findByType finds nothing", async () => {
-        voucherModel.findMany.mockResolvedValue([]);
-
-        const result = await repository.findByType("missing");
-
-        expect(voucherModel.findMany).toHaveBeenCalledWith({ where: { type: "missing" } });
-        expect(result).toHaveLength(0);
-    });
-
-    it("creates a voucher price info using Prisma", async () => {
-        const entity = VoucherPriceInfoEntity.create("premium", BigInt(60), "200000", "100000", "100000");
-        const createdRow = {
-            id: 11,
-            type: entity.type,
-            duration: entity.duration,
-            fullPrice: entity.fullPrice,
-            grant: entity.grant,
-            actualPrice: entity.actualPrice,
-        };
-        voucherModel.create.mockResolvedValue(createdRow);
-
-        const result = await repository.create(entity);
-
-        expect(voucherModel.create).toHaveBeenCalledWith({
-            data: {
-                id: 0,
-                type: "premium",
-                duration: BigInt(60),
-                fullPrice: "200000",
-                grant: "100000",
-                actualPrice: "100000",
-            },
+                // Assert
+                expect(voucherModel.findUnique).toHaveBeenCalledWith({ where: { id: 10 } });
+                expect(result).toBeInstanceOf(VoucherPriceInfoEntity);
+                expect(result).toMatchObject({
+                    id: 10,
+                    type: "standard",
+                    duration: BigInt(30),
+                    fullPrice: "100000",
+                    grant: "50000",
+                    actualPrice: "50000",
+                });
+            });
         });
-        expect(result).toMatchObject({ id: 11, type: "premium" });
-    });
 
-    it("updates a voucher price info using Prisma", async () => {
-        const entity = new VoucherPriceInfoEntity(15, "standard", BigInt(30), "100000", "50000", "50000");
-        entity.type = "vip";
-        entity.duration = BigInt(90);
-        entity.fullPrice = "300000";
-        entity.grant = "150000";
-        entity.actualPrice = "150000";
+        describe("given no voucher price info exists with the specified id", () => {
+            it("should return null", async () => {
+                // Arrange
+                voucherModel.findUnique.mockResolvedValue(null);
 
-        const updatedRow = {
-            id: 15,
-            type: entity.type,
-            duration: entity.duration,
-            fullPrice: entity.fullPrice,
-            grant: entity.grant,
-            actualPrice: entity.actualPrice,
-        };
-        voucherModel.update.mockResolvedValue(updatedRow);
+                // Act
+                const result = await repository.findById(999);
 
-        const result = await repository.update(entity);
-
-        expect(voucherModel.update).toHaveBeenCalledWith({
-            where: { id: 15 },
-            data: {
-                type: "vip",
-                duration: BigInt(90),
-                fullPrice: "300000",
-                grant: "150000",
-                actualPrice: "150000",
-            },
+                // Assert
+                expect(voucherModel.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
+                expect(result).toBeNull();
+            });
         });
-        expect(result).toMatchObject({ id: 15, type: "vip" });
     });
 
-    it("deletes a voucher price info by id", async () => {
-        voucherModel.delete.mockResolvedValue(undefined);
+    // ============================================
+    // findByType
+    // ============================================
+    describe("findByType", () => {
+        describe("given voucher price infos exist with the specified type", () => {
+            it("should return all matching entities", async () => {
+                // Arrange
+                const rows = [
+                    createVoucherRow({ id: 10 }),
+                    createVoucherRow({ id: 11 }),
+                ];
+                voucherModel.findMany.mockResolvedValue(rows);
 
-        await repository.delete(25);
+                // Act
+                const result = await repository.findByType("standard");
 
-        expect(voucherModel.delete).toHaveBeenCalledWith({ where: { id: 25 } });
+                // Assert
+                expect(voucherModel.findMany).toHaveBeenCalledWith({ where: { type: "standard" } });
+                expect(result).toHaveLength(2);
+                expect(result[0]).toMatchObject({ id: 10, type: "standard" });
+                expect(result[1]).toMatchObject({ id: 11, type: "standard" });
+            });
+        });
+
+        describe("given no voucher price infos exist with the specified type", () => {
+            it("should return empty array", async () => {
+                // Arrange
+                voucherModel.findMany.mockResolvedValue([]);
+
+                // Act
+                const result = await repository.findByType("missing");
+
+                // Assert
+                expect(voucherModel.findMany).toHaveBeenCalledWith({ where: { type: "missing" } });
+                expect(result).toHaveLength(0);
+            });
+        });
+
+        describe("given different voucher types", () => {
+            it.each(["standard", "premium", "vip", "basic"])(
+                "should query with type %s",
+                async (type) => {
+                    // Arrange
+                    voucherModel.findMany.mockResolvedValue([]);
+
+                    // Act
+                    await repository.findByType(type);
+
+                    // Assert
+                    expect(voucherModel.findMany).toHaveBeenCalledWith({ where: { type } });
+                }
+            );
+        });
     });
 
-    it("returns all voucher price info records", async () => {
-        const rows = [sampleRow, { ...sampleRow, id: 11, type: "premium" }];
-        voucherModel.findMany.mockResolvedValue(rows);
+    // ============================================
+    // findAll
+    // ============================================
+    describe("findAll", () => {
+        describe("given voucher price infos exist", () => {
+            it("should return all entities", async () => {
+                // Arrange
+                const rows = [
+                    createVoucherRow({ id: 10, type: "standard" }),
+                    createVoucherRow({ id: 11, type: "premium" }),
+                ];
+                voucherModel.findMany.mockResolvedValue(rows);
 
-        const result = await repository.findAll();
+                // Act
+                const result = await repository.findAll();
 
-        expect(voucherModel.findMany).toHaveBeenCalledWith();
-        expect(result).toHaveLength(2);
-        expect(result[0]).toMatchObject({ id: 10 });
+                // Assert
+                expect(voucherModel.findMany).toHaveBeenCalledWith();
+                expect(result).toHaveLength(2);
+                expect(result[0]).toMatchObject({ id: 10 });
+                expect(result[1]).toMatchObject({ id: 11, type: "premium" });
+            });
+        });
+
+        describe("given no voucher price infos exist", () => {
+            it("should return empty array", async () => {
+                // Arrange
+                voucherModel.findMany.mockResolvedValue([]);
+
+                // Act
+                const result = await repository.findAll();
+
+                // Assert
+                expect(result).toEqual([]);
+            });
+        });
+    });
+
+    // ============================================
+    // create
+    // ============================================
+    describe("create", () => {
+        describe("given a valid VoucherPriceInfoEntity", () => {
+            it("should persist voucher and return created entity", async () => {
+                // Arrange
+                const entity = VoucherPriceInfoEntity.create("premium", BigInt(60), "200000", "100000", "100000");
+                const createdRow = createVoucherRow({
+                    id: 11,
+                    type: "premium",
+                    duration: BigInt(60),
+                    fullPrice: "200000",
+                    grant: "100000",
+                    actualPrice: "100000",
+                });
+                voucherModel.create.mockResolvedValue(createdRow);
+
+                // Act
+                const result = await repository.create(entity);
+
+                // Assert
+                expect(voucherModel.create).toHaveBeenCalledWith({
+                    data: {
+                        id: 0,
+                        type: "premium",
+                        duration: BigInt(60),
+                        fullPrice: "200000",
+                        grant: "100000",
+                        actualPrice: "100000",
+                    },
+                });
+                expect(result).toMatchObject({ id: 11, type: "premium" });
+            });
+        });
+
+        describe("given different duration values", () => {
+            it.each([
+                [BigInt(15), "15-day voucher"],
+                [BigInt(30), "30-day voucher"],
+                [BigInt(60), "60-day voucher"],
+                [BigInt(90), "90-day voucher"],
+            ])("should create with duration %s (%s)", async (duration) => {
+                // Arrange
+                const entity = VoucherPriceInfoEntity.create("test", duration, "100", "50", "50");
+                const createdRow = createVoucherRow({ id: 12, duration });
+                voucherModel.create.mockResolvedValue(createdRow);
+
+                // Act
+                const result = await repository.create(entity);
+
+                // Assert
+                expect(voucherModel.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({ duration }),
+                });
+                expect(result.duration).toBe(duration);
+            });
+        });
+    });
+
+    // ============================================
+    // update
+    // ============================================
+    describe("update", () => {
+        describe("given an existing VoucherPriceInfoEntity with changes", () => {
+            it("should update voucher with correct data", async () => {
+                // Arrange
+                const entity = new VoucherPriceInfoEntity(15, "vip", BigInt(90), "300000", "150000", "150000");
+                const updatedRow = createVoucherRow({
+                    id: 15,
+                    type: "vip",
+                    duration: BigInt(90),
+                    fullPrice: "300000",
+                    grant: "150000",
+                    actualPrice: "150000",
+                });
+                voucherModel.update.mockResolvedValue(updatedRow);
+
+                // Act
+                const result = await repository.update(entity);
+
+                // Assert
+                expect(voucherModel.update).toHaveBeenCalledWith({
+                    where: { id: 15 },
+                    data: {
+                        type: "vip",
+                        duration: BigInt(90),
+                        fullPrice: "300000",
+                        grant: "150000",
+                        actualPrice: "150000",
+                    },
+                });
+                expect(result).toMatchObject({ id: 15, type: "vip" });
+            });
+        });
+
+        describe("given only price fields are changed", () => {
+            it("should update with new prices", async () => {
+                // Arrange
+                const entity = new VoucherPriceInfoEntity(16, "standard", BigInt(30), "150000", "75000", "75000");
+                const updatedRow = createVoucherRow({
+                    id: 16,
+                    fullPrice: "150000",
+                    grant: "75000",
+                    actualPrice: "75000",
+                });
+                voucherModel.update.mockResolvedValue(updatedRow);
+
+                // Act
+                const result = await repository.update(entity);
+
+                // Assert
+                expect(result.fullPrice).toBe("150000");
+                expect(result.grant).toBe("75000");
+                expect(result.actualPrice).toBe("75000");
+            });
+        });
+
+        describe("given type is upgraded from standard to premium", () => {
+            it("should correctly update the type", async () => {
+                // Arrange
+                const entity = new VoucherPriceInfoEntity(17, "premium", BigInt(30), "100000", "50000", "50000");
+                const updatedRow = createVoucherRow({
+                    id: 17,
+                    type: "premium",
+                });
+                voucherModel.update.mockResolvedValue(updatedRow);
+
+                // Act
+                const result = await repository.update(entity);
+
+                // Assert
+                expect(voucherModel.update).toHaveBeenCalledWith({
+                    where: { id: 17 },
+                    data: expect.objectContaining({ type: "premium" }),
+                });
+                expect(result.type).toBe("premium");
+            });
+        });
+    });
+
+    // ============================================
+    // delete
+    // ============================================
+    describe("delete", () => {
+        describe("given a valid voucher id", () => {
+            it("should delete the voucher price info", async () => {
+                // Arrange
+                voucherModel.delete.mockResolvedValue(undefined);
+
+                // Act
+                await repository.delete(25);
+
+                // Assert
+                expect(voucherModel.delete).toHaveBeenCalledWith({ where: { id: 25 } });
+            });
+        });
+
+        describe("given different voucher ids", () => {
+            it.each([1, 10, 100, 999])("should delete voucher with id %i", async (id) => {
+                // Arrange
+                voucherModel.delete.mockResolvedValue(undefined);
+
+                // Act
+                await repository.delete(id);
+
+                // Assert
+                expect(voucherModel.delete).toHaveBeenCalledWith({ where: { id } });
+            });
+        });
     });
 });
-

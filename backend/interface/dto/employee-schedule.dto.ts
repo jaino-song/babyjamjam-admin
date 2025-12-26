@@ -2,7 +2,14 @@ import { IsBoolean, IsDateString, IsInt, IsOptional, IsString } from "class-vali
 
 export class CreateEmployeeScheduleDto {
     @IsInt()
-    employeeId!: number;
+    clientId!: number;
+
+    @IsInt()
+    primaryEmployeeId!: number;
+
+    @IsOptional()
+    @IsInt()
+    secondaryEmployeeId?: number | null;
 
     @IsString()
     workAddress!: string;

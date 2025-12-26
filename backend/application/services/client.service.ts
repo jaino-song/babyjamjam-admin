@@ -11,6 +11,36 @@ import { ClientEntity } from "domain/entities/client.entity";
 import { PaginatedResult } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
+// Response type that includes employee information
+export interface ClientWithEmployees {
+    id: number;
+    name: string;
+    address: string | null;
+    phone: string | null;
+    type: string | null;
+    duration: number | null;
+    fullPrice: string | null;
+    grant: string | null;
+    actualPrice: string | null;
+    startDate: Date | null;
+    endDate: Date | null;
+    careCenter: boolean;
+    voucherClient: boolean;
+    birthday: string | null;
+    contractStatus: string | null;
+    breastPump: boolean;
+    primaryEmployee: { id: number; name: string } | null;
+    secondaryEmployee: { id: number; name: string } | null;
+}
+
+export interface PaginatedClientWithEmployees {
+    data: ClientWithEmployees[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+}
+
 @Injectable()
 export class ClientService {
     constructor(
@@ -42,39 +72,12 @@ export class ClientService {
         contractStatus?: string | null;
         breastPump: boolean;
     }): Promise<ClientEntity> {
-        // Create employee_schedule for primary employee
         const startDate = params.startDate ? new Date(params.startDate) : new Date();
-        const endDate = params.endDate ? new Date(params.endDate) : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000); // Default to 1 year
+        const endDate = params.endDate ? new Date(params.endDate) : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
 
-        const primarySchedule = await this.prismaService.employee_schedule.create({
-            data: {
-                employee_id: params.primaryEmployeeId,
-                work_address: params.address ?? "",
-                start_date: startDate,
-                end_date: endDate,
-                replaced: false,
-            },
-        });
-
-        // Create employee_schedule for secondary employee if provided
-        let secondaryScheduleId: number | null = null;
-        if (params.secondaryEmployeeId !== null && params.secondaryEmployeeId !== undefined) {
-            const secondarySchedule = await this.prismaService.employee_schedule.create({
-                data: {
-                    employee_id: params.secondaryEmployeeId,
-                    work_address: params.address ?? "",
-                    start_date: startDate,
-                    end_date: endDate,
-                    replaced: false,
-                },
-            });
-            secondaryScheduleId = secondarySchedule.id;
-        }
-
-        return this.createClientUsecase.execute({
+        // First create the client
+        const client = await this.createClientUsecase.execute({
             name: params.name,
-            primaryScheduleId: primarySchedule.id,
-            secondaryScheduleId: secondaryScheduleId,
             address: params.address ?? null,
             phone: params.phone ?? null,
             type: params.type ?? null,
@@ -82,26 +85,104 @@ export class ClientService {
             fullPrice: params.fullPrice ?? null,
             grant: params.grant ?? null,
             actualPrice: params.actualPrice ?? null,
-            startDate: params.startDate ? new Date(params.startDate) : null,
-            endDate: params.endDate ? new Date(params.endDate) : null,
+            startDate: startDate,
+            endDate: endDate,
             careCenter: params.careCenter,
             voucherClient: params.voucherClient,
             birthday: params.birthday ?? null,
             contractStatus: params.contractStatus ?? null,
             breastPump: params.breastPump,
         });
+
+        // Then create the employee_schedule with the client_id
+        await this.prismaService.employee_schedule.create({
+            data: {
+                client_id: client.id,
+                primary_employee_id: params.primaryEmployeeId,
+                secondary_employee_id: params.secondaryEmployeeId ?? null,
+                work_address: params.address ?? "",
+                start_date: startDate,
+                end_date: endDate,
+                replaced: false,
+            },
+        });
+
+        return client;
     }
 
-    findAll(): Promise<ClientEntity[]> {
-        return this.listClientsUsecase.execute();
+    async findAll(): Promise<ClientWithEmployees[]> {
+        const clients = await this.listClientsUsecase.execute();
+        return this.attachEmployeesToClients(clients);
     }
 
-    findAllPaginated(page: number, limit: number, search?: string): Promise<PaginatedResult<ClientEntity>> {
-        return this.listClientsPaginatedUsecase.execute(page, limit, search);
+    async findAllPaginated(page: number, limit: number, search?: string): Promise<PaginatedClientWithEmployees> {
+        const result = await this.listClientsPaginatedUsecase.execute(page, limit, search);
+        const clientsWithEmployees = await this.attachEmployeesToClients(result.data);
+        return {
+            data: clientsWithEmployees,
+            total: result.total,
+            page: result.page,
+            limit: result.limit,
+            totalPages: result.totalPages,
+        };
     }
 
-    findById(id: number): Promise<ClientEntity | null> {
-        return this.findClientByIdUsecase.execute(id);
+    async findById(id: number): Promise<ClientWithEmployees | null> {
+        const client = await this.findClientByIdUsecase.execute(id);
+        if (!client) return null;
+        
+        const [withEmployees] = await this.attachEmployeesToClients([client]);
+        return withEmployees;
+    }
+
+    // Helper method to attach employee info to clients
+    private async attachEmployeesToClients(clients: ClientEntity[]): Promise<ClientWithEmployees[]> {
+        if (clients.length === 0) return [];
+
+        const clientIds = clients.map(c => c.id);
+        
+        // Get all active schedules for these clients with employee info
+        const schedules = await this.prismaService.employee_schedule.findMany({
+            where: {
+                client_id: { in: clientIds },
+                replaced: false,
+            },
+            include: {
+                primary_employee: true,
+                secondary_employee: true,
+            },
+        });
+
+        // Create a map of client_id to schedule
+        const scheduleMap = new Map(schedules.map(s => [s.client_id, s]));
+
+        return clients.map(client => {
+            const schedule = scheduleMap.get(client.id);
+            return {
+                id: client.id,
+                name: client.name,
+                address: client.address,
+                phone: client.phone,
+                type: client.type,
+                duration: client.duration,
+                fullPrice: client.fullPrice,
+                grant: client.grant,
+                actualPrice: client.actualPrice,
+                startDate: client.startDate,
+                endDate: client.endDate,
+                careCenter: client.careCenter,
+                voucherClient: client.voucherClient,
+                birthday: client.birthday,
+                contractStatus: client.contractStatus,
+                breastPump: client.breastPump,
+                primaryEmployee: schedule?.primary_employee 
+                    ? { id: schedule.primary_employee.id, name: schedule.primary_employee.name }
+                    : null,
+                secondaryEmployee: schedule?.secondary_employee 
+                    ? { id: schedule.secondary_employee.id, name: schedule.secondary_employee.name }
+                    : null,
+            };
+        });
     }
 
     async update(id: number, params: {
@@ -123,101 +204,66 @@ export class ClientService {
         contractStatus?: string | null;
         breastPump?: boolean;
     }): Promise<ClientEntity> {
-        // Get existing client to check for schedule changes
+        // Get existing client
         const existingClient = await this.findClientByIdUsecase.execute(id);
         if (!existingClient) {
             throw new Error(`Client with id ${id} not found`);
         }
 
-        let primaryScheduleId: number | null | undefined = undefined;
-        let secondaryScheduleId: number | null | undefined = undefined;
-
         const startDate = params.startDate ? new Date(params.startDate) : existingClient.startDate ?? new Date();
         const endDate = params.endDate ? new Date(params.endDate) : existingClient.endDate ?? new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
 
-        // If primary employee is being changed, create new schedule
-        // Only process if primaryEmployeeId is explicitly provided and not null/undefined
-        if (params.primaryEmployeeId !== undefined && params.primaryEmployeeId !== null) {
-            // Get current employee from existing schedule to check if it actually changed
-            let currentPrimaryEmployeeId: number | null = null;
-            if (existingClient.primaryScheduleId) {
-                const currentSchedule = await this.prismaService.employee_schedule.findUnique({
-                    where: { id: existingClient.primaryScheduleId },
-                });
-                currentPrimaryEmployeeId = currentSchedule?.employee_id ?? null;
-            }
+        // Check if employee assignment is being changed
+        const employeeChanged = params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined;
 
-            // Only create new schedule if employee actually changed
-            if (currentPrimaryEmployeeId !== params.primaryEmployeeId) {
+        if (employeeChanged) {
+            // Get current schedule for this client
+            const currentSchedule = await this.prismaService.employee_schedule.findFirst({
+                where: { client_id: id, replaced: false },
+                orderBy: { id: 'desc' },
+            });
+
+            const currentPrimaryEmployeeId = currentSchedule?.primary_employee_id ?? null;
+            const currentSecondaryEmployeeId = currentSchedule?.secondary_employee_id ?? null;
+
+            // Determine new employee values
+            const newPrimaryEmployeeId = params.primaryEmployeeId !== undefined 
+                ? params.primaryEmployeeId 
+                : currentPrimaryEmployeeId;
+            const newSecondaryEmployeeId = params.secondaryEmployeeId !== undefined 
+                ? params.secondaryEmployeeId 
+                : currentSecondaryEmployeeId;
+
+            // Only create new schedule if employees actually changed
+            const actuallyChanged = newPrimaryEmployeeId !== currentPrimaryEmployeeId || 
+                                   newSecondaryEmployeeId !== currentSecondaryEmployeeId;
+
+            if (actuallyChanged && newPrimaryEmployeeId !== null) {
                 // Mark old schedule as replaced if exists
-                if (existingClient.primaryScheduleId) {
+                if (currentSchedule) {
                     await this.prismaService.employee_schedule.update({
-                        where: { id: existingClient.primaryScheduleId },
+                        where: { id: currentSchedule.id },
                         data: { replaced: true, end_date: new Date() },
                     });
                 }
 
                 // Create new schedule
-                const newSchedule = await this.prismaService.employee_schedule.create({
+                await this.prismaService.employee_schedule.create({
                     data: {
-                        employee_id: params.primaryEmployeeId,
+                        client_id: id,
+                        primary_employee_id: newPrimaryEmployeeId,
+                        secondary_employee_id: newSecondaryEmployeeId,
                         work_address: params.address ?? existingClient.address ?? "",
                         start_date: startDate,
                         end_date: endDate,
                         replaced: false,
                     },
                 });
-                primaryScheduleId = newSchedule.id;
             }
-            // If employee hasn't changed, keep the existing schedule (primaryScheduleId stays undefined)
-        }
-
-        // If secondary employee is being changed
-        if (params.secondaryEmployeeId !== undefined) {
-            // Get current employee from existing schedule to check if it actually changed
-            let currentSecondaryEmployeeId: number | null = null;
-            if (existingClient.secondaryScheduleId) {
-                const currentSchedule = await this.prismaService.employee_schedule.findUnique({
-                    where: { id: existingClient.secondaryScheduleId },
-                });
-                currentSecondaryEmployeeId = currentSchedule?.employee_id ?? null;
-            }
-
-            // Check if employee actually changed
-            const employeeChanged = params.secondaryEmployeeId !== currentSecondaryEmployeeId;
-
-            if (employeeChanged) {
-                // Mark old schedule as replaced if exists
-                if (existingClient.secondaryScheduleId) {
-                    await this.prismaService.employee_schedule.update({
-                        where: { id: existingClient.secondaryScheduleId },
-                        data: { replaced: true, end_date: new Date() },
-                    });
-                }
-
-                if (params.secondaryEmployeeId !== null) {
-                    // Create new schedule
-                    const newSchedule = await this.prismaService.employee_schedule.create({
-                        data: {
-                            employee_id: params.secondaryEmployeeId,
-                            work_address: params.address ?? existingClient.address ?? "",
-                            start_date: startDate,
-                            end_date: endDate,
-                            replaced: false,
-                        },
-                    });
-                    secondaryScheduleId = newSchedule.id;
-                } else {
-                    secondaryScheduleId = null;
-                }
-            }
-            // If employee hasn't changed, keep the existing schedule (secondaryScheduleId stays undefined)
         }
 
         return this.updateClientUsecase.execute(id, {
             name: params.name,
-            primaryScheduleId: primaryScheduleId,
-            secondaryScheduleId: secondaryScheduleId,
             address: params.address,
             phone: params.phone,
             type: params.type,

@@ -119,6 +119,15 @@ export function ClientDetailModal({
 
                     <Divider sx={{ my: 2 }} />
 
+                    {/* Employee Info */}
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                        {t(locale, "clients.form.section-employee")}
+                    </Typography>
+                    <InfoRow label={t(locale, "clients.form.primary-employee")} value={client.primaryEmployee?.name ?? "-"} />
+                    <InfoRow label={t(locale, "clients.form.secondary-employee")} value={client.secondaryEmployee?.name ?? "-"} />
+
+                    <Divider sx={{ my: 2 }} />
+
                     {/* Service Info */}
                     <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                         {t(locale, "clients.form.section-service")}
@@ -163,10 +172,10 @@ export function ClientDetailModal({
                             <Chip label={t(locale, "clients.form.voucher-client")} size="small" color="primary" variant="outlined" />
                         )}
                         {client.careCenter && (
-                            <Chip label={t(locale, "clients.form.care-center")} size="small" color="secondary" variant="outlined" />
+                            <Chip label={t(locale, "clients.form.care-center")} size="small" color="primary" variant="outlined" />
                         )}
                         {client.breastPump && (
-                            <Chip label={t(locale, "clients.form.breast-pump")} size="small" color="info" variant="outlined" />
+                            <Chip label={t(locale, "clients.form.breast-pump")} size="small" color="primary" variant="outlined" />
                         )}
                         {!client.voucherClient && !client.careCenter && !client.breastPump && (
                             <Typography variant="body2" color="text.secondary">-</Typography>

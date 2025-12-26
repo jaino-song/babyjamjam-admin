@@ -3,8 +3,6 @@ import { ClientEntity } from "domain/entities/client.entity";
 type ClientRow = {
     id: number;
     name: string;
-    primary_schedule_id: number | null;
-    secondary_schedule_id: number | null;
     address: string | null;
     phone: string | null;
     type: string | null;
@@ -26,8 +24,6 @@ export class ClientMapper {
         return new ClientEntity(
             row.id,
             row.name,
-            row.primary_schedule_id,
-            row.secondary_schedule_id,
             row.address,
             row.phone,
             row.type,
@@ -48,8 +44,6 @@ export class ClientMapper {
     static toPrismaCreate(entity: ClientEntity) {
         return {
             name: entity.name,
-            primary_schedule_id: entity.primaryScheduleId,
-            secondary_schedule_id: entity.secondaryScheduleId,
             address: entity.address,
             phone: entity.phone,
             type: entity.type,
@@ -70,8 +64,6 @@ export class ClientMapper {
     static toPrismaUpdate(entity: ClientEntity) {
         return {
             name: entity.name,
-            primary_schedule_id: entity.primaryScheduleId,
-            secondary_schedule_id: entity.secondaryScheduleId,
             address: entity.address,
             phone: entity.phone,
             type: entity.type,

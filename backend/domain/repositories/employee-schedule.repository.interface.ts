@@ -2,7 +2,9 @@ import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity
 
 export interface IEmployeeScheduleRepository {
     findById(id: number): Promise<EmployeeScheduleEntity | null>;
-    findByEmployeeId(employeeId: number): Promise<EmployeeScheduleEntity[]>;
+    findByClientId(clientId: number): Promise<EmployeeScheduleEntity[]>;
+    findByPrimaryEmployeeId(primaryEmployeeId: number): Promise<EmployeeScheduleEntity[]>;
+    findBySecondaryEmployeeId(secondaryEmployeeId: number): Promise<EmployeeScheduleEntity[]>;
     findAll(): Promise<EmployeeScheduleEntity[]>;
     create(schedule: EmployeeScheduleEntity): Promise<EmployeeScheduleEntity>;
     update(schedule: EmployeeScheduleEntity): Promise<EmployeeScheduleEntity>;

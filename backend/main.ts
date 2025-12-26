@@ -2,7 +2,6 @@ import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
-// Force restart to pick up Prisma client changes
 
 // Add BigInt serialization support
 (BigInt.prototype as any).toJSON = function () {
