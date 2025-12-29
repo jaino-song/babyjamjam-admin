@@ -188,7 +188,7 @@ export const ContractCreationForm = () => {
         type: "", // Missing in form
         days: "", // Missing in form
         area: "", // Missing in form
-        contractDuration: end.diff(start, 'day').toString(),
+        contractDuration: `${start.format("YYYY-MM-DD")} ~ ${end.format("YYYY-MM-DD")}`,
         startYear: start.format("YY"),
         startMonth: start.format("MM"),
         startDay: start.format("DD"),
@@ -591,13 +591,14 @@ export const ContractCreationForm = () => {
             <CloseIcon />
           </IconButton>
         </DialogTitle>
-        <DialogContent sx={{ p: 0, overflow: "hidden" }}>
+        <DialogContent sx={{ p: 0, overflow: "hidden", display: "flex", flexGrow: 1 }}>
           <iframe
             id="eformsign_iframe"
             style={{
               width: "100%",
               height: "100%",
               border: "none",
+              flexGrow: 1,
             }}
             title="eformsign Document"
           />
