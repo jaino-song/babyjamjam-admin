@@ -57,6 +57,7 @@ describe("ClientService", () => {
         "900101",
         "pending",
         false,
+        null,
     );
 
     let service: ClientService;

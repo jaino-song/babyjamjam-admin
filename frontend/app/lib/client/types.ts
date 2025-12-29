@@ -24,6 +24,8 @@ export interface Client {
     voucherClient: boolean;
     breastPump: boolean;
     contractStatus: string | null;
+    eDocId: string | null;
+    hasSigned: boolean;
 }
 
 // Create client DTO - Frontend sends employeeId, backend converts to scheduleId

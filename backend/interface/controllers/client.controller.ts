@@ -28,6 +28,7 @@ export class ClientController {
             birthday: dto.birthday ?? null,
             contractStatus: dto.contractStatus ?? null,
             breastPump: dto.breastPump,
+            eDocId: dto.eDocId ?? null,
         });
     }
 
@@ -74,6 +75,7 @@ export class ClientController {
             birthday: dto.birthday,
             contractStatus: dto.contractStatus,
             breastPump: dto.breastPump,
+            eDocId: dto.eDocId,
         });
     }
 

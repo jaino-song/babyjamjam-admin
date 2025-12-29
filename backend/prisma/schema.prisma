@@ -88,6 +88,8 @@ model client {
   birthday                 String?             @db.VarChar(6)
   contract_status          String?
   breast_pump              Boolean             @default(false)
+  e_doc_id                 String?             @unique
+  signed_doc               eformsign_doc?      @relation("client_signed_doc", fields: [e_doc_id], references: [document_id], onDelete: SetNull, onUpdate: NoAction)
   eformsign_docs           eformsign_doc[]     @relation("eformsign_doc_client")
   employee_schedules       employee_schedule[]
 }
@@ -109,4 +111,5 @@ model eformsign_doc {
   expired             Boolean  @default(false)
   client_id           Int      @db.Integer
   client              client   @relation("eformsign_doc_client", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  signed_by_client    client?  @relation("client_signed_doc")
 }

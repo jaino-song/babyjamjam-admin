@@ -18,6 +18,7 @@ type CreateClientParams = {
     birthday: string | null;
     contractStatus: string | null;
     breastPump: boolean;
+    eDocId?: string | null;
 };
 
 @Injectable()
@@ -28,7 +29,10 @@ export class CreateClientUsecase {
     ) {}
 
     execute(params: CreateClientParams): Promise<ClientEntity> {
-        const client = ClientEntity.create(params);
+        const client = ClientEntity.create({
+            ...params,
+            eDocId: params.eDocId ?? null,
+        });
         return this.clientRepository.create(client);
     }
 }

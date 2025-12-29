@@ -227,7 +227,11 @@
       "add-new-employee": "Add New Employee",
       "add-employee-coming-soon": "Add employee feature coming soon.",
       "type-to-search": "Type to search",
-      "auto-filled": "Auto-filled"
+      "auto-filled": "Auto-filled",
+      "section-document": "E-Document",
+      "document-status": "Signing Status",
+      "document-signed": "Signed",
+      "document-not-signed": "Not Signed"
     }
   },
   "employees": {

@@ -181,6 +181,25 @@ export function ClientDetailModal({
                             <Typography variant="body2" color="text.secondary">-</Typography>
                         )}
                     </Box>
+
+                    <Divider sx={{ my: 2 }} />
+
+                    {/* Document Signing Status */}
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                        {t(locale, "clients.form.section-document")}
+                    </Typography>
+                    <InfoRow
+                        label={t(locale, "clients.form.document-status")}
+                        value={
+                            <Chip
+                                label={client.hasSigned
+                                    ? t(locale, "clients.form.document-signed")
+                                    : t(locale, "clients.form.document-not-signed")}
+                                color={client.hasSigned ? "success" : "default"}
+                                size="small"
+                            />
+                        }
+                    />
                 </Box>
             </DialogContent>
             <DialogActions sx={{ px: 3, py: 2 }}>

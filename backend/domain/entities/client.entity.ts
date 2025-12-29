@@ -14,6 +14,7 @@ interface UpdateClientProps {
     birthday?: string | null;
     contractStatus?: string | null;
     breastPump?: boolean;
+    eDocId?: string | null;
 }
 
 interface CreateClientProps {
@@ -32,6 +33,7 @@ interface CreateClientProps {
     birthday: string | null;
     contractStatus: string | null;
     breastPump: boolean;
+    eDocId: string | null;
 }
 
 export class ClientEntity {
@@ -52,6 +54,7 @@ export class ClientEntity {
         public birthday: string | null,
         public contractStatus: string | null,
         public breastPump: boolean,
+        public eDocId: string | null,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -82,6 +85,7 @@ export class ClientEntity {
             props.birthday,
             props.contractStatus,
             props.breastPump,
+            props.eDocId,
         );
     }
 
@@ -101,9 +105,10 @@ export class ClientEntity {
         this.birthday = props.birthday ?? this.birthday;
         this.contractStatus = props.contractStatus ?? this.contractStatus;
         this.breastPump = props.breastPump ?? this.breastPump;
+        this.eDocId = props.eDocId ?? this.eDocId;
     }
 
-    static fromPrisma(prismaData: { id: number, name: string, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean }): ClientEntity {
+    static fromPrisma(prismaData: { id: number, name: string, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean, eDocId: string | null }): ClientEntity {
         return new ClientEntity(
             prismaData.id,
             prismaData.name,
@@ -121,11 +126,12 @@ export class ClientEntity {
             prismaData.birthday,
             prismaData.contractStatus,
             prismaData.breastPump,
+            prismaData.eDocId,
         );
     }
 
     // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { id: number, name: string, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean } {
+    toPersistence(): { id: number, name: string, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean, eDocId: string | null } {
         return {
             id: this.id,
             name: this.name,
@@ -143,6 +149,7 @@ export class ClientEntity {
             birthday: this.birthday,
             contractStatus: this.contractStatus,
             breastPump: this.breastPump,
+            eDocId: this.eDocId,
         };
     }
 }
