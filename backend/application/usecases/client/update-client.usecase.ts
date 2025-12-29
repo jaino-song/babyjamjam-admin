@@ -18,6 +18,7 @@ type UpdateClientParams = {
     birthday?: string | null;
     contractStatus?: string | null;
     breastPump?: boolean;
+    eDocId?: string | null;
 };
 
 @Injectable()

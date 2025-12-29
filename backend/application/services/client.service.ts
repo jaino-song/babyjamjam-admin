@@ -29,6 +29,8 @@ export interface ClientWithEmployees {
     birthday: string | null;
     contractStatus: string | null;
     breastPump: boolean;
+    eDocId: string | null;
+    hasSigned: boolean;
     primaryEmployee: { id: number; name: string } | null;
     secondaryEmployee: { id: number; name: string } | null;
 }
@@ -71,6 +73,7 @@ export class ClientService {
         birthday?: string | null;
         contractStatus?: string | null;
         breastPump: boolean;
+        eDocId?: string | null;
     }): Promise<ClientEntity> {
         const startDate = params.startDate ? new Date(params.startDate) : new Date();
         const endDate = params.endDate ? new Date(params.endDate) : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
@@ -92,6 +95,7 @@ export class ClientService {
             birthday: params.birthday ?? null,
             contractStatus: params.contractStatus ?? null,
             breastPump: params.breastPump,
+            eDocId: params.eDocId ?? null,
         });
 
         // Then create the employee_schedule with the client_id
@@ -175,10 +179,12 @@ export class ClientService {
                 birthday: client.birthday,
                 contractStatus: client.contractStatus,
                 breastPump: client.breastPump,
-                primaryEmployee: schedule?.primary_employee 
+                eDocId: client.eDocId,
+                hasSigned: client.eDocId !== null,
+                primaryEmployee: schedule?.primary_employee
                     ? { id: schedule.primary_employee.id, name: schedule.primary_employee.name }
                     : null,
-                secondaryEmployee: schedule?.secondary_employee 
+                secondaryEmployee: schedule?.secondary_employee
                     ? { id: schedule.secondary_employee.id, name: schedule.secondary_employee.name }
                     : null,
             };
@@ -203,6 +209,7 @@ export class ClientService {
         birthday?: string | null;
         contractStatus?: string | null;
         breastPump?: boolean;
+        eDocId?: string | null;
     }): Promise<ClientEntity> {
         // Get existing client
         const existingClient = await this.findClientByIdUsecase.execute(id);
@@ -278,6 +285,7 @@ export class ClientService {
             birthday: params.birthday,
             contractStatus: params.contractStatus,
             breastPump: params.breastPump,
+            eDocId: params.eDocId,
         });
     }
 

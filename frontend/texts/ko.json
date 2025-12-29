@@ -232,7 +232,11 @@
       "add-new-employee": "새 제공인력 추가",
       "add-employee-coming-soon": "제공인력 추가 기능은 곧 제공될 예정입니다.",
       "type-to-search": "검색어를 입력하세요",
-      "auto-filled": "자동 반영"
+      "auto-filled": "자동 반영",
+      "section-document": "전자계약서",
+      "document-status": "서명 상태",
+      "document-signed": "서명 완료",
+      "document-not-signed": "미서명"
     }
   },
   "employees": {

@@ -63,6 +63,10 @@ export class CreateClientDto {
 
     @IsBoolean()
     breastPump!: boolean;
+
+    @IsOptional()
+    @IsString()
+    eDocId?: string | null;
 }
 
 export class UpdateClientDto {
@@ -133,4 +137,8 @@ export class UpdateClientDto {
     @IsOptional()
     @IsBoolean()
     breastPump?: boolean;
+
+    @IsOptional()
+    @IsString()
+    eDocId?: string | null;
 }

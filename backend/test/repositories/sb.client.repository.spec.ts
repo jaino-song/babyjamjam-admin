@@ -33,6 +33,7 @@ describe("SbClientRepository", () => {
         birthday: "900101",
         contract_status: "completed",
         breast_pump: true,
+        e_doc_id: null,
         ...overrides,
     });
 
@@ -52,6 +53,7 @@ describe("SbClientRepository", () => {
         birthday: "950315",
         contractStatus: "pending",
         breastPump: false,
+        eDocId: null,
         ...overrides,
     });
 
@@ -411,6 +413,7 @@ describe("SbClientRepository", () => {
                     "880520",
                     "in_progress",
                     true,
+                    null,
                 );
                 const updatedRow = createClientRow({
                     id: 7,
@@ -453,7 +456,7 @@ describe("SbClientRepository", () => {
                 const entity = new ClientEntity(
                     8, "Client", null, null, null, null,
                     null, null, null, null, null, false, false,
-                    null, null, true, // breastPump = true
+                    null, null, true, null, // breastPump = true, eDocId = null
                 );
                 const updatedRow = createClientRow({ id: 8, breast_pump: true });
                 clientModel.update.mockResolvedValue(updatedRow);

@@ -17,6 +17,7 @@ type ClientRow = {
     birthday: string | null;
     contract_status: string | null;
     breast_pump: boolean;
+    e_doc_id: string | null;
 };
 
 export class ClientMapper {
@@ -38,6 +39,7 @@ export class ClientMapper {
             row.birthday,
             row.contract_status,
             row.breast_pump,
+            row.e_doc_id,
         );
     }
 
@@ -58,6 +60,7 @@ export class ClientMapper {
             birthday: entity.birthday,
             contract_status: entity.contractStatus,
             breast_pump: entity.breastPump,
+            e_doc_id: entity.eDocId,
         };
     }
 
@@ -78,6 +81,7 @@ export class ClientMapper {
             birthday: entity.birthday,
             contract_status: entity.contractStatus,
             breast_pump: entity.breastPump,
+            e_doc_id: entity.eDocId,
         };
     }
 }
