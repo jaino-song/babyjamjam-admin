@@ -124,6 +124,7 @@
     "name-placeholder": "Jane Doe",
     "phone-label": "Mother's Phone",
     "phone-placeholder": "010-1234-5678",
+    "area-label": "Service Area",
     "start-date-label": "Contract Start Date",
     "start-date-placeholder": "2025-01-01",
     "end-date-label": "Contract End Date",

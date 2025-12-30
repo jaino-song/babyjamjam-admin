@@ -37,7 +37,7 @@ import "dayjs/locale/ko";
 import { useState } from "react";
 import { useEformsign } from "@/app/lib/eformsign/useEformsign";
 import type { EformsignDocumentOption } from "@/app/lib/eformsign/types";
-import { useVoucherPriceInfos } from "@/app/hooks";
+import { useVoucherPriceInfos, useAreaTemplates } from "@/app/hooks";
 import voucherOptions from "../templates/json/voucher.json";
 import { MoonLoader } from "react-spinners";
 import { NameInput } from "./form-components/NameInput";
@@ -99,6 +99,7 @@ export const ContractCreationForm = () => {
     actualPrice,
     voucherType,
     voucherDuration,
+    area,
     setName,
     setPhone,
     setStartDate,
@@ -111,10 +112,14 @@ export const ContractCreationForm = () => {
     setActualPrice,
     setVoucherType,
     setVoucherDuration,
+    setArea,
   } = useFormStore();
 
   // Voucher price info query - fetches price data based on selected voucher type
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(voucherType);
+
+  // Area templates query - fetches area-to-template mappings
+  const { data: areaTemplates = [], isLoading: isAreaTemplatesLoading } = useAreaTemplates();
 
   // Cast the result of t() to string[] because the translation returns an array for this key
   const steps = t(locale, "contract-msg.pagination-steps") as unknown as string[];
@@ -187,7 +192,7 @@ export const ContractCreationForm = () => {
         caretaker1Contact: employeePhone,
         type: "", // Missing in form
         days: "", // Missing in form
-        area: "", // Missing in form
+        area,
         contractDuration: `${start.format("YYYY-MM-DD")} ~ ${end.format("YYYY-MM-DD")}`,
         startYear: start.format("YY"),
         startMonth: start.format("MM"),
@@ -247,7 +252,7 @@ export const ContractCreationForm = () => {
 
   // Validation logic for each step
   const isStep1Valid = name && phone;
-  const isStep2Valid = employeeName && employeePhone;
+  const isStep2Valid = employeeName && employeePhone && area;
   const isStep3Valid = startDate && endDate && paymentDate;
 
   const isNextDisabled = () => {
@@ -310,6 +315,23 @@ export const ContractCreationForm = () => {
                       <NameInput name={name} setName={setName} label={t(locale, "contract-msg.name-label")} placeholder={t(locale, "contract-msg.name-placeholder")} />
                       {/* 이용자 연락처 */}
                       <ContactInput phone={phone} setPhone={setPhone} label={t(locale, "contract-msg.phone-label")} placeholder={t(locale, "contract-msg.phone-placeholder")} />
+                      {/* 지역 선택 (계약서 템플릿) */}
+                      <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
+                        <InputLabel>{t(locale, "contract-msg.area-label")}</InputLabel>
+                        <Select
+                          value={area}
+                          label={t(locale, "contract-msg.area-label")}
+                          onChange={(e) => setArea(e.target.value)}
+                          disabled={isAreaTemplatesLoading}
+                          sx={{ bgcolor: "background.default" }}
+                        >
+                          {areaTemplates.map((template) => (
+                            <MenuItem key={template.areaId} value={template.areaId}>
+                              {template.templateName || template.areaId}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
                     </Stack>
                   </Fade>
                 )}
@@ -322,6 +344,7 @@ export const ContractCreationForm = () => {
                       <NameInput name={employeeName} setName={setEmployeeName} label={t(locale, "contract-msg.employee-name-label")} placeholder={t(locale, "contract-msg.employee-name-placeholder")} />
                       {/* 제공인력 1 연락처 */}
                       <ContactInput phone={employeePhone} setPhone={setEmployeePhone} label={t(locale, "contract-msg.employee-phone-label")} placeholder={t(locale, "contract-msg.employee-phone-placeholder")} />
+                      
                     </Stack>
                   </Fade>
                 )}
@@ -591,17 +614,26 @@ export const ContractCreationForm = () => {
             <CloseIcon />
           </IconButton>
         </DialogTitle>
-        <DialogContent sx={{ p: 0, overflow: "hidden", display: "flex", flexGrow: 1 }}>
-          <iframe
-            id="eformsign_iframe"
+        <DialogContent sx={{ p: 0, overflow: "hidden", display: "flex", flexDirection: "column", flexGrow: 1, height: "calc(100vh - 64px)" }}>
+          <div
             style={{
               width: "100%",
               height: "100%",
-              border: "none",
-              flexGrow: 1,
+              overflow: "hidden",
             }}
-            title="eformsign Document"
-          />
+          >
+            <iframe
+              id="eformsign_iframe"
+              style={{
+                width: "100%",
+                height: "100%",
+                border: "none",
+                transform: "scale(1)",
+                transformOrigin: "top left",
+              }}
+              title="eformsign Document"
+            />
+          </div>
         </DialogContent>
       </Dialog>
     </LocalizationProvider>

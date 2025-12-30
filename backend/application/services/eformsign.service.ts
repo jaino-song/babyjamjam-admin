@@ -116,7 +116,7 @@ export class EformsignService {
         return await response.json();
     }
 
-    generateDocumentOptions(contractData: ContractDataDto, accessToken: string, refreshToken: string) {
+    generateDocumentOptions(contractData: ContractDataDto, accessToken: string, refreshToken: string, templateId?: string) {
         return {
             company: {
                 id: this.EFORMSIGN_COMPANY_ID,
@@ -124,8 +124,12 @@ export class EformsignService {
                 user_key: this.USER_EMAIL,
             },
             layout: {
+                "lang_code": "ko",
                 "zoom": "0.75",
-                "viewer_toolbar": { "toolbar.save": "false", "toolbar.print": "false" }
+                "viewer_toolbar": {
+                    "toolbar.save": "false",
+                    "toolbar.print": "false",
+                },
             },
             user: {
                 type: "01",
@@ -135,7 +139,7 @@ export class EformsignService {
             },
             mode: {
                 type: "01",
-                template_id: this.EFORMSIGN_TEMPLATE_ID,
+                template_id: templateId || this.EFORMSIGN_TEMPLATE_ID,
             },
             prefill: {
                 document_name: "산모신생아건강관리서비스 계약서",

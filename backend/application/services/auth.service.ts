@@ -48,14 +48,14 @@ export class AuthService {
     async validateKakaoUser(kakaoData: KakaoData): Promise<UserValidationResult> {
         let user = await this.prisma.user.findFirst({
             where: {
-                kakaoId: kakaoData.kakaoId
+                kakao_id: kakaoData.kakaoId
             },
         });
 
         if (!user) {
             user = await this.prisma.user.create({
                 data: {
-                    kakaoId: kakaoData.kakaoId,
+                    kakao_id: kakaoData.kakaoId,
                     email: kakaoData.email,
                     name: kakaoData.name,
                     profile_image: kakaoData.profileImage,

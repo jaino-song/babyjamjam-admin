@@ -19,10 +19,18 @@ export interface VoucherPriceInfo {
   actualPrice: string | null;
 }
 
+export interface AreaTemplate {
+  id: string;
+  areaId: string;
+  templateId: string;
+  templateName: string | null;
+}
+
 // Query keys - centralized for consistency
 export const voucherQueryKeys = {
   bankAccountInfos: ["bank-account-infos"] as const,
   voucherPriceInfos: (type: string) => ["voucher-price-infos", type] as const,
+  areaTemplates: ["area-templates"] as const,
 };
 
 // Hooks
@@ -48,6 +56,18 @@ export function useVoucherPriceInfos(type: string) {
       return data as VoucherPriceInfo[];
     },
     enabled: !!type,
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60 * 24, // 24 hours
+  });
+}
+
+export function useAreaTemplates() {
+  return useQuery<AreaTemplate[]>({
+    queryKey: voucherQueryKeys.areaTemplates,
+    queryFn: async () => {
+      const { data } = await api.get("/area-templates");
+      return data as AreaTemplate[];
+    },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60 * 24, // 24 hours
   });

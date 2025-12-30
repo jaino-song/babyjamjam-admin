@@ -2,7 +2,7 @@ import { UserEntity } from "domain/entities/user.entity";
 
 type UserRow = {
     id: string;
-    kakaoId: string;
+    kakao_id: string;
     email: string | null;
     name: string | null;
     profile_image: string | null;
@@ -14,7 +14,7 @@ export class UserMapper {
     static toDomain(row: UserRow): UserEntity {
         return new UserEntity(
             row.id,
-            row.kakaoId,
+            row.kakao_id,
             row.email,
             row.name,
             row.profile_image,
@@ -25,7 +25,7 @@ export class UserMapper {
 
     static toPrismaCreate(entity: UserEntity) {
         return {
-            kakaoId: entity.kakaoId,
+            kakao_id: entity.kakaoId,
             email: entity.email,
             name: entity.name,
             profile_image: entity.profileImage,
@@ -42,5 +42,3 @@ export class UserMapper {
         };
     }
 }
-
-
