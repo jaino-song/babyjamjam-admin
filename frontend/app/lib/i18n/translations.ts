@@ -39,7 +39,9 @@ export function tSafe<
   category: Category,
   key: Key
 ): string {
-  const value = translations[locale]?.[category]?.[key as keyof typeof enTranslations[Category]];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const categoryData = (translations[locale] as any)?.[category];
+  const value = categoryData?.[key];
   return String(value ?? key);
 }
 
