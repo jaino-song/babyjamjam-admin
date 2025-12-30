@@ -10,10 +10,12 @@ import {
     SbAreaTemplateRepository,
 } from "infrastructure/database/repositories/sb.area-template.repository";
 import { AreaTemplateService } from "application/services/area-template.service";
+import { AreaTemplateController } from "interface/controllers/area-template.controller";
 import { AREA_TEMPLATE_REPOSITORY } from "domain/repositories/area-template.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 @Module({
+    controllers: [AreaTemplateController],
     providers: [
         CreateAreaTemplateUsecase,
         FindAreaTemplateByAreaUsecase,
