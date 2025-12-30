@@ -124,8 +124,12 @@ export class EformsignService {
                 user_key: this.USER_EMAIL,
             },
             layout: {
+                "lang_code": "ko",
                 "zoom": "0.75",
-                "viewer_toolbar": { "toolbar.save": "false", "toolbar.print": "false" }
+                "viewer_toolbar": {
+                    "toolbar.save": "false",
+                    "toolbar.print": "false",
+                },
             },
             user: {
                 type: "01",

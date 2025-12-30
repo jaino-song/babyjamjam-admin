@@ -326,8 +326,8 @@ export const ContractCreationForm = () => {
                           sx={{ bgcolor: "background.default" }}
                         >
                           {areaTemplates.map((template) => (
-                            <MenuItem key={template.area} value={template.area}>
-                              {template.templateName || template.area}
+                            <MenuItem key={template.areaId} value={template.areaId}>
+                              {template.templateName || template.areaId}
                             </MenuItem>
                           ))}
                         </Select>
@@ -614,17 +614,26 @@ export const ContractCreationForm = () => {
             <CloseIcon />
           </IconButton>
         </DialogTitle>
-        <DialogContent sx={{ p: 0, overflow: "hidden", display: "flex", flexGrow: 1 }}>
-          <iframe
-            id="eformsign_iframe"
+        <DialogContent sx={{ p: 0, overflow: "hidden", display: "flex", flexDirection: "column", flexGrow: 1, height: "calc(100vh - 64px)" }}>
+          <div
             style={{
               width: "100%",
               height: "100%",
-              border: "none",
-              flexGrow: 1,
+              overflow: "hidden",
             }}
-            title="eformsign Document"
-          />
+          >
+            <iframe
+              id="eformsign_iframe"
+              style={{
+                width: "100%",
+                height: "100%",
+                border: "none",
+                transform: "scale(1)",
+                transformOrigin: "top left",
+              }}
+              title="eformsign Document"
+            />
+          </div>
         </DialogContent>
       </Dialog>
     </LocalizationProvider>

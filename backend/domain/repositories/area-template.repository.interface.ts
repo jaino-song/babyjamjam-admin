@@ -5,7 +5,7 @@ export interface IAreaTemplateRepository {
     findByArea(area: string): Promise<AreaTemplateEntity | null>;
     create(areaTemplate: AreaTemplateEntity): Promise<AreaTemplateEntity>;
     update(areaTemplate: AreaTemplateEntity): Promise<AreaTemplateEntity>;
-    delete(area: string): Promise<void>;
+    delete(id: string): Promise<void>;
 }
 
 export const AREA_TEMPLATE_REPOSITORY = 'AREA_TEMPLATE_REPOSITORY';

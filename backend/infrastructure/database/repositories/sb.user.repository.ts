@@ -17,7 +17,7 @@ export class SbUserRepository implements IUserRepository {
 
     async findByKakaoId(kakaoId: string): Promise<UserEntity | null> {
         const user = await this.prismaService.user.findUnique({
-            where: { kakaoId },
+            where: { kakao_id: kakaoId },
         });
         return user ? UserMapper.toDomain(user) : null;
     }

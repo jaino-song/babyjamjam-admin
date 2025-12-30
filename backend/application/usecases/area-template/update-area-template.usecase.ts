@@ -16,7 +16,8 @@ export class UpdateAreaTemplateUsecase {
         }
 
         const updated = new AreaTemplateEntity(
-            existing.area,
+            existing.id,
+            existing.areaId,
             params.templateId ?? existing.templateId,
             params.templateName !== undefined ? params.templateName : existing.templateName,
         );

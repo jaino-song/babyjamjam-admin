@@ -1,30 +1,28 @@
 import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity";
 
 type BankAccountInfoRow = {
-    area: string;
-    bankName: string | null;
-    accNum: string | null;
+    area_id: string;
+    bank_name: string | null;
+    acc_num: string | null;
 };
 
 export class BankAccountInfoMapper {
     static toDomain(row: BankAccountInfoRow): BankAccountInfoEntity {
-        return new BankAccountInfoEntity(row.area, row.bankName, row.accNum);
+        return new BankAccountInfoEntity(row.area_id, row.bank_name, row.acc_num);
     }
 
     static toPrismaCreate(entity: BankAccountInfoEntity) {
         return {
-            area: entity.area,
-            bankName: entity.bankName,
-            accNum: entity.accNum,
+            area_id: entity.area,
+            bank_name: entity.bankName,
+            acc_num: entity.accNum,
         };
     }
 
     static toPrismaUpdate(entity: BankAccountInfoEntity) {
         return {
-            bankName: entity.bankName,
-            accNum: entity.accNum,
+            bank_name: entity.bankName,
+            acc_num: entity.accNum,
         };
     }
 }
-
-

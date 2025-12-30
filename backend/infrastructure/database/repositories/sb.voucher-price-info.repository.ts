@@ -9,28 +9,28 @@ export class SbVoucherPriceInfoRepository implements IVoucherPriceInfoRepository
     constructor(private prismaService: PrismaService) {}
 
     async findById(id: number): Promise<VoucherPriceInfoEntity | null> {
-        const voucherPriceInfo = await this.prismaService.voucherPriceInfo.findUnique({
+        const voucherPriceInfo = await this.prismaService.voucher_price_info.findUnique({
             where: { id },
         });
         return voucherPriceInfo ? VoucherPriceInfoMapper.toDomain(voucherPriceInfo) : null;
     }
 
     async findByType(type: string): Promise<VoucherPriceInfoEntity[]> {
-        const voucherPriceInfos = await this.prismaService.voucherPriceInfo.findMany({
+        const voucherPriceInfos = await this.prismaService.voucher_price_info.findMany({
             where: { type: type },
         });
         return voucherPriceInfos.map(row => VoucherPriceInfoMapper.toDomain(row));
     }
-    
+
     async create(voucherPriceInfo: VoucherPriceInfoEntity): Promise<VoucherPriceInfoEntity> {
-        const created = await this.prismaService.voucherPriceInfo.create({
+        const created = await this.prismaService.voucher_price_info.create({
             data: VoucherPriceInfoMapper.toPrismaCreate(voucherPriceInfo),
         });
         return VoucherPriceInfoMapper.toDomain(created);
     }
 
     async update(voucherPriceInfo: VoucherPriceInfoEntity): Promise<VoucherPriceInfoEntity> {
-        const updated = await this.prismaService.voucherPriceInfo.update({
+        const updated = await this.prismaService.voucher_price_info.update({
             where: { id: voucherPriceInfo.id },
             data: VoucherPriceInfoMapper.toPrismaUpdate(voucherPriceInfo),
         });
@@ -38,13 +38,13 @@ export class SbVoucherPriceInfoRepository implements IVoucherPriceInfoRepository
     }
 
     async delete(id: number): Promise<void> {
-        await this.prismaService.voucherPriceInfo.delete({
+        await this.prismaService.voucher_price_info.delete({
             where: { id },
         });
     }
 
     async findAll(): Promise<VoucherPriceInfoEntity[]> {
-        const voucherPriceInfos = await this.prismaService.voucherPriceInfo.findMany();
+        const voucherPriceInfos = await this.prismaService.voucher_price_info.findMany();
         return voucherPriceInfos.map(row => VoucherPriceInfoMapper.toDomain(row));
     }
 }

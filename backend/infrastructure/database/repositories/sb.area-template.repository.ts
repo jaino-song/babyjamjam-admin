@@ -9,35 +9,35 @@ export class SbAreaTemplateRepository implements IAreaTemplateRepository {
     constructor(private prismaService: PrismaService) {}
 
     async findAll(): Promise<AreaTemplateEntity[]> {
-        const areaTemplates = await this.prismaService.area_template.findMany();
-        return areaTemplates.map(AreaTemplateMapper.toDomain);
+        const docTemplates = await this.prismaService.doc_template.findMany();
+        return docTemplates.map(AreaTemplateMapper.toDomain);
     }
 
     async findByArea(area: string): Promise<AreaTemplateEntity | null> {
-        const areaTemplate = await this.prismaService.area_template.findUnique({
-            where: { area },
+        const docTemplate = await this.prismaService.doc_template.findFirst({
+            where: { area_id: area },
         });
-        return areaTemplate ? AreaTemplateMapper.toDomain(areaTemplate) : null;
+        return docTemplate ? AreaTemplateMapper.toDomain(docTemplate) : null;
     }
 
     async create(areaTemplate: AreaTemplateEntity): Promise<AreaTemplateEntity> {
-        const created = await this.prismaService.area_template.create({
+        const created = await this.prismaService.doc_template.create({
             data: AreaTemplateMapper.toPrismaCreate(areaTemplate),
         });
         return AreaTemplateMapper.toDomain(created);
     }
 
     async update(areaTemplate: AreaTemplateEntity): Promise<AreaTemplateEntity> {
-        const updated = await this.prismaService.area_template.update({
-            where: { area: areaTemplate.area },
+        const updated = await this.prismaService.doc_template.update({
+            where: { id: areaTemplate.id },
             data: AreaTemplateMapper.toPrismaUpdate(areaTemplate),
         });
         return AreaTemplateMapper.toDomain(updated);
     }
 
-    async delete(area: string): Promise<void> {
-        await this.prismaService.area_template.delete({
-            where: { area },
+    async delete(id: string): Promise<void> {
+        await this.prismaService.doc_template.delete({
+            where: { id },
         });
     }
 }

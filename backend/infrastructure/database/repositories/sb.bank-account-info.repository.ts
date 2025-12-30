@@ -9,35 +9,35 @@ export class SbBankAccountInfoRepository implements IBankAccountInfoRepository {
     constructor(private prismaService: PrismaService) {}
 
     async findAll(): Promise<BankAccountInfoEntity[]> {
-        const bankAccountInfos = await this.prismaService.bankAccountInfo.findMany();
+        const bankAccountInfos = await this.prismaService.bank_account_info.findMany();
         return bankAccountInfos.map(BankAccountInfoMapper.toDomain);
     }
 
     async findByArea(area: string): Promise<BankAccountInfoEntity | null> {
-        const bankAccountInfo = await this.prismaService.bankAccountInfo.findUnique({
-            where: { area },
+        const bankAccountInfo = await this.prismaService.bank_account_info.findUnique({
+            where: { area_id: area },
         });
         return bankAccountInfo ? BankAccountInfoMapper.toDomain(bankAccountInfo) : null;
     }
 
     async create(bankAccountInfo: BankAccountInfoEntity): Promise<BankAccountInfoEntity> {
-        const created = await this.prismaService.bankAccountInfo.create({
+        const created = await this.prismaService.bank_account_info.create({
             data: BankAccountInfoMapper.toPrismaCreate(bankAccountInfo),
         });
         return BankAccountInfoMapper.toDomain(created);
     }
 
     async update(bankAccountInfo: BankAccountInfoEntity): Promise<BankAccountInfoEntity> {
-        const updated = await this.prismaService.bankAccountInfo.update({
-            where: { area: bankAccountInfo.area },
+        const updated = await this.prismaService.bank_account_info.update({
+            where: { area_id: bankAccountInfo.area },
             data: BankAccountInfoMapper.toPrismaUpdate(bankAccountInfo),
         });
         return BankAccountInfoMapper.toDomain(updated);
     }
 
     async delete(area: string): Promise<void> {
-        await this.prismaService.bankAccountInfo.delete({
-            where: { area },
+        await this.prismaService.bank_account_info.delete({
+            where: { area_id: area },
         });
     }
 }

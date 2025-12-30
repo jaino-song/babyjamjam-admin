@@ -13,16 +13,15 @@ export class BankAccountInfoEntity {
         return new BankAccountInfoEntity(area, bankName, accNum);
     }
 
-    static fromPrisma(prismaData: { area: string, bankName: string | null, accNum: string | null }): BankAccountInfoEntity {
-        return new BankAccountInfoEntity(prismaData.area, prismaData.bankName, prismaData.accNum);
+    static fromPrisma(prismaData: { area_id: string, bank_name: string | null, acc_num: string | null }): BankAccountInfoEntity {
+        return new BankAccountInfoEntity(prismaData.area_id, prismaData.bank_name, prismaData.acc_num);
     }
 
-    // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { area: string, bankName: string | null, accNum: string | null } {
+    toPersistence(): { area_id: string, bank_name: string | null, acc_num: string | null } {
         return {
-            area: this.area,
-            bankName: this.bankName,
-            accNum: this.accNum,
+            area_id: this.area,
+            bank_name: this.bankName,
+            acc_num: this.accNum,
         };
     }
 }

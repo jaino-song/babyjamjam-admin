@@ -20,7 +20,8 @@ export interface VoucherPriceInfo {
 }
 
 export interface AreaTemplate {
-  area: string;
+  id: string;
+  areaId: string;
   templateId: string;
   templateName: string | null;
 }
