@@ -317,10 +317,10 @@ export const ContractCreationForm = () => {
                       <ContactInput phone={phone} setPhone={setPhone} label={t(locale, "contract-msg.phone-label")} placeholder={t(locale, "contract-msg.phone-placeholder")} />
                       {/* 지역 선택 (계약서 템플릿) */}
                       <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
-                        <InputLabel>{t(locale, "contract-msg.area-label")}</InputLabel>
+                        <InputLabel>{t(locale, "contract-msg.doc-type-label")}</InputLabel>
                         <Select
                           value={area}
-                          label={t(locale, "contract-msg.area-label")}
+                          label={t(locale, "contract-msg.doc-type-label")}
                           onChange={(e) => setArea(e.target.value)}
                           disabled={isAreaTemplatesLoading}
                           sx={{ bgcolor: "background.default" }}

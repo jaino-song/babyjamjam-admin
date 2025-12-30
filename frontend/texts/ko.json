@@ -128,7 +128,7 @@
     "name-placeholder": "홍길동",
     "phone-label": "산모님 연락처",
     "phone-placeholder": "010-1234-5678",
-    "area-label": "서비스 지역",
+    "doc-type-label": "계약서 선택",
     "start-date-label": "계약 시작일",
     "start-date-placeholder": "2025-01-01",
     "end-date-label": "계약 종료일",
