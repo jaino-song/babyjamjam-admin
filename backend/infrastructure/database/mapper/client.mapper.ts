@@ -3,8 +3,6 @@ import { ClientEntity } from "domain/entities/client.entity";
 type ClientRow = {
     id: number;
     name: string;
-    primary_employee_id: number;
-    secondary_employee_id: number | null;
     address: string | null;
     phone: string | null;
     type: string | null;
@@ -16,6 +14,10 @@ type ClientRow = {
     end_date: Date | null;
     care_center: boolean;
     voucher_client: boolean;
+    birthday: string | null;
+    contract_status: string | null;
+    breast_pump: boolean;
+    e_doc_id: string | null;
 };
 
 export class ClientMapper {
@@ -23,8 +25,6 @@ export class ClientMapper {
         return new ClientEntity(
             row.id,
             row.name,
-            row.primary_employee_id,
-            row.secondary_employee_id,
             row.address,
             row.phone,
             row.type,
@@ -36,14 +36,16 @@ export class ClientMapper {
             row.end_date,
             row.care_center,
             row.voucher_client,
+            row.birthday,
+            row.contract_status,
+            row.breast_pump,
+            row.e_doc_id,
         );
     }
 
     static toPrismaCreate(entity: ClientEntity) {
         return {
             name: entity.name,
-            primary_employee_id: entity.primaryEmployeeId,
-            secondary_employee_id: entity.secondaryEmployeeId,
             address: entity.address,
             phone: entity.phone,
             type: entity.type,
@@ -55,14 +57,16 @@ export class ClientMapper {
             end_date: entity.endDate,
             care_center: entity.careCenter,
             voucher_client: entity.voucherClient,
+            birthday: entity.birthday,
+            contract_status: entity.contractStatus,
+            breast_pump: entity.breastPump,
+            e_doc_id: entity.eDocId,
         };
     }
 
     static toPrismaUpdate(entity: ClientEntity) {
         return {
             name: entity.name,
-            primary_employee_id: entity.primaryEmployeeId,
-            secondary_employee_id: entity.secondaryEmployeeId,
             address: entity.address,
             phone: entity.phone,
             type: entity.type,
@@ -74,6 +78,10 @@ export class ClientMapper {
             end_date: entity.endDate,
             care_center: entity.careCenter,
             voucher_client: entity.voucherClient,
+            birthday: entity.birthday,
+            contract_status: entity.contractStatus,
+            breast_pump: entity.breastPump,
+            e_doc_id: entity.eDocId,
         };
     }
 }

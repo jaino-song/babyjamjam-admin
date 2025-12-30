@@ -17,7 +17,7 @@ import { EmployeeEntity } from "domain/entities/employee.entity";
 
 export type EmployeeUpdateParams = {
     name?: string;
-    workArea?: string;
+    workArea?: string[];
     phone?: string;
     grade?: string;
     openToNextWork?: boolean;
@@ -40,7 +40,7 @@ export class EmployeeService {
         private readonly listEmployeesOpenToNextWorkUsecase: ListEmployeesOpenToNextWorkUsecase,
     ) {}
 
-    create(params: { name: string; workArea: string; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string }): Promise<EmployeeEntity> {
+    create(params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string }): Promise<EmployeeEntity> {
         return this.createEmployeeUsecase.execute(
             params.name,
             params.workArea,

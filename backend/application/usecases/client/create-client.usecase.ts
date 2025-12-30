@@ -4,8 +4,6 @@ import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client
 
 type CreateClientParams = {
     name: string;
-    primaryEmployeeId: number;
-    secondaryEmployeeId: number | null;
     address: string | null;
     phone: string | null;
     type: string | null;
@@ -17,6 +15,10 @@ type CreateClientParams = {
     endDate: Date | null;
     careCenter: boolean;
     voucherClient: boolean;
+    birthday: string | null;
+    contractStatus: string | null;
+    breastPump: boolean;
+    eDocId?: string | null;
 };
 
 @Injectable()
@@ -27,7 +29,10 @@ export class CreateClientUsecase {
     ) {}
 
     execute(params: CreateClientParams): Promise<ClientEntity> {
-        const client = ClientEntity.create(params);
+        const client = ClientEntity.create({
+            ...params,
+            eDocId: params.eDocId ?? null,
+        });
         return this.clientRepository.create(client);
     }
 }

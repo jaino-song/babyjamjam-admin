@@ -2,7 +2,7 @@ export class EmployeeEntity {
     constructor(
         public readonly id: number,
         public name: string,
-        public workArea: string,
+        public workArea: string[],
         public phone: string,
         public grade: string,
         public openToNextWork: boolean,
@@ -19,7 +19,7 @@ export class EmployeeEntity {
 
     updateProfile(
         name?: string,
-        workArea?: string,
+        workArea?: string[],
         phone?: string,
         grade?: string,
         openToNextWork?: boolean,
@@ -33,7 +33,7 @@ export class EmployeeEntity {
 
     static create(
         name: string,
-        workArea: string,
+        workArea: string[],
         phone: string,
         grade: string,
         openToNextWork: boolean,
@@ -50,7 +50,7 @@ export class EmployeeEntity {
         );
     }
 
-    static fromPrisma(prismaData: { id: number, name: string, workArea: string, phone: string, grade: string, openToNextWork: boolean, registeredDate: Date }): EmployeeEntity {
+    static fromPrisma(prismaData: { id: number, name: string, workArea: string[], phone: string, grade: string, openToNextWork: boolean, registeredDate: Date }): EmployeeEntity {
         return new EmployeeEntity(
             prismaData.id,
             prismaData.name,
@@ -63,7 +63,7 @@ export class EmployeeEntity {
     }
 
     // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { id: number, name: string, workArea: string, phone: string, grade: string, openToNextWork: boolean, registeredDate: Date } {
+    toPersistence(): { id: number, name: string, workArea: string[], phone: string, grade: string, openToNextWork: boolean, registeredDate: Date } {
         return {
             id: this.id,
             name: this.name,
