@@ -91,12 +91,16 @@
     "reminder": "Reminder",
     "thanks": "Reservation Complete",
     "survey": "Survey",
-    "contract": "E-Contract"
+    "contract": "E-Contract",
+    "info": "Information Collection"
   },
   "greeting-msg": {
     "subtitle": "Generate a greeting message",
     "name-label": "Mother's Name",
     "name-placeholder": "Jane Doe"
+  },
+  "info-msg": {
+    "subtitle": "Generate an information collection message for service processing"
   },
   "service-info-msg": {
     "subtitle": "Generate a service information message",
@@ -104,26 +108,27 @@
     "name-placeholder": "Jane Doe"
   },
   "reminder-msg": {
-    "subtitle": "Generate a reminder message",
+    "subtitle": "Generate a reminder message after consultation",
     "name-label": "Mother's Name",
     "name-placeholder": "Jane Doe"
   },
   "thanks-msg": {
-    "subtitle": "Generate a thank you message",
+    "subtitle": "Generate a reservation complete thank you message",
     "name-label": "Mother's Name",
     "name-placeholder": "Jane Doe"
   },
   "survey-msg": {
-    "subtitle": "Generate a survey request message",
+    "subtitle": "Generate a monitoring survey request message",
     "name-label": "Mother's Name",
     "name-placeholder": "Jane Doe"
   },
   "contract-msg": {
-    "subtitle": "Generate an e-contract message",
+    "subtitle": "Generate an e-contract notification message",
     "name-label": "Mother's Name",
     "name-placeholder": "Jane Doe",
     "phone-label": "Mother's Phone",
     "phone-placeholder": "010-1234-5678",
+    "doc-type-label": "Select Contract",
     "area-label": "Service Area",
     "start-date-label": "Contract Start Date",
     "start-date-placeholder": "2025-01-01",
@@ -155,22 +160,22 @@
     "settings": "Settings"
   },
   "login": {
-    "title": "Get Started After Login",
-    "subtitle": "Login to get started",
+    "title": "Login to Get Started",
+    "subtitle": "Please select one of the social login options below to log in",
     "kakao-login": "Login with Kakao",
     "google-login": "Login with Google"
   },
   "documents-list": {
-    "title": "Documents",
-    "subtitle": "You can view the list of sorted documents based on the options.",
-    "document-title": "Document Title",
+    "title": "Contracts",
+    "subtitle": "View the list of contracts based on conditions.",
+    "document-title": "Contractor",
     "created-date": "Created Date",
     "status": "Status",
-    "new-document": "New Document"
+    "new-document": "New Contract"
   },
   "clients": {
     "title": "Client Management",
-    "subtitle": "Manage registered clients and register new clients.",
+    "subtitle": "Manage registered client information and register new clients.",
     "search-placeholder": "Search by name, phone, address",
     "no-data": "No clients registered.",
     "load-error": "Failed to load client list.",
@@ -180,7 +185,7 @@
       "phone": "Phone",
       "type": "Voucher Type",
       "duration": "Duration",
-      "status": "Status",
+      "status": "Contract Status",
       "start-date": "Start Date",
       "actions": "Actions"
     },
@@ -188,7 +193,7 @@
       "add-title": "Register New Client",
       "edit-title": "Edit Client Information",
       "section-basic": "Basic Information",
-      "section-employee": "Assigned Employee",
+      "section-employee": "Assigned Provider",
       "section-service": "Service Information",
       "section-pricing": "Pricing Information",
       "section-contract": "Contract Information",
@@ -198,25 +203,25 @@
       "birthday-helper": "YYMMDD format (e.g., 990315)",
       "phone": "Phone",
       "address": "Address",
-      "primary-employee": "Primary Employee",
-      "secondary-employee": "Secondary Employee",
+      "primary-employee": "Primary Provider",
+      "secondary-employee": "Secondary Provider",
       "none": "None",
       "voucher-type": "Voucher Type",
       "duration": "Service Duration",
-      "full-price": "Full Price",
+      "full-price": "Total Service Amount",
       "grant": "Government Grant",
       "actual-price": "Out-of-Pocket",
       "contract-status": "Contract Status",
       "start-date": "Start Date",
       "end-date": "End Date",
       "voucher-client": "Voucher Client",
-      "care-center": "Care Center",
+      "care-center": "Postpartum Care Center",
       "breast-pump": "Breast Pump Rental",
       "error-name-required": "Name is required.",
       "error-birthday-required": "Birthday is required.",
       "error-address-required": "Address is required.",
       "error-phone-required": "Phone number is required.",
-      "error-employee-required": "Primary employee is required.",
+      "error-employee-required": "Primary provider is required.",
       "error-type-required": "Voucher type is required.",
       "error-duration-required": "Service duration is required.",
       "error-price-required": "Pricing information is required.",
@@ -224,23 +229,23 @@
       "error-end-date-required": "End date is required.",
       "error-save-failed": "Failed to save. Please try again.",
       "employee-search-placeholder": "Search by name...",
-      "no-employee-found": "No matching employee found.",
-      "add-new-employee": "Add New Employee",
-      "add-employee-coming-soon": "Add employee feature coming soon.",
+      "no-employee-found": "No matching provider found.",
+      "add-new-employee": "Add New Provider",
+      "add-employee-coming-soon": "Add provider feature coming soon.",
       "type-to-search": "Type to search",
       "auto-filled": "Auto-filled",
-      "section-document": "E-Document",
+      "section-document": "E-Contract",
       "document-status": "Signing Status",
       "document-signed": "Signed",
       "document-not-signed": "Not Signed"
     }
   },
   "employees": {
-    "title": "Employee Management",
-    "subtitle": "Manage registered employees and register new employees.",
-    "add-employee": "Add New Employee",
+    "title": "Provider Management",
+    "subtitle": "Manage registered provider information and register new providers.",
+    "add-employee": "Register New Provider",
     "search-placeholder": "Search by name, phone, work area",
-    "no-employees": "No employees registered.",
+    "no-employees": "No providers registered.",
     "schedule-not-implemented": "Schedule feature coming soon",
     "table": {
       "name": "Name",
@@ -252,11 +257,11 @@
       "unavailable": "Unavailable"
     },
     "form": {
-      "create-title": "Register New Employee",
-      "edit-title": "Edit Employee Information",
-      "section-basic": "Basic Info",
-      "section-work": "Work Info",
-      "section-registration": "Registration Info",
+      "create-title": "Register New Provider",
+      "edit-title": "Edit Provider Information",
+      "section-basic": "Basic Information",
+      "section-work": "Work Information",
+      "section-registration": "Registration Information",
       "name": "Name",
       "phone": "Phone",
       "work-area": "Work Area",
@@ -265,11 +270,11 @@
       "registered-date": "Registered Date"
     },
     "detail": {
-      "title": "Employee Details"
+      "title": "Provider Details"
     },
     "delete-confirm": {
-      "title": "Delete Employee",
-      "message": "Are you sure you want to delete this employee? This action cannot be undone."
+      "title": "Delete Provider",
+      "message": "Are you sure you want to delete this provider? This action cannot be undone."
     }
   }
 }
