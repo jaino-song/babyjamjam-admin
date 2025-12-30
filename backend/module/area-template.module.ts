@@ -1,0 +1,32 @@
+import { Module } from "@nestjs/common";
+import {
+    CreateAreaTemplateUsecase,
+    FindAreaTemplateByAreaUsecase,
+    ListAreaTemplatesUsecase,
+    UpdateAreaTemplateUsecase,
+    DeleteAreaTemplateUsecase,
+} from "application/usecases/area-template";
+import {
+    SbAreaTemplateRepository,
+} from "infrastructure/database/repositories/sb.area-template.repository";
+import { AreaTemplateService } from "application/services/area-template.service";
+import { AREA_TEMPLATE_REPOSITORY } from "domain/repositories/area-template.repository.interface";
+import { PrismaService } from "infrastructure/database/prisma.service";
+
+@Module({
+    providers: [
+        CreateAreaTemplateUsecase,
+        FindAreaTemplateByAreaUsecase,
+        ListAreaTemplatesUsecase,
+        UpdateAreaTemplateUsecase,
+        DeleteAreaTemplateUsecase,
+        AreaTemplateService,
+        PrismaService,
+        {
+            provide: AREA_TEMPLATE_REPOSITORY,
+            useClass: SbAreaTemplateRepository,
+        },
+    ],
+    exports: [AreaTemplateService],
+})
+export class AreaTemplateModule {}

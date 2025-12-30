@@ -13,6 +13,7 @@ interface FormStore {
     paymentDate: string;
     voucherType: string;
     voucherDuration: string;
+    area: string;
     setName: (name: string) => void;
     setPhone: (phone: string) => void;
     setStartDate: (startDate: string) => void;
@@ -25,6 +26,7 @@ interface FormStore {
     setPaymentDate: (paymentDate: string) => void;
     setVoucherType: (voucherType: string) => void;
     setVoucherDuration: (voucherDuration: string) => void;
+    setArea: (area: string) => void;
 }
 
 export const useFormStore = create<FormStore>((set) => {
@@ -41,7 +43,8 @@ export const useFormStore = create<FormStore>((set) => {
         paymentDate: "",
         voucherType: "",
         voucherDuration: "",
-        setName: (name: string) => set({ name: name}),
+        area: "",
+        setName: (name: string) => set({ name }),
         setPhone: (phone: string) => set({ phone: phone}),
         setStartDate: (startDate: string) => set({ startDate: startDate}),
         setEndDate: (endDate: string) => set({ endDate: endDate}),
@@ -51,7 +54,8 @@ export const useFormStore = create<FormStore>((set) => {
         setGrant: (grant: string) => set({ grant: grant}),
         setActualPrice: (actualPrice: string) => set({ actualPrice: actualPrice}),
         setPaymentDate: (paymentDate: string) => set({ paymentDate: paymentDate}),
-        setVoucherType: (voucherType: string) => set({ voucherType: voucherType}),
-        setVoucherDuration: (voucherDuration: string) => set({ voucherDuration: voucherDuration}),
+        setVoucherType: (voucherType: string) => set({ voucherType }),
+        setVoucherDuration: (voucherDuration: string) => set({ voucherDuration }),
+        setArea: (area: string) => set({ area }),
     }
 })

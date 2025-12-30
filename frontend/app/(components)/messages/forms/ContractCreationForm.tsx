@@ -99,6 +99,7 @@ export const ContractCreationForm = () => {
     actualPrice,
     voucherType,
     voucherDuration,
+    area,
     setName,
     setPhone,
     setStartDate,
@@ -111,6 +112,7 @@ export const ContractCreationForm = () => {
     setActualPrice,
     setVoucherType,
     setVoucherDuration,
+    setArea,
   } = useFormStore();
 
   // Voucher price info query - fetches price data based on selected voucher type
@@ -187,7 +189,7 @@ export const ContractCreationForm = () => {
         caretaker1Contact: employeePhone,
         type: "", // Missing in form
         days: "", // Missing in form
-        area: "", // Missing in form
+        area,
         contractDuration: `${start.format("YYYY-MM-DD")} ~ ${end.format("YYYY-MM-DD")}`,
         startYear: start.format("YY"),
         startMonth: start.format("MM"),
