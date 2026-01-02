@@ -3,6 +3,15 @@ import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
 
+// Catch any unhandled errors
+process.on('uncaughtException', (error) => {
+    console.error('UNCAUGHT EXCEPTION:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('UNHANDLED REJECTION at:', promise, 'reason:', reason);
+});
+
 // Add BigInt serialization support (env reloaded)
 (BigInt.prototype as any).toJSON = function () {
     return this.toString();
@@ -35,6 +44,11 @@ async function bootstrap() {
 
     const port = process.env.PORT || 3001;
     await app.listen(port, '0.0.0.0');
-    console.log(`Server is running on port ${port}`);
+    console.log(`Server is running on http://0.0.0.0:${port}`);
+
+    // Keep-alive log every 30 seconds
+    setInterval(() => {
+        console.log(`[Heartbeat] Server still alive at ${new Date().toISOString()}`);
+    }, 30000);
 }
 bootstrap();
