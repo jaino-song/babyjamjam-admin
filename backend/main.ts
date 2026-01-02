@@ -42,13 +42,7 @@ async function bootstrap() {
         res.send("Server is running");
     });
 
-    const port = Number(process.env.PORT) || 3001;
-    await app.listen(port);
-    console.log(`Server is running on port ${port}`);
-
-    // Keep-alive log every 30 seconds
-    setInterval(() => {
-        console.log(`[Heartbeat] Server still alive at ${new Date().toISOString()}`);
-    }, 30000);
+    await app.listen(3001);
+    console.log("Server is running");
 }
 bootstrap();
