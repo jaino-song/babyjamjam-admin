@@ -29,7 +29,7 @@ export interface AreaTemplate {
 // Query keys - centralized for consistency
 export const voucherQueryKeys = {
   bankAccountInfos: ["bank-account-infos"] as const,
-  voucherPriceInfos: (type: string) => ["voucher-price-infos", type] as const,
+  voucherPriceInfos: (type: string, year?: number) => ["voucher-price-infos", type, year] as const,
   areaTemplates: ["area-templates"] as const,
 };
 
@@ -46,12 +46,12 @@ export function useBankAccountInfos() {
   });
 }
 
-export function useVoucherPriceInfos(type: string) {
+export function useVoucherPriceInfos(type: string, year?: number) {
   return useQuery<VoucherPriceInfo[]>({
-    queryKey: voucherQueryKeys.voucherPriceInfos(type),
+    queryKey: voucherQueryKeys.voucherPriceInfos(type, year),
     queryFn: async () => {
       const { data } = await api.get("/voucher-price-infos/type", {
-        params: { type },
+        params: { type, year },
       });
       return data as VoucherPriceInfo[];
     },

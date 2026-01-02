@@ -8,6 +8,7 @@ export type UpdateVoucherPriceInfoParams = {
     fullPrice?: string | null;
     grant?: string | null;
     actualPrice?: string | null;
+    year?: number | null;
 };
 
 @Injectable()
@@ -37,6 +38,9 @@ export class UpdateVoucherPriceInfoUsecase {
         }
         if (updates.actualPrice !== undefined) {
             voucherPriceInfo.actualPrice = updates.actualPrice;
+        }
+        if (updates.year !== undefined && updates.year !== null) {
+            voucherPriceInfo.year = updates.year;
         }
 
         return this.voucherPriceInfoRepository.update(voucherPriceInfo);

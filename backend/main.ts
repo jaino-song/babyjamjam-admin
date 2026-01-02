@@ -3,7 +3,7 @@ import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
 
-// Add BigInt serialization support
+// Add BigInt serialization support (env reloaded)
 (BigInt.prototype as any).toJSON = function () {
     return this.toString();
 };
@@ -33,7 +33,8 @@ async function bootstrap() {
         res.send("Server is running");
     });
 
-    await app.listen(3001);
-    console.log("Server is running");
+    const port = process.env.PORT || 3001;
+    await app.listen(port);
+    console.log(`Server is running on port ${port}`);
 }
 bootstrap();

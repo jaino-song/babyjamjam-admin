@@ -9,8 +9,8 @@ export class CreateVoucherPriceInfoUsecase {
         private readonly voucherPriceInfoRepository: IVoucherPriceInfoRepository,
     ) {}
 
-    execute(type: string, duration: bigint, fullPrice: string, grant: string, actualPrice: string): Promise<VoucherPriceInfoEntity> {
-        const voucherPriceInfo = VoucherPriceInfoEntity.create(type, duration, fullPrice, grant, actualPrice);
+    execute(type: string, duration: bigint, fullPrice: string, grant: string, actualPrice: string, year: number): Promise<VoucherPriceInfoEntity> {
+        const voucherPriceInfo = VoucherPriceInfoEntity.create(type, duration, fullPrice, grant, actualPrice, year);
         return this.voucherPriceInfoRepository.create(voucherPriceInfo);
     }
 }

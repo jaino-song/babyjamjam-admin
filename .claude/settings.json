@@ -6,5 +6,26 @@
     "github@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
     "figma@claude-plugins-official": true
-  }
+  },
+    "permissions": {
+      "allow": [
+        "Bash(pnpm build:*)",
+        "Bash(pnpm install:*)",
+        "Bash(npx tsc --noEmit)",
+        "Bash(cat:*)",
+        "Bash(pnpm prisma generate:*)",
+        "Bash(ls:*)",
+        "Bash(lsof:*)",
+        "Bash(curl:*)",
+        "Bash(git config:*)",
+        "Bash(git fetch:*)",
+        "Bash(git diff-tree:*)",
+        "Bash(pnpm add:*)",
+        "Bash(npx playwright:*)",
+        "Bash(pnpm test:*)",
+        "Bash(pnpm dev:*)",
+        "Bash(pnpm --filter:*)",
+        "mcp__plugin_playwright_playwright__*"
+      ]
+    }
 }

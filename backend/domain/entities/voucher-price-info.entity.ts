@@ -6,6 +6,7 @@ export class VoucherPriceInfoEntity {
         public fullPrice: string | null,
         public grant: string | null,
         public actualPrice: string | null,
+        public year: number,
     ) {}
 
     static create(
@@ -14,6 +15,7 @@ export class VoucherPriceInfoEntity {
         fullPrice: string,
         grant: string,
         actualPrice: string,
+        year: number,
     ): VoucherPriceInfoEntity {
         return new VoucherPriceInfoEntity(
             0,
@@ -22,10 +24,19 @@ export class VoucherPriceInfoEntity {
             fullPrice,
             grant,
             actualPrice,
+            year,
         );
     }
 
-    static fromPrisma(prismaData: { id: number, type: string | null, duration: bigint | null, fullPrice: string | null, grant: string | null, actualPrice: string | null }): VoucherPriceInfoEntity {
+    static fromPrisma(prismaData: {
+        id: number;
+        type: string | null;
+        duration: bigint | null;
+        fullPrice: string | null;
+        grant: string | null;
+        actualPrice: string | null;
+        year: number;
+    }): VoucherPriceInfoEntity {
         return new VoucherPriceInfoEntity(
             prismaData.id,
             prismaData.type,
@@ -33,11 +44,20 @@ export class VoucherPriceInfoEntity {
             prismaData.fullPrice,
             prismaData.grant,
             prismaData.actualPrice,
+            prismaData.year,
         );
     }
 
     // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { id: number, type: string | null, duration: bigint | null, fullPrice: string | null, grant: string | null, actualPrice: string | null } {
+    toPersistence(): {
+        id: number;
+        type: string | null;
+        duration: bigint | null;
+        fullPrice: string | null;
+        grant: string | null;
+        actualPrice: string | null;
+        year: number;
+    } {
         return {
             id: this.id,
             type: this.type,
@@ -45,6 +65,7 @@ export class VoucherPriceInfoEntity {
             fullPrice: this.fullPrice,
             grant: this.grant,
             actualPrice: this.actualPrice,
+            year: this.year,
         };
     }
 }

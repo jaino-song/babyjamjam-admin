@@ -20,9 +20,10 @@ describe("SbVoucherPriceInfoRepository", () => {
         id: 10,
         type: "standard",
         duration: BigInt(30),
-        fullPrice: "100000",
+        full_price: "100000",
         grant: "50000",
-        actualPrice: "50000",
+        actual_price: "50000",
+        year: 2025,
         ...overrides,
     });
 
@@ -182,14 +183,15 @@ describe("SbVoucherPriceInfoRepository", () => {
         describe("given a valid VoucherPriceInfoEntity", () => {
             it("should persist voucher and return created entity", async () => {
                 // Arrange
-                const entity = VoucherPriceInfoEntity.create("premium", BigInt(60), "200000", "100000", "100000");
+                const entity = VoucherPriceInfoEntity.create("premium", BigInt(60), "200000", "100000", "100000", 2025);
                 const createdRow = createVoucherRow({
                     id: 11,
                     type: "premium",
                     duration: BigInt(60),
-                    fullPrice: "200000",
+                    full_price: "200000",
                     grant: "100000",
-                    actualPrice: "100000",
+                    actual_price: "100000",
+                    year: 2025,
                 });
                 voucherModel.create.mockResolvedValue(createdRow);
 
@@ -202,9 +204,10 @@ describe("SbVoucherPriceInfoRepository", () => {
                         id: 0,
                         type: "premium",
                         duration: BigInt(60),
-                        fullPrice: "200000",
+                        full_price: "200000",
                         grant: "100000",
-                        actualPrice: "100000",
+                        actual_price: "100000",
+                        year: 2025,
                     },
                 });
                 expect(result).toMatchObject({ id: 11, type: "premium" });
@@ -219,7 +222,7 @@ describe("SbVoucherPriceInfoRepository", () => {
                 [BigInt(90), "90-day voucher"],
             ])("should create with duration %s (%s)", async (duration) => {
                 // Arrange
-                const entity = VoucherPriceInfoEntity.create("test", duration, "100", "50", "50");
+                const entity = VoucherPriceInfoEntity.create("test", duration, "100", "50", "50", 2025);
                 const createdRow = createVoucherRow({ id: 12, duration });
                 voucherModel.create.mockResolvedValue(createdRow);
 
@@ -242,14 +245,15 @@ describe("SbVoucherPriceInfoRepository", () => {
         describe("given an existing VoucherPriceInfoEntity with changes", () => {
             it("should update voucher with correct data", async () => {
                 // Arrange
-                const entity = new VoucherPriceInfoEntity(15, "vip", BigInt(90), "300000", "150000", "150000");
+                const entity = new VoucherPriceInfoEntity(15, "vip", BigInt(90), "300000", "150000", "150000", 2025);
                 const updatedRow = createVoucherRow({
                     id: 15,
                     type: "vip",
                     duration: BigInt(90),
-                    fullPrice: "300000",
+                    full_price: "300000",
                     grant: "150000",
-                    actualPrice: "150000",
+                    actual_price: "150000",
+                    year: 2025,
                 });
                 voucherModel.update.mockResolvedValue(updatedRow);
 
@@ -262,9 +266,10 @@ describe("SbVoucherPriceInfoRepository", () => {
                     data: {
                         type: "vip",
                         duration: BigInt(90),
-                        fullPrice: "300000",
+                        full_price: "300000",
                         grant: "150000",
-                        actualPrice: "150000",
+                        actual_price: "150000",
+                        year: 2025,
                     },
                 });
                 expect(result).toMatchObject({ id: 15, type: "vip" });
@@ -274,12 +279,13 @@ describe("SbVoucherPriceInfoRepository", () => {
         describe("given only price fields are changed", () => {
             it("should update with new prices", async () => {
                 // Arrange
-                const entity = new VoucherPriceInfoEntity(16, "standard", BigInt(30), "150000", "75000", "75000");
+                const entity = new VoucherPriceInfoEntity(16, "standard", BigInt(30), "150000", "75000", "75000", 2025);
                 const updatedRow = createVoucherRow({
                     id: 16,
-                    fullPrice: "150000",
+                    full_price: "150000",
                     grant: "75000",
-                    actualPrice: "75000",
+                    actual_price: "75000",
+                    year: 2025,
                 });
                 voucherModel.update.mockResolvedValue(updatedRow);
 
@@ -296,7 +302,7 @@ describe("SbVoucherPriceInfoRepository", () => {
         describe("given type is upgraded from standard to premium", () => {
             it("should correctly update the type", async () => {
                 // Arrange
-                const entity = new VoucherPriceInfoEntity(17, "premium", BigInt(30), "100000", "50000", "50000");
+                const entity = new VoucherPriceInfoEntity(17, "premium", BigInt(30), "100000", "50000", "50000", 2025);
                 const updatedRow = createVoucherRow({
                     id: 17,
                     type: "premium",

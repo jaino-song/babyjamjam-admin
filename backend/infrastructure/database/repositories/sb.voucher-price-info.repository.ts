@@ -22,6 +22,14 @@ export class SbVoucherPriceInfoRepository implements IVoucherPriceInfoRepository
         return voucherPriceInfos.map(row => VoucherPriceInfoMapper.toDomain(row));
     }
 
+    async findByTypeAndYear(type: string, year: number): Promise<VoucherPriceInfoEntity[]> {
+        const voucherPriceInfos = await this.prismaService.voucher_price_info.findMany({
+            where: { type, year },
+            orderBy: { duration: "asc" },
+        });
+        return voucherPriceInfos.map(row => VoucherPriceInfoMapper.toDomain(row));
+    }
+
     async create(voucherPriceInfo: VoucherPriceInfoEntity): Promise<VoucherPriceInfoEntity> {
         const created = await this.prismaService.voucher_price_info.create({
             data: VoucherPriceInfoMapper.toPrismaCreate(voucherPriceInfo),

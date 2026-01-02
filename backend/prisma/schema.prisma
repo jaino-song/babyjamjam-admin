@@ -9,25 +9,25 @@ datasource db {
 }
 
 model area {
-  id                String              @id
+  id                String             @id
   name              String
   korean_name       String
-  doc_templates     doc_template[]
   bank_account_info bank_account_info?
+  doc_templates     doc_template[]
 }
 
 model bank_account_info {
-  area_id   String  @id
+  area_id   String  @id(map: "bankAccountInfo_pkey")
   bank_name String?
   acc_num   String?
   area      area    @relation(fields: [area_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model doc_template {
-  id            String  @id @default(dbgenerated("gen_random_uuid()"))
   area_id       String
   template_id   String
   template_name String?
+  id            String  @id @default(dbgenerated("(gen_random_uuid())::text"))
   area          area    @relation(fields: [area_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
@@ -48,17 +48,21 @@ model user {
   profile_image String?  @db.VarChar
   role          String?  @db.VarChar
   created_at    DateTime @default(now()) @db.Timestamp(6)
-  kakao_id      String   @unique @db.VarChar
+  kakao_id      String   @unique(map: "user_kakaoId_key") @db.VarChar
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model voucher_price_info {
-  id           Int     @id @db.SmallInt
+  id           Int     @id(map: "voucherPriceInfo_pkey") @default(autoincrement()) @db.SmallInt
   type         String?
   duration     BigInt?
   full_price   String?
   grant        String?
   actual_price String?
+  year         Int
+
+  @@unique([year, type, duration], map: "voucher_price_info_year_type_duration_uniq")
+  @@index([type, duration, year])
 }
 
 model employee {
@@ -75,13 +79,13 @@ model employee {
 
 model employee_schedule {
   id                    Int       @id @default(autoincrement())
-  client_id             Int
   primary_employee_id   Int       @db.SmallInt
-  secondary_employee_id Int?      @db.SmallInt
   work_address          String
   start_date            DateTime  @db.Date
   end_date              DateTime  @db.Date
   replaced              Boolean   @default(false)
+  client_id             Int
+  secondary_employee_id Int?      @db.SmallInt
   client                client    @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   primary_employee      employee  @relation("schedule_primary_employee", fields: [primary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   secondary_employee    employee? @relation("schedule_secondary_employee", fields: [secondary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -103,10 +107,10 @@ model client {
   care_center        Boolean
   voucher_client     Boolean
   birthday           String?             @db.VarChar(6)
-  contract_status    String?
   breast_pump        Boolean             @default(false)
+  contract_status    String?
   e_doc_id           String?             @unique
-  signed_doc         eformsign_doc?      @relation("client_signed_doc", fields: [e_doc_id], references: [document_id], onDelete: SetNull, onUpdate: NoAction)
+  signed_doc         eformsign_doc?      @relation("client_signed_doc", fields: [e_doc_id], references: [document_id], onUpdate: NoAction)
   eformsign_docs     eformsign_doc[]     @relation("eformsign_doc_client")
   employee_schedules employee_schedule[]
 }
@@ -126,7 +130,18 @@ model eformsign_doc {
   step_recipient_sms  String
   expired_date        DateTime @db.Timestamptz(6)
   expired             Boolean  @default(false)
-  client_id           Int      @db.Integer
-  client              client   @relation("eformsign_doc_client", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  client_id           Int
   signed_by_client    client?  @relation("client_signed_doc")
+  client              client   @relation("eformsign_doc_client", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model voucher_price_info_2025 {
+  id           Int     @id @db.SmallInt
+  type         String?
+  duration     BigInt?
+  full_price   String?
+  grant        String?
+  actual_price String?
 }

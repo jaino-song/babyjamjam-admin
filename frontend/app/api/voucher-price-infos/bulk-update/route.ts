@@ -1,0 +1,70 @@
+import { NextRequest, NextResponse } from "next/server";
+import { serverAPIClient } from "@/app/lib/axios/server";
+
+// Helper: 요청에서 토큰 추출
+function getAuthToken(request: NextRequest): string | null {
+  return request.cookies.get("auth_token")?.value || null;
+}
+
+/**
+ * POST /api/voucher-price-infos/bulk-update
+ * 파싱된 바우처 가격 정보 일괄 업데이트
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const token = getAuthToken(request);
+    if (!token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await request.json();
+
+    // items 배열 검증
+    if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
+      return NextResponse.json(
+        { error: "업데이트할 항목이 없습니다" },
+        { status: 400 },
+      );
+    }
+
+    // year 검증
+    if (!body.year || typeof body.year !== "number" || body.year < 2000 || body.year > 2100) {
+      return NextResponse.json(
+        { error: "유효한 연도를 입력해주세요 (2000-2100)" },
+        { status: 400 },
+      );
+    }
+
+    // 백엔드 API 호출
+    const response = await serverAPIClient.post(
+      "/voucher-price-infos/bulk-update",
+      body,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    return NextResponse.json(response.data);
+  } catch (error) {
+    console.error("[API] Error bulk updating voucher prices:", error);
+
+    // axios 에러 처리
+    if (error && typeof error === "object" && "response" in error) {
+      const axiosError = error as { response?: { status: number; data: unknown } };
+      if (axiosError.response) {
+        return NextResponse.json(
+          axiosError.response.data || { error: "업데이트 실패" },
+          { status: axiosError.response.status },
+        );
+      }
+    }
+
+    return NextResponse.json(
+      { error: "바우처 가격 정보 업데이트에 실패했습니다" },
+      { status: 500 },
+    );
+  }
+}

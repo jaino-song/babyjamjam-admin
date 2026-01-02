@@ -14,8 +14,8 @@ import {
   Typography,
   Fade,
 } from "@mui/material";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import voucherOptions from "../templates/json/voucher.json";
+import { GeneratedMsg } from "../templates/GeneratedMsg";
 import bankAccountJSON from "../templates/json/bank-account.json";
 import { priceInfoMsgTemplate } from "../templates/messageTemplate/priceInfoMsg";
 import { t } from "@/app/lib/i18n/translations";
@@ -53,12 +53,19 @@ interface BankAccountInfo {
   accNum: string;
 }
 
+// 가격 포맷팅 (천 단위 콤마)
+function formatPrice(price: string): string {
+  const num = parseInt(price.replace(/[,원\s]/g, ""), 10);
+  if (isNaN(num)) return price;
+  return num.toLocaleString("ko-KR");
+}
+
 export const PriceInfoMessageForm = () => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
 
   // Subscribe to Zustand store
-  const { name, voucherType, voucherDuration, setName, setVoucherType, setVoucherDuration, setFullPrice, setActualPrice, setGrant } = useFormStore();
+  const { name, voucherType, voucherDuration, voucherYear, setName, setVoucherType, setVoucherDuration, setFullPrice, setActualPrice, setGrant, setVoucherYear } = useFormStore();
 
   const [formData, setFormData] = useState<PriceInfoFormData>({
     name: name,
@@ -87,8 +94,8 @@ export const PriceInfoMessageForm = () => {
   // Bank account info query
   const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading, error: bankAccountInfosError } = useBankAccountInfos();
 
-  // Voucher price info query
-  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading, error: voucherPriceInfosError } = useVoucherPriceInfos(formData.type);
+  // Voucher price info query (연도 필터 적용)
+  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading, error: voucherPriceInfosError } = useVoucherPriceInfos(formData.type, voucherYear);
 
   // Voucher type change handler
   const handleVoucherTypeChange = (value: string) => {
@@ -163,27 +170,48 @@ export const PriceInfoMessageForm = () => {
         <CardContent>
           <Stack spacing={3}>
             <NameInput name={name} setName={setName} label={t(locale, "price-info-msg.name-label")} placeholder={t(locale, "price-info-msg.name-placeholder")} />
-            {/* voucher type */}
-            <FormControl fullWidth>
-              <InputLabel>{t(locale, "price-info-msg.voucher-type-label")}</InputLabel>
-              <Select
-                value={formData.type}
-                label={isVoucherPriceInfosLoading ? t(locale, "common.loading") : t(locale, "price-info-msg.voucher-type-label")}
-                onChange={(e) => handleVoucherTypeChange(e.target.value)}
-                disabled={isVoucherPriceInfosLoading}
-              >
-                {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
-                  <MenuItem key={groupName} disabled sx={{ fontWeight: 600 }}>
-                    {groupName}
-                  </MenuItem>,
-                  ...Object.entries(types).map(([typeValue, typeData]) => (
-                    <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
-                      {typeData.label}
+            {/* voucher year & type */}
+            <Stack direction="row" spacing={2}>
+              <FormControl sx={{ minWidth: 100 }}>
+                <InputLabel>연도</InputLabel>
+                <Select
+                  value={voucherYear}
+                  label="연도"
+                  onChange={(e) => {
+                    setVoucherYear(Number(e.target.value));
+                    // 연도 변경시 duration 초기화
+                    setFormData(prev => ({ ...prev, duration: "", voucherId: null }));
+                    setVoucherDuration("");
+                  }}
+                >
+                  {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
+                    <MenuItem key={year} value={year}>
+                      {year}년
                     </MenuItem>
-                  ))
-                ])}
-              </Select>
-            </FormControl>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl fullWidth>
+                <InputLabel>{t(locale, "price-info-msg.voucher-type-label")}</InputLabel>
+                <Select
+                  value={formData.type}
+                  label={isVoucherPriceInfosLoading ? t(locale, "common.loading") : t(locale, "price-info-msg.voucher-type-label")}
+                  onChange={(e) => handleVoucherTypeChange(e.target.value)}
+                  disabled={isVoucherPriceInfosLoading}
+                >
+                  {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
+                    <MenuItem key={groupName} disabled sx={{ fontWeight: 600 }}>
+                      {groupName}
+                    </MenuItem>,
+                    ...Object.entries(types).map(([typeValue, typeData]) => (
+                      <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
+                        {typeData.label}
+                      </MenuItem>
+                    ))
+                  ])}
+                </Select>
+              </FormControl>
+            </Stack>
 
             {/* voucher duration */}
             {formData.type && voucherPriceInfos.length > 0 && (
@@ -195,7 +223,7 @@ export const PriceInfoMessageForm = () => {
                   onChange={(e) => handleDurationChange(e.target.value)}
                 >
                   {voucherPriceInfos.map((v) => (
-                    <MenuItem key={v.duration} value={v.duration}>
+                    <MenuItem key={v.id} value={v.duration}>
                       {v.duration}일
                     </MenuItem>
                   ))}
@@ -222,9 +250,9 @@ export const PriceInfoMessageForm = () => {
             {/* Price Info */}
             {formData.fullPrice && formData.grant && formData.actualPrice && (
               <Stack spacing={2}>
-                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.full-price-label")}: {formData.fullPrice}{t(locale, "common.currency-symbol")}</Typography>
-                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.grant-price-label")}: {formData.grant}{t(locale, "common.currency-symbol")}</Typography>
-                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.actual-price-label")}: {formData.actualPrice}{t(locale, "common.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.full-price-label")}: {formatPrice(formData.fullPrice)}{t(locale, "common.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.grant-price-label")}: {formatPrice(formData.grant)}{t(locale, "common.currency-symbol")}</Typography>
+                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.actual-price-label")}: {formatPrice(formData.actualPrice)}{t(locale, "common.currency-symbol")}</Typography>
               </Stack>
             )}
 
@@ -244,30 +272,13 @@ export const PriceInfoMessageForm = () => {
 
           {/* generated message */}
           {generatedMessage && (
-            <Paper elevation={0} data-component="price-info-message-form-generated-message" sx={{ p: 0 }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-                <Typography variant="h6" color="primary.main" fontWeight={600}>
-                  {t(locale, "common.generated-message-title")}
-                </Typography>
-                <Button
-                  variant="outlined"
-                  size="medium"
-                  startIcon={<ContentCopyIcon />}
-                  onClick={handleCopy}
-                >
-                  {t(locale, "common.copy-button")}
-                </Button>
-              </Stack>
-              <Paper data-component="price-info-message-form-generated-message-paper" sx={{ p: 2, border: 2, borderColor: "grey.200", maxHeight: "50vh", overflow: "auto" }}>
-                <Typography
-                  variant="body2"
-                  component="pre"
-                  sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "1rem" }}
-                >
-                  {generatedMessage}
-                </Typography>
-              </Paper>
-            </Paper>
+            <GeneratedMsg
+              title={t(locale, "common.generated-message-title")}
+              copyButtonText={t(locale, "common.copy-button")}
+              message={generatedMessage}
+              onMessageChange={setGeneratedMessage}
+              handleCopy={handleCopy}
+            />
           )}
         </Box>
       </Fade>

@@ -275,5 +275,65 @@
       "title": "제공인력 삭제",
       "message": "정말로 이 제공인력을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다."
     }
+  },
+  "settings": {
+    "title": "설정",
+    "voucher-price": {
+      "tab-title": "바우처 요금표",
+      "title": "바우처 요금표 업데이트",
+      "subtitle": "정부지원 바우처 요금표 이미지를 업로드하면 AI가 자동으로 가격 정보를 추출합니다.",
+      "steps": {
+        "upload": "이미지 업로드",
+        "preview": "데이터 확인",
+        "complete": "완료"
+      },
+      "dropzone": {
+        "title": "바우처 요금표 이미지를 업로드하세요",
+        "description": "드래그 앤 드롭 또는 클릭하여 파일 선택",
+        "formats": "지원 형식: PNG, JPG, JPEG, PDF (최대 10MB)",
+        "analyzing": "이미지 분석 중...",
+        "change-file": "다른 파일을 선택하려면 클릭하거나 드래그하세요"
+      },
+      "guide": {
+        "title": "업로드 가이드:",
+        "item1": "표 전체가 보이도록 캡처해주세요",
+        "item2": "단위 표시(천원/원)가 포함되어야 합니다",
+        "item3": "단축, 표준, 연장 헤더가 보여야 합니다"
+      },
+      "preview": {
+        "total-items": "총 {count}개 항목",
+        "validation-passed": "검증 통과",
+        "warnings": "{count}개 경고",
+        "validation-warnings": "검증 경고 ({count}건)",
+        "validation-formula": "* 검증 수식: 서비스가격 = 정부지원금 + 본인부담금"
+      },
+      "table": {
+        "type": "유형",
+        "duration": "기간 (일)",
+        "full-price": "서비스가격",
+        "grant": "정부지원금",
+        "actual-price": "본인부담금",
+        "validation": "검증",
+        "edit": "수정"
+      },
+      "actions": {
+        "upload-another": "다른 이미지 업로드",
+        "confirm-update": "업데이트 확인",
+        "updating": "업데이트 중...",
+        "new-upload": "새 요금표 업로드"
+      },
+      "result": {
+        "success": "업데이트 완료!",
+        "updated-count": "{count}개 항목 업데이트",
+        "created-count": "{count}개 항목 신규 생성",
+        "partial-failure": "일부 항목 처리 실패:"
+      },
+      "errors": {
+        "invalid-file-type": "허용되지 않는 파일 형식입니다. 허용 형식: PNG, JPG, JPEG, PDF",
+        "file-too-large": "파일 크기가 10MB를 초과합니다",
+        "parse-failed": "이미지 파싱에 실패했습니다",
+        "update-failed": "업데이트에 실패했습니다"
+      }
+    }
   }
 }

@@ -13,6 +13,7 @@ interface FormStore {
     paymentDate: string;
     voucherType: string;
     voucherDuration: string;
+    voucherYear: number;
     area: string;
     setName: (name: string) => void;
     setPhone: (phone: string) => void;
@@ -26,8 +27,12 @@ interface FormStore {
     setPaymentDate: (paymentDate: string) => void;
     setVoucherType: (voucherType: string) => void;
     setVoucherDuration: (voucherDuration: string) => void;
+    setVoucherYear: (voucherYear: number) => void;
     setArea: (area: string) => void;
 }
+
+// 현재 연도를 기본값으로 사용
+const currentYear = new Date().getFullYear();
 
 export const useFormStore = create<FormStore>((set) => {
     return {
@@ -43,6 +48,7 @@ export const useFormStore = create<FormStore>((set) => {
         paymentDate: "",
         voucherType: "",
         voucherDuration: "",
+        voucherYear: currentYear,
         area: "",
         setName: (name: string) => set({ name }),
         setPhone: (phone: string) => set({ phone: phone}),
@@ -56,6 +62,7 @@ export const useFormStore = create<FormStore>((set) => {
         setPaymentDate: (paymentDate: string) => set({ paymentDate: paymentDate}),
         setVoucherType: (voucherType: string) => set({ voucherType }),
         setVoucherDuration: (voucherDuration: string) => set({ voucherDuration }),
+        setVoucherYear: (voucherYear: number) => set({ voucherYear }),
         setArea: (area: string) => set({ area }),
     }
 })
