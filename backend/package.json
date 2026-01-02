@@ -13,6 +13,7 @@
     "test": "jest",
     "test:watch": "jest --watch"
   },
+  "_dependencies_warning": "DO NOT REMOVE @nestjs/cli, ts-node, or typescript from dependencies! They are required for Railway production deployment with 'nest start'. Moving them to devDependencies will break deployment. See commit 993b0d63.",
   "dependencies": {
     "@nestjs/cli": "^10.0.0",
     "@nestjs/common": "^10.0.0",
