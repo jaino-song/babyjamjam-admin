@@ -23,10 +23,10 @@ async function bootstrap() {
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     // CORS configuration - support both production and development origins
     const allowedOrigins = [
-        process.env.PRODUCTION_FRONTEND_URL,
-        process.env.DEVELOPMENT_FRONTEND_URL,
+        process.env['PRODUCTION_FRONTEND_URL'],
+        process.env['DEVELOPMENT_FRONTEND_URL'],
         "http://localhost:3000", // Fallback for local development
-    ].filter(Boolean); // Remove undefined values
+    ].filter((origin): origin is string => Boolean(origin)); // Remove undefined values
 
     console.log("Allowed CORS origins:", allowedOrigins);
 

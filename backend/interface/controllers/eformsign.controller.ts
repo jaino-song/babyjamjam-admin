@@ -16,8 +16,9 @@ export class EformsignController {
             const signature = this.eformsignService.generateSignature(body.executionTime);
             return { signature };
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
-                { error: error.message },
+                { error: message },
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
@@ -32,8 +33,9 @@ export class EformsignController {
             );
             return result;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
-                { error: error.message },
+                { error: message },
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
@@ -48,8 +50,9 @@ export class EformsignController {
             );
             return result;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
-                { error: error.message },
+                { error: message },
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
@@ -75,8 +78,9 @@ export class EformsignController {
             );
             return documentOptions;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
-                { error: error.message },
+                { error: message },
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
@@ -98,8 +102,9 @@ export class EformsignController {
             const documents = await this.eformsignService.getAllDocuments(accessToken);
             return documents;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
-                { error: error.message },
+                { error: message },
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
@@ -120,8 +125,9 @@ export class EformsignController {
             const documents = await this.eformsignService.getInProgressDocuments(accessToken);
             return documents;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
-                { error: error.message },
+                { error: message },
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
@@ -142,8 +148,9 @@ export class EformsignController {
             const documents = await this.eformsignService.getCompletedDocuments(accessToken);
             return documents;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
-                { error: error.message },
+                { error: message },
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
@@ -164,8 +171,9 @@ export class EformsignController {
             const documents = await this.eformsignService.getRejectedDocuments(accessToken);
             return documents;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
-                { error: error.message },
+                { error: message },
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
@@ -189,8 +197,9 @@ export class EformsignController {
             const document = await this.eformsignService.getDocumentById(accessToken, documentId);
             return document;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
-                { error: error.message },
+                { error: message },
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }

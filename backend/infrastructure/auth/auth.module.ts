@@ -10,7 +10,7 @@ import { PrismaService } from "../database/prisma.service";
     imports: [
         PassportModule,
         JwtModule.register({
-            secret: process.env.JWT_SECRET || "your-secret-key",
+            secret: process.env['JWT_SECRET'] ?? "your-secret-key",
             signOptions: { expiresIn: "7d" },
         }),
     ],

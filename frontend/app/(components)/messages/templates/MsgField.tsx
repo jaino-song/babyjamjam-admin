@@ -1,16 +1,16 @@
 import { TextField } from "@mui/material"
 
 interface MsgFieldProps {
-  defaultValue: string;
+  value: string;
   onChange?: (value: string) => void;
 }
 
-export const MsgField = ({ defaultValue, onChange }: MsgFieldProps) => {
+export const MsgField = ({ value, onChange }: MsgFieldProps) => {
   return (
     <TextField
       multiline
       fullWidth
-      defaultValue={defaultValue}
+      value={value}
       onChange={(e) => onChange?.(e.target.value)}
       rows={12}
       slotProps={{

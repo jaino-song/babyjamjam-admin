@@ -143,7 +143,13 @@ export const PriceInfoMessageForm = () => {
   };
 
   const handleGenerate = () => {
-    const message = priceInfoMsgTemplate(formData);
+    const formattedData = {
+      ...formData,
+      fullPrice: formatPrice(formData.fullPrice),
+      grant: formatPrice(formData.grant),
+      actualPrice: formatPrice(formData.actualPrice),
+    };
+    const message = priceInfoMsgTemplate(formattedData);
     setGeneratedMessage(message);
   };
 

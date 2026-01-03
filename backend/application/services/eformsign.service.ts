@@ -22,13 +22,13 @@ export class EformsignService {
     private readonly EFORMSIGN_TEMPLATE_ID: string;
 
     constructor(private configService: ConfigService) {
-        this.USER_EMAIL = this.configService.get("EFORMSIGN_USER_EMAIL");
-        this.EFORMSIGN_API_URL = this.configService.get("EFORMSIGN_API_URL");
-        this.EFORMSIGN_DOC_API_URL = this.configService.get("EFORMSIGN_DOC_API_URL");
-        this.EFORMSIGN_API_KEY = this.configService.get("EFORMSIGN_API_KEY");
-        this.EFORMSIGN_PRIVATE_KEY = this.configService.get("EFORMSIGN_PRIVATE_KEY");
-        this.EFORMSIGN_COMPANY_ID = this.configService.get("EFORMSIGN_COMPANY_ID");
-        this.EFORMSIGN_TEMPLATE_ID = this.configService.get("EFORMSIGN_TEMPLATE_ID");
+        this.USER_EMAIL = this.configService.getOrThrow<string>("EFORMSIGN_USER_EMAIL");
+        this.EFORMSIGN_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_API_URL");
+        this.EFORMSIGN_DOC_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_DOC_API_URL");
+        this.EFORMSIGN_API_KEY = this.configService.getOrThrow<string>("EFORMSIGN_API_KEY");
+        this.EFORMSIGN_PRIVATE_KEY = this.configService.getOrThrow<string>("EFORMSIGN_PRIVATE_KEY");
+        this.EFORMSIGN_COMPANY_ID = this.configService.getOrThrow<string>("EFORMSIGN_COMPANY_ID");
+        this.EFORMSIGN_TEMPLATE_ID = this.configService.getOrThrow<string>("EFORMSIGN_TEMPLATE_ID");
     }
 
     /**
