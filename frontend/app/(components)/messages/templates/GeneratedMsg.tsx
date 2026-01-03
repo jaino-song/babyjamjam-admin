@@ -31,7 +31,7 @@ export const GeneratedMsg = ({ title, copyButtonText, message, onMessageChange, 
             </Button>
           </Stack>
           {/* message */}
-          <MsgField defaultValue={message} onChange={onMessageChange} />
+          <MsgField value={message} onChange={onMessageChange} />
         </Paper>    
     )
 }

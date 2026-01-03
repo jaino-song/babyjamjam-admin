@@ -52,7 +52,7 @@ export class VoucherPriceInfoController {
     update(@Query("id") id: string, @Body() dto: UpdateVoucherPriceInfoDto) {
         return this.voucherService.update(Number(id), {
             type: dto.type ?? undefined,
-            duration: dto.duration !== undefined ? BigInt(dto.duration) : undefined,
+            duration: dto.duration != null ? BigInt(dto.duration) : undefined,
             fullPrice: dto.fullPrice ?? undefined,
             grant: dto.grant ?? undefined,
             actualPrice: dto.actualPrice ?? undefined,

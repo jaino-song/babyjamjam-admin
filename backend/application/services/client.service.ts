@@ -134,9 +134,9 @@ export class ClientService {
     async findById(id: number): Promise<ClientWithEmployees | null> {
         const client = await this.findClientByIdUsecase.execute(id);
         if (!client) return null;
-        
+
         const [withEmployees] = await this.attachEmployeesToClients([client]);
-        return withEmployees;
+        return withEmployees ?? null;
     }
 
     // Helper method to attach employee info to clients

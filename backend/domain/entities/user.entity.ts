@@ -14,7 +14,7 @@ export class UserEntity {
     }
 
     canManageDocuments(): boolean {
-        return ['admin', 'manager'].includes(this.role);
+        return this.role !== null && ['admin', 'manager'].includes(this.role);
     }
 
     updateProfile(name: string, email: string): void {

@@ -21,11 +21,11 @@ export class EformsignApiClient implements IEformsignClientRepository {
     private readonly EFORMSIGN_PRIVATE_KEY: string;
 
     constructor(private configService: ConfigService) {
-        this.USER_EMAIL = this.configService.get<string>("EFORMSIGN_USER_EMAIL");
-        this.EFORMSIGN_API_URL = this.configService.get<string>("EFORMSIGN_API_URL");
-        this.EFORMSIGN_DOC_API_URL = this.configService.get<string>("EFORMSIGN_DOC_API_URL");
-        this.EFORMSIGN_API_KEY = this.configService.get<string>("EFORMSIGN_API_KEY");
-        this.EFORMSIGN_PRIVATE_KEY = this.configService.get<string>("EFORMSIGN_PRIVATE_KEY");
+        this.USER_EMAIL = this.configService.getOrThrow<string>("EFORMSIGN_USER_EMAIL");
+        this.EFORMSIGN_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_API_URL");
+        this.EFORMSIGN_DOC_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_DOC_API_URL");
+        this.EFORMSIGN_API_KEY = this.configService.getOrThrow<string>("EFORMSIGN_API_KEY");
+        this.EFORMSIGN_PRIVATE_KEY = this.configService.getOrThrow<string>("EFORMSIGN_PRIVATE_KEY");
     }
 
     /**

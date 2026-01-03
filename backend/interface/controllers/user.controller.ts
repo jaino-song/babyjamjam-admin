@@ -23,7 +23,12 @@ export class UserController {
     
     @Patch()
     update(@Query("id") id: string, @Body() updateUserDto: UpdateUserDto) {
-        return this.userService.update(id, updateUserDto);
+        return this.userService.update(id, {
+            name: updateUserDto.name ?? undefined,
+            email: updateUserDto.email ?? undefined,
+            profileImage: updateUserDto.profileImage ?? undefined,
+            role: updateUserDto.role,
+        });
     }
 
     @Delete()
