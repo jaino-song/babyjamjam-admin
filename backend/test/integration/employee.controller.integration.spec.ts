@@ -1,0 +1,542 @@
+import { Test, TestingModule } from "@nestjs/testing";
+import { INestApplication, ValidationPipe } from "@nestjs/common";
+import request from "supertest";
+import { EmployeeController } from "interface/controllers/employee.controller";
+import { EmployeeService } from "application/services/employee.service";
+import { EmployeeEntity } from "domain/entities/employee.entity";
+
+describe("EmployeeController (Integration)", () => {
+    // ============================================
+    // Test Fixtures & Setup
+    // ============================================
+
+    let app: INestApplication;
+    let employeeService: jest.Mocked<EmployeeService>;
+
+    type EmployeeOverrides = Partial<{
+        id: number;
+        name: string;
+        workArea: string[];
+        phone: string;
+        grade: string;
+        openToNextWork: boolean;
+        registeredDate: Date;
+    }>;
+
+    const createMockEmployee = (overrides: EmployeeOverrides = {}): EmployeeEntity => {
+        return new EmployeeEntity(
+            overrides.id ?? 1,
+            overrides.name ?? "Test Employee",
+            overrides.workArea ?? ["Seoul", "Incheon"],
+            overrides.phone ?? "010-1234-5678",
+            overrides.grade ?? "A",
+            overrides.openToNextWork ?? true,
+            overrides.registeredDate ?? new Date("2025-01-01"),
+        );
+    };
+
+    beforeEach(async () => {
+        const mockEmployeeService = {
+            create: jest.fn(),
+            findAll: jest.fn(),
+            findById: jest.fn(),
+            findByWorkArea: jest.fn(),
+            findByGrade: jest.fn(),
+            findByOpenStatus: jest.fn(),
+            findByRegisteredDate: jest.fn(),
+            findByRegisteredDateRange: jest.fn(),
+            findAllOpenToNextWork: jest.fn(),
+            changeOpenStatus: jest.fn(),
+            update: jest.fn(),
+            delete: jest.fn(),
+        };
+
+        const moduleFixture: TestingModule = await Test.createTestingModule({
+            controllers: [EmployeeController],
+            providers: [
+                {
+                    provide: EmployeeService,
+                    useValue: mockEmployeeService,
+                },
+            ],
+        }).compile();
+
+        app = moduleFixture.createNestApplication();
+        app.useGlobalPipes(new ValidationPipe({ transform: true }));
+        await app.init();
+
+        employeeService = moduleFixture.get(EmployeeService);
+    });
+
+    afterEach(async () => {
+        await app.close();
+    });
+
+    // ============================================
+    // POST /employees - Create
+    // ============================================
+    describe("POST /employees", () => {
+        describe("given valid employee data", () => {
+            it("should create a new employee and return 201", async () => {
+                // Arrange
+                const createDto = {
+                    name: "New Employee",
+                    workArea: ["Seoul"],
+                    phone: "010-9999-8888",
+                    grade: "B",
+                    openToNextWork: true,
+                };
+                const createdEmployee = createMockEmployee({ id: 5, ...createDto });
+                employeeService.create.mockResolvedValue(createdEmployee);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .post("/employees")
+                    .send(createDto);
+
+                // Assert
+                expect(response.status).toBe(201);
+                expect(employeeService.create).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        name: "New Employee",
+                        workArea: ["Seoul"],
+                        grade: "B",
+                    }),
+                );
+            });
+        });
+
+        describe("given employee with registeredDate", () => {
+            it("should pass registeredDate to service", async () => {
+                // Arrange
+                const createDto = {
+                    name: "Dated Employee",
+                    workArea: ["Busan"],
+                    phone: "010-1111-2222",
+                    grade: "A",
+                    openToNextWork: false,
+                    registeredDate: "2025-06-15",
+                };
+                const createdEmployee = createMockEmployee({ id: 10, name: "Dated Employee" });
+                employeeService.create.mockResolvedValue(createdEmployee);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .post("/employees")
+                    .send(createDto);
+
+                // Assert
+                expect(response.status).toBe(201);
+                expect(employeeService.create).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        registeredDate: "2025-06-15",
+                    }),
+                );
+            });
+        });
+    });
+
+    // ============================================
+    // GET /employees - List All
+    // ============================================
+    describe("GET /employees", () => {
+        describe("given employees exist", () => {
+            it("should return all employees", async () => {
+                // Arrange
+                const employees = [
+                    createMockEmployee({ id: 1, name: "Employee A" }),
+                    createMockEmployee({ id: 2, name: "Employee B" }),
+                ];
+                employeeService.findAll.mockResolvedValue(employees);
+
+                // Act
+                const response = await request(app.getHttpServer()).get("/employees");
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(response.body).toHaveLength(2);
+                expect(employeeService.findAll).toHaveBeenCalled();
+            });
+        });
+
+        describe("given no employees exist", () => {
+            it("should return empty array", async () => {
+                // Arrange
+                employeeService.findAll.mockResolvedValue([]);
+
+                // Act
+                const response = await request(app.getHttpServer()).get("/employees");
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(response.body).toEqual([]);
+            });
+        });
+    });
+
+    // ============================================
+    // GET /employees/id - Find By ID
+    // ============================================
+    describe("GET /employees/id", () => {
+        describe("given employee exists", () => {
+            it("should return the employee", async () => {
+                // Arrange
+                const employee = createMockEmployee({ id: 7, name: "Specific Employee" });
+                employeeService.findById.mockResolvedValue(employee);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/employees/id")
+                    .query({ id: "7" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.findById).toHaveBeenCalledWith(7);
+            });
+        });
+
+        describe("given employee does not exist", () => {
+            it("should return null from service", async () => {
+                // Arrange
+                employeeService.findById.mockResolvedValue(null);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/employees/id")
+                    .query({ id: "999" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.findById).toHaveBeenCalledWith(999);
+            });
+        });
+    });
+
+    // ============================================
+    // GET /employees/work-area - Find By Work Area
+    // ============================================
+    describe("GET /employees/work-area", () => {
+        it("should return employees by work area", async () => {
+            // Arrange
+            const employees = [
+                createMockEmployee({ id: 1, workArea: ["Seoul"] }),
+                createMockEmployee({ id: 2, workArea: ["Seoul", "Incheon"] }),
+            ];
+            employeeService.findByWorkArea.mockResolvedValue(employees);
+
+            // Act
+            const response = await request(app.getHttpServer())
+                .get("/employees/work-area")
+                .query({ workArea: "Seoul" });
+
+            // Assert
+            expect(response.status).toBe(200);
+            expect(response.body).toHaveLength(2);
+            expect(employeeService.findByWorkArea).toHaveBeenCalledWith("Seoul");
+        });
+    });
+
+    // ============================================
+    // GET /employees/grade - Find By Grade
+    // ============================================
+    describe("GET /employees/grade", () => {
+        it("should return employees by grade", async () => {
+            // Arrange
+            const employees = [
+                createMockEmployee({ id: 1, grade: "A" }),
+                createMockEmployee({ id: 2, grade: "A" }),
+            ];
+            employeeService.findByGrade.mockResolvedValue(employees);
+
+            // Act
+            const response = await request(app.getHttpServer())
+                .get("/employees/grade")
+                .query({ grade: "A" });
+
+            // Assert
+            expect(response.status).toBe(200);
+            expect(response.body).toHaveLength(2);
+            expect(employeeService.findByGrade).toHaveBeenCalledWith("A");
+        });
+    });
+
+    // ============================================
+    // GET /employees/open-status - Find By Open Status
+    // ============================================
+    describe("GET /employees/open-status", () => {
+        describe("given openToNextWork=true", () => {
+            it("should return employees open to next work", async () => {
+                // Arrange
+                const employees = [createMockEmployee({ openToNextWork: true })];
+                employeeService.findByOpenStatus.mockResolvedValue(employees);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/employees/open-status")
+                    .query({ openToNextWork: "true" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(true);
+            });
+        });
+
+        describe("given openToNextWork=false", () => {
+            it("should return employees not open to next work", async () => {
+                // Arrange
+                const employees = [createMockEmployee({ openToNextWork: false })];
+                employeeService.findByOpenStatus.mockResolvedValue(employees);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/employees/open-status")
+                    .query({ openToNextWork: "false" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(false);
+            });
+        });
+
+        describe("given no query parameter", () => {
+            it("should default to true", async () => {
+                // Arrange
+                const employees = [createMockEmployee({ openToNextWork: true })];
+                employeeService.findByOpenStatus.mockResolvedValue(employees);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/employees/open-status");
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(true);
+            });
+        });
+    });
+
+    // ============================================
+    // GET /employees/registered-date - Find By Registered Date
+    // ============================================
+    describe("GET /employees/registered-date", () => {
+        it("should return employees by registered date", async () => {
+            // Arrange
+            const date = "2025-01-15";
+            const employees = [createMockEmployee({ registeredDate: new Date(date) })];
+            employeeService.findByRegisteredDate.mockResolvedValue(employees);
+
+            // Act
+            const response = await request(app.getHttpServer())
+                .get("/employees/registered-date")
+                .query({ date });
+
+            // Assert
+            expect(response.status).toBe(200);
+            expect(employeeService.findByRegisteredDate).toHaveBeenCalledWith(new Date(date));
+        });
+    });
+
+    // ============================================
+    // GET /employees/registered-range - Find By Date Range
+    // ============================================
+    describe("GET /employees/registered-range", () => {
+        it("should return employees in date range", async () => {
+            // Arrange
+            const startDate = "2025-01-01";
+            const endDate = "2025-01-31";
+            const employees = [createMockEmployee({ id: 1 }), createMockEmployee({ id: 2 })];
+            employeeService.findByRegisteredDateRange.mockResolvedValue(employees);
+
+            // Act
+            const response = await request(app.getHttpServer())
+                .get("/employees/registered-range")
+                .query({ startDate, endDate });
+
+            // Assert
+            expect(response.status).toBe(200);
+            expect(response.body).toHaveLength(2);
+            expect(employeeService.findByRegisteredDateRange).toHaveBeenCalledWith(
+                new Date(startDate),
+                new Date(endDate),
+            );
+        });
+    });
+
+    // ============================================
+    // GET /employees/open-to-next-work - Find All Open To Next Work
+    // ============================================
+    describe("GET /employees/open-to-next-work", () => {
+        it("should return all employees open to next work", async () => {
+            // Arrange
+            const employees = [
+                createMockEmployee({ id: 1, openToNextWork: true }),
+                createMockEmployee({ id: 2, openToNextWork: true }),
+            ];
+            employeeService.findAllOpenToNextWork.mockResolvedValue(employees);
+
+            // Act
+            const response = await request(app.getHttpServer())
+                .get("/employees/open-to-next-work");
+
+            // Assert
+            expect(response.status).toBe(200);
+            expect(response.body).toHaveLength(2);
+            expect(employeeService.findAllOpenToNextWork).toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
+    // PATCH /employees/open-status - Change Open Status
+    // ============================================
+    describe("PATCH /employees/open-status", () => {
+        it("should change employee open status to true", async () => {
+            // Arrange
+            const updatedEmployee = createMockEmployee({ id: 5, openToNextWork: true });
+            employeeService.changeOpenStatus.mockResolvedValue(updatedEmployee);
+
+            // Act
+            const response = await request(app.getHttpServer())
+                .patch("/employees/open-status")
+                .query({ id: "5" })
+                .send({ openToNextWork: true });
+
+            // Assert
+            expect(response.status).toBe(200);
+            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(5, true);
+        });
+
+        it("should change employee open status to false", async () => {
+            // Arrange
+            const updatedEmployee = createMockEmployee({ id: 3, openToNextWork: false });
+            employeeService.changeOpenStatus.mockResolvedValue(updatedEmployee);
+
+            // Act
+            const response = await request(app.getHttpServer())
+                .patch("/employees/open-status")
+                .query({ id: "3" })
+                .send({ openToNextWork: false });
+
+            // Assert
+            expect(response.status).toBe(200);
+            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(3, false);
+        });
+    });
+
+    // ============================================
+    // PATCH /employees - Update
+    // ============================================
+    describe("PATCH /employees", () => {
+        describe("given valid update data", () => {
+            it("should update the employee", async () => {
+                // Arrange
+                const updateDto = {
+                    name: "Updated Name",
+                    grade: "S",
+                };
+                const updatedEmployee = createMockEmployee({ id: 3, ...updateDto });
+                employeeService.update.mockResolvedValue(updatedEmployee);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .patch("/employees")
+                    .query({ id: "3" })
+                    .send(updateDto);
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.update).toHaveBeenCalledWith(
+                    3,
+                    expect.objectContaining({
+                        name: "Updated Name",
+                        grade: "S",
+                    }),
+                );
+            });
+        });
+
+        describe("given partial update", () => {
+            it("should only update provided fields", async () => {
+                // Arrange
+                const partialDto = { phone: "010-0000-0000" };
+                const updatedEmployee = createMockEmployee({ id: 4, phone: "010-0000-0000" });
+                employeeService.update.mockResolvedValue(updatedEmployee);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .patch("/employees")
+                    .query({ id: "4" })
+                    .send(partialDto);
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.update).toHaveBeenCalledWith(
+                    4,
+                    expect.objectContaining({
+                        phone: "010-0000-0000",
+                    }),
+                );
+            });
+        });
+
+        describe("given workArea update", () => {
+            it("should update workArea array", async () => {
+                // Arrange
+                const updateDto = { workArea: ["Seoul", "Busan", "Daegu"] };
+                const updatedEmployee = createMockEmployee({ id: 2, ...updateDto });
+                employeeService.update.mockResolvedValue(updatedEmployee);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .patch("/employees")
+                    .query({ id: "2" })
+                    .send(updateDto);
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.update).toHaveBeenCalledWith(
+                    2,
+                    expect.objectContaining({
+                        workArea: ["Seoul", "Busan", "Daegu"],
+                    }),
+                );
+            });
+        });
+    });
+
+    // ============================================
+    // DELETE /employees - Delete
+    // ============================================
+    describe("DELETE /employees", () => {
+        describe("given valid employee id", () => {
+            it("should delete the employee", async () => {
+                // Arrange
+                employeeService.delete.mockResolvedValue(undefined);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .delete("/employees")
+                    .query({ id: "8" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.delete).toHaveBeenCalledWith(8);
+            });
+        });
+
+        describe("given different employee ids", () => {
+            it.each([1, 10, 100, 999])("should delete employee with id %i", async (id) => {
+                // Arrange
+                employeeService.delete.mockResolvedValue(undefined);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .delete("/employees")
+                    .query({ id: String(id) });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(employeeService.delete).toHaveBeenCalledWith(id);
+            });
+        });
+    });
+});

@@ -37,6 +37,7 @@ describe("ClientService", () => {
             create: jest.fn(),
             update: jest.fn(),
             findFirst: jest.fn(),
+            findMany: jest.fn().mockResolvedValue([]),
         },
     });
 
@@ -352,7 +353,7 @@ describe("ClientService", () => {
     // findAll
     // ============================================
     describe("findAll", () => {
-        it("should delegate to listClientsUsecase", async () => {
+        it("should delegate to listClientsUsecase and attach employee info", async () => {
             // Arrange
             const mockClients = [createClientEntity()];
             listClientsUsecase.execute.mockResolvedValue(mockClients);
@@ -362,7 +363,14 @@ describe("ClientService", () => {
 
             // Assert
             expect(listClientsUsecase.execute).toHaveBeenCalled();
-            expect(result).toBe(mockClients);
+            expect(result).toHaveLength(1);
+            expect(result[0]).toMatchObject({
+                id: 1,
+                name: "Test Client",
+                primaryEmployee: null,
+                secondaryEmployee: null,
+                hasSigned: false,
+            });
         });
     });
 
@@ -370,7 +378,7 @@ describe("ClientService", () => {
     // findById
     // ============================================
     describe("findById", () => {
-        it("should delegate to findClientByIdUsecase", async () => {
+        it("should delegate to findClientByIdUsecase and attach employee info", async () => {
             // Arrange
             const mockClient = createClientEntity();
             findClientByIdUsecase.execute.mockResolvedValue(mockClient);
@@ -380,7 +388,13 @@ describe("ClientService", () => {
 
             // Assert
             expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(1);
-            expect(result).toBe(mockClient);
+            expect(result).toMatchObject({
+                id: 1,
+                name: "Test Client",
+                primaryEmployee: null,
+                secondaryEmployee: null,
+                hasSigned: false,
+            });
         });
     });
 

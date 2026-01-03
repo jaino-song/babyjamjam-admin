@@ -109,80 +109,11 @@ export class EformsignDocEntity {
     }
 
     /**
-     * Maps a Prisma row into a domain entity.
-     * Field names depend on your Prisma schema (this matches the project's snake_case convention).
+     * Reconstitute an entity from persistence data (used by Mapper).
+     * This method is infrastructure-agnostic - it only knows domain types.
      */
-    static fromPrisma(prismaData: {
-        id: number;
-        document_id: string;
-        created_date: Date;
-        updated_date: Date;
-        status_type: string;
-        status_detail: string;
-        step_type: string;
-        step_index: string;
-        step_name: string;
-        step_recipient_type: string;
-        step_recipient_name: string;
-        step_recipient_sms: string;
-        expired_date: Date;
-        expired: boolean;
-        client_id: number;
-    }): EformsignDocEntity {
-        return new EformsignDocEntity({
-            id: prismaData.id,
-            documentId: prismaData.document_id,
-            createdDate: prismaData.created_date,
-            updatedDate: prismaData.updated_date,
-            statusType: prismaData.status_type,
-            statusDetail: prismaData.status_detail,
-            stepType: prismaData.step_type,
-            stepIndex: prismaData.step_index,
-            stepName: prismaData.step_name,
-            stepRecipientType: prismaData.step_recipient_type,
-            stepRecipientName: prismaData.step_recipient_name,
-            stepRecipientSms: prismaData.step_recipient_sms,
-            expiredDate: prismaData.expired_date,
-            expired: prismaData.expired,
-            clientId: prismaData.client_id,
-        });
-    }
-
-    /**
-     * Prepare this entity into a DB-friendly shape (Prisma create/update data).
-     */
-    toPersistence(): {
-        document_id: string;
-        created_date: Date;
-        updated_date: Date;
-        status_type: string;
-        status_detail: string;
-        step_type: string;
-        step_index: string;
-        step_name: string;
-        step_recipient_type: string;
-        step_recipient_name: string;
-        step_recipient_sms: string;
-        expired_date: Date;
-        expired: boolean;
-        client_id: number;
-    } {
-        return {
-            document_id: this.props.documentId,
-            created_date: this.props.createdDate,
-            updated_date: this.props.updatedDate,
-            status_type: this.props.statusType,
-            status_detail: this.props.statusDetail,
-            step_type: this.props.stepType,
-            step_index: this.props.stepIndex,
-            step_name: this.props.stepName,
-            step_recipient_type: this.props.stepRecipientType,
-            step_recipient_name: this.props.stepRecipientName,
-            step_recipient_sms: this.props.stepRecipientSms,
-            expired_date: this.props.expiredDate,
-            expired: this.props.expired,
-            client_id: this.props.clientId,
-        };
+    static reconstitute(props: EformsignDocProps): EformsignDocEntity {
+        return new EformsignDocEntity(props);
     }
 }
 

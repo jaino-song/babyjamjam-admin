@@ -1,0 +1,447 @@
+import { Test, TestingModule } from "@nestjs/testing";
+import { INestApplication, ValidationPipe } from "@nestjs/common";
+import request from "supertest";
+import { UserController } from "interface/controllers/user.controller";
+import { UserService } from "application/services/user.service";
+import { UserEntity } from "domain/entities/user.entity";
+
+describe("UserController (Integration)", () => {
+    // ============================================
+    // Test Fixtures & Setup
+    // ============================================
+
+    let app: INestApplication;
+    let userService: jest.Mocked<UserService>;
+
+    type UserOverrides = Partial<{
+        id: string;
+        kakaoId: string;
+        email: string | null;
+        name: string | null;
+        profileImage: string | null;
+        role: string | null;
+        createdAt: Date;
+    }>;
+
+    const createMockUser = (overrides: UserOverrides = {}): UserEntity => {
+        return new UserEntity(
+            overrides.id ?? "user-uuid-1",
+            overrides.kakaoId ?? "kakao-123456",
+            overrides.email ?? "test@example.com",
+            overrides.name ?? "Test User",
+            overrides.profileImage ?? "https://example.com/profile.jpg",
+            overrides.role ?? "user",
+            overrides.createdAt ?? new Date("2025-01-01"),
+        );
+    };
+
+    beforeEach(async () => {
+        const mockUserService = {
+            create: jest.fn(),
+            findById: jest.fn(),
+            findByKakaoId: jest.fn(),
+            update: jest.fn(),
+            delete: jest.fn(),
+        };
+
+        const moduleFixture: TestingModule = await Test.createTestingModule({
+            controllers: [UserController],
+            providers: [
+                {
+                    provide: UserService,
+                    useValue: mockUserService,
+                },
+            ],
+        }).compile();
+
+        app = moduleFixture.createNestApplication();
+        app.useGlobalPipes(new ValidationPipe({ transform: true }));
+        await app.init();
+
+        userService = moduleFixture.get(UserService);
+    });
+
+    afterEach(async () => {
+        await app.close();
+    });
+
+    // ============================================
+    // POST /users - Create
+    // ============================================
+    describe("POST /users", () => {
+        describe("given valid user data with all fields", () => {
+            it("should create a new user and return 201", async () => {
+                // Arrange
+                const createDto = {
+                    kakaoId: "kakao-999888",
+                    name: "New User",
+                    email: "newuser@example.com",
+                    profileImage: "https://example.com/new-profile.jpg",
+                };
+                const createdUser = createMockUser({
+                    id: "new-user-uuid",
+                    ...createDto,
+                });
+                userService.create.mockResolvedValue(createdUser);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .post("/users")
+                    .send(createDto);
+
+                // Assert
+                expect(response.status).toBe(201);
+                expect(userService.create).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        kakaoId: "kakao-999888",
+                        name: "New User",
+                        email: "newuser@example.com",
+                    }),
+                );
+            });
+        });
+
+        describe("given minimal user data (only kakaoId)", () => {
+            it("should create user with optional fields as undefined", async () => {
+                // Arrange
+                const createDto = {
+                    kakaoId: "kakao-minimal",
+                };
+                const createdUser = createMockUser({
+                    id: "minimal-user-uuid",
+                    kakaoId: "kakao-minimal",
+                    name: null,
+                    email: null,
+                    profileImage: null,
+                });
+                userService.create.mockResolvedValue(createdUser);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .post("/users")
+                    .send(createDto);
+
+                // Assert
+                expect(response.status).toBe(201);
+                expect(userService.create).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        kakaoId: "kakao-minimal",
+                    }),
+                );
+            });
+        });
+    });
+
+    // ============================================
+    // GET /users/id - Find By ID
+    // ============================================
+    describe("GET /users/id", () => {
+        describe("given user exists", () => {
+            it("should return the user", async () => {
+                // Arrange
+                const user = createMockUser({
+                    id: "specific-user-uuid",
+                    name: "Specific User",
+                });
+                userService.findById.mockResolvedValue(user);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/users/id")
+                    .query({ id: "specific-user-uuid" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.findById).toHaveBeenCalledWith("specific-user-uuid");
+            });
+        });
+
+        describe("given user does not exist", () => {
+            it("should return null from service", async () => {
+                // Arrange
+                userService.findById.mockResolvedValue(null);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/users/id")
+                    .query({ id: "non-existent-uuid" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.findById).toHaveBeenCalledWith("non-existent-uuid");
+            });
+        });
+    });
+
+    // ============================================
+    // GET /users/kakao - Find By Kakao ID
+    // ============================================
+    describe("GET /users/kakao", () => {
+        describe("given user with kakaoId exists", () => {
+            it("should return the user", async () => {
+                // Arrange
+                const user = createMockUser({
+                    id: "kakao-linked-user",
+                    kakaoId: "kakao-777666",
+                });
+                userService.findByKakaoId.mockResolvedValue(user);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/users/kakao")
+                    .query({ kakaoId: "kakao-777666" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.findByKakaoId).toHaveBeenCalledWith("kakao-777666");
+            });
+        });
+
+        describe("given no user with kakaoId exists", () => {
+            it("should return null from service", async () => {
+                // Arrange
+                userService.findByKakaoId.mockResolvedValue(null);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/users/kakao")
+                    .query({ kakaoId: "kakao-nonexistent" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.findByKakaoId).toHaveBeenCalledWith("kakao-nonexistent");
+            });
+        });
+
+        describe("given different kakaoId formats", () => {
+            it.each([
+                "12345678",
+                "kakao_user_123",
+                "long-kakao-id-with-many-characters",
+            ])("should find user with kakaoId %s", async (kakaoId) => {
+                // Arrange
+                const user = createMockUser({ kakaoId });
+                userService.findByKakaoId.mockResolvedValue(user);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .get("/users/kakao")
+                    .query({ kakaoId });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.findByKakaoId).toHaveBeenCalledWith(kakaoId);
+            });
+        });
+    });
+
+    // ============================================
+    // PATCH /users - Update
+    // ============================================
+    describe("PATCH /users", () => {
+        describe("given valid update data", () => {
+            it("should update the user", async () => {
+                // Arrange
+                const updateDto = {
+                    name: "Updated Name",
+                    email: "updated@example.com",
+                };
+                const updatedUser = createMockUser({
+                    id: "user-to-update",
+                    ...updateDto,
+                });
+                userService.update.mockResolvedValue(updatedUser);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .patch("/users")
+                    .query({ id: "user-to-update" })
+                    .send(updateDto);
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.update).toHaveBeenCalledWith(
+                    "user-to-update",
+                    expect.objectContaining({
+                        name: "Updated Name",
+                        email: "updated@example.com",
+                    }),
+                );
+            });
+        });
+
+        describe("given profile image update", () => {
+            it("should update profileImage", async () => {
+                // Arrange
+                const updateDto = {
+                    profileImage: "https://new-image.com/profile.png",
+                };
+                const updatedUser = createMockUser({
+                    id: "user-with-new-image",
+                    profileImage: updateDto.profileImage,
+                });
+                userService.update.mockResolvedValue(updatedUser);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .patch("/users")
+                    .query({ id: "user-with-new-image" })
+                    .send(updateDto);
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.update).toHaveBeenCalledWith(
+                    "user-with-new-image",
+                    expect.objectContaining({
+                        profileImage: "https://new-image.com/profile.png",
+                    }),
+                );
+            });
+        });
+
+        describe("given role update", () => {
+            it("should update user role to admin", async () => {
+                // Arrange
+                const updateDto = { role: "admin" };
+                const updatedUser = createMockUser({
+                    id: "promoted-user",
+                    role: "admin",
+                });
+                userService.update.mockResolvedValue(updatedUser);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .patch("/users")
+                    .query({ id: "promoted-user" })
+                    .send(updateDto);
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.update).toHaveBeenCalledWith(
+                    "promoted-user",
+                    expect.objectContaining({
+                        role: "admin",
+                    }),
+                );
+            });
+
+            it("should update user role to manager", async () => {
+                // Arrange
+                const updateDto = { role: "manager" };
+                const updatedUser = createMockUser({
+                    id: "manager-user",
+                    role: "manager",
+                });
+                userService.update.mockResolvedValue(updatedUser);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .patch("/users")
+                    .query({ id: "manager-user" })
+                    .send(updateDto);
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.update).toHaveBeenCalledWith(
+                    "manager-user",
+                    expect.objectContaining({
+                        role: "manager",
+                    }),
+                );
+            });
+
+            it("should allow setting role to null", async () => {
+                // Arrange
+                const updateDto = { role: null };
+                const updatedUser = createMockUser({
+                    id: "demoted-user",
+                    role: null,
+                });
+                userService.update.mockResolvedValue(updatedUser);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .patch("/users")
+                    .query({ id: "demoted-user" })
+                    .send(updateDto);
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.update).toHaveBeenCalledWith(
+                    "demoted-user",
+                    expect.objectContaining({
+                        role: null,
+                    }),
+                );
+            });
+        });
+
+        describe("given partial update", () => {
+            it("should only update provided fields", async () => {
+                // Arrange
+                const partialDto = { name: "Only Name Updated" };
+                const updatedUser = createMockUser({
+                    id: "partial-update-user",
+                    name: "Only Name Updated",
+                });
+                userService.update.mockResolvedValue(updatedUser);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .patch("/users")
+                    .query({ id: "partial-update-user" })
+                    .send(partialDto);
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.update).toHaveBeenCalledWith(
+                    "partial-update-user",
+                    expect.objectContaining({
+                        name: "Only Name Updated",
+                    }),
+                );
+            });
+        });
+    });
+
+    // ============================================
+    // DELETE /users - Delete
+    // ============================================
+    describe("DELETE /users", () => {
+        describe("given valid user id", () => {
+            it("should delete the user", async () => {
+                // Arrange
+                userService.delete.mockResolvedValue(undefined);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .delete("/users")
+                    .query({ id: "user-to-delete" });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.delete).toHaveBeenCalledWith("user-to-delete");
+            });
+        });
+
+        describe("given different user ids", () => {
+            it.each([
+                "uuid-1234-5678",
+                "short-id",
+                "very-long-uuid-string-for-testing-purposes",
+            ])("should delete user with id %s", async (id) => {
+                // Arrange
+                userService.delete.mockResolvedValue(undefined);
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .delete("/users")
+                    .query({ id });
+
+                // Assert
+                expect(response.status).toBe(200);
+                expect(userService.delete).toHaveBeenCalledWith(id);
+            });
+        });
+    });
+});

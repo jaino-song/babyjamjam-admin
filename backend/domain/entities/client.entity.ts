@@ -108,48 +108,47 @@ export class ClientEntity {
         this.eDocId = props.eDocId ?? this.eDocId;
     }
 
-    static fromPrisma(prismaData: { id: number, name: string, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean, eDocId: string | null }): ClientEntity {
+    /**
+     * Reconstitute an entity from persistence data (used by Mapper).
+     * This method is infrastructure-agnostic - it only knows domain types.
+     */
+    static reconstitute(
+        id: number,
+        name: string,
+        address: string | null,
+        phone: string | null,
+        type: string | null,
+        duration: number | null,
+        fullPrice: string | null,
+        grant: string | null,
+        actualPrice: string | null,
+        startDate: Date | null,
+        endDate: Date | null,
+        careCenter: boolean,
+        voucherClient: boolean,
+        birthday: string | null,
+        contractStatus: string | null,
+        breastPump: boolean,
+        eDocId: string | null,
+    ): ClientEntity {
         return new ClientEntity(
-            prismaData.id,
-            prismaData.name,
-            prismaData.address,
-            prismaData.phone,
-            prismaData.type,
-            prismaData.duration,
-            prismaData.fullPrice,
-            prismaData.grant,
-            prismaData.actualPrice,
-            prismaData.startDate,
-            prismaData.endDate,
-            prismaData.careCenter,
-            prismaData.voucherClient,
-            prismaData.birthday,
-            prismaData.contractStatus,
-            prismaData.breastPump,
-            prismaData.eDocId,
+            id,
+            name,
+            address,
+            phone,
+            type,
+            duration,
+            fullPrice,
+            grant,
+            actualPrice,
+            startDate,
+            endDate,
+            careCenter,
+            voucherClient,
+            birthday,
+            contractStatus,
+            breastPump,
+            eDocId,
         );
-    }
-
-    // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { id: number, name: string, address: string | null, phone: string | null, type: string | null, duration: number | null, fullPrice: string | null, grant: string | null, actualPrice: string | null, startDate: Date | null, endDate: Date | null, careCenter: boolean, voucherClient: boolean, birthday: string | null, contractStatus: string | null, breastPump: boolean, eDocId: string | null } {
-        return {
-            id: this.id,
-            name: this.name,
-            address: this.address,
-            phone: this.phone,
-            type: this.type,
-            duration: this.duration,
-            fullPrice: this.fullPrice,
-            grant: this.grant,
-            actualPrice: this.actualPrice,
-            startDate: this.startDate,
-            endDate: this.endDate,
-            careCenter: this.careCenter,
-            voucherClient: this.voucherClient,
-            birthday: this.birthday,
-            contractStatus: this.contractStatus,
-            breastPump: this.breastPump,
-            eDocId: this.eDocId,
-        };
     }
 }

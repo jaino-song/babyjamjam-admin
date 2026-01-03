@@ -34,28 +34,27 @@ export class UserEntity {
         );
     }
 
-    static fromPrisma(prismaData: { id: string, kakaoId: string, email: string | null, name: string | null, profile_image: string | null, role: string | null, created_at: Date }): UserEntity {
+    /**
+     * Reconstitute an entity from persistence data (used by Mapper).
+     * This method is infrastructure-agnostic - it only knows domain types.
+     */
+    static reconstitute(
+        id: string,
+        kakaoId: string,
+        email: string | null,
+        name: string | null,
+        profileImage: string | null,
+        role: string | null,
+        createdAt: Date,
+    ): UserEntity {
         return new UserEntity(
-            prismaData.id,
-            prismaData.kakaoId,
-            prismaData.email,
-            prismaData.name,
-            prismaData.profile_image,
-            prismaData.role || 'user',
-            prismaData.created_at,
+            id,
+            kakaoId,
+            email,
+            name,
+            profileImage,
+            role || 'user',
+            createdAt,
         );
-    }
-
-    // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { id: string, kakaoId: string, email: string | null, name: string | null, profile_image: string | null, role: string | null, created_at: Date } {
-        return {
-            id: this.id,
-            kakaoId: this.kakaoId,
-            email: this.email,
-            name: this.name,
-            profile_image: this.profileImage,
-            role: this.role,
-            created_at: this.createdAt,
-        };
     }
 }

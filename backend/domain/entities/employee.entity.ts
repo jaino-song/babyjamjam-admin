@@ -50,28 +50,27 @@ export class EmployeeEntity {
         );
     }
 
-    static fromPrisma(prismaData: { id: number, name: string, workArea: string[], phone: string, grade: string, openToNextWork: boolean, registeredDate: Date }): EmployeeEntity {
+    /**
+     * Reconstitute an entity from persistence data (used by Mapper).
+     * This method is infrastructure-agnostic - it only knows domain types.
+     */
+    static reconstitute(
+        id: number,
+        name: string,
+        workArea: string[],
+        phone: string,
+        grade: string,
+        openToNextWork: boolean,
+        registeredDate: Date,
+    ): EmployeeEntity {
         return new EmployeeEntity(
-            prismaData.id,
-            prismaData.name,
-            prismaData.workArea,
-            prismaData.phone,
-            prismaData.grade,
-            prismaData.openToNextWork,
-            prismaData.registeredDate,
+            id,
+            name,
+            workArea,
+            phone,
+            grade,
+            openToNextWork,
+            registeredDate,
         );
-    }
-
-    // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { id: number, name: string, workArea: string[], phone: string, grade: string, openToNextWork: boolean, registeredDate: Date } {
-        return {
-            id: this.id,
-            name: this.name,
-            workArea: this.workArea,
-            phone: this.phone,
-            grade: this.grade,
-            openToNextWork: this.openToNextWork,
-            registeredDate: this.registeredDate,
-        };
     }
 }
