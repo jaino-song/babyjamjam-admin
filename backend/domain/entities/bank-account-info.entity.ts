@@ -13,15 +13,15 @@ export class BankAccountInfoEntity {
         return new BankAccountInfoEntity(area, bankName, accNum);
     }
 
-    static fromPrisma(prismaData: { area_id: string, bank_name: string | null, acc_num: string | null }): BankAccountInfoEntity {
-        return new BankAccountInfoEntity(prismaData.area_id, prismaData.bank_name, prismaData.acc_num);
-    }
-
-    toPersistence(): { area_id: string, bank_name: string | null, acc_num: string | null } {
-        return {
-            area_id: this.area,
-            bank_name: this.bankName,
-            acc_num: this.accNum,
-        };
+    /**
+     * Reconstitute an entity from persistence data (used by Mapper).
+     * This method is infrastructure-agnostic - it only knows domain types.
+     */
+    static reconstitute(
+        area: string,
+        bankName: string | null,
+        accNum: string | null,
+    ): BankAccountInfoEntity {
+        return new BankAccountInfoEntity(area, bankName, accNum);
     }
 }

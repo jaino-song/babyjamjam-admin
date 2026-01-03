@@ -27,24 +27,23 @@ export class MessageEntity {
         );
     }
 
-    static fromPrisma(prismaData: { id: number, title: string | null, text: string | null, created_at: Date, edited_at: Date | null }): MessageEntity {
+    /**
+     * Reconstitute an entity from persistence data (used by Mapper).
+     * This method is infrastructure-agnostic - it only knows domain types.
+     */
+    static reconstitute(
+        id: number,
+        title: string,
+        text: string,
+        createdAt: Date,
+        editedAt: Date | null,
+    ): MessageEntity {
         return new MessageEntity(
-            prismaData.id,
-            prismaData.title || '',
-            prismaData.text || '',
-            prismaData.created_at,
-            prismaData.edited_at,
+            id,
+            title,
+            text,
+            createdAt,
+            editedAt,
         );
-    }
-
-    // Prepare this entity into this shape to be saved to the database
-    toPersistence(): { id: number, title: string | null, text: string | null, created_at: Date, edited_at: Date | null } {
-        return {
-            id: this.id,
-            title: this.title,
-            text: this.text,
-            created_at: this.createdAt,
-            edited_at: this.editedAt,
-        };
     }
 }

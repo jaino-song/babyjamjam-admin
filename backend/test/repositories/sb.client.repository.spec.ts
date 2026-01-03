@@ -344,6 +344,7 @@ describe("SbClientRepository", () => {
                         birthday: "950315",
                         contract_status: "pending",
                         breast_pump: false,
+                        e_doc_id: null,
                     },
                 });
                 expect(result).toBeInstanceOf(ClientEntity);
@@ -443,6 +444,7 @@ describe("SbClientRepository", () => {
                         birthday: "880520",
                         contract_status: "in_progress",
                         breast_pump: true,
+                        e_doc_id: null,
                     },
                 });
                 expect(result).toBeInstanceOf(ClientEntity);

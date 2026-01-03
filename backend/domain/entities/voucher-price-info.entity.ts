@@ -28,44 +28,27 @@ export class VoucherPriceInfoEntity {
         );
     }
 
-    static fromPrisma(prismaData: {
-        id: number;
-        type: string | null;
-        duration: bigint | null;
-        fullPrice: string | null;
-        grant: string | null;
-        actualPrice: string | null;
-        year: number;
-    }): VoucherPriceInfoEntity {
+    /**
+     * Reconstitute an entity from persistence data (used by Mapper).
+     * This method is infrastructure-agnostic - it only knows domain types.
+     */
+    static reconstitute(
+        id: number,
+        type: string | null,
+        duration: bigint | null,
+        fullPrice: string | null,
+        grant: string | null,
+        actualPrice: string | null,
+        year: number,
+    ): VoucherPriceInfoEntity {
         return new VoucherPriceInfoEntity(
-            prismaData.id,
-            prismaData.type,
-            prismaData.duration,
-            prismaData.fullPrice,
-            prismaData.grant,
-            prismaData.actualPrice,
-            prismaData.year,
+            id,
+            type,
+            duration,
+            fullPrice,
+            grant,
+            actualPrice,
+            year,
         );
-    }
-
-    // Prepare this entity into this shape to be saved to the database
-    toPersistence(): {
-        id: number;
-        type: string | null;
-        duration: bigint | null;
-        fullPrice: string | null;
-        grant: string | null;
-        actualPrice: string | null;
-        year: number;
-    } {
-        return {
-            id: this.id,
-            type: this.type,
-            duration: this.duration,
-            fullPrice: this.fullPrice,
-            grant: this.grant,
-            actualPrice: this.actualPrice,
-            year: this.year,
-        };
     }
 }

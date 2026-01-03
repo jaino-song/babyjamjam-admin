@@ -20,7 +20,23 @@ type EformsignDocRow = {
 
 export class EformsignDocMapper {
     static toDomain(row: EformsignDocRow): EformsignDocEntity {
-        return EformsignDocEntity.fromPrisma(row);
+        return EformsignDocEntity.reconstitute({
+            id: row.id,
+            documentId: row.document_id,
+            createdDate: row.created_date,
+            updatedDate: row.updated_date,
+            statusType: row.status_type,
+            statusDetail: row.status_detail,
+            stepType: row.step_type,
+            stepIndex: row.step_index,
+            stepName: row.step_name,
+            stepRecipientType: row.step_recipient_type,
+            stepRecipientName: row.step_recipient_name,
+            stepRecipientSms: row.step_recipient_sms,
+            expiredDate: row.expired_date,
+            expired: row.expired,
+            clientId: row.client_id,
+        });
     }
 
     // static toPrismaCreate(entity: EformsignDocEntity) {

@@ -16,7 +16,7 @@ describe("SbUserRepository", () => {
 
     const createUserRow = (overrides = {}) => ({
         id: "user-1",
-        kakaoId: "kakao-1",
+        kakao_id: "kakao-1",
         email: "user@example.com",
         name: "Jane Doe",
         profile_image: "http://example.com/avatar.png",
@@ -113,7 +113,7 @@ describe("SbUserRepository", () => {
                 const now = new Date();
                 const row = createUserRow({
                     id: "user-2",
-                    kakaoId: "kakao-2",
+                    kakao_id: "kakao-2",
                     created_at: now,
                 });
                 userModel.findUnique.mockResolvedValue(row);
@@ -122,7 +122,7 @@ describe("SbUserRepository", () => {
                 const result = await repository.findByKakaoId("kakao-2");
 
                 // Assert
-                expect(userModel.findUnique).toHaveBeenCalledWith({ where: { kakaoId: "kakao-2" } });
+                expect(userModel.findUnique).toHaveBeenCalledWith({ where: { kakao_id: "kakao-2" } });
                 expect(result).toBeInstanceOf(UserEntity);
                 expect(result).toMatchObject({
                     id: "user-2",
@@ -138,7 +138,7 @@ describe("SbUserRepository", () => {
                 const now = new Date();
                 const row = createUserRow({
                     id: "user-3",
-                    kakaoId: "kakao-3",
+                    kakao_id: "kakao-3",
                     email: null,
                     name: null,
                     profile_image: null,
@@ -192,7 +192,7 @@ describe("SbUserRepository", () => {
                 });
                 const createdRow = createUserRow({
                     id: "user-new",
-                    kakaoId: "kakao-new",
+                    kakao_id: "kakao-new",
                     email: "new@example.com",
                     name: "New User",
                     profile_image: "http://example.com/new.png",
@@ -206,7 +206,7 @@ describe("SbUserRepository", () => {
                 // Assert
                 expect(userModel.create).toHaveBeenCalledWith({
                     data: {
-                        kakaoId: "kakao-new",
+                        kakao_id: "kakao-new",
                         email: "new@example.com",
                         name: "New User",
                         profile_image: "http://example.com/new.png",
@@ -232,7 +232,7 @@ describe("SbUserRepository", () => {
                 });
                 const createdRow = createUserRow({
                     id: "user-minimal",
-                    kakaoId: "kakao-minimal",
+                    kakao_id: "kakao-minimal",
                     email: null,
                     name: null,
                     profile_image: null,
@@ -266,7 +266,7 @@ describe("SbUserRepository", () => {
                 });
                 const updatedRow = createUserRow({
                     id: "user-4",
-                    kakaoId: "kakao-4",
+                    kakao_id: "kakao-4",
                     email: "updated@example.com",
                     name: "Updated User",
                     profile_image: "http://example.com/updated.png",

@@ -33,7 +33,7 @@ describe("SbVoucherPriceInfoRepository", () => {
 
     beforeEach(() => {
         voucherModel = createMockPrismaVoucher();
-        prisma = { voucherPriceInfo: voucherModel } as unknown as PrismaService;
+        prisma = { voucher_price_info: voucherModel } as unknown as PrismaService;
         repository = new SbVoucherPriceInfoRepository(prisma);
     });
 

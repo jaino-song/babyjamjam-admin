@@ -2,6 +2,7 @@ import type { Config } from "jest";
 
 const config: Config = {
     rootDir: "./",
+    roots: ["<rootDir>/"],
     testEnvironment: "node",
     moduleFileExtensions: ["ts", "js", "json"],
     transform: {
@@ -9,7 +10,7 @@ const config: Config = {
             tsconfig: "tsconfig.json",
         }],
     },
-    testRegex: "\\.spec\\.ts$",
+    testMatch: ["**/*.spec.ts"],
     moduleNameMapper: {
         "^application/(.*)$": "<rootDir>/application/$1",
         "^domain/(.*)$": "<rootDir>/domain/$1",
