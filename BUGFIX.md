@@ -322,6 +322,174 @@ const parsePrice = (value: string | null): number => {
 
 ---
 
+## 2025-12-30
+
+### 9. 번역 함수에서 카테고리 데이터 접근 시 타입 안전성 문제
+
+**증상:**
+번역 데이터 접근 시 TypeScript 컴파일러 경고 발생 또는 런타임에서 undefined 접근 가능성.
+
+**원인:**
+카테고리 데이터에 접근할 때 타입 가드 없이 직접 접근하여, 존재하지 않는 키에 대한 안전한 처리가 없었음.
+
+**해결 방법:**
+번역 함수에서 카테고리 데이터 접근 로직을 개선하여 타입 안전성 확보.
+
+**커밋:** `3350f3aa`
+
+---
+
+## 2026-01-02
+
+### 10. Railway 배포 시 NestJS 서버 실행 실패
+
+**증상:**
+Railway 배포 후 백엔드 서버가 시작되지 않거나, 외부에서 접속 불가.
+```
+Error: Cannot find module '@nestjs/cli'
+Error: address already in use
+Connection refused
+```
+
+**원인:**
+여러 가지 복합적인 문제:
+1. `@nestjs/cli`, `ts-node`, `typescript`가 `devDependencies`에만 있어 production 빌드에서 누락
+2. 서버가 `localhost`에만 바인딩되어 외부 접속 불가
+3. Railway의 포트 할당 방식과 NestJS 설정 불일치
+
+**해결 방법:**
+
+1. **Dependencies 이동** (`backend/package.json`):
+```json
+// devDependencies → dependencies 로 이동
+{
+  "dependencies": {
+    "@nestjs/cli": "^10.x",
+    "ts-node": "^10.x",
+    "typescript": "^5.x"
+  }
+}
+```
+
+2. **0.0.0.0 바인딩** (`backend/src/main.ts`):
+```typescript
+// localhost 대신 0.0.0.0으로 바인딩
+await app.listen(process.env.PORT ?? 3001, '0.0.0.0');
+```
+
+3. **Production 시작 스크립트 수정** (`backend/package.json`):
+```json
+{
+  "scripts": {
+    "start:prod": "nest start"
+  }
+}
+```
+
+**주의사항:**
+- Railway에서는 PORT 환경변수가 자동 설정됨
+- `nest build && node dist/main` 대신 `nest start` 사용 시 dependencies 필요
+- 포트는 3001로 고정 (Railway 내부 라우팅 호환)
+
+**관련 커밋:**
+- `91cacb46` - explicitly bind to 0.0.0.0
+- `aa56b306` - use node dist/main for production
+- `413ac00e` - simplify port binding
+- `c91e67f2` - revert to nest start and port 3001
+- `07cb71d9` - move nest start dependencies to production
+
+---
+
+### 11. React Server Components CVE 취약점 (보안)
+
+**증상:**
+보안 취약점 경고 - Next.js 및 React의 서버 컴포넌트 관련 CVE.
+
+**원인:**
+React Server Components 관련 패키지들에서 보안 취약점 발견:
+- `next`
+- `react-server-dom-webpack`
+- `react-server-dom-parcel`
+- `react-server-dom-turbopack`
+
+**해결 방법:**
+Vercel의 `fix-react2shell-next` 도구를 사용하여 취약한 패키지들을 보안 버전으로 업데이트:
+
+```bash
+# 자동화 도구가 package.json 스캔 후 패치 적용
+npx fix-react2shell-next
+```
+
+**영향받은 파일:**
+- `frontend/package.json`
+- `pnpm-lock.yaml`
+
+**커밋:** `ad2dd3a7`
+**PR:** #16
+
+---
+
+### 12. 대시보드 로딩 최적화 - 중복 API 호출 문제
+
+**증상:**
+대시보드 로딩 시 `/auth/me` 엔드포인트가 2번 호출됨. 400-600ms 로딩 시간.
+
+**원인:**
+1. 서버 사이드 렌더링 시 `getCurrentUser()` 호출 (1회)
+2. 클라이언트 하이드레이션 시 `useGetAuthUser()` 훅이 동일 API 재호출 (2회)
+
+**문제 코드:**
+```typescript
+// dashboard/page.tsx (Server Component)
+const user = await getCurrentUser();  // 첫 번째 호출
+
+// Header.tsx (Client Component)
+const { data: user } = useGetAuthUser();  // 두 번째 호출 - 중복!
+```
+
+**해결 방법:**
+
+1. **UserProvider Context 생성** - 서버에서 가져온 사용자 정보를 클라이언트에 전달:
+```typescript
+// (components)/providers/UserProvider.tsx
+'use client';
+export function UserProvider({ initialUser, children }) {
+  const contextValue = useMemo(() => ({ initialUser }), [initialUser]);
+  return <UserContext.Provider value={contextValue}>{children}</UserContext.Provider>;
+}
+```
+
+2. **useGetAuthUser 훅 수정** - initialData 옵션 추가:
+```typescript
+export const useGetAuthUser = (options?: { initialData?: User | null }) => {
+  return useQuery({
+    queryKey: ['authUser'],
+    queryFn: fetchAuthUser,
+    staleTime: 1000 * 60 * 30, // 30분으로 증가
+    gcTime: 1000 * 60 * 60,    // 1시간 GC
+    initialData: options?.initialData ?? undefined,
+  });
+};
+```
+
+3. **React cache()로 서버 사이드 중복 방지**:
+```typescript
+// lib/auth/cookies.ts
+import { cache } from 'react';
+export const getCurrentUser = cache(async () => {
+  // API 호출 로직
+});
+```
+
+**결과:**
+- 대시보드 로딩 시간: 400-600ms → 100-200ms
+- Network 탭에서 `/auth/me` 호출 1회로 감소
+- Header 로딩 스피너 제거 (즉시 표시)
+
+**상세 문서:** `docs/tasks/dashboard-loading-optimization.md`
+
+---
+
 ## 예방 조치
 
 1. **TypeScript Strict Mode 활용**: 타입 불일치를 컴파일 시점에 발견
@@ -329,3 +497,6 @@ const parsePrice = (value: string | null): number => {
 3. **E2E 테스트**: 주요 CRUD 플로우에 대한 통합 테스트 작성
 4. **코드 리뷰**: 외래 키 관계 및 falsy 값 처리 주의
 5. **데이터베이스 설계 문서화**: 테이블 간 관계 및 외래 키 참조 명확히 기록
+6. **배포 전 환경변수 검증**: Railway/Vercel 등 플랫폼별 요구사항 확인
+7. **보안 패치 자동화**: Dependabot 또는 유사 도구로 취약점 모니터링
+8. **서버/클라이언트 데이터 흐름 문서화**: 중복 호출 방지를 위한 아키텍처 설계

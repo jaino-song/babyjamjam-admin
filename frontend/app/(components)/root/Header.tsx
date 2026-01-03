@@ -1,29 +1,31 @@
 "use client";
 import { AppBar, Toolbar, IconButton, Box, Typography, Avatar, Drawer } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
-import NotificationsNoneIcon from "@mui/icons-material/NotificationsNone";
 import LoginIcon from '@mui/icons-material/Login';
 import { useState } from "react";
 import { NavBar } from "../nav-bar/NavBar";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
-import { useGetAuthUser } from "@/app/hooks/useGetAuthUser";
+import { useGetAuthUser, AuthUser } from "@/app/hooks/useGetAuthUser";
 
+interface HeaderProps {
+  // 서버에서 prefetch된 사용자 데이터 (duplicate fetch 방지)
+  initialUser?: AuthUser | null;
+}
 
-export const Header = () => {
+export const Header = ({ initialUser }: HeaderProps) => {
   const locale = useLocale();
   const [isNavOpen, setIsNavOpen] = useState(false);
   const handleNavOpen = () => {
     setIsNavOpen(true);
   };
 
-
-
   const handleNavClose = () => {
     setIsNavOpen(false);
   };
 
-  const { data: user, isLoading } = useGetAuthUser();
+  // initialUser가 있으면 즉시 사용, 없으면 client-side fetch
+  const { data: user, isLoading } = useGetAuthUser({ initialData: initialUser });
 
   return (
     <>
@@ -62,8 +64,9 @@ export const Header = () => {
             <NotificationsNoneIcon />
           </IconButton> */}
           {/* User Profile */}
-          <IconButton color="inherit" aria-label={user ? "user" : "login"} disabled={isLoading}>
-            {isLoading ? (
+          {/* initialUser가 있으면 로딩 상태 없이 즉시 렌더링 */}
+          <IconButton color="inherit" aria-label={user ? "user" : "login"} disabled={!initialUser && isLoading}>
+            {!initialUser && isLoading ? (
               <Avatar />
             ) : user ? (
               <Avatar alt={user?.name || 'User'} src={user?.profile_image || ''} />

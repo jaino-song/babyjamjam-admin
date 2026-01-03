@@ -52,17 +52,12 @@ const activity: ActivityItem[] = [
   { primary: "System maintenance complete", secondary: "2 days ago · IT" },
 ];
 
-import { redirect } from "next/navigation";
-
+// NOTE: 인증 체크는 dashboard/layout.tsx에서 처리
+// layout에서 이미 getCurrentUser()를 호출하므로 여기서는 중복 호출하지 않음
 export default async function Dashboard() {
   const locale = await getLocale();
+  // layout에서 인증된 사용자만 접근 가능하므로 user는 항상 존재
   const user = await getCurrentUser();
-
-  // Redirect to login if not authenticated
-  if (!user) {
-    console.log("[Dashboard] No user found, redirecting to login");
-    redirect("/login");
-  }
 
   const stats = getStats(locale);
 
