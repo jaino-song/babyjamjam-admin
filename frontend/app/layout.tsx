@@ -9,6 +9,8 @@ import AnimatedContainer from "./(components)/root/AnimatedContainer";
 import { Box } from "@mui/material";
 import { LocaleProvider } from "./(components)/LocaleProvider";
 import { getLocale } from "./actions/locale";
+import { getCurrentUser } from "./lib/auth/cookies";
+import { UserProvider } from "./(components)/providers/UserProvider";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",
@@ -32,6 +34,9 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const locale = await getLocale();
+  // 서버에서 user 데이터 prefetch - ConditionalHeader에서 사용
+  // React cache()로 감싸져 있어 같은 request에서 중복 호출되지 않음
+  const user = await getCurrentUser();
 
   return (
     <html lang={locale}>
@@ -40,12 +45,14 @@ export default async function RootLayout({
           <ThemeProvider>
             <QueryProvider>
               <LocaleProvider locale={locale}>
-                <ConditionalHeader />
-                <AnimatedContainer>
-                  <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1 }}>
-                    {children}
-                  </Box>
-                </AnimatedContainer>
+                <UserProvider user={user}>
+                  <ConditionalHeader />
+                  <AnimatedContainer>
+                    <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1 }}>
+                      {children}
+                    </Box>
+                  </AnimatedContainer>
+                </UserProvider>
               </LocaleProvider>
             </QueryProvider>
           </ThemeProvider>
