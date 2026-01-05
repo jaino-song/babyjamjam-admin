@@ -8,6 +8,8 @@ import {
     RefreshEformsignAccessTokenUsecase,
     FetchAllEformsignDocsFromApiUsecase,
     FetchEformsignDocFromApiUsecase,
+    CreateEformsignDocUsecase,
+    CreateEformsignDocParams,
 } from "application/usecases/eformsign-doc";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import {
@@ -23,6 +25,7 @@ export class EformsignDocService {
         private readonly findEformsignDocByDocumentIdUsecase: FindEformsignDocByDocumentIdUsecase,
         private readonly findEformsignDocsByClientIdUsecase: FindEformsignDocsByClientIdUsecase,
         private readonly listEformsignDocsUsecase: ListEformsignDocsUsecase,
+        private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
         // External API use cases
         private readonly getEformsignAccessTokenUsecase: GetEformsignAccessTokenUsecase,
         private readonly refreshEformsignAccessTokenUsecase: RefreshEformsignAccessTokenUsecase,
@@ -31,6 +34,14 @@ export class EformsignDocService {
     ) {}
 
     // ============ Local DB Operations ============
+
+    /**
+     * Create a new eformsign doc record in local DB
+     * @param params - document creation parameters
+     */
+    create(params: CreateEformsignDocParams): Promise<EformsignDocEntity> {
+        return this.createEformsignDocUsecase.execute(params);
+    }
 
     /**
      * Find a stored eformsign doc by its DB id

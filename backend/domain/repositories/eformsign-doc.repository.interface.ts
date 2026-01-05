@@ -5,11 +5,11 @@ export interface IEformsignDocRepository {
     findByDocumentId(documentId: string): Promise<EformsignDocEntity | null>;
     findByClientId(clientId: number): Promise<EformsignDocEntity[]>;
     findAll(): Promise<EformsignDocEntity[]>;
-    // create(doc: EformsignDocEntity): Promise<EformsignDocEntity>;
-    // update(doc: EformsignDocEntity): Promise<EformsignDocEntity>;
-    // upsertByDocumentId(doc: EformsignDocEntity): Promise<EformsignDocEntity>;
-    // delete(id: number): Promise<void>;
-    // deleteByDocumentId(documentId: string): Promise<void>;
+    create(doc: EformsignDocEntity): Promise<EformsignDocEntity>;
+    update(doc: EformsignDocEntity): Promise<EformsignDocEntity>;
+    upsertByDocumentId(doc: EformsignDocEntity): Promise<EformsignDocEntity>;
+    delete(id: number): Promise<void>;
+    deleteByDocumentId(documentId: string): Promise<void>;
 }
 
 export const EFORMSIGN_DOC_REPOSITORY = "EFORMSIGN_DOC_REPOSITORY";

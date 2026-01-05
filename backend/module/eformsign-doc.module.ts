@@ -8,6 +8,7 @@ import {
     RefreshEformsignAccessTokenUsecase,
     FetchAllEformsignDocsFromApiUsecase,
     FetchEformsignDocFromApiUsecase,
+    CreateEformsignDocUsecase,
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_CLIENT_REPOSITORY } from "domain/repositories/eformsign.client.interface";
@@ -25,6 +26,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FindEformsignDocByDocumentIdUsecase,
         FindEformsignDocsByClientIdUsecase,
         ListEformsignDocsUsecase,
+        CreateEformsignDocUsecase,
         // Use cases - External API
         GetEformsignAccessTokenUsecase,
         RefreshEformsignAccessTokenUsecase,

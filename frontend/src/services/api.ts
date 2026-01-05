@@ -26,8 +26,25 @@ export const eformsignApi = {
         const { data } = await api.post('/refresh-access-token', { executionTime });
         return data;
     },
-    generateDocument: async (contractData: ContractDataDto) => {
-        const { data } = await api.post('/generate-document', { contractData });
+    generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
+        const { data } = await api.post('/generate-document', { contractData, clientId });
+        return data;
+    },
+    // Create eformsign doc record to track document in local DB
+    createDocRecord: async (params: {
+        documentId: string;
+        clientId: number;
+        statusType: string;
+        statusDetail: string;
+        stepType: string;
+        stepIndex: string;
+        stepName: string;
+        stepRecipientType: string;
+        stepRecipientName: string;
+        stepRecipientSms: string;
+        expiredDate: string;
+    }) => {
+        const { data } = await api.post('/eformsign-docs', params);
         return data;
     },
     // Documents APIs - token is read from httpOnly cookie on server

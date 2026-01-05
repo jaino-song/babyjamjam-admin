@@ -5,6 +5,7 @@ import {
     RefreshAccessTokenDto,
     FetchDocumentsDto,
     FetchDocumentByIdDto,
+    CreateEformsignDocLocalDto,
 } from "interface/dto/eformsign-doc.dto";
 
 @Controller("eformsign-docs")
@@ -12,6 +13,28 @@ export class EformsignDocController {
     constructor(private readonly eformsignDocService: EformsignDocService) {}
 
     // ============ Local DB Endpoints ============
+
+    /**
+     * POST /eformsign-docs
+     * Create a new eformsign document record in local DB
+     * Called by frontend after document is created in eformsign
+     */
+    @Post()
+    create(@Body() dto: CreateEformsignDocLocalDto) {
+        return this.eformsignDocService.create({
+            documentId: dto.documentId,
+            clientId: dto.clientId,
+            statusType: dto.statusType,
+            statusDetail: dto.statusDetail,
+            stepType: dto.stepType,
+            stepIndex: dto.stepIndex,
+            stepName: dto.stepName,
+            stepRecipientType: dto.stepRecipientType,
+            stepRecipientName: dto.stepRecipientName,
+            stepRecipientSms: dto.stepRecipientSms,
+            expiredDate: new Date(dto.expiredDate),
+        });
+    }
 
     /**
      * GET /eformsign-docs

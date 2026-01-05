@@ -8,6 +8,7 @@ export interface IVoucherPriceInfoRepository {
     update(voucherPriceInfo: VoucherPriceInfoEntity): Promise<VoucherPriceInfoEntity>;
     delete(id: number): Promise<void>;
     findAll(): Promise<VoucherPriceInfoEntity[]>;
+    getDistinctYears(): Promise<number[]>;
 }
 
 export const VOUCHER_PRICE_INFO_REPOSITORY = 'VOUCHER_PRICE_INFO_REPOSITORY';

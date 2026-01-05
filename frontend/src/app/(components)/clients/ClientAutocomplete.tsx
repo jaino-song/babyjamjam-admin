@@ -8,27 +8,29 @@ import {
     Typography,
     CircularProgress,
     Paper,
+    Chip,
     Divider,
     ButtonBase,
 } from "@mui/material";
-import { UserPlus } from "lucide-react";
-import { useEmployees, Employee } from "@/app/hooks/useEmployees";
+import { UserPlus, FileCheck } from "lucide-react";
+import { useAllClients } from "@/app/hooks/useClients";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
+import type { Client } from "@/app/lib/client/types";
 
-interface EmployeeAutocompleteProps {
+interface ClientAutocompleteProps {
     value: number | null;
-    onChange: (employeeId: number | null, employee: Employee | null) => void;
+    onChange: (clientId: number | null, client: Client | null) => void;
     label: string;
     required?: boolean;
     error?: boolean;
     helperText?: string;
-    excludeIds?: number[]; // IDs to exclude from options (e.g., if already selected as secondary)
+    excludeIds?: number[];
     allowManualEntry?: boolean;
     onManualEntry?: () => void;
 }
 
-export function EmployeeAutocomplete({
+export function ClientAutocomplete({
     value,
     onChange,
     label,
@@ -38,30 +40,29 @@ export function EmployeeAutocomplete({
     excludeIds = [],
     allowManualEntry = false,
     onManualEntry,
-}: EmployeeAutocompleteProps) {
+}: ClientAutocompleteProps) {
     const locale = useLocale();
-    const { data: employees, isLoading } = useEmployees();
+    const { data: clients, isLoading } = useAllClients();
 
     // Track input value and open state to control dropdown visibility
     const [inputValue, setInputValue] = useState("");
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
-    // Filter out excluded employees
-    const availableEmployees = useMemo(() => {
-        if (!employees) return [];
-        return employees.filter(emp => !excludeIds.includes(emp.id));
-    }, [employees, excludeIds]);
+    // Filter out excluded clients
+    const availableClients = useMemo(() => {
+        if (!clients) return [];
+        return clients.filter((client) => !excludeIds.includes(client.id));
+    }, [clients, excludeIds]);
 
-    // Find selected employee
-    const selectedEmployee = useMemo(() => {
-        // Use explicit null/undefined check instead of falsy check since 0 is a valid ID
-        if (value === null || value === undefined || !employees) return null;
-        return employees.find(emp => emp.id === value) || null;
-    }, [value, employees]);
+    // Find selected client
+    const selectedClient = useMemo(() => {
+        if (value === null || value === undefined || !clients) return null;
+        return clients.find((client) => client.id === value) || null;
+    }, [value, clients]);
 
     const handleChange = (
         _event: React.SyntheticEvent,
-        newValue: Employee | null
+        newValue: Client | null
     ) => {
         // Update input value immediately to show selected name
         setInputValue(newValue?.name ?? "");
@@ -96,12 +97,12 @@ export function EmployeeAutocomplete({
     };
 
     return (
-        <Autocomplete<Employee, false, false, false>
-            value={selectedEmployee}
+        <Autocomplete<Client, false, false, false>
+            value={selectedClient}
             onChange={handleChange}
             inputValue={inputValue}
             onInputChange={handleInputChange}
-            options={availableEmployees}
+            options={availableClients}
             loading={isLoading}
             clearOnBlur={false}
             blurOnSelect={true}
@@ -114,10 +115,11 @@ export function EmployeeAutocomplete({
                 if (!filterInput.trim()) return [];
                 const searchLower = filterInput.toLowerCase();
                 return options.filter(
-                    emp =>
-                        emp.name.toLowerCase().includes(searchLower) ||
-                        emp.workArea.some(area => area.toLowerCase().includes(searchLower)) ||
-                        emp.phone.includes(filterInput)
+                    (client) =>
+                        client.name.toLowerCase().includes(searchLower) ||
+                        (client.phone && client.phone.includes(filterInput)) ||
+                        (client.address &&
+                            client.address.toLowerCase().includes(searchLower))
                 );
             }}
             renderOption={(props, option) => (
@@ -137,9 +139,20 @@ export function EmployeeAutocomplete({
                             }}
                         >
                             <Typography variant="body1">{option.name}</Typography>
+                            {option.hasSigned && (
+                                <Chip
+                                    icon={<FileCheck size={14} />}
+                                    label={t(locale, "contract-msg.client-signed")}
+                                    size="small"
+                                    color="success"
+                                    variant="outlined"
+                                    sx={{ height: 20, fontSize: "0.7rem" }}
+                                />
+                            )}
                         </Box>
                         <Typography variant="caption" color="text.secondary">
-                            {option.workArea.join(", ")} · {option.phone}
+                            {option.phone || "-"}{" "}
+                            {option.address && `· ${option.address}`}
                         </Typography>
                     </Box>
                 </Box>
@@ -151,12 +164,14 @@ export function EmployeeAutocomplete({
                     required={required}
                     error={error}
                     helperText={helperText}
-                    placeholder={t(locale, "clients.form.employee-search-placeholder")}
+                    placeholder={t(locale, "contract-msg.client-search-placeholder")}
                     InputProps={{
                         ...params.InputProps,
                         endAdornment: (
                             <>
-                                {isLoading ? <CircularProgress color="inherit" size={20} /> : null}
+                                {isLoading ? (
+                                    <CircularProgress color="inherit" size={20} />
+                                ) : null}
                                 {params.InputProps.endAdornment}
                             </>
                         ),
@@ -165,7 +180,7 @@ export function EmployeeAutocomplete({
             )}
             noOptionsText={
                 <Typography variant="body2" color="text.secondary" sx={{ py: 1, textAlign: "center" }}>
-                    {t(locale, "clients.form.no-employee-found")}
+                    {t(locale, "contract-msg.no-client-found")}
                 </Typography>
             }
             PaperComponent={(props) => (
@@ -202,11 +217,11 @@ export function EmployeeAutocomplete({
                                     >
                                         <UserPlus size={16} />
                                         <Typography variant="body1" color="primary">
-                                            {t(locale, "contract-msg.employee-manual-entry")}
+                                            {t(locale, "contract-msg.manual-entry")}
                                         </Typography>
                                     </Box>
                                     <Typography variant="caption" color="text.secondary">
-                                        {t(locale, "contract-msg.employee-manual-entry-description")}
+                                        {t(locale, "contract-msg.manual-entry-description")}
                                     </Typography>
                                 </Box>
                             </ButtonBase>

@@ -55,4 +55,13 @@ export class SbVoucherPriceInfoRepository implements IVoucherPriceInfoRepository
         const voucherPriceInfos = await this.prismaService.voucher_price_info.findMany();
         return voucherPriceInfos.map(row => VoucherPriceInfoMapper.toDomain(row));
     }
+
+    async getDistinctYears(): Promise<number[]> {
+        const result = await this.prismaService.voucher_price_info.findMany({
+            select: { year: true },
+            distinct: ["year"],
+            orderBy: { year: "desc" },
+        });
+        return result.map(row => row.year);
+    }
 }

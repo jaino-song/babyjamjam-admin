@@ -6,4 +6,5 @@ export * from "./list-voucher-price-info.usecase";
 export * from "./update-voucher-price-info.usecase";
 export * from "./parse-voucher-image.usecase";
 export * from "./bulk-update-voucher-price-info.usecase";
+export * from "./get-distinct-years.usecase";
 

@@ -16,6 +16,7 @@ import { EmployeeModule } from "module/employee.module";
 import { ClientModule } from "module/client.module";
 import { EmployeeScheduleModule } from "module/employee-schedule.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
+import { EformsignWebhookModule } from "module/eformsign-webhook.module";
 import { AreaTemplateModule } from "module/area-template.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -37,6 +38,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         ClientModule,
         EmployeeScheduleModule,
         EformsignDocModule,
+        EformsignWebhookModule,
         AreaTemplateModule,
     ],
     controllers: [AuthController, EformsignController],

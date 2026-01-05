@@ -1,8 +1,13 @@
-// Local DB use cases
+// Local DB use cases - Read
 export * from "./find-eformsign-doc-by-id.usecase";
 export * from "./find-eformsign-doc-by-document-id.usecase";
 export * from "./find-eformsign-docs-by-client-id.usecase";
 export * from "./list-eformsign-docs.usecase";
+
+// Local DB use cases - Write
+export * from "./create-eformsign-doc.usecase";
+export * from "./update-eformsign-doc-status.usecase";
+export * from "./link-document-to-client.usecase";
 
 // External API use cases
 export * from "./get-eformsign-access-token.usecase";
