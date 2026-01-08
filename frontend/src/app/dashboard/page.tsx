@@ -77,10 +77,9 @@ export default async function Dashboard() {
             data-component="hero-banner"
             subtitle={t(locale, "dashboard.welcome_back")}
             title={`${user?.name} ${t(locale, "dashboard.suffix")}`}
-            primaryActionLabel={t(locale, "actions.price_calculator")}
+            primaryActionLabel={t(locale, "actions.send_contract")}
             secondaryActionLabel={t(locale, "actions.write_message")}
-            primaryActionDisabled={true}
-            primaryActionHref="/price-calculator"
+            primaryActionHref="/contracts/creation"
             secondaryActionHref="/messages/greeting"
           />
 

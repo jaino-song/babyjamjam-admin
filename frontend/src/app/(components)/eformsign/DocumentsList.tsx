@@ -238,7 +238,7 @@ export function DocumentsList() {
               size="medium" 
               sx={{ color: "#1e88e5" }} 
               LinkComponent={Link}
-              href="/messages/contract"
+              href="/contracts/creation"
             >
               <Plus size={30} strokeWidth={2} />
             </IconButton>

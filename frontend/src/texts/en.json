@@ -56,7 +56,8 @@
     "create_report": "Create Report",
     "schedule_meeting": "Schedule Meeting",
     "price_calculator": "Price Calculator",
-    "write_message": "Write Message"
+    "write_message": "Write Message",
+    "send_contract": "Send Contract"
   },
   "user": {
     "profile": "Profile",

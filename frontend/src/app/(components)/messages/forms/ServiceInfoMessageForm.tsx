@@ -2,11 +2,7 @@
 import { useState } from "react";
 import {
   Button,
-  Card,
-  CardContent,
-  Paper,
   Stack,
-  Typography,
   Fade,
   Box,
 } from "@mui/material";
@@ -35,43 +31,28 @@ export const ServiceInfoMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} data-component="service-info-message-form" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%", bgcolor: "background.default" }}>
+    <Box data-component="service-info-message-form" sx={{ display: "flex", flexDirection: "column", flexGrow: 1, height: "100%", bgcolor: "background.default" }}>
       <Fade in appear timeout={500}>
-        <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-          {/* title */}
-          <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-            {t(locale, "msg-type.service-info")}
-          </Typography>
-          {/* subtitle */}
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            {t(locale, "service-info-msg.subtitle")}
-          </Typography>
-
+        <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1 }}>
           {/* form */}
-          <Card elevation={0} data-component="service-info-message-form-card" sx={{ bgcolor: "background.default" }}>
-            <CardContent>
-              <Stack spacing={3}>
-                {/* name */}
-                <NameInput name={name} setName={setName} label={t(locale, "service-info-msg.name-label")} placeholder={t(locale, "service-info-msg.name-placeholder")} />
-                {/* generate button */}
-                <Button
-                  variant="contained"
-                  size="large"
-                  onClick={handleGenerate}
-                  disabled={!name}
-                  data-component="service-info-message-form-generate-button"
-                >
-                  {t(locale, "common.generate-button")}
-                </Button>
-              </Stack>
-            </CardContent>
-          </Card>
+          <Stack spacing={3}>
+            <NameInput name={name} setName={setName} label={t(locale, "service-info-msg.name-label")} placeholder={t(locale, "service-info-msg.name-placeholder")} />
+            <Button
+              variant="contained"
+              size="large"
+              onClick={handleGenerate}
+              disabled={!name}
+              data-component="service-info-message-form-generate-button"
+            >
+              {t(locale, "common.generate-button")}
+            </Button>
+          </Stack>
 
           {/* generated message */}
           {generatedMessage && (
-            <GeneratedMsg 
-              title={t(locale, "common.generated-message-title")} 
-              copyButtonText={t(locale, "common.copy-button")} 
+            <GeneratedMsg
+              title={t(locale, "common.generated-message-title")}
+              copyButtonText={t(locale, "common.copy-button")}
               message={generatedMessage}
               onMessageChange={setGeneratedMessage}
               handleCopy={handleCopy}
@@ -79,6 +60,6 @@ export const ServiceInfoMessageForm = () => {
           )}
         </Box>
       </Fade>
-    </Paper>
+    </Box>
   );
 };

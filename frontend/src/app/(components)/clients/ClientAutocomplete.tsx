@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
     Autocomplete,
     TextField,
@@ -18,6 +18,7 @@ import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import type { Client } from "@/app/lib/client/types";
 import { useClientDialogStore } from "@/app/store/client-dialog-store";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 
 interface ClientAutocompleteProps {
     value: number | null;
@@ -46,9 +47,12 @@ export function ClientAutocomplete({
     const { data: clients, isLoading } = useAllClients();
     const setPrefillName = useClientDialogStore((state) => state.setPrefillName);
 
-    // Track input value and open state to control dropdown visibility
+    // Track input value for display synchronization
     const [inputValue, setInputValue] = useState("");
+    // Track open state for controlled dropdown behavior
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    // Ref for the input element - used to blur when closing dropdown
+    const inputRef = useRef<HTMLInputElement>(null);
 
     // Filter out excluded clients
     const availableClients = useMemo(() => {
@@ -79,23 +83,28 @@ export function ClientAutocomplete({
     ) => {
         // Update input value immediately to show selected name
         setInputValue(newValue?.name ?? "");
-        // Delay closing dropdown and calling onChange to let the click event complete
-        setTimeout(() => {
-            setIsDropdownOpen(false);
-            onChange(newValue?.id ?? null, newValue);
-        }, 0);
+        onChange(newValue?.id ?? null, newValue);
     };
 
     const handleManualEntry = (e: React.MouseEvent) => {
         // Prevent the Autocomplete from closing before click completes
         e.preventDefault();
         e.stopPropagation();
+        // Close the dropdown state
         setIsDropdownOpen(false);
+        // Blur the input using ref to ensure dropdown closes completely
+        // Note: We use ref because the Paper slot is rendered in a Portal,
+        // so DOM traversal with closest() won't find the Autocomplete
+        inputRef.current?.blur();
         // Save the typed name to the store so ClientFormDialog can prefill it
         setPrefillName(inputValue);
-        if (onManualEntry) {
-            onManualEntry();
-        }
+        // Use setTimeout to ensure dropdown is fully closed before opening dialog
+        // This prevents the dropdown from appearing over the new dialog
+        setTimeout(() => {
+            if (onManualEntry) {
+                onManualEntry();
+            }
+        }, 100);
     };
 
     // Handle input change to track what user types
@@ -104,14 +113,9 @@ export function ClientAutocomplete({
         newInputValue: string,
         reason: string
     ) => {
-        // Only update inputValue for user input, not for option selection
-        if (reason === "input") {
+        // Update inputValue for user input and clear actions
+        if (reason === "input" || reason === "clear") {
             setInputValue(newInputValue);
-            // Open dropdown when user starts typing
-            setIsDropdownOpen(newInputValue.length > 0);
-        } else if (reason === "clear") {
-            setInputValue("");
-            setIsDropdownOpen(false);
         }
     };
 
@@ -125,20 +129,24 @@ export function ClientAutocomplete({
             loading={isLoading}
             clearOnBlur={false}
             blurOnSelect={true}
-            // Only open dropdown when user has typed at least 1 character
+            // Control dropdown visibility - opens on focus or when typing
             open={isDropdownOpen}
+            onOpen={() => setIsDropdownOpen(true)}
             onClose={() => setIsDropdownOpen(false)}
+            openOnFocus
             getOptionLabel={(option) => option.name}
             isOptionEqualToValue={(option, val) => option.id === val.id}
             filterOptions={(options, { inputValue: filterInput }) => {
-                if (!filterInput.trim()) return options; // Show all options when input is empty
-                const searchLower = filterInput.toLowerCase();
+                // Only show options when user has typed something
+                if (!filterInput.trim()) return [];
                 return options.filter(
                     (client) =>
-                        client.name.toLowerCase().includes(searchLower) ||
+                        // 초성 search only for name (e.g., ㄱ → 김현아)
+                        matchesKoreanSearch(client.name, filterInput) ||
+                        // Phone: simple substring match (no 초성)
                         (client.phone && client.phone.includes(filterInput)) ||
-                        (client.address &&
-                            client.address.toLowerCase().includes(searchLower))
+                        // Address: simple substring match (no 초성 to avoid false positives)
+                        (client.address && client.address.toLowerCase().includes(filterInput.toLowerCase()))
                 );
             }}
             renderOption={(props, option) => (
@@ -179,6 +187,7 @@ export function ClientAutocomplete({
             renderInput={(params) => (
                 <TextField
                     {...params}
+                    inputRef={inputRef}
                     label={label}
                     required={required}
                     error={error}

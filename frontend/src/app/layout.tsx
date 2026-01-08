@@ -21,6 +21,15 @@ const Pretendard = localFont({
 export const metadata: Metadata = {
   title: "Incheon Imirae Back Office",
   description: "Incheon Imirae Back Office",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "이미래 인천",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export const viewport: Viewport = {
@@ -48,7 +57,7 @@ export default async function RootLayout({
                 <UserProvider user={user}>
                   <ConditionalHeader />
                   <AnimatedContainer>
-                    <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1 }}>
+                    <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1, width: "100%" }}>
                       {children}
                     </Box>
                   </AnimatedContainer>

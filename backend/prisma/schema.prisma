@@ -42,13 +42,15 @@ model message {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model user {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email         String?  @db.VarChar
-  name          String?  @db.VarChar
-  profile_image String?  @db.VarChar
-  role          String?  @db.VarChar
-  created_at    DateTime @default(now()) @db.Timestamp(6)
-  kakao_id      String   @unique(map: "user_kakaoId_key") @db.VarChar
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email              String?             @db.VarChar
+  name               String?             @db.VarChar
+  profile_image      String?             @db.VarChar
+  role               String?             @db.VarChar
+  created_at         DateTime            @default(now()) @db.Timestamp(6)
+  kakao_id           String              @unique(map: "user_kakaoId_key") @db.VarChar
+  push_subscriptions push_subscription[]
+  notifications      notification[]
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -144,4 +146,32 @@ model voucher_price_info_2025 {
   full_price   String?
   grant        String?
   actual_price String?
+}
+
+/// PWA Push Subscription - stores browser push endpoints for Web Push notifications
+model push_subscription {
+  id         Int      @id @default(autoincrement())
+  user_id    String   @db.Uuid
+  endpoint   String   @unique
+  p256dh_key String   // Public key for encryption
+  auth_key   String   // Auth secret for encryption
+  user_agent String?  // Browser/device info for debugging
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  user       user     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id])
+}
+
+/// Notification history - tracks sent notifications
+model notification {
+  id         Int      @id @default(autoincrement())
+  user_id    String   @db.Uuid
+  title      String
+  body       String
+  data       Json?    // Additional payload (URL to open, etc.)
+  sent_at    DateTime @default(now()) @db.Timestamptz(6)
+  read_at    DateTime? @db.Timestamptz(6)
+  user       user     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id, sent_at])
 }

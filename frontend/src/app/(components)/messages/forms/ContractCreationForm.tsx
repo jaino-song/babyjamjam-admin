@@ -575,12 +575,10 @@ export const ContractCreationForm = () => {
         sx={{
           display: "flex",
           flexDirection: "column",
-          borderTopLeftRadius: 0,
-          borderTopRightRadius: 0,
+          justifyContent: "flex-start",
           p: 3,
           flexGrow: 1,
           width: "100%",
-          height: "100%",
           bgcolor: "background.default",
         }}
       >

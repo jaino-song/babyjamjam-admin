@@ -56,6 +56,7 @@
     "create_report": "보고서 작성",
     "schedule_meeting": "회의 일정 잡기",
     "price_calculator": "요금 계산기",
+    "send_contract": "계약서 전송",
     "write_message": "메시지 작성"
   },
   "user": {
@@ -63,6 +64,10 @@
     "settings": "설정",
     "logout": "로그아웃",
     "login": "로그인"
+  },
+  "msg-form": {
+    "title": "메시지",
+    "select-msg-type": "원하시는 메시지를 선택해 주세요"
   },
   "price-info-msg": {
     "title": "이용 요금 문자 생성",
@@ -173,7 +178,7 @@
       "이용자\n정보",
       "제공인력\n정보",
       "바우처\n정보",
-      "계약 정보"
+      "계약\n정보"
     ]
   },
   "nav-bar": {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import {
     Box,
     Table,
@@ -9,12 +9,11 @@ import {
     TableContainer,
     TableHead,
     TableRow,
-    TextField,
-    InputAdornment,
     IconButton,
     Chip,
     CircularProgress,
     Alert,
+    Divider,
 } from "@mui/material";
 import { Search, Plus } from "lucide-react";
 import { useLocale } from "../LocaleProvider";
@@ -37,8 +36,6 @@ const getStatusChip = (openToNextWork: boolean, locale: Locale) => {
 
 export function EmployeesTable() {
     const locale = useLocale();
-    const [searchInput, setSearchInput] = useState("");
-    const [search, setSearch] = useState("");
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
@@ -47,28 +44,8 @@ export function EmployeesTable() {
     const { data: employees, isLoading, error } = useEmployees();
     const deleteEmployee = useDeleteEmployee();
 
-    // Filter employees based on search query
-    const filteredEmployees = useMemo(() => {
-        if (!employees) return [];
-        if (!search.trim()) return employees;
-        
-        const query = search.toLowerCase();
-        return employees.filter((emp) =>
-            emp.name.toLowerCase().includes(query) ||
-            emp.workArea?.some(area => area.toLowerCase().includes(query)) ||
-            emp.phone?.includes(query)
-        );
-    }, [employees, search]);
-
-    const handleSearch = () => {
-        setSearch(searchInput);
-    };
-
-    const handleKeyPress = (e: React.KeyboardEvent) => {
-        if (e.key === "Enter") {
-            handleSearch();
-        }
-    };
+    // Use all employees (search not implemented in icon-button toolbar yet)
+    const filteredEmployees = employees || [];
 
     const handleAddNew = () => {
         setEditingEmployee(null);
@@ -128,55 +105,83 @@ export function EmployeesTable() {
             <Box data-component="employees-table-container">
                 {/* Toolbar */}
                 <Box
+                    data-component="employees-toolbar"
                     sx={{
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "space-between",
-                        mb: 2,
-                        gap: 2,
+                        justifyContent: "space-around",
                     }}
                 >
-                    {/* Search */}
-                    <TextField
-                        size="small"
-                        placeholder={t(locale, "employees.search-placeholder")}
-                        value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
-                        onKeyPress={handleKeyPress}
-                        InputProps={{
-                            endAdornment: (
-                                <InputAdornment position="end">
-                                    <IconButton size="small" onClick={handleSearch}>
-                                        <Search size={20} />
-                                    </IconButton>
-                                </InputAdornment>
-                            ),
-                        }}
-                        sx={{ minWidth: 250 }}
-                    />
-
-                    {/* Add Button */}
-                    <IconButton
-                        color="primary"
-                        onClick={handleAddNew}
-                        sx={{ 
-                            bgcolor: "primary.main", 
-                            color: "white",
-                            "&:hover": { bgcolor: "primary.dark" }
+                    <Box
+                        data-component="employees-toolbar-buttons"
+                        sx={{
+                            display: "flex",
+                            justifyContent: "space-around",
+                            alignItems: "center",
+                            gap: 1,
+                            width: "100%"
                         }}
                     >
-                        <Plus size={24} />
-                    </IconButton>
+                        {/* Search Button */}
+                        <IconButton size="medium" sx={{ color: "grey.600" }}>
+                            <Search size={24} strokeWidth={2} />
+                        </IconButton>
+
+                        {/* Spacer */}
+                        <Box sx={{ flex: 1 }} />
+
+                        {/* Add Button */}
+                        <IconButton
+                            size="medium"
+                            sx={{ color: "#1e88e5" }}
+                            onClick={handleAddNew}
+                        >
+                            <Plus size={30} strokeWidth={2} />
+                        </IconButton>
+                    </Box>
                 </Box>
 
+                <Divider />
+
                 {/* Table */}
+                <Box sx={{ minHeight: 200, width: "100%" }}>
                 <TableContainer>
-                    <Table size="small">
+                    <Table sx={{ tableLayout: "fixed", width: "100%" }}>
                         <TableHead>
                             <TableRow>
-                                <TableCell sx={{ fontWeight: 600 }}>{t(locale, "employees.table.name")}</TableCell>
-                                <TableCell sx={{ fontWeight: 600 }}>{t(locale, "employees.table.open-status")}</TableCell>
-                                <TableCell sx={{ fontWeight: 600 }}>{t(locale, "employees.table.assigned-client")}</TableCell>
+                                <TableCell
+                                    align="center"
+                                    sx={{
+                                        fontWeight: 500,
+                                        color: "rgba(0, 0, 0, 0.6)",
+                                        fontSize: "0.875rem",
+                                        width: "30%",
+                                    }}
+                                >
+                                    {t(locale, "employees.table.name")}
+                                </TableCell>
+                                <TableCell
+                                    align="center"
+                                    sx={{
+                                        fontWeight: 500,
+                                        color: "rgba(0, 0, 0, 0.6)",
+                                        fontSize: "0.875rem",
+                                        width: "30%",
+                                    }}
+                                >
+                                    {t(locale, "employees.table.open-status")}
+                                </TableCell>
+                                <TableCell
+                                    align="center"
+                                    sx={{
+                                        fontWeight: 500,
+                                        color: "rgba(0, 0, 0, 0.6)",
+                                        fontSize: "0.875rem",
+                                        width: "40%",
+                                    }}
+                                >
+                                    {t(locale, "employees.table.assigned-client")}
+                                </TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
@@ -188,15 +193,25 @@ export function EmployeesTable() {
                                 </TableRow>
                             ) : (
                                 filteredEmployees.map((employee) => (
-                                    <TableRow 
-                                        key={employee.id} 
+                                    <TableRow
+                                        key={employee.id}
                                         hover
                                         onClick={() => handleRowClick(employee)}
-                                        sx={{ cursor: "pointer" }}
+                                        sx={{ cursor: "pointer", "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
                                     >
-                                        <TableCell>{employee.name}</TableCell>
-                                        <TableCell>{getStatusChip(employee.openToNextWork, locale)}</TableCell>
-                                        <TableCell sx={{ color: "text.secondary" }}>
+                                        <TableCell
+                                            align="center"
+                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
+                                        >
+                                            {employee.name}
+                                        </TableCell>
+                                        <TableCell align="center">
+                                            {getStatusChip(employee.openToNextWork, locale)}
+                                        </TableCell>
+                                        <TableCell
+                                            align="center"
+                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.6)" }}
+                                        >
                                             {t(locale, "employees.schedule-not-implemented")}
                                         </TableCell>
                                     </TableRow>
@@ -221,6 +236,7 @@ export function EmployeesTable() {
                     onClose={handleFormDialogClose}
                     employee={editingEmployee}
                 />
+                </Box>
             </Box>
         </ComponentContainer>
     );

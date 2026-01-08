@@ -34,7 +34,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                 </Box>
                 <Stack spacing={1}>
                     <NavButton href="/dashboard" label={t(locale, "nav-bar.dashboard")} icon={<House size={15} />} active={isDashboard} onClick={onClose} />
-                    <NavButton href="/messages/greeting" label={t(locale, "nav-bar.messages")} icon={<MessageCircle size={15} />} active={isMessages} onClick={onClose} />
+                    <NavButton href="/messages" label={t(locale, "nav-bar.messages")} icon={<MessageCircle size={15} />} active={isMessages} onClick={onClose} />
                     <NavButton href="/contracts" label={t(locale, "nav-bar.contracts")} icon={<File size={15} />} active={isContracts} onClick={onClose} />
                     <NavButton href="/clients" label={t(locale, "nav-bar.clients")} icon={<PeopleOutlineIcon fontSize="small" />} active={isClients} onClick={onClose} />
                     <NavButton href="/employees" label={t(locale, "nav-bar.employees")} icon={<AssignmentIndOutlinedIcon fontSize="small" />} active={isEmployees} onClick={onClose} />

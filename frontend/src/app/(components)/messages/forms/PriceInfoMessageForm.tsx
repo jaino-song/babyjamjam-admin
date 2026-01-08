@@ -3,12 +3,9 @@ import { useState, useEffect } from "react";
 import {
   Box,
   Button,
-  Card,
-  CardContent,
   FormControl,
   InputLabel,
   MenuItem,
-  Paper,
   Select,
   Stack,
   Typography,
@@ -159,21 +156,10 @@ export const PriceInfoMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} data-component="price-info-message-form" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%", bgcolor: "background.default" }}>
+    <Box data-component="price-info-message-form" sx={{ display: "flex", flexDirection: "column", flexGrow: 1, height: "100%", bgcolor: "background.default" }}>
       <Fade in appear timeout={500}>
-        <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-          {/* title */}
-          <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-            {t(locale, "price-info-msg.title")}
-          </Typography>
-      {/* subtitle */}
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t(locale, "price-info-msg.subtitle")}
-      </Typography>
-
-      {/* form */}
-      <Card elevation={0} data-component="price-info-message-form-card" sx={{ bgcolor: "background.default" }}>
-        <CardContent>
+        <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1 }}>
+          {/* form */}
           <Stack spacing={3}>
             <NameInput name={name} setName={setName} label={t(locale, "price-info-msg.name-label")} placeholder={t(locale, "price-info-msg.name-placeholder")} />
             {/* voucher year & type */}
@@ -273,8 +259,6 @@ export const PriceInfoMessageForm = () => {
               {isVoucherPriceInfosLoading || isBankAccountInfosLoading ? t(locale, "common.generate-button-loading") : t(locale, "common.generate-button")}
             </Button>
           </Stack>
-        </CardContent>
-      </Card>
 
           {/* generated message */}
           {generatedMessage && (
@@ -288,7 +272,7 @@ export const PriceInfoMessageForm = () => {
           )}
         </Box>
       </Fade>
-    </Paper>
+    </Box>
   );
 };
 

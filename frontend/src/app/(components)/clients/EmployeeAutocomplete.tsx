@@ -16,6 +16,7 @@ import { useEmployees, Employee } from "@/app/hooks/useEmployees";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { useEmployeeDialogStore } from "@/app/store/employee-dialog-store";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 
 interface EmployeeAutocompleteProps {
     "data-component"?: string;
@@ -139,12 +140,15 @@ export function EmployeeAutocomplete({
             getOptionLabel={(option) => option.name}
             isOptionEqualToValue={(option, val) => option.id === val.id}
             filterOptions={(options, { inputValue: filterInput }) => {
-                if (!filterInput.trim()) return options; // Show all options when input is empty
-                const searchLower = filterInput.toLowerCase();
+                // Only show options when user has typed something
+                if (!filterInput.trim()) return [];
                 return options.filter(
                     emp =>
-                        emp.name.toLowerCase().includes(searchLower) ||
-                        emp.workArea.some(area => area.toLowerCase().includes(searchLower)) ||
+                        // 초성 search only for name (e.g., ㄱ → 김현아)
+                        matchesKoreanSearch(emp.name, filterInput) ||
+                        // Work area: simple substring match (no 초성 to avoid false positives)
+                        emp.workArea.some(area => area.toLowerCase().includes(filterInput.toLowerCase())) ||
+                        // Phone: simple substring match
                         emp.phone.includes(filterInput)
                 );
             }}
