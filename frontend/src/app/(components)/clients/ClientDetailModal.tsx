@@ -154,9 +154,9 @@ export function ClientDetailModal({
                     <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                         {t(locale, "clients.form.section-contract")}
                     </Typography>
-                    <InfoRow 
-                        label={t(locale, "clients.form.contract-status")} 
-                        value={getStatusChip(client.contractStatus)} 
+                    <InfoRow
+                        label={t(locale, "clients.form.contract-status")}
+                        value={getStatusChip(client.serviceStatus)}
                     />
                     <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(client.startDate)} />
                     <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(client.endDate)} />

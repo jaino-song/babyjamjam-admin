@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, IsDateString } from "class-validator";
+import { IsNumber, IsOptional, IsString, IsDateString, IsBoolean } from "class-validator";
 
 /**
  * DTO for getting access token
@@ -78,5 +78,9 @@ export class CreateEformsignDocLocalDto {
 
     @IsDateString()
     expiredDate!: string; // ISO date string
+
+    @IsOptional()
+    @IsBoolean()
+    linkToClient?: boolean; // If true, also update client.e_doc_id
 }
 

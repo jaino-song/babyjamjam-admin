@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
     Dialog,
     DialogTitle,
@@ -10,11 +11,13 @@ import {
     Box,
     Chip,
     Divider,
-    Grid,
     IconButton,
 } from "@mui/material";
-import { Pencil, Trash2, X } from "lucide-react";
-import { Client, CONTRACT_STATUS_OPTIONS } from "../types";
+import { Pencil, Trash2, X, CircleStop, UserRoundCog } from "lucide-react";
+import { Client, SERVICE_STATUS_OPTIONS } from "../types";
+import { useTerminateService, useRequestReplacement } from "../hooks/use-clients";
+import { TerminateConfirmDialog } from "./TerminateConfirmDialog";
+import { ReplacementModal } from "./ReplacementModal";
 import { useLocale } from "@/core/providers";
 import { t } from "@/app/lib/i18n/translations";
 
@@ -27,21 +30,14 @@ interface ClientDetailModalProps {
 }
 
 const getStatusChip = (status: string | null) => {
-    const option = CONTRACT_STATUS_OPTIONS.find(o => o.value === status);
+    const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
     if (!option) return <Chip label="-" size="small" />;
-    
-    const colorMap: Record<string, "default" | "warning" | "info" | "success" | "error"> = {
-        pending: "warning",
-        in_progress: "info",
-        completed: "success",
-        cancelled: "error",
-    };
-    
+
     return (
-        <Chip 
-            label={option.label} 
-            color={colorMap[status || ""] || "default"} 
-            size="small" 
+        <Chip
+            label={option.label}
+            color={option.color}
+            size="small"
         />
     );
 };
@@ -75,14 +71,19 @@ const InfoRow = ({ label, value }: InfoRowProps) => (
     </Box>
 );
 
-export function ClientDetailModal({ 
-    open, 
-    onClose, 
-    client, 
-    onEdit, 
-    onDelete 
+export function ClientDetailModal({
+    open,
+    onClose,
+    client,
+    onEdit,
+    onDelete
 }: ClientDetailModalProps) {
     const locale = useLocale();
+    const [terminateDialogOpen, setTerminateDialogOpen] = useState(false);
+    const [replacementModalOpen, setReplacementModalOpen] = useState(false);
+
+    const terminateService = useTerminateService();
+    const requestReplacement = useRequestReplacement();
 
     if (!client) return null;
 
@@ -95,6 +96,40 @@ export function ClientDetailModal({
         onDelete(client.id);
         onClose();
     };
+
+    const handleTerminate = async () => {
+        try {
+            await terminateService.mutateAsync({ id: client.id });
+            setTerminateDialogOpen(false);
+            onClose();
+        } catch (err) {
+            console.error("Failed to terminate service:", err);
+        }
+    };
+
+    const handleRequestReplacement = async (
+        newPrimaryEmployeeId: number,
+        newSecondaryEmployeeId: number | null
+    ) => {
+        try {
+            await requestReplacement.mutateAsync({
+                id: client.id,
+                dto: {
+                    newPrimaryEmployeeId,
+                    newSecondaryEmployeeId,
+                },
+            });
+            setReplacementModalOpen(false);
+            onClose();
+        } catch (err) {
+            console.error("Failed to request replacement:", err);
+        }
+    };
+
+    // Check if terminate/replace buttons should be shown
+    // Only show for active or waiting status (not already terminated/completed)
+    const canTerminate = client.serviceStatus !== "terminated" && client.serviceStatus !== "completed";
+    const canReplace = client.serviceStatus === "active" || client.serviceStatus === "waiting";
 
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -154,9 +189,9 @@ export function ClientDetailModal({
                     <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                         {t(locale, "clients.form.section-contract")}
                     </Typography>
-                    <InfoRow 
-                        label={t(locale, "clients.form.contract-status")} 
-                        value={getStatusChip(client.contractStatus)} 
+                    <InfoRow
+                        label={t(locale, "clients.form.service-status")}
+                        value={getStatusChip(client.serviceStatus)}
                     />
                     <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(client.startDate)} />
                     <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(client.endDate)} />
@@ -202,23 +237,67 @@ export function ClientDetailModal({
                     />
                 </Box>
             </DialogContent>
-            <DialogActions sx={{ px: 3, py: 2 }}>
-                <Button
-                    variant="outlined"
-                    color="error"
-                    startIcon={<Trash2 size={16} />}
-                    onClick={handleDelete}
-                >
-                    {t(locale, "common.delete")}
-                </Button>
-                <Button
-                    variant="contained"
-                    startIcon={<Pencil size={16} />}
-                    onClick={handleEdit}
-                >
-                    {t(locale, "common.edit")}
-                </Button>
+            <DialogActions sx={{ px: 3, py: 2, justifyContent: "space-between" }}>
+                <Box sx={{ display: "flex", gap: 1 }}>
+                    {canTerminate && (
+                        <Button
+                            variant="outlined"
+                            sx={{ color: "grey.700", borderColor: "grey.400" }}
+                            startIcon={<CircleStop size={16} />}
+                            onClick={() => setTerminateDialogOpen(true)}
+                        >
+                            {t(locale, "clients.actions.terminate")}
+                        </Button>
+                    )}
+                    {canReplace && (
+                        <Button
+                            variant="outlined"
+                            color="warning"
+                            startIcon={<UserRoundCog size={16} />}
+                            onClick={() => setReplacementModalOpen(true)}
+                        >
+                            {t(locale, "clients.actions.replace")}
+                        </Button>
+                    )}
+                </Box>
+                <Box sx={{ display: "flex", gap: 1 }}>
+                    <Button
+                        variant="outlined"
+                        color="error"
+                        startIcon={<Trash2 size={16} />}
+                        onClick={handleDelete}
+                    >
+                        {t(locale, "common.delete")}
+                    </Button>
+                    <Button
+                        variant="contained"
+                        startIcon={<Pencil size={16} />}
+                        onClick={handleEdit}
+                    >
+                        {t(locale, "common.edit")}
+                    </Button>
+                </Box>
             </DialogActions>
+
+            {/* Terminate Confirmation Dialog */}
+            <TerminateConfirmDialog
+                open={terminateDialogOpen}
+                onClose={() => setTerminateDialogOpen(false)}
+                onConfirm={handleTerminate}
+                clientName={client.name}
+                isLoading={terminateService.isPending}
+            />
+
+            {/* Replacement Modal */}
+            <ReplacementModal
+                open={replacementModalOpen}
+                onClose={() => setReplacementModalOpen(false)}
+                onConfirm={handleRequestReplacement}
+                currentPrimaryEmployeeId={client.primaryEmployee?.id ?? null}
+                currentSecondaryEmployeeId={client.secondaryEmployee?.id ?? null}
+                clientName={client.name}
+                isLoading={requestReplacement.isPending}
+            />
         </Dialog>
     );
 }

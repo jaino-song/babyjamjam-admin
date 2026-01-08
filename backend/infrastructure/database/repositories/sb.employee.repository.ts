@@ -8,6 +8,14 @@ import { EmployeeMapper } from "infrastructure/database/mapper/employee.mapper";
 export class SbEmployeeRepository implements IEmployeeRepository {
     constructor(private readonly prismaService: PrismaService) {}
 
+    private async getNextEmployeeId(): Promise<number> {
+        const lastEmployee = await this.prismaService.employee.findFirst({
+            orderBy: { id: "desc" },
+            select: { id: true },
+        });
+        return lastEmployee ? lastEmployee.id + 1 : 1;
+    }
+
     async findById(id: number): Promise<EmployeeEntity | null> {
         const employee = await this.prismaService.employee.findUnique({
             where: { id },
@@ -16,8 +24,10 @@ export class SbEmployeeRepository implements IEmployeeRepository {
     }
 
     async create(employee: EmployeeEntity): Promise<EmployeeEntity> {
+        const data = EmployeeMapper.toPrismaCreate(employee);
+        const id = data.id > 0 ? data.id : await this.getNextEmployeeId();
         const created = await this.prismaService.employee.create({
-            data: EmployeeMapper.toPrismaCreate(employee),
+            data: { ...data, id },
         });
         return EmployeeMapper.toDomain(created);
     }
@@ -105,4 +115,3 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
 }
-

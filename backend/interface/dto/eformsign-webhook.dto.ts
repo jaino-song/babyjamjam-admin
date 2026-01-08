@@ -66,6 +66,34 @@ class WebhookDocumentDto {
 }
 
 /**
+ * Document action event object (when document is opened/viewed)
+ * Note: This event type may not be officially documented but is observed in webhook flow
+ */
+class WebhookDocumentActionDto {
+    @IsString()
+    document_id!: string;
+
+    @IsString()
+    action_type!: string; // "open", "view", etc.
+
+    @IsOptional()
+    @IsNumber()
+    workflow_seq?: number;
+
+    @IsOptional()
+    @IsString()
+    workflow_name?: string;
+
+    @IsOptional()
+    @IsString()
+    actor_id?: string;
+
+    @IsOptional()
+    @IsNumber()
+    action_date?: number; // epoch timestamp
+}
+
+/**
  * PDF generation event object
  */
 class WebhookReadyDocumentPdfDto {
@@ -79,13 +107,24 @@ class WebhookReadyDocumentPdfDto {
     workflow_seq!: number;
 
     @IsString()
+    workflow_name!: string;
+
+    @IsString()
     template_id!: string;
 
     @IsString()
     template_name!: string;
 
+    @IsOptional()
+    @IsString()
+    template_version?: string;
+
     @IsString()
     document_status!: string;
+
+    @IsOptional()
+    @IsString()
+    document_history_id?: string;
 
     @IsOptional()
     export_ready_list?: unknown[];
@@ -101,6 +140,7 @@ class WebhookReadyDocumentPdfDto {
  *
  * Event types:
  * - "document": Document status change events
+ * - "document_action": Document action events (open, view)
  * - "ready_document_pdf": PDF generation complete events
  */
 export class EformsignWebhookPayloadDto {
@@ -114,13 +154,19 @@ export class EformsignWebhookPayloadDto {
     company_id!: string;
 
     @IsString()
-    event_type!: string; // "document" or "ready_document_pdf"
+    event_type!: string; // "document", "document_action", or "ready_document_pdf"
 
     @IsOptional()
     @ValidateNested()
     @Type(() => WebhookDocumentDto)
     @IsObject()
     document?: WebhookDocumentDto;
+
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => WebhookDocumentActionDto)
+    @IsObject()
+    document_action?: WebhookDocumentActionDto;
 
     @IsOptional()
     @ValidateNested()

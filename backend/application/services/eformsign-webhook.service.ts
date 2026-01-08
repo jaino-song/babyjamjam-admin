@@ -37,6 +37,7 @@ const DOCUMENT_STATUS = {
  */
 const EVENT_TYPES = {
     DOCUMENT: "document",                  // Document status change
+    DOCUMENT_ACTION: "document_action",    // Document action (open, view, etc.)
     READY_DOCUMENT_PDF: "ready_document_pdf", // PDF generation complete
 };
 
@@ -47,27 +48,115 @@ export class EformsignWebhookService {
     constructor(
         private readonly updateStatusUsecase: UpdateEformsignDocStatusUsecase,
         private readonly linkDocumentUsecase: LinkDocumentToClientUsecase,
+        // NOTE: UpdateClientContractStatusUsecase removed - service status is now computed from dates
     ) {}
 
     async processWebhook(payload: EformsignWebhookPayloadDto): Promise<void> {
-        const { event_type, webhook_id, document, ready_document_pdf } = payload;
+        const { event_type, webhook_id, document, ready_document_pdf, document_action } = payload;
 
         this.logger.log(`Processing webhook ${webhook_id}: event_type=${event_type}`);
 
-        // Handle document events
+        // Handle document events (status changes)
         if (event_type === EVENT_TYPES.DOCUMENT && document) {
             await this.handleDocumentEvent(document);
             return;
         }
 
-        // Handle PDF ready events (optional - for future use)
+        // Handle document_action events (open, view actions)
+        if (event_type === EVENT_TYPES.DOCUMENT_ACTION && document_action) {
+            await this.handleDocumentActionEvent(document_action);
+            return;
+        }
+
+        // Handle PDF ready events - also update status since it contains document_status
         if (event_type === EVENT_TYPES.READY_DOCUMENT_PDF && ready_document_pdf) {
-            this.logger.log(`PDF ready for document ${ready_document_pdf.document_id}`);
-            // Could be used to download/store the final PDF
+            await this.handleReadyDocumentPdfEvent(ready_document_pdf);
             return;
         }
 
         this.logger.warn(`Unknown webhook event type: ${event_type}`);
+    }
+
+    /**
+     * Handle ready_document_pdf event - PDF is ready and document is complete
+     * This event contains document_status which we should use to update our DB
+     */
+    private async handleReadyDocumentPdfEvent(
+        pdfEvent: NonNullable<EformsignWebhookPayloadDto["ready_document_pdf"]>
+    ): Promise<void> {
+        const { document_id: documentId, document_status: status, workflow_seq, workflow_name } = pdfEvent;
+
+        this.logger.log(`PDF ready event: ${documentId} -> status=${status}, workflow=${workflow_name}`);
+
+        // Map status to Korean detail and determine status type
+        const { statusType, statusDetail } = this.mapStatus(status);
+
+        // Update document status in DB
+        try {
+            await this.updateStatusUsecase.execute({
+                documentId,
+                statusType,
+                statusDetail,
+                stepType: String(workflow_seq),
+                stepIndex: String(workflow_seq),
+                stepName: workflow_name,
+                expired: false,
+            });
+
+            this.logger.log(`Document ${documentId} status updated from PDF event: ${status} -> ${statusDetail}`);
+        } catch (error) {
+            // Document not found - frontend must create record first
+            this.logger.warn(
+                `[ready_document_pdf] Document ${documentId} not found in DB. ` +
+                `Ensure frontend calls POST /eformsign-docs to create the record with clientId first. Error: ${error}`
+            );
+            return;
+        }
+
+        // If document is completed, link it to the client (updates client.eDocId)
+        if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
+            this.logger.log(`Document ${documentId} completed (from PDF event), linking to client`);
+            try {
+                await this.linkDocumentUsecase.execute(documentId);
+                this.logger.log(`Document ${documentId} successfully linked to client`);
+            } catch (error) {
+                this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
+            }
+        }
+    }
+
+    /**
+     * Handle document_action events (when document is opened or viewed)
+     * Updates status to reflect document has been opened
+     */
+    private async handleDocumentActionEvent(
+        action: NonNullable<EformsignWebhookPayloadDto["document_action"]>
+    ): Promise<void> {
+        const { document_id: documentId, action_type, workflow_seq, workflow_name } = action;
+
+        this.logger.log(`Document action event: ${documentId} -> action=${action_type}, workflow=${workflow_name}`);
+
+        // Map action type to status (opened = 서명 페이지 열림)
+        const statusDetail = action_type === "open" ? "서명 페이지 열림" : `액션: ${action_type}`;
+
+        try {
+            await this.updateStatusUsecase.execute({
+                documentId,
+                statusType: "020", // In-progress/opened
+                statusDetail,
+                stepType: String(workflow_seq || 0),
+                stepIndex: String(workflow_seq || 0),
+                stepName: workflow_name || "unknown",
+                expired: false,
+            });
+
+            this.logger.log(`Document ${documentId} action recorded: ${action_type}`);
+        } catch (error) {
+            this.logger.warn(
+                `[document_action] Document ${documentId} not found in DB. ` +
+                `Ensure frontend calls POST /eformsign-docs to create the record first. Error: ${error}`
+            );
+        }
     }
 
     private async handleDocumentEvent(document: NonNullable<EformsignWebhookPayloadDto["document"]>): Promise<void> {
@@ -92,12 +181,15 @@ export class EformsignWebhookService {
 
             this.logger.log(`Document ${documentId} status updated: ${status} -> ${statusDetail}`);
         } catch (error) {
-            // Document might not exist in our DB yet (created externally)
-            this.logger.warn(`Failed to update document ${documentId}: ${error}`);
+            // Document might not exist in our DB - frontend must create it first
+            this.logger.warn(
+                `[${status}] Document ${documentId} not found in DB. ` +
+                `Ensure frontend calls POST /eformsign-docs to create the record with clientId first. Error: ${error}`
+            );
             return;
         }
 
-        // If document is completed, link it to the client
+        // If document is completed, link it to the client (updates client.eDocId)
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
             this.logger.log(`Document ${documentId} completed, linking to client`);
             try {

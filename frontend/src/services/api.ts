@@ -43,6 +43,7 @@ export const eformsignApi = {
         stepRecipientName: string;
         stepRecipientSms: string;
         expiredDate: string;
+        linkToClient?: boolean; // If true, also update client.e_doc_id
     }) => {
         const { data } = await api.post('/eformsign-docs', params);
         return data;

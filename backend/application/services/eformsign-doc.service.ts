@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import {
     FindEformsignDocByIdUsecase,
     FindEformsignDocByDocumentIdUsecase,
@@ -19,6 +19,8 @@ import {
 
 @Injectable()
 export class EformsignDocService {
+    private readonly logger = new Logger(EformsignDocService.name);
+
     constructor(
         // Local DB use cases
         private readonly findEformsignDocByIdUsecase: FindEformsignDocByIdUsecase,
@@ -39,8 +41,11 @@ export class EformsignDocService {
      * Create a new eformsign doc record in local DB
      * @param params - document creation parameters
      */
-    create(params: CreateEformsignDocParams): Promise<EformsignDocEntity> {
-        return this.createEformsignDocUsecase.execute(params);
+    async create(params: CreateEformsignDocParams): Promise<EformsignDocEntity> {
+        this.logger.log(`Creating eformsign doc record: documentId=${params.documentId}, clientId=${params.clientId}, linkToClient=${params.linkToClient}`);
+        const result = await this.createEformsignDocUsecase.execute(params);
+        this.logger.log(`Successfully created eformsign doc record: id=${result.id}, documentId=${result.documentId}`);
+        return result;
     }
 
     /**

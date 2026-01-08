@@ -15,7 +15,7 @@ type ClientRow = {
     care_center: boolean;
     voucher_client: boolean;
     birthday: string | null;
-    contract_status: string | null;
+    service_status: string | null;
     breast_pump: boolean;
     e_doc_id: string | null;
 };
@@ -37,7 +37,7 @@ export class ClientMapper {
             row.care_center,
             row.voucher_client,
             row.birthday,
-            row.contract_status,
+            row.service_status,
             row.breast_pump,
             row.e_doc_id,
         );
@@ -58,7 +58,7 @@ export class ClientMapper {
             care_center: entity.careCenter,
             voucher_client: entity.voucherClient,
             birthday: entity.birthday,
-            contract_status: entity.contractStatus,
+            service_status: entity.serviceStatus,
             breast_pump: entity.breastPump,
             e_doc_id: entity.eDocId,
         };
@@ -79,7 +79,7 @@ export class ClientMapper {
             care_center: entity.careCenter,
             voucher_client: entity.voucherClient,
             birthday: entity.birthday,
-            contract_status: entity.contractStatus,
+            service_status: entity.serviceStatus,
             breast_pump: entity.breastPump,
             e_doc_id: entity.eDocId,
         };

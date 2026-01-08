@@ -51,7 +51,7 @@ describe("SbClientRepository", () => {
         careCenter: false,
         voucherClient: true,
         birthday: "950315",
-        contractStatus: "pending",
+        serviceStatus: "waiting",
         breastPump: false,
         eDocId: null,
         ...overrides,

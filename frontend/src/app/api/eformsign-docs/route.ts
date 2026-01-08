@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
 
-        const response = await serverAPIClient.post("/api/eformsign-docs", body);
+        const response = await serverAPIClient.post("/eformsign-docs", body);
 
         return NextResponse.json(response.data);
     } catch (error) {

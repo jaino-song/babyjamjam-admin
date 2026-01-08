@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import {
     CreateClientUsecase,
     DeleteClientUsecase,
@@ -10,6 +10,7 @@ import {
 import { ClientEntity } from "domain/entities/client.entity";
 import { PaginatedResult } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { computeServiceStatus, SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
 
 // Response type that includes employee information
 export interface ClientWithEmployees {
@@ -27,7 +28,7 @@ export interface ClientWithEmployees {
     careCenter: boolean;
     voucherClient: boolean;
     birthday: string | null;
-    contractStatus: string | null;
+    serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
     hasSigned: boolean;
@@ -45,6 +46,8 @@ export interface PaginatedClientWithEmployees {
 
 @Injectable()
 export class ClientService {
+    private readonly logger = new Logger(ClientService.name);
+
     constructor(
         private readonly createClientUsecase: CreateClientUsecase,
         private readonly findClientByIdUsecase: FindClientByIdUsecase,
@@ -71,7 +74,7 @@ export class ClientService {
         careCenter: boolean;
         voucherClient: boolean;
         birthday?: string | null;
-        contractStatus?: string | null;
+        serviceStatus?: string | null;
         breastPump: boolean;
         eDocId?: string | null;
     }): Promise<ClientEntity> {
@@ -93,7 +96,7 @@ export class ClientService {
             careCenter: params.careCenter,
             voucherClient: params.voucherClient,
             birthday: params.birthday ?? null,
-            contractStatus: params.contractStatus ?? null,
+            serviceStatus: params.serviceStatus ?? null,
             breastPump: params.breastPump,
             eDocId: params.eDocId ?? null,
         });
@@ -139,12 +142,15 @@ export class ClientService {
         return withEmployees ?? null;
     }
 
-    // Helper method to attach employee info to clients
+    /**
+     * Helper method to attach employee info to clients and compute service status
+     * Implements lazy update: computes status on access and updates DB if changed
+     */
     private async attachEmployeesToClients(clients: ClientEntity[]): Promise<ClientWithEmployees[]> {
         if (clients.length === 0) return [];
 
         const clientIds = clients.map(c => c.id);
-        
+
         // Get all active schedules for these clients with employee info
         const schedules = await this.prismaService.employee_schedule.findMany({
             where: {
@@ -160,8 +166,24 @@ export class ClientService {
         // Create a map of client_id to schedule
         const scheduleMap = new Map(schedules.map(s => [s.client_id, s]));
 
-        return clients.map(client => {
+        // Compute and update service status for each client (lazy update strategy)
+        const clientsNeedingUpdate: { id: number; newStatus: ServiceStatusType }[] = [];
+
+        const result = clients.map(client => {
             const schedule = scheduleMap.get(client.id);
+
+            // Compute current service status based on dates
+            const computedStatus = computeServiceStatus(
+                client.serviceStatus,
+                client.startDate,
+                client.endDate,
+            );
+
+            // Track clients that need status update in DB
+            if (client.serviceStatus !== computedStatus) {
+                clientsNeedingUpdate.push({ id: client.id, newStatus: computedStatus });
+            }
+
             return {
                 id: client.id,
                 name: client.name,
@@ -177,7 +199,7 @@ export class ClientService {
                 careCenter: client.careCenter,
                 voucherClient: client.voucherClient,
                 birthday: client.birthday,
-                contractStatus: client.contractStatus,
+                serviceStatus: computedStatus, // Return computed status, not stored one
                 breastPump: client.breastPump,
                 eDocId: client.eDocId,
                 hasSigned: client.eDocId !== null,
@@ -188,6 +210,38 @@ export class ClientService {
                     ? { id: schedule.secondary_employee.id, name: schedule.secondary_employee.name }
                     : null,
             };
+        });
+
+        // Batch update clients whose status changed (non-blocking)
+        if (clientsNeedingUpdate.length > 0) {
+            this.updateServiceStatusesInBackground(clientsNeedingUpdate);
+        }
+
+        return result;
+    }
+
+    /**
+     * Background update of service statuses (fire-and-forget)
+     * Does not block the main response
+     */
+    private updateServiceStatusesInBackground(
+        updates: { id: number; newStatus: ServiceStatusType }[]
+    ): void {
+        // Use Promise.allSettled to handle each update independently
+        Promise.allSettled(
+            updates.map(async ({ id, newStatus }) => {
+                try {
+                    await this.prismaService.client.update({
+                        where: { id },
+                        data: { service_status: newStatus },
+                    });
+                    this.logger.debug(`Updated client ${id} service status to ${newStatus}`);
+                } catch (error) {
+                    this.logger.warn(`Failed to update client ${id} service status: ${error}`);
+                }
+            })
+        ).catch(error => {
+            this.logger.error(`Error in background status updates: ${error}`);
         });
     }
 
@@ -207,7 +261,7 @@ export class ClientService {
         careCenter?: boolean;
         voucherClient?: boolean;
         birthday?: string | null;
-        contractStatus?: string | null;
+        serviceStatus?: string | null;
         breastPump?: boolean;
         eDocId?: string | null;
     }): Promise<ClientEntity> {
@@ -283,9 +337,129 @@ export class ClientService {
             careCenter: params.careCenter,
             voucherClient: params.voucherClient,
             birthday: params.birthday,
-            contractStatus: params.contractStatus,
+            serviceStatus: params.serviceStatus,
             breastPump: params.breastPump,
             eDocId: params.eDocId,
+        });
+    }
+
+    /**
+     * Terminate a client's service (manual status change)
+     * Sets serviceStatus to 'terminated' and ends the service immediately
+     * @param clientId - The client ID
+     * @param reason - Optional termination reason for logging
+     */
+    async terminateService(clientId: number, reason?: string): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(clientId);
+        if (!client) {
+            throw new NotFoundException(`Client with id ${clientId} not found`);
+        }
+
+        this.logger.log(
+            `Terminating service for client ${clientId}` +
+            (reason ? `: ${reason}` : "")
+        );
+
+        // Update client with terminated status and set end_date to today
+        const updatedClient = await this.updateClientUsecase.execute(clientId, {
+            serviceStatus: SERVICE_STATUS.TERMINATED,
+            endDate: new Date(),
+        });
+
+        // Also mark the current schedule as ended
+        await this.prismaService.employee_schedule.updateMany({
+            where: { client_id: clientId, replaced: false },
+            data: { end_date: new Date() },
+        });
+
+        return updatedClient;
+    }
+
+    /**
+     * Request a provider replacement for a client
+     * Sets serviceStatus to 'replacement_requested' to indicate pending change
+     * @param clientId - The client ID
+     * @param newPrimaryEmployeeId - The new primary employee to assign
+     * @param newSecondaryEmployeeId - Optional new secondary employee
+     */
+    async requestReplacement(
+        clientId: number,
+        newPrimaryEmployeeId: number,
+        newSecondaryEmployeeId?: number | null,
+    ): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(clientId);
+        if (!client) {
+            throw new NotFoundException(`Client with id ${clientId} not found`);
+        }
+
+        this.logger.log(
+            `Replacement requested for client ${clientId}: ` +
+            `new primary=${newPrimaryEmployeeId}, secondary=${newSecondaryEmployeeId ?? "none"}`
+        );
+
+        // Update client status to replacement_requested
+        const updatedClient = await this.updateClientUsecase.execute(clientId, {
+            serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED,
+        });
+
+        // Get current schedule and mark as replaced
+        const currentSchedule = await this.prismaService.employee_schedule.findFirst({
+            where: { client_id: clientId, replaced: false },
+            orderBy: { id: "desc" },
+        });
+
+        if (currentSchedule) {
+            await this.prismaService.employee_schedule.update({
+                where: { id: currentSchedule.id },
+                data: { replaced: true, end_date: new Date() },
+            });
+        }
+
+        // Create new schedule with new employees
+        await this.prismaService.employee_schedule.create({
+            data: {
+                client_id: clientId,
+                primary_employee_id: newPrimaryEmployeeId,
+                secondary_employee_id: newSecondaryEmployeeId ?? null,
+                work_address: client.address ?? "",
+                start_date: new Date(),
+                end_date: client.endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+                replaced: false,
+            },
+        });
+
+        return updatedClient;
+    }
+
+    /**
+     * Complete a replacement and restore service to active status
+     * Call this after the replacement has been processed
+     * @param clientId - The client ID
+     */
+    async completeReplacement(clientId: number): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(clientId);
+        if (!client) {
+            throw new NotFoundException(`Client with id ${clientId} not found`);
+        }
+
+        if (client.serviceStatus !== SERVICE_STATUS.REPLACEMENT_REQUESTED) {
+            this.logger.warn(
+                `Client ${clientId} is not in replacement_requested status, ` +
+                `current status: ${client.serviceStatus}`
+            );
+        }
+
+        this.logger.log(`Completing replacement for client ${clientId}`);
+
+        // Compute what the status should be based on dates (usually 'active')
+        const computedStatus = computeServiceStatus(
+            null, // Ignore current status, compute fresh
+            client.startDate,
+            client.endDate,
+        );
+
+        return this.updateClientUsecase.execute(clientId, {
+            serviceStatus: computedStatus,
         });
     }
 

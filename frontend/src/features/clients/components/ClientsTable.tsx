@@ -19,7 +19,7 @@ import {
 } from "@mui/material";
 import { Search, Plus } from "lucide-react";
 import { useClients, useDeleteClient } from "../hooks/use-clients";
-import { Client, CONTRACT_STATUS_OPTIONS } from "../types";
+import { Client, SERVICE_STATUS_OPTIONS } from "../types";
 import { ComponentContainer } from "@/app/(components)/root/ComponentContainer";
 import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
@@ -27,21 +27,14 @@ import { useLocale } from "@/core/providers";
 import { t } from "@/app/lib/i18n/translations";
 
 const getStatusChip = (status: string | null) => {
-    const option = CONTRACT_STATUS_OPTIONS.find(o => o.value === status);
+    const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
     if (!option) return <Chip label="-" size="small" variant="outlined" />;
-    
-    const colorMap: Record<string, "default" | "warning" | "info" | "success" | "error"> = {
-        pending: "warning",
-        in_progress: "info",
-        completed: "success",
-        cancelled: "error",
-    };
-    
+
     return (
-        <Chip 
-            label={option.label} 
-            color={colorMap[status || ""] || "default"} 
-            size="small" 
+        <Chip
+            label={option.label}
+            color={option.color}
+            size="small"
         />
     );
 };
@@ -218,7 +211,7 @@ export function ClientsTable() {
                                         sx={{ cursor: "pointer" }}
                                     >
                                         <TableCell>{client.name}</TableCell>
-                                        <TableCell>{getStatusChip(client.contractStatus)}</TableCell>
+                                        <TableCell>{getStatusChip(client.serviceStatus)}</TableCell>
                                         <TableCell sx={{ p: 0 }}>{formatDate(client.startDate)}</TableCell>
                                     </TableRow>
                                 ))

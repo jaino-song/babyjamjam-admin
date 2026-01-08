@@ -1,0 +1,58 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - main [ref=e5]:
+      - heading "Kakao" [level=1] [ref=e7]:
+        - generic [ref=e9]: Kakao
+      - article [ref=e10]:
+        - generic [ref=e12]:
+          - generic [ref=e13]:
+            - generic [ref=e15]:
+              - generic: Enter Account Information
+              - textbox "Enter Account Information" [ref=e16]:
+                - /placeholder: KakaoMail ID, email, phone number
+            - generic [ref=e19]:
+              - generic: Enter Password
+              - textbox "Enter Password" [ref=e20]:
+                - /placeholder: Password
+            - generic [ref=e23]:
+              - generic:
+                - checkbox "Save Login Information" [ref=e24] [cursor=pointer]
+                - generic [ref=e25] [cursor=pointer]: Save Login Information
+              - button "See reference" [ref=e27] [cursor=pointer]:
+                - generic [ref=e28]: See reference
+            - generic [ref=e29]:
+              - button "Log In" [ref=e30] [cursor=pointer]
+              - generic [ref=e32]: or
+              - button "Log in with QR code" [ref=e33] [cursor=pointer]
+          - generic [ref=e34]:
+            - link "Sign Up" [ref=e35] [cursor=pointer]:
+              - /url: /weblogin/create_account?continue=https%3A%2F%2Fkauth.kakao.com%2Foauth%2Fauthorize%3Fresponse_type%3Dcode%26redirect_uri%3Dhttp%253A%252F%252Flocalhost%253A3001%252Fauth%252Fkakao%252Fcallback%26client_id%3D479afcedc0c97cded2033bfbfb4472ee%26through_account%3Dtrue%26auth_tran_id%3D2wLAOqNmqWyNkbgQfpkq6ulD4e1vgqwBz0CWmmDPCg0bWQAAAZuXPyeu&lang=en&showHeader=false
+            - list [ref=e36]:
+              - listitem [ref=e37]:
+                - link "Find Account" [ref=e38] [cursor=pointer]:
+                  - /url: /weblogin/find_account?continue=https%3A%2F%2Fkauth.kakao.com%2Foauth%2Fauthorize%3Fresponse_type%3Dcode%26redirect_uri%3Dhttp%253A%252F%252Flocalhost%253A3001%252Fauth%252Fkakao%252Fcallback%26client_id%3D479afcedc0c97cded2033bfbfb4472ee%26through_account%3Dtrue%26auth_tran_id%3D2wLAOqNmqWyNkbgQfpkq6ulD4e1vgqwBz0CWmmDPCg0bWQAAAZuXPyeu&lang=en&showHeader=false
+              - listitem [ref=e39]:
+                - link "Reset Password" [ref=e40] [cursor=pointer]:
+                  - /url: /weblogin/find_password?continue=%2Flogin%3Fcontinue%3Dhttps%253A%252F%252Fkauth.kakao.com%252Foauth%252Fauthorize%253Fresponse_type%253Dcode%2526redirect_uri%253Dhttp%25253A%25252F%25252Flocalhost%25253A3001%25252Fauth%25252Fkakao%25252Fcallback%2526client_id%253D479afcedc0c97cded2033bfbfb4472ee%2526through_account%253Dtrue%2526auth_tran_id%253D2wLAOqNmqWyNkbgQfpkq6ulD4e1vgqwBz0CWmmDPCg0bWQAAAZuXPyeu&lang=en&showHeader=false
+    - contentinfo [ref=e41]:
+      - strong: Service Usage Information
+      - generic [ref=e43]:
+        - generic: Language Selection Box
+        - combobox "Language Selection Box" [ref=e44] [cursor=pointer]: English
+      - generic [ref=e46]:
+        - link "Terms of Service" [ref=e47] [cursor=pointer]:
+          - /url: https://www.kakao.com/policy/terms?lang=en
+        - link "Privacy Policy" [ref=e48] [cursor=pointer]:
+          - /url: https://www.kakao.com/policy/privacy?lang=en
+          - strong [ref=e49]: Privacy Policy
+        - link "Customer Service" [ref=e50] [cursor=pointer]:
+          - /url: https://cs.kakao.com/
+      - generic [ref=e51]:
+        - text: ©
+        - link "Kakao Corp." [ref=e52] [cursor=pointer]:
+          - /url: http://kakaocorp.com/
+  - alert [ref=e53]
+```

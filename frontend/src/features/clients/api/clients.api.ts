@@ -3,6 +3,8 @@ import type {
   Client,
   CreateClientDto,
   UpdateClientDto,
+  TerminateServiceDto,
+  RequestReplacementDto,
   PaginatedResponse
 } from '../types';
 
@@ -47,4 +49,25 @@ export const clientsApi = {
    * Delete client
    */
   delete: (id: number) => api.delete(`/clients/${id}`),
+
+  /**
+   * Terminate service for a client
+   * Changes serviceStatus to 'terminated'
+   */
+  terminateService: (id: number, dto?: TerminateServiceDto) =>
+    api.patch<Client>(`/clients/${id}/terminate`, dto ?? {}),
+
+  /**
+   * Request employee replacement for a client
+   * Changes serviceStatus to 'replacement_requested'
+   */
+  requestReplacement: (id: number, dto: RequestReplacementDto) =>
+    api.patch<Client>(`/clients/${id}/request-replacement`, dto),
+
+  /**
+   * Complete the employee replacement process
+   * Changes serviceStatus back to 'active' (or computed status)
+   */
+  completeReplacement: (id: number) =>
+    api.patch<Client>(`/clients/${id}/complete-replacement`, {}),
 };

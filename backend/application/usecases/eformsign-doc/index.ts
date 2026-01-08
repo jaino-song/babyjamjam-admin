@@ -8,6 +8,7 @@ export * from "./list-eformsign-docs.usecase";
 export * from "./create-eformsign-doc.usecase";
 export * from "./update-eformsign-doc-status.usecase";
 export * from "./link-document-to-client.usecase";
+// NOTE: UpdateClientContractStatusUsecase deprecated - service status is now computed from dates
 
 // External API use cases
 export * from "./get-eformsign-access-token.usecase";

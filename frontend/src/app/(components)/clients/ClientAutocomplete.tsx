@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
     Autocomplete,
     TextField,
@@ -17,6 +17,7 @@ import { useAllClients } from "@/app/hooks/useClients";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import type { Client } from "@/app/lib/client/types";
+import { useClientDialogStore } from "@/app/store/client-dialog-store";
 
 interface ClientAutocompleteProps {
     value: number | null;
@@ -43,6 +44,7 @@ export function ClientAutocomplete({
 }: ClientAutocompleteProps) {
     const locale = useLocale();
     const { data: clients, isLoading } = useAllClients();
+    const setPrefillName = useClientDialogStore((state) => state.setPrefillName);
 
     // Track input value and open state to control dropdown visibility
     const [inputValue, setInputValue] = useState("");
@@ -60,6 +62,17 @@ export function ClientAutocomplete({
         return clients.find((client) => client.id === value) || null;
     }, [value, clients]);
 
+    // Sync inputValue when selectedClient changes (e.g., after creating a new client)
+    // This ensures the text field shows the client name when selection changes externally
+    useEffect(() => {
+        if (selectedClient) {
+            setInputValue(selectedClient.name);
+        } else if (value === null) {
+            // Only clear input if value is explicitly null (not when waiting for clients to load)
+            setInputValue("");
+        }
+    }, [selectedClient, value]);
+
     const handleChange = (
         _event: React.SyntheticEvent,
         newValue: Client | null
@@ -73,7 +86,13 @@ export function ClientAutocomplete({
         }, 0);
     };
 
-    const handleManualEntry = () => {
+    const handleManualEntry = (e: React.MouseEvent) => {
+        // Prevent the Autocomplete from closing before click completes
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDropdownOpen(false);
+        // Save the typed name to the store so ClientFormDialog can prefill it
+        setPrefillName(inputValue);
         if (onManualEntry) {
             onManualEntry();
         }
@@ -112,7 +131,7 @@ export function ClientAutocomplete({
             getOptionLabel={(option) => option.name}
             isOptionEqualToValue={(option, val) => option.id === val.id}
             filterOptions={(options, { inputValue: filterInput }) => {
-                if (!filterInput.trim()) return [];
+                if (!filterInput.trim()) return options; // Show all options when input is empty
                 const searchLower = filterInput.toLowerCase();
                 return options.filter(
                     (client) =>
@@ -183,52 +202,54 @@ export function ClientAutocomplete({
                     {t(locale, "contract-msg.no-client-found")}
                 </Typography>
             }
-            PaperComponent={(props) => (
-                <Paper {...props} elevation={8}>
-                    {props.children}
-                    {allowManualEntry && (
-                        <>
-                            <Divider />
-                            <ButtonBase
-                                onClick={handleManualEntry}
-                                sx={{
-                                    width: "100%",
-                                    py: 1.5,
-                                    px: 2,
-                                    justifyContent: "flex-start",
-                                    "&:hover": {
-                                        bgcolor: "action.hover",
-                                    },
-                                }}
-                            >
-                                <Box
+            slots={{
+                paper: (props) => (
+                    <Paper {...props} elevation={8}>
+                        {props.children}
+                        {allowManualEntry && (
+                            <>
+                                <Divider />
+                                <ButtonBase
+                                    onMouseDown={handleManualEntry}
                                     sx={{
-                                        display: "flex",
-                                        flexDirection: "column",
                                         width: "100%",
+                                        py: 1.5,
+                                        px: 2,
+                                        justifyContent: "flex-start",
+                                        "&:hover": {
+                                            bgcolor: "action.hover",
+                                        },
                                     }}
                                 >
                                     <Box
                                         sx={{
                                             display: "flex",
-                                            alignItems: "center",
-                                            gap: 1,
+                                            flexDirection: "column",
+                                            width: "100%",
                                         }}
                                     >
-                                        <UserPlus size={16} />
-                                        <Typography variant="body1" color="primary">
-                                            {t(locale, "contract-msg.manual-entry")}
+                                        <Box
+                                            sx={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 1,
+                                            }}
+                                        >
+                                            <UserPlus size={16} />
+                                            <Typography variant="body1" color="primary">
+                                                {t(locale, "contract-msg.manual-entry")}
+                                            </Typography>
+                                        </Box>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {t(locale, "contract-msg.manual-entry-description")}
                                         </Typography>
                                     </Box>
-                                    <Typography variant="caption" color="text.secondary">
-                                        {t(locale, "contract-msg.manual-entry-description")}
-                                    </Typography>
-                                </Box>
-                            </ButtonBase>
-                        </>
-                    )}
-                </Paper>
-            )}
+                                </ButtonBase>
+                            </>
+                        )}
+                    </Paper>
+                ),
+            }}
         />
     );
 }

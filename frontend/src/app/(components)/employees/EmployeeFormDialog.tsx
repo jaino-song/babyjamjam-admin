@@ -19,6 +19,7 @@ import {
     Box,
     OutlinedInput,
     SelectChangeEvent,
+    Alert,
 } from "@mui/material";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
@@ -28,12 +29,16 @@ import {
     UpdateEmployeeDto,
     useCreateEmployee,
     useUpdateEmployee,
+    employeeQueryKeys,
 } from "@/app/hooks/useEmployees";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEmployeeDialogStore } from "@/app/store/employee-dialog-store";
 
 interface EmployeeFormDialogProps {
     open: boolean;
     onClose: () => void;
     employee?: Employee | null;
+    onSuccess?: (employee: Employee) => void;
 }
 
 const WORK_AREAS = ["인천 연수구", "인천 남동구", "인천 부평구", "인천 계양구", "인천 미추홀구", "인천 서구"];
@@ -51,19 +56,37 @@ const initialFormData: FormData = {
     name: "",
     workArea: [],
     phone: "",
-    grade: "",
+    grade: "3급", // Default to 3급
     openToNextWork: true,
 };
 
-export function EmployeeFormDialog({ open, onClose, employee }: EmployeeFormDialogProps) {
+export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: EmployeeFormDialogProps) {
     const locale = useLocale();
+    const queryClient = useQueryClient();
     const [formData, setFormData] = useState<FormData>(initialFormData);
-    
+
+    // Track which fields have been touched for validation display
+    const [touched, setTouched] = useState({
+        phone: false,
+        workArea: false,
+    });
+
+    // Error state for displaying API errors
+    const [error, setError] = useState<string | null>(null);
+
     const createMutation = useCreateEmployee();
     const updateMutation = useUpdateEmployee();
-    
+
+    // Read pre-filled name from Zustand store
+    const prefillName = useEmployeeDialogStore((state) => state.prefillName);
+
     const isEditMode = !!employee;
     const isLoading = createMutation.isPending || updateMutation.isPending;
+
+    // Validation helpers
+    const isPhoneValid = formData.phone.length > 0;
+    const isWorkAreaValid = formData.workArea.length > 0;
+    const isFormValid = formData.name.trim() && isPhoneValid && isWorkAreaValid;
 
     useEffect(() => {
         if (employee) {
@@ -75,9 +98,16 @@ export function EmployeeFormDialog({ open, onClose, employee }: EmployeeFormDial
                 openToNextWork: employee.openToNextWork,
             });
         } else {
-            setFormData(initialFormData);
+            // In create mode, use prefillName from store if available
+            setFormData({
+                ...initialFormData,
+                name: prefillName || "",
+            });
         }
-    }, [employee, open]);
+        // Reset touched state and error when dialog opens
+        setTouched({ phone: false, workArea: false });
+        setError(null);
+    }, [employee, open, prefillName]);
 
     const handleChange = <K extends keyof FormData>(field: K, value: FormData[K]) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
@@ -95,8 +125,19 @@ export function EmployeeFormDialog({ open, onClose, employee }: EmployeeFormDial
     };
 
     const handleSubmit = async () => {
-        if (!formData.name.trim()) return;
-        
+        // Mark all fields as touched to show any validation errors
+        setTouched({ phone: true, workArea: true });
+        setError(null); // Clear any previous error
+
+        console.log("[EmployeeFormDialog] handleSubmit called, formData:", formData);
+        console.log("[EmployeeFormDialog] Validation: name=", formData.name.trim(), "phone=", isPhoneValid, "workArea=", isWorkAreaValid);
+
+        // Validate all required fields
+        if (!formData.name.trim() || !isPhoneValid || !isWorkAreaValid) {
+            console.log("[EmployeeFormDialog] Validation failed, returning early");
+            return;
+        }
+
         try {
             if (isEditMode && employee) {
                 const dto: UpdateEmployeeDto = {
@@ -106,7 +147,23 @@ export function EmployeeFormDialog({ open, onClose, employee }: EmployeeFormDial
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
                 };
-                await updateMutation.mutateAsync({ id: employee.id, dto });
+                console.log("[EmployeeFormDialog] Updating employee with dto:", dto);
+                const updatedEmployee = await updateMutation.mutateAsync({ id: employee.id, dto });
+                console.log("[EmployeeFormDialog] Update result:", updatedEmployee);
+
+                // Check if the response is an error (has statusCode or error property)
+                if (updatedEmployee && ('error' in updatedEmployee || 'statusCode' in updatedEmployee)) {
+                    const errorMessage = (updatedEmployee as { error?: string; message?: string }).error
+                        || (updatedEmployee as { message?: string }).message
+                        || t(locale, "employees.form.error-update-failed");
+                    console.error("[EmployeeFormDialog] Update returned error:", updatedEmployee);
+                    setError(errorMessage);
+                    return;
+                }
+
+                // Wait for the employees query to refetch so the Autocomplete can find the employee
+                await queryClient.refetchQueries({ queryKey: employeeQueryKeys.all });
+                onSuccess?.(updatedEmployee);
             } else {
                 const dto: CreateEmployeeDto = {
                     name: formData.name,
@@ -115,27 +172,67 @@ export function EmployeeFormDialog({ open, onClose, employee }: EmployeeFormDial
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
                 };
-                await createMutation.mutateAsync(dto);
+                console.log("[EmployeeFormDialog] Creating employee with dto:", dto);
+                const newEmployee = await createMutation.mutateAsync(dto);
+                console.log("[EmployeeFormDialog] Create result:", newEmployee);
+
+                // Check if the response is an error (has statusCode or error property)
+                if (newEmployee && ('error' in newEmployee || 'statusCode' in newEmployee)) {
+                    const errorMessage = (newEmployee as { error?: string; message?: string }).error
+                        || (newEmployee as { message?: string }).message
+                        || t(locale, "employees.form.error-create-failed");
+
+                    // Check for duplicate phone error
+                    if (errorMessage.toLowerCase().includes('unique constraint') ||
+                        errorMessage.toLowerCase().includes('phone') ||
+                        errorMessage.toLowerCase().includes('duplicate')) {
+                        setError(t(locale, "employees.form.error-phone-duplicate"));
+                    } else {
+                        setError(errorMessage);
+                    }
+                    console.error("[EmployeeFormDialog] Create returned error:", newEmployee);
+                    return;
+                }
+
+                // Wait for the employees query to refetch so the Autocomplete can find the new employee
+                await queryClient.refetchQueries({ queryKey: employeeQueryKeys.all });
+                console.log("[EmployeeFormDialog] Calling onSuccess with:", newEmployee);
+                onSuccess?.(newEmployee);
             }
+            console.log("[EmployeeFormDialog] Calling onClose");
             onClose();
-        } catch (error) {
-            console.error("Failed to save employee:", error);
+        } catch (error: unknown) {
+            console.error("[EmployeeFormDialog] Failed to save employee:", error);
+            const errorMessage = error instanceof Error ? error.message : t(locale, "employees.form.error-save-failed");
+            setError(errorMessage);
         }
     };
 
     const handleClose = () => {
         setFormData(initialFormData);
+        setError(null);
         onClose();
     };
 
     return (
-        <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+        <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth data-component="EmployeeFormDialog">
             <DialogTitle>
-                {isEditMode 
+                {isEditMode
                     ? t(locale, "employees.form.edit-title")
                     : t(locale, "employees.form.create-title")}
             </DialogTitle>
-            <DialogContent dividers>
+            <DialogContent dividers data-component="EmployeeFormDialog-Content">
+                {/* Error Alert */}
+                {error && (
+                    <Alert
+                        severity="error"
+                        sx={{ mb: 2 }}
+                        onClose={() => setError(null)}
+                        data-component="EmployeeFormDialog-ErrorAlert"
+                    >
+                        {error}
+                    </Alert>
+                )}
                 <Grid container spacing={2} sx={{ mt: 0.5 }}>
                     {/* Name */}
                     <Grid size={{ xs: 12 }}>
@@ -152,17 +249,21 @@ export function EmployeeFormDialog({ open, onClose, employee }: EmployeeFormDial
                     <Grid size={{ xs: 12, sm: 6 }}>
                         <TextField
                             fullWidth
+                            required
                             label={t(locale, "employees.form.phone")}
                             value={formatPhoneNumber(formData.phone)}
                             onChange={(e) => handleChange("phone", parsePhoneNumber(e.target.value))}
+                            onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
                             placeholder="010-1234-5678"
                             inputProps={{ maxLength: 13 }}
+                            error={touched.phone && !isPhoneValid}
+                            helperText={touched.phone && !isPhoneValid ? t(locale, "employees.form.phone-required") : undefined}
                         />
                     </Grid>
 
                     {/* Work Area - Multi-select */}
                     <Grid size={{ xs: 12 }}>
-                        <FormControl fullWidth>
+                        <FormControl fullWidth required error={touched.workArea && !isWorkAreaValid}>
                             <InputLabel>{t(locale, "employees.form.work-area")}</InputLabel>
                             <Select<string[]>
                                 multiple
@@ -172,6 +273,7 @@ export function EmployeeFormDialog({ open, onClose, employee }: EmployeeFormDial
                                     const value = e.target.value;
                                     handleChange("workArea", typeof value === "string" ? value.split(",") : value);
                                 }}
+                                onBlur={() => setTouched((prev) => ({ ...prev, workArea: true }))}
                                 input={<OutlinedInput label={t(locale, "employees.form.work-area")} />}
                                 renderValue={(selected: string[]) => (
                                     <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
@@ -187,12 +289,17 @@ export function EmployeeFormDialog({ open, onClose, employee }: EmployeeFormDial
                                     </MenuItem>
                                 ))}
                             </Select>
+                            {touched.workArea && !isWorkAreaValid && (
+                                <Box component="span" sx={{ color: "error.main", fontSize: "0.75rem", mt: 0.5, ml: 1.75 }}>
+                                    {t(locale, "employees.form.work-area-required")}
+                                </Box>
+                            )}
                         </FormControl>
                     </Grid>
 
                     {/* Grade */}
                     <Grid size={{ xs: 12, sm: 6 }}>
-                        <FormControl fullWidth>
+                        <FormControl fullWidth required>
                             <InputLabel>{t(locale, "employees.form.grade")}</InputLabel>
                             <Select
                                 value={formData.grade}
@@ -223,18 +330,19 @@ export function EmployeeFormDialog({ open, onClose, employee }: EmployeeFormDial
                     </Grid>
                 </Grid>
             </DialogContent>
-            <DialogActions>
-                <Button onClick={handleClose} disabled={isLoading}>
+            <DialogActions data-component="EmployeeFormDialog-Actions">
+                <Button onClick={handleClose} disabled={isLoading} data-component="EmployeeFormDialog-CancelButton">
                     {t(locale, "common.cancel")}
                 </Button>
-                <Button 
-                    variant="contained" 
-                    onClick={handleSubmit} 
-                    disabled={isLoading || !formData.name.trim()}
+                <Button
+                    variant="contained"
+                    onClick={handleSubmit}
+                    disabled={isLoading || !isFormValid}
+                    data-component="EmployeeFormDialog-SubmitButton"
                 >
-                    {isLoading 
+                    {isLoading
                         ? t(locale, "common.saving")
-                        : isEditMode 
+                        : isEditMode
                             ? t(locale, "common.save")
                             : t(locale, "common.create")}
                 </Button>

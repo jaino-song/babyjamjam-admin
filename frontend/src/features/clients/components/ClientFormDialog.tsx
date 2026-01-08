@@ -25,11 +25,13 @@ import {
 import { useCreateClient, useUpdateClient } from "../hooks/use-clients";
 import { useVoucherPriceInfos } from "@/app/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
+import { EmployeeFormDialog } from "@/features/employees";
+import type { Employee } from "@/features/employees";
 import {
     Client,
     CreateClientDto,
     UpdateClientDto,
-    CONTRACT_STATUS_OPTIONS
+    SERVICE_STATUS_OPTIONS
 } from "../types";
 import { useLocale } from "@/core/providers";
 import { t } from "@/app/lib/i18n/translations";
@@ -106,13 +108,18 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
         careCenter: false,
         voucherClient: true,
         breastPump: false,
-        contractStatus: "pending",
+        serviceStatus: "waiting",
     });
 
     const [error, setError] = useState<string | null>(null);
-    
+
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
+
+    // State for employee creation dialog
+    const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
+    // Track which employee field (primary/secondary) triggered the dialog
+    const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
 
     // Fetch voucher price info based on selected type
     const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(formData.type || "");
@@ -183,7 +190,7 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     careCenter: client.careCenter,
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
-                    contractStatus: client.contractStatus || "pending",
+                    serviceStatus: client.serviceStatus || "waiting",
                 });
                 // In edit mode, consider prices as manually set
                 if (client.fullPrice || client.grant || client.actualPrice) {
@@ -207,7 +214,7 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                    contractStatus: "pending",
+                    serviceStatus: "waiting",
                 });
             }
             setError(null);
@@ -294,7 +301,7 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
-                    contractStatus: formData.contractStatus,
+                    serviceStatus: formData.serviceStatus,
                 };
                 await updateClient.mutateAsync({ id: client.id, dto: updateDto });
             } else {
@@ -316,6 +323,7 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
     const isSubmitting = createClient.isPending || updateClient.isPending;
 
     return (
+    <>
         <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
             <DialogTitle>
                 {isEditMode 
@@ -393,6 +401,10 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                             label={t(locale, "clients.form.primary-employee")}
                             required
                             excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
+                            onAddNew={() => {
+                                setEmployeeDialogTarget("primary");
+                                setIsEmployeeDialogOpen(true);
+                            }}
                         />
                     </Grid>
                     <Grid size={{ xs: 12, sm: 6 }}>
@@ -401,6 +413,10 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                             onChange={(id) => handleChange("secondaryEmployeeId", id)}
                             label={t(locale, "clients.form.secondary-employee")}
                             excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
+                            onAddNew={() => {
+                                setEmployeeDialogTarget("secondary");
+                                setIsEmployeeDialogOpen(true);
+                            }}
                         />
                     </Grid>
 
@@ -534,13 +550,13 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
 
                     <Grid size={{ xs: 12, sm: 6 }}>
                         <FormControl fullWidth>
-                            <InputLabel>{t(locale, "clients.form.contract-status")}</InputLabel>
+                            <InputLabel>{t(locale, "clients.form.service-status")}</InputLabel>
                             <Select
-                                value={formData.contractStatus || ""}
-                                label={t(locale, "clients.form.contract-status")}
-                                onChange={(e) => handleChange("contractStatus", e.target.value)}
+                                value={formData.serviceStatus || ""}
+                                label={t(locale, "clients.form.service-status")}
+                                onChange={(e) => handleChange("serviceStatus", e.target.value)}
                             >
-                                {CONTRACT_STATUS_OPTIONS.map((status) => (
+                                {SERVICE_STATUS_OPTIONS.map((status) => (
                                     <MenuItem key={status.value} value={status.value}>
                                         {status.label}
                                     </MenuItem>
@@ -630,5 +646,23 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                 </Button>
             </DialogActions>
         </Dialog>
+
+        {/* Employee Creation Dialog */}
+        <EmployeeFormDialog
+            open={isEmployeeDialogOpen}
+            onClose={() => {
+                setIsEmployeeDialogOpen(false);
+                setEmployeeDialogTarget(null);
+            }}
+            onSuccess={(newEmployee: Employee) => {
+                // Auto-select the newly created employee in the appropriate field
+                if (employeeDialogTarget === "primary") {
+                    handleChange("primaryEmployeeId", newEmployee.id);
+                } else if (employeeDialogTarget === "secondary") {
+                    handleChange("secondaryEmployeeId", newEmployee.id);
+                }
+            }}
+        />
+    </>
     );
 }

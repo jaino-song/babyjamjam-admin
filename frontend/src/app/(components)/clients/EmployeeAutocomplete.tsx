@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
     Autocomplete,
     TextField,
@@ -15,8 +15,10 @@ import { UserPlus } from "lucide-react";
 import { useEmployees, Employee } from "@/app/hooks/useEmployees";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
+import { useEmployeeDialogStore } from "@/app/store/employee-dialog-store";
 
 interface EmployeeAutocompleteProps {
+    "data-component"?: string;
     value: number | null;
     onChange: (employeeId: number | null, employee: Employee | null) => void;
     label: string;
@@ -25,7 +27,7 @@ interface EmployeeAutocompleteProps {
     helperText?: string;
     excludeIds?: number[]; // IDs to exclude from options (e.g., if already selected as secondary)
     allowManualEntry?: boolean;
-    onManualEntry?: () => void;
+    onManualEntry?: (inputValue?: string) => void;
 }
 
 export function EmployeeAutocomplete({
@@ -38,13 +40,20 @@ export function EmployeeAutocomplete({
     excludeIds = [],
     allowManualEntry = false,
     onManualEntry,
+    "data-component": dataComponent,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
     const { data: employees, isLoading } = useEmployees();
 
-    // Track input value and open state to control dropdown visibility
+    // Zustand store for prefilling employee name in EmployeeFormDialog
+    const setPrefillName = useEmployeeDialogStore((state) => state.setPrefillName);
+
+    // Track input value for display synchronization
     const [inputValue, setInputValue] = useState("");
-    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    // Track open state - needed for Korean IME compatibility
+    const [isOpen, setIsOpen] = useState(false);
+    // Ref for the input element - used to blur when closing dropdown
+    const inputRef = useRef<HTMLInputElement>(null);
 
     // Filter out excluded employees
     const availableEmployees = useMemo(() => {
@@ -59,23 +68,45 @@ export function EmployeeAutocomplete({
         return employees.find(emp => emp.id === value) || null;
     }, [value, employees]);
 
+    // Sync inputValue when selectedEmployee changes (e.g., after creating a new employee)
+    // This ensures the text field shows the employee name when selection changes externally
+    useEffect(() => {
+        if (selectedEmployee) {
+            setInputValue(selectedEmployee.name);
+        } else if (value === null) {
+            // Only clear input if value is explicitly null (not when waiting for employees to load)
+            setInputValue("");
+        }
+    }, [selectedEmployee, value]);
+
     const handleChange = (
         _event: React.SyntheticEvent,
         newValue: Employee | null
     ) => {
         // Update input value immediately to show selected name
         setInputValue(newValue?.name ?? "");
-        // Delay closing dropdown and calling onChange to let the click event complete
-        setTimeout(() => {
-            setIsDropdownOpen(false);
-            onChange(newValue?.id ?? null, newValue);
-        }, 0);
+        onChange(newValue?.id ?? null, newValue);
     };
 
-    const handleManualEntry = () => {
-        if (onManualEntry) {
-            onManualEntry();
-        }
+    const handleManualEntry = (e: React.MouseEvent) => {
+        // Prevent the Autocomplete from closing before click completes
+        e.preventDefault();
+        e.stopPropagation();
+        // Close the dropdown state
+        setIsOpen(false);
+        // Blur the input using ref to ensure dropdown closes completely
+        // Note: We use ref because the Paper slot is rendered in a Portal,
+        // so DOM traversal with closest() won't find the Autocomplete
+        inputRef.current?.blur();
+        // Save typed name to Zustand store for EmployeeFormDialog to prefill
+        setPrefillName(inputValue);
+        // Use setTimeout to ensure dropdown is fully closed before opening dialog
+        // This prevents the dropdown from appearing over the new dialog
+        setTimeout(() => {
+            if (onManualEntry) {
+                onManualEntry(inputValue);
+            }
+        }, 100);
     };
 
     // Handle input change to track what user types
@@ -84,19 +115,14 @@ export function EmployeeAutocomplete({
         newInputValue: string,
         reason: string
     ) => {
-        // Only update inputValue for user input, not for option selection
-        if (reason === "input") {
+        if (reason === "input" || reason === "clear") {
             setInputValue(newInputValue);
-            // Open dropdown when user starts typing
-            setIsDropdownOpen(newInputValue.length > 0);
-        } else if (reason === "clear") {
-            setInputValue("");
-            setIsDropdownOpen(false);
         }
     };
 
     return (
         <Autocomplete<Employee, false, false, false>
+            data-component={dataComponent ?? "EmployeeAutocomplete"}
             value={selectedEmployee}
             onChange={handleChange}
             inputValue={inputValue}
@@ -105,13 +131,15 @@ export function EmployeeAutocomplete({
             loading={isLoading}
             clearOnBlur={false}
             blurOnSelect={true}
-            // Only open dropdown when user has typed at least 1 character
-            open={isDropdownOpen}
-            onClose={() => setIsDropdownOpen(false)}
+            // Open on focus for better UX with Korean IME
+            open={isOpen}
+            onOpen={() => setIsOpen(true)}
+            onClose={() => setIsOpen(false)}
+            openOnFocus
             getOptionLabel={(option) => option.name}
             isOptionEqualToValue={(option, val) => option.id === val.id}
             filterOptions={(options, { inputValue: filterInput }) => {
-                if (!filterInput.trim()) return [];
+                if (!filterInput.trim()) return options; // Show all options when input is empty
                 const searchLower = filterInput.toLowerCase();
                 return options.filter(
                     emp =>
@@ -147,6 +175,7 @@ export function EmployeeAutocomplete({
             renderInput={(params) => (
                 <TextField
                     {...params}
+                    inputRef={inputRef}
                     label={label}
                     required={required}
                     error={error}
@@ -168,52 +197,55 @@ export function EmployeeAutocomplete({
                     {t(locale, "clients.form.no-employee-found")}
                 </Typography>
             }
-            PaperComponent={(props) => (
-                <Paper {...props} elevation={8}>
-                    {props.children}
-                    {allowManualEntry && (
-                        <>
-                            <Divider />
-                            <ButtonBase
-                                onClick={handleManualEntry}
-                                sx={{
-                                    width: "100%",
-                                    py: 1.5,
-                                    px: 2,
-                                    justifyContent: "flex-start",
-                                    "&:hover": {
-                                        bgcolor: "action.hover",
-                                    },
-                                }}
-                            >
-                                <Box
+            slots={{
+                paper: (props) => (
+                    <Paper {...props} elevation={8} data-component="EmployeeAutocomplete-Dropdown">
+                        {props.children}
+                        {allowManualEntry && (
+                            <>
+                                <Divider />
+                                <ButtonBase
+                                    data-component="EmployeeAutocomplete-AddNewButton"
+                                    onMouseDown={handleManualEntry}
                                     sx={{
-                                        display: "flex",
-                                        flexDirection: "column",
                                         width: "100%",
+                                        py: 1.5,
+                                        px: 2,
+                                        justifyContent: "flex-start",
+                                        "&:hover": {
+                                            bgcolor: "action.hover",
+                                        },
                                     }}
                                 >
                                     <Box
                                         sx={{
                                             display: "flex",
-                                            alignItems: "center",
-                                            gap: 1,
+                                            flexDirection: "column",
+                                            width: "100%",
                                         }}
                                     >
-                                        <UserPlus size={16} />
-                                        <Typography variant="body1" color="primary">
-                                            {t(locale, "contract-msg.employee-manual-entry")}
+                                        <Box
+                                            sx={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 1,
+                                            }}
+                                        >
+                                            <UserPlus size={16} />
+                                            <Typography variant="body1" color="primary">
+                                                {t(locale, "contract-msg.employee-manual-entry")}
+                                            </Typography>
+                                        </Box>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {t(locale, "contract-msg.employee-manual-entry-description")}
                                         </Typography>
                                     </Box>
-                                    <Typography variant="caption" color="text.secondary">
-                                        {t(locale, "contract-msg.employee-manual-entry-description")}
-                                    </Typography>
-                                </Box>
-                            </ButtonBase>
-                        </>
-                    )}
-                </Paper>
-            )}
+                                </ButtonBase>
+                            </>
+                        )}
+                    </Paper>
+                ),
+            }}
         />
     );
 }

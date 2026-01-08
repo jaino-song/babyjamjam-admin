@@ -12,7 +12,9 @@ import {
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_CLIENT_REPOSITORY } from "domain/repositories/eformsign.client.interface";
+import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
+import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
@@ -44,6 +46,10 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         {
             provide: EFORMSIGN_CLIENT_REPOSITORY,
             useClass: EformsignApiClient,
+        },
+        {
+            provide: CLIENT_REPOSITORY,
+            useClass: SbClientRepository,
         },
     ],
     exports: [EformsignDocService],

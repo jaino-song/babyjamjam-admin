@@ -42,13 +42,13 @@ describe("UpdateClientUsecase", () => {
             const result = await usecase.execute(1, {
                 address: "새 주소",
                 phone: "010-1111-1111",
-                contractStatus: "completed",
+                serviceStatus: "completed",
             });
 
             // Assert
             expect(result.address).toBe("새 주소");
             expect(result.phone).toBe("010-1111-1111");
-            expect(result.contractStatus).toBe("completed");
+            expect(result.serviceStatus).toBe("completed");
             expect(result.name).toBe("고객"); // 변경 안 됨
         });
 

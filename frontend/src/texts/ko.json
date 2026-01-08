@@ -215,6 +215,12 @@
       "actions": "관리"
     },
     "form": {
+      "pagination-steps": [
+        "기본 정보",
+        "담당 인력",
+        "서비스/요금",
+        "계약 정보"
+      ],
       "add-title": "새 고객 등록",
       "edit-title": "고객 정보 수정",
       "section-basic": "기본 정보",
@@ -292,7 +298,13 @@
       "work-area": "근무 지역",
       "grade": "등급",
       "open-to-next-work": "근무 가능 여부",
-      "registered-date": "등록일"
+      "registered-date": "등록일",
+      "phone-required": "연락처를 입력해주세요",
+      "work-area-required": "근무 지역을 선택해주세요",
+      "error-phone-duplicate": "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+      "error-create-failed": "제공인력 등록에 실패했습니다. 다시 시도해주세요.",
+      "error-update-failed": "제공인력 정보 수정에 실패했습니다. 다시 시도해주세요.",
+      "error-save-failed": "저장에 실패했습니다. 다시 시도해주세요."
     },
     "detail": {
       "title": "제공인력 상세 정보"

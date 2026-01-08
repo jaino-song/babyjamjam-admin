@@ -1,3 +1,5 @@
+import { computeServiceStatus, ServiceStatusType } from "domain/value-objects/service-status.vo";
+
 interface UpdateClientProps {
     name?: string;
     address?: string | null;
@@ -12,7 +14,7 @@ interface UpdateClientProps {
     careCenter?: boolean;
     voucherClient?: boolean;
     birthday?: string | null;
-    contractStatus?: string | null;
+    serviceStatus?: string | null;
     breastPump?: boolean;
     eDocId?: string | null;
 }
@@ -31,7 +33,7 @@ interface CreateClientProps {
     careCenter: boolean;
     voucherClient: boolean;
     birthday: string | null;
-    contractStatus: string | null;
+    serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
 }
@@ -52,7 +54,7 @@ export class ClientEntity {
         public careCenter: boolean,
         public voucherClient: boolean,
         public birthday: string | null,
-        public contractStatus: string | null,
+        public serviceStatus: string | null,
         public breastPump: boolean,
         public eDocId: string | null,
     ) {}
@@ -63,6 +65,23 @@ export class ClientEntity {
 
     isVoucherClient(): boolean {
         return this.voucherClient;
+    }
+
+    /**
+     * Compute the current service status based on dates
+     * Returns the computed status without modifying the entity
+     */
+    computeCurrentStatus(): ServiceStatusType {
+        return computeServiceStatus(this.serviceStatus, this.startDate, this.endDate);
+    }
+
+    /**
+     * Check if the stored status differs from the computed status
+     * If true, the status should be updated in the database
+     */
+    needsStatusUpdate(): boolean {
+        const computed = this.computeCurrentStatus();
+        return this.serviceStatus !== computed;
     }
 
     static create(
@@ -83,7 +102,7 @@ export class ClientEntity {
             props.careCenter,
             props.voucherClient,
             props.birthday,
-            props.contractStatus,
+            props.serviceStatus,
             props.breastPump,
             props.eDocId,
         );
@@ -103,7 +122,7 @@ export class ClientEntity {
         this.careCenter = props.careCenter ?? this.careCenter;
         this.voucherClient = props.voucherClient ?? this.voucherClient;
         this.birthday = props.birthday ?? this.birthday;
-        this.contractStatus = props.contractStatus ?? this.contractStatus;
+        this.serviceStatus = props.serviceStatus ?? this.serviceStatus;
         this.breastPump = props.breastPump ?? this.breastPump;
         this.eDocId = props.eDocId ?? this.eDocId;
     }
@@ -127,7 +146,7 @@ export class ClientEntity {
         careCenter: boolean,
         voucherClient: boolean,
         birthday: string | null,
-        contractStatus: string | null,
+        serviceStatus: string | null,
         breastPump: boolean,
         eDocId: string | null,
     ): ClientEntity {
@@ -146,7 +165,7 @@ export class ClientEntity {
             careCenter,
             voucherClient,
             birthday,
-            contractStatus,
+            serviceStatus,
             breastPump,
             eDocId,
         );

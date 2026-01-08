@@ -10,7 +10,6 @@ import {
   Stepper,
   Step,
   StepLabel,
-  InputAdornment,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -37,7 +36,7 @@ import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import dayjs, { Dayjs } from "dayjs";
 import "dayjs/locale/ko";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useEformsign } from "@/app/lib/eformsign/useEformsign";
 import type { EformsignDocumentOption } from "@/app/lib/eformsign/types";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/app/hooks";
@@ -47,7 +46,9 @@ import { NameInput } from "./form-components/NameInput";
 import { ContactInput } from "./form-components/ContactInput";
 import { ClientAutocomplete } from "../../clients/ClientAutocomplete";
 import { EmployeeAutocomplete } from "../../clients/EmployeeAutocomplete";
+import { ClientFormDialog } from "../../clients/ClientFormDialog";
 import { useCreateClient } from "@/app/hooks/useClients";
+import { useEmployees } from "@/app/hooks/useEmployees";
 import type { Client } from "@/app/lib/client/types";
 import type { Employee } from "@/app/hooks/useEmployees";
 
@@ -84,6 +85,13 @@ interface ContractDataDto {
 // // Set Korean as the global locale
 // dayjs.locale("ko");
 
+// 가격 포맷팅 (천 단위 콤마)
+function formatPrice(price: string): string {
+  const num = parseInt(price.replace(/[,원\s]/g, ""), 10);
+  if (isNaN(num)) return price;
+  return num.toLocaleString("ko-KR");
+}
+
 export const ContractCreationForm = () => {
   const locale = useLocale();
   const [activeStep, setActiveStep] = useState(0);
@@ -91,6 +99,9 @@ export const ContractCreationForm = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [documentCreated, setDocumentCreated] = useState(false);
+
+  // State for client creation dialog
+  const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
 
   const { isLoaded: isEformsignLoaded, isLoading: isEformsignLoading, error: eformsignError, openDocument } = useEformsign();
 
@@ -161,6 +172,46 @@ export const ContractCreationForm = () => {
   // Client creation mutation - used when creating new client via manual entry
   const createClientMutation = useCreateClient();
 
+  // Employees query - used to look up employee details when client is selected
+  const { data: employees } = useEmployees();
+
+  // Ref to store selected client for delayed employee auto-population
+  // Used when employees list loads after client selection
+  const selectedClientRef = useRef<Client | null>(null);
+
+  // Auto-populate employees when client has employee info AND employees list is loaded
+  // This handles the race condition where client is selected before employees finish loading
+  useEffect(() => {
+    const client = selectedClientRef.current;
+
+    // Skip if no client selected or employees not yet loaded
+    if (!client || !employees) return;
+
+    // Skip if user manually entered an employee (don't override manual selection)
+    // Note: We use isEmployeeManualEntry instead of employeeId !== null because
+    // when switching clients, we WANT to override the auto-selected employee from the previous client
+    if (isEmployeeManualEntry) return;
+
+    // Auto-populate primary employee if available AND different from current selection
+    if (client.primaryEmployee) {
+      const primaryEmp = employees.find(e => e.id === client.primaryEmployee?.id);
+      if (primaryEmp && primaryEmp.id !== employeeId) {
+        setEmployeeSelection(primaryEmp.id, primaryEmp.name, primaryEmp.phone);
+        setIsEmployeeManualEntry(false);
+      }
+    }
+
+    // Auto-populate secondary employee if available
+    if (client.secondaryEmployee) {
+      const secondaryEmp = employees.find(e => e.id === client.secondaryEmployee?.id);
+      if (secondaryEmp && secondaryEmp.id !== employee2Id) {
+        setShowEmployee2(true);
+        setEmployee2Selection(secondaryEmp.id, secondaryEmp.name, secondaryEmp.phone);
+        setIsEmployee2ManualEntry(false);
+      }
+    }
+  }, [employees, employeeId, employee2Id, isEmployeeManualEntry, setEmployeeSelection, setIsEmployeeManualEntry, setShowEmployee2, setEmployee2Selection, setIsEmployee2ManualEntry]);
+
   // Voucher years query - fetches available years from database
   const { data: voucherYears = [], isLoading: isVoucherYearsLoading } = useVoucherYears();
 
@@ -222,24 +273,95 @@ export const ContractCreationForm = () => {
   // Client selection handlers
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
     setClientId(selectedClientId);
+
+    // Store client in ref for delayed employee auto-population (useEffect handles this)
+    selectedClientRef.current = client;
+
     if (client) {
       // Auto-populate fields from selected client
       setName(client.name);
       setPhone(client.phone || "");
       setBirthday(client.birthday || "");
       setAddress(client.address || "");
+
+      // Auto-populate voucher info from client if available
+      if (client.type) {
+        setVoucherType(client.type);
+      }
+      if (client.duration) {
+        setVoucherDuration(client.duration.toString());
+      }
+      if (client.fullPrice) {
+        setFullPrice(client.fullPrice);
+      }
+      if (client.grant) {
+        setGrant(client.grant);
+      }
+      if (client.actualPrice) {
+        setActualPrice(client.actualPrice);
+      }
+      // Auto-populate contract dates if available
+      if (client.startDate) {
+        setStartDate(client.startDate);
+        // Default payment date to start date
+        setPaymentDate(client.startDate);
+      }
+      if (client.endDate) {
+        setEndDate(client.endDate);
+      }
+
+      // Auto-populate primary employee if employees are already loaded
+      // (useEffect handles the case when employees load after client selection)
+      if (client.primaryEmployee && employees) {
+        const primaryEmp = employees.find(e => e.id === client.primaryEmployee?.id);
+        if (primaryEmp) {
+          setEmployeeSelection(primaryEmp.id, primaryEmp.name, primaryEmp.phone);
+          setIsEmployeeManualEntry(false);
+        }
+      }
+
+      // Auto-populate secondary employee if employees are already loaded
+      if (client.secondaryEmployee && employees) {
+        const secondaryEmp = employees.find(e => e.id === client.secondaryEmployee?.id);
+        if (secondaryEmp) {
+          setShowEmployee2(true);
+          setEmployee2Selection(secondaryEmp.id, secondaryEmp.name, secondaryEmp.phone);
+          setIsEmployee2ManualEntry(false);
+        }
+      }
     } else {
       // Clear fields when client is deselected
       setName("");
       setPhone("");
       setBirthday("");
       setAddress("");
+      // Also clear voucher info
+      setVoucherType("");
+      setVoucherDuration("");
+      setFullPrice("");
+      setGrant("");
+      setActualPrice("");
+      setStartDate("");
+      setEndDate("");
+      // Also clear employee info
+      resetEmployeeFields();
+      resetEmployee2Fields();
     }
   };
 
   const handleToggleManualEntry = () => {
     resetClientFields();
     setIsManualEntry(!isManualEntry);
+  };
+
+  // Handler to open client dialog from autocomplete
+  const handleOpenClientDialog = () => {
+    setIsClientDialogOpen(true);
+  };
+
+  // Handler when a client is created from the dialog
+  const handleClientCreated = (newClient: Client) => {
+    handleClientSelect(newClient.id, newClient);
   };
 
   // Employee selection handlers
@@ -374,7 +496,7 @@ export const ContractCreationForm = () => {
           onSuccess: async (response) => {
             console.log("Document created successfully:", response);
 
-            // Create eformsign_doc record to track the document
+            // Create eformsign_doc record to track the document and link to client
             if (finalClientId && response.document_id) {
               try {
                 await eformsignApi.createDocRecord({
@@ -389,6 +511,7 @@ export const ContractCreationForm = () => {
                   stepRecipientName: name,
                   stepRecipientSms: phone,
                   expiredDate: end.add(30, "day").toISOString(),
+                  linkToClient: true, // Also update client.e_doc_id for tracking
                 });
               } catch (docError) {
                 console.error("Failed to create eformsign doc record:", docError);
@@ -502,7 +625,7 @@ export const ContractCreationForm = () => {
                             label={t(locale, "contract-msg.client-select-label")}
                             required
                             allowManualEntry
-                            onManualEntry={handleToggleManualEntry}
+                            onManualEntry={handleOpenClientDialog}
                           />
                           {/* Show selected client info (read-only) */}
                           {clientId && (
@@ -800,55 +923,21 @@ export const ContractCreationForm = () => {
                       )}
 
                       {/* 가격 정보 - 기간 선택 후 표시 */}
-                      {voucherDuration && (
-                        <>
-                          <Divider sx={{ my: 1 }} />
-                          {/* 서비스 금액 */}
-                          <Fade in timeout={400}>
-                            <TextField
-                              fullWidth
-                              label={t(locale, "contract-msg.full-price-label")}
-                              value={fullPrice}
-                              onChange={(e) => setFullPrice(e.target.value)}
-                              placeholder={t(locale, "contract-msg.price-placeholder")}
-                              slotProps={{
-                                input: {
-                                  endAdornment: <InputAdornment position="end">원</InputAdornment>,
-                                },
-                              }}
-                            />
-                          </Fade>
-                          {/* 정부지원금 */}
-                          <Fade in timeout={400} style={{ transitionDelay: "100ms" }}>
-                            <TextField
-                              fullWidth
-                              label={t(locale, "contract-msg.grant-label")}
-                              value={grant}
-                              onChange={(e) => setGrant(e.target.value)}
-                              placeholder={t(locale, "contract-msg.price-placeholder")}
-                              slotProps={{
-                                input: {
-                                  endAdornment: <InputAdornment position="end">원</InputAdornment>,
-                                },
-                              }}
-                            />
-                          </Fade>
-                          {/* 본인부담금 */}
-                          <Fade in timeout={400} style={{ transitionDelay: "200ms" }}>
-                            <TextField
-                              fullWidth
-                              label={t(locale, "contract-msg.actual-price-label")}
-                              value={actualPrice}
-                              onChange={(e) => setActualPrice(e.target.value)}
-                              placeholder={t(locale, "contract-msg.price-placeholder")}
-                              slotProps={{
-                                input: {
-                                  endAdornment: <InputAdornment position="end">원</InputAdornment>,
-                                },
-                              }}
-                            />
-                          </Fade>
-                        </>
+                      {voucherDuration && fullPrice && grant && actualPrice && (
+                        <Fade in timeout={400}>
+                          <Stack spacing={1}>
+                            <Divider sx={{ my: 1 }} />
+                            <Typography variant="body1" fontWeight={500}>
+                              {t(locale, "contract-msg.full-price-label")}: {formatPrice(fullPrice)}원
+                            </Typography>
+                            <Typography variant="body1" fontWeight={500}>
+                              {t(locale, "contract-msg.grant-label")}: {formatPrice(grant)}원
+                            </Typography>
+                            <Typography variant="body1" fontWeight={500}>
+                              {t(locale, "contract-msg.actual-price-label")}: {formatPrice(actualPrice)}원
+                            </Typography>
+                          </Stack>
+                        </Fade>
                       )}
                     </Stack>
                   </Fade>
@@ -1034,6 +1123,13 @@ export const ContractCreationForm = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Client creation dialog */}
+      <ClientFormDialog
+        open={isClientDialogOpen}
+        onClose={() => setIsClientDialogOpen(false)}
+        onSuccess={handleClientCreated}
+      />
     </LocalizationProvider>
   );
 };

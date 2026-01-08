@@ -19,6 +19,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         // Use cases
         UpdateEformsignDocStatusUsecase,
         LinkDocumentToClientUsecase,
+        // NOTE: UpdateClientContractStatusUsecase removed - service status is now computed from dates
         // Infrastructure
         PrismaService,
         // Repository bindings
