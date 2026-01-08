@@ -73,6 +73,19 @@ interface ContractDataDto {
   actualPrice: string;
 }
 
+const formatPrice = (price: number | string): string => {
+  if (!price && price !== 0) return "";
+  const cleaned = typeof price === "string" ? price.replace(/,/g, "") : String(price);
+  const num = parseInt(cleaned, 10);
+  if (isNaN(num)) return "";
+  return num.toLocaleString("ko-KR");
+};
+
+const parsePrice = (value: string | null | undefined): string => {
+  if (!value) return "";
+  return value.replace(/,/g, "");
+};
+
 // // Set Korean as the global locale
 // dayjs.locale("ko");
 
@@ -99,6 +112,7 @@ export const ContractCreationForm = () => {
     actualPrice,
     voucherType,
     voucherDuration,
+    voucherYear,
     area,
     setName,
     setPhone,
@@ -112,11 +126,12 @@ export const ContractCreationForm = () => {
     setActualPrice,
     setVoucherType,
     setVoucherDuration,
+    setVoucherYear,
     setArea,
   } = useFormStore();
 
   // Voucher price info query - fetches price data based on selected voucher type
-  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(voucherType);
+  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(voucherType, voucherYear);
 
   // Area templates query - fetches area-to-template mappings
   const { data: areaTemplates = [], isLoading: isAreaTemplatesLoading } = useAreaTemplates();
@@ -135,6 +150,14 @@ export const ContractCreationForm = () => {
   // Voucher type change handler - resets duration and prices when type changes
   const handleVoucherTypeChange = (value: string) => {
     setVoucherType(value);
+    setVoucherDuration("");
+    setFullPrice("");
+    setGrant("");
+    setActualPrice("");
+  };
+
+  const handleVoucherYearChange = (value: number) => {
+    setVoucherYear(value);
     setVoucherDuration("");
     setFullPrice("");
     setGrant("");
@@ -380,22 +403,39 @@ export const ContractCreationForm = () => {
                           {/* 바우처 기간 선택 - 유형 선택 후에만 표시 */}
                           {voucherType && voucherPriceInfos.length > 0 && (
                             <Fade in timeout={400}>
-                              <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
-                                <InputLabel>{t(locale, "price-info-msg.duration-label")}</InputLabel>
-                                <Select
-                                  value={voucherDuration}
-                                  label={t(locale, "price-info-msg.duration-label")}
-                                  onChange={(e) => handleDurationChange(e.target.value)}
-                                  disabled={isVoucherPriceInfosLoading}
-                                  sx={{ bgcolor: "background.default" }}
-                                >
-                                  {voucherPriceInfos.map((v) => (
-                                    <MenuItem key={v.duration} value={v.duration} sx={{ bgcolor: "background.default" }}>
-                                      {v.duration}일
-                                    </MenuItem>
-                                  ))}
-                                </Select>
-                              </FormControl>
+                              <Stack direction="row" spacing={2}>
+                                <FormControl sx={{ minWidth: 100, bgcolor: "background.default" }}>
+                                  <InputLabel>연도</InputLabel>
+                                  <Select
+                                    value={voucherYear}
+                                    label="연도"
+                                    onChange={(e) => handleVoucherYearChange(Number(e.target.value))}
+                                    sx={{ bgcolor: "background.default" }}
+                                  >
+                                    {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
+                                      <MenuItem key={year} value={year}>
+                                        {year}년
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                                <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
+                                  <InputLabel>{t(locale, "price-info-msg.duration-label")}</InputLabel>
+                                  <Select
+                                    value={voucherDuration}
+                                    label={t(locale, "price-info-msg.duration-label")}
+                                    onChange={(e) => handleDurationChange(e.target.value)}
+                                    disabled={isVoucherPriceInfosLoading}
+                                    sx={{ bgcolor: "background.default" }}
+                                  >
+                                    {voucherPriceInfos.map((v) => (
+                                      <MenuItem key={v.duration} value={v.duration} sx={{ bgcolor: "background.default" }}>
+                                        {v.duration}일
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                              </Stack>
                             </Fade>
                           )}
 
@@ -418,8 +458,8 @@ export const ContractCreationForm = () => {
                             <TextField
                               fullWidth
                               label={t(locale, "contract-msg.full-price-label")}
-                              value={fullPrice}
-                              onChange={(e) => setFullPrice(e.target.value)}
+                              value={formatPrice(fullPrice)}
+                              onChange={(e) => setFullPrice(parsePrice(e.target.value))}
                               placeholder={t(locale, "contract-msg.price-placeholder")}
                               slotProps={{
                                 input: {
@@ -433,8 +473,8 @@ export const ContractCreationForm = () => {
                             <TextField
                               fullWidth
                               label={t(locale, "contract-msg.grant-label")}
-                              value={grant}
-                              onChange={(e) => setGrant(e.target.value)}
+                              value={formatPrice(grant)}
+                              onChange={(e) => setGrant(parsePrice(e.target.value))}
                               placeholder={t(locale, "contract-msg.price-placeholder")}
                               slotProps={{
                                 input: {
@@ -448,8 +488,8 @@ export const ContractCreationForm = () => {
                             <TextField
                               fullWidth
                               label={t(locale, "contract-msg.actual-price-label")}
-                              value={actualPrice}
-                              onChange={(e) => setActualPrice(e.target.value)}
+                              value={formatPrice(actualPrice)}
+                              onChange={(e) => setActualPrice(parsePrice(e.target.value))}
                               placeholder={t(locale, "contract-msg.price-placeholder")}
                               slotProps={{
                                 input: {
@@ -639,4 +679,3 @@ export const ContractCreationForm = () => {
     </LocalizationProvider>
   );
 };
-
