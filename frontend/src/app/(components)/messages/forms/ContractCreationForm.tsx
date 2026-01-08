@@ -84,6 +84,19 @@ interface ContractDataDto {
   actualPrice: string;
 }
 
+const formatPrice = (price: number | string): string => {
+  if (!price && price !== 0) return "";
+  const cleaned = typeof price === "string" ? price.replace(/,/g, "") : String(price);
+  const num = parseInt(cleaned, 10);
+  if (isNaN(num)) return "";
+  return num.toLocaleString("ko-KR");
+};
+
+const parsePrice = (value: string | null | undefined): string => {
+  if (!value) return "";
+  return value.replace(/,/g, "");
+};
+
 // // Set Korean as the global locale
 // dayjs.locale("ko");
 
@@ -174,53 +187,7 @@ export const ContractCreationForm = () => {
     setArea,
   } = useFormStore();
 
-  // Client creation mutation - used when creating new client via manual entry
-  const createClientMutation = useCreateClient();
-
-  // Employees query - used to look up employee details when client is selected
-  const { data: employees } = useEmployees();
-
-  // Ref to store selected client for delayed employee auto-population
-  // Used when employees list loads after client selection
-  const selectedClientRef = useRef<Client | null>(null);
-
-  // Auto-populate employees when client has employee info AND employees list is loaded
-  // This handles the race condition where client is selected before employees finish loading
-  useEffect(() => {
-    const client = selectedClientRef.current;
-
-    // Skip if no client selected or employees not yet loaded
-    if (!client || !employees) return;
-
-    // Skip if user manually entered an employee (don't override manual selection)
-    // Note: We use isEmployeeManualEntry instead of employeeId !== null because
-    // when switching clients, we WANT to override the auto-selected employee from the previous client
-    if (isEmployeeManualEntry) return;
-
-    // Auto-populate primary employee if available AND different from current selection
-    if (client.primaryEmployee) {
-      const primaryEmp = employees.find(e => e.id === client.primaryEmployee?.id);
-      if (primaryEmp && primaryEmp.id !== employeeId) {
-        setEmployeeSelection(primaryEmp.id, primaryEmp.name, primaryEmp.phone);
-        setIsEmployeeManualEntry(false);
-      }
-    }
-
-    // Auto-populate secondary employee if available
-    if (client.secondaryEmployee) {
-      const secondaryEmp = employees.find(e => e.id === client.secondaryEmployee?.id);
-      if (secondaryEmp && secondaryEmp.id !== employee2Id) {
-        setShowEmployee2(true);
-        setEmployee2Selection(secondaryEmp.id, secondaryEmp.name, secondaryEmp.phone);
-        setIsEmployee2ManualEntry(false);
-      }
-    }
-  }, [employees, employeeId, employee2Id, isEmployeeManualEntry, setEmployeeSelection, setIsEmployeeManualEntry, setShowEmployee2, setEmployee2Selection, setIsEmployee2ManualEntry]);
-
-  // Voucher years query - fetches available years from database
-  const { data: voucherYears = [], isLoading: isVoucherYearsLoading } = useVoucherYears();
-
-  // Voucher price info query - fetches price data based on selected voucher type and year
+  // Voucher price info query - fetches price data based on selected voucher type
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(voucherType, voucherYear);
 
   // Area templates query - fetches area-to-template mappings
@@ -250,6 +217,14 @@ export const ContractCreationForm = () => {
   // Voucher type change handler - resets duration and prices when type changes
   const handleVoucherTypeChange = (value: string) => {
     setVoucherType(value);
+    setVoucherDuration("");
+    setFullPrice("");
+    setGrant("");
+    setActualPrice("");
+  };
+
+  const handleVoucherYearChange = (value: number) => {
+    setVoucherYear(value);
     setVoucherDuration("");
     setFullPrice("");
     setGrant("");
@@ -732,18 +707,69 @@ export const ContractCreationForm = () => {
                       {/* Employee 1 Section */}
                       {!isEmployeeManualEntry ? (
                         <>
-                          {/* Employee 1 selection mode */}
-                          <EmployeeAutocomplete
-                            value={employeeId}
-                            onChange={handleEmployeeSelect}
-                            label={t(locale, "contract-msg.employee-select-label")}
-                            required
-                            allowManualEntry
-                            onManualEntry={handleToggleEmployeeManualEntry}
-                            excludeIds={employee2Id !== null ? [employee2Id] : []}
-                          />
-                          {/* Show selected employee 1 info (read-only) */}
-                          {employeeId !== null && (
+                          {/* 바우처 유형 선택 */}
+                          <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
+                            <InputLabel>{t(locale, "price-info-msg.voucher-type-label")}</InputLabel>
+                            <Select
+                              value={voucherType}
+                              label={t(locale, "price-info-msg.voucher-type-label")}
+                              onChange={(e) => handleVoucherTypeChange(e.target.value)}
+                              sx={{ bgcolor: "background.default" }}
+                            >
+                              {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
+                                <MenuItem key={groupName} disabled sx={{ fontWeight: 600, bgcolor: "background.default" }}>
+                                  {groupName}
+                                </MenuItem>,
+                                ...Object.entries(types).map(([typeValue, typeData]) => (
+                                  <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
+                                    {typeData.label}
+                                  </MenuItem>
+                                ))
+                              ])}
+                            </Select>
+                          </FormControl>
+
+                          {/* 바우처 기간 선택 - 유형 선택 후에만 표시 */}
+                          {voucherType && voucherPriceInfos.length > 0 && (
+                            <Fade in timeout={400}>
+                              <Stack direction="row" spacing={2}>
+                                <FormControl sx={{ minWidth: 100, bgcolor: "background.default" }}>
+                                  <InputLabel>연도</InputLabel>
+                                  <Select
+                                    value={voucherYear}
+                                    label="연도"
+                                    onChange={(e) => handleVoucherYearChange(Number(e.target.value))}
+                                    sx={{ bgcolor: "background.default" }}
+                                  >
+                                    {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
+                                      <MenuItem key={year} value={year}>
+                                        {year}년
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                                <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
+                                  <InputLabel>{t(locale, "price-info-msg.duration-label")}</InputLabel>
+                                  <Select
+                                    value={voucherDuration}
+                                    label={t(locale, "price-info-msg.duration-label")}
+                                    onChange={(e) => handleDurationChange(e.target.value)}
+                                    disabled={isVoucherPriceInfosLoading}
+                                    sx={{ bgcolor: "background.default" }}
+                                  >
+                                    {voucherPriceInfos.map((v) => (
+                                      <MenuItem key={v.duration} value={v.duration} sx={{ bgcolor: "background.default" }}>
+                                        {v.duration}일
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                              </Stack>
+                            </Fade>
+                          )}
+
+                          {/* 로딩 표시 */}
+                          {voucherType && isVoucherPriceInfosLoading && (
                             <Fade in timeout={300}>
                               <Stack spacing={2} sx={{ pl: 1, borderLeft: 3, borderColor: "primary.main" }}>
                                 <Typography variant="body2" color="text.secondary">
@@ -755,31 +781,137 @@ export const ContractCreationForm = () => {
                         </>
                       ) : (
                         <>
-                          {/* Employee 1 manual entry mode */}
-                          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              {t(locale, "contract-msg.employee-manual-entry-mode")}
-                            </Typography>
-                            <Button
-                              size="small"
-                              variant="text"
-                              onClick={handleToggleEmployeeManualEntry}
-                            >
-                              {t(locale, "contract-msg.switch-to-employee-search")}
-                            </Button>
-                          </Box>
-                          <NameInput
-                            name={employeeName}
-                            setName={setEmployeeName}
-                            label={t(locale, "contract-msg.employee-name-label")}
-                            placeholder={t(locale, "contract-msg.employee-name-placeholder")}
-                          />
-                          <ContactInput
-                            phone={employeePhone}
-                            setPhone={setEmployeePhone}
-                            label={t(locale, "contract-msg.employee-phone-label")}
-                            placeholder={t(locale, "contract-msg.employee-phone-placeholder")}
-                          />
+                          {/* 서비스 금액 */}
+                          <Fade in timeout={400}>
+                            <TextField
+                              fullWidth
+                              label={t(locale, "contract-msg.full-price-label")}
+                              value={formatPrice(fullPrice)}
+                              onChange={(e) => setFullPrice(parsePrice(e.target.value))}
+                              placeholder={t(locale, "contract-msg.price-placeholder")}
+                              slotProps={{
+                                input: {
+                                  endAdornment: <InputAdornment position="end">원</InputAdornment>,
+                                },
+                              }}
+                            />
+                          </Fade>
+                          {/* 정부지원금 */}
+                          <Fade in timeout={400} style={{ transitionDelay: "100ms" }}>
+                            <TextField
+                              fullWidth
+                              label={t(locale, "contract-msg.grant-label")}
+                              value={formatPrice(grant)}
+                              onChange={(e) => setGrant(parsePrice(e.target.value))}
+                              placeholder={t(locale, "contract-msg.price-placeholder")}
+                              slotProps={{
+                                input: {
+                                  endAdornment: <InputAdornment position="end">원</InputAdornment>,
+                                },
+                              }}
+                            />
+                          </Fade>
+                          {/* 본인부담금 */}
+                          <Fade in timeout={400} style={{ transitionDelay: "200ms" }}>
+                            <TextField
+                              fullWidth
+                              label={t(locale, "contract-msg.actual-price-label")}
+                              value={formatPrice(actualPrice)}
+                              onChange={(e) => setActualPrice(parsePrice(e.target.value))}
+                              placeholder={t(locale, "contract-msg.price-placeholder")}
+                              slotProps={{
+                                input: {
+                                  endAdornment: <InputAdornment position="end">원</InputAdornment>,
+                                },
+                              }}
+                            />
+                          </Fade>
+                          {/* 계약 시작일 */}
+                          <Fade in timeout={400} style={{ transitionDelay: "300ms" }}>
+                            <Box>
+                              <DatePicker
+                                label={t(locale, "contract-msg.start-date-label")}
+                                value={startDate ? dayjs(startDate) : null}
+                                onChange={(newValue: Dayjs | null) => {
+                                  setStartDate(newValue ? newValue.format("YYYY-MM-DD") : "");
+                                }}
+                                format="YY년 MM월 DD일"
+                                localeText={{
+                                  clearButtonLabel: "초기화",
+                                  cancelButtonLabel: "취소",
+                                  okButtonLabel: "확인",
+                                  toolbarTitle: "날짜 선택",
+                                }}
+                                slotProps={{
+                                  toolbar: {
+                                    toolbarFormat: "YY년 MM월 DD일",
+                                  },
+                                  textField: {
+                                    fullWidth: true,
+                                    placeholder: "25년 01월 01일",
+                                  },
+                                }}
+                              />
+                            </Box>
+                          </Fade>
+                          {/* 계약 종료일 */}
+                          <Fade in timeout={400} style={{ transitionDelay: "400ms" }}>
+                            <Box>
+                              <DatePicker
+                                label={t(locale, "contract-msg.end-date-label")}
+                                value={endDate ? dayjs(endDate) : null}
+                                onChange={(newValue: Dayjs | null) => {
+                                  setEndDate(newValue ? newValue.format("YYYY-MM-DD") : "");
+                                }}
+                                format="YY년 MM월 DD일"
+                                localeText={{
+                                  clearButtonLabel: "초기화",
+                                  cancelButtonLabel: "취소",
+                                  okButtonLabel: "확인",
+                                  toolbarTitle: "날짜 선택",
+                                }}
+                                slotProps={{
+                                  toolbar: {
+                                    toolbarFormat: "YY년 MM월 DD일",
+                                  },
+                                  textField: {
+                                    fullWidth: true,
+                                    placeholder: "25년 12월 31일",
+                                  },
+                                }}
+                              />
+                            </Box>
+                          </Fade>
+                          {/* 본인부담금 결제일 */}
+                          <Fade in timeout={400} style={{ transitionDelay: "500ms" }}>
+                            <Box>
+                              <DatePicker
+                                label={t(locale, "contract-msg.payment-date-label")}
+                                value={paymentDate ? dayjs(paymentDate) : null}
+                                onChange={(newValue: Dayjs | null) => {
+                                  setPaymentDate(
+                                    newValue ? newValue.format("YYYY-MM-DD") : ""
+                                  );
+                                }}
+                                format="YY년 MM월 DD일"
+                                localeText={{
+                                  clearButtonLabel: "초기화",
+                                  cancelButtonLabel: "취소",
+                                  okButtonLabel: "확인",
+                                  toolbarTitle: "날짜 선택",
+                                }}
+                                slotProps={{
+                                  toolbar: {
+                                    toolbarFormat: "YY년 MM월 DD일",
+                                  },
+                                  textField: {
+                                    fullWidth: true,
+                                    placeholder: "25년 01월 01일",
+                                  },
+                                }}
+                              />
+                            </Box>
+                          </Fade>
                         </>
                       )}
 
@@ -1149,4 +1281,3 @@ export const ContractCreationForm = () => {
     </LocalizationProvider>
   );
 };
-
