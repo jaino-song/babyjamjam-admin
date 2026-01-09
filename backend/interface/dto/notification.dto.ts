@@ -6,15 +6,15 @@ import { IsString, IsNotEmpty, IsOptional, IsNumber, IsObject, Min } from "class
 export class SubscribePushDto {
     @IsString()
     @IsNotEmpty()
-    endpoint: string;
+    endpoint!: string;
 
     @IsString()
     @IsNotEmpty()
-    p256dh: string; // Base64 encoded
+    p256dh!: string; // Base64 encoded
 
     @IsString()
     @IsNotEmpty()
-    auth: string; // Base64 encoded
+    auth!: string; // Base64 encoded
 
     @IsString()
     @IsOptional()
@@ -24,21 +24,21 @@ export class SubscribePushDto {
 export class UnsubscribePushDto {
     @IsString()
     @IsNotEmpty()
-    endpoint: string;
+    endpoint!: string;
 }
 
 export class SendNotificationDto {
     @IsString()
     @IsNotEmpty()
-    userId: string;
+    userId!: string;
 
     @IsString()
     @IsNotEmpty()
-    title: string;
+    title!: string;
 
     @IsString()
     @IsNotEmpty()
-    body: string;
+    body!: string;
 
     @IsObject()
     @IsOptional()
@@ -48,11 +48,11 @@ export class SendNotificationDto {
 export class BroadcastNotificationDto {
     @IsString()
     @IsNotEmpty()
-    title: string;
+    title!: string;
 
     @IsString()
     @IsNotEmpty()
-    body: string;
+    body!: string;
 
     @IsObject()
     @IsOptional()
@@ -73,24 +73,24 @@ export class GetNotificationsQueryDto {
 
 // Response DTOs
 export class VapidKeyResponseDto {
-    publicKey: string;
+    publicKey!: string;
 }
 
 export class NotificationResponseDto {
-    id: number;
-    title: string;
-    body: string;
-    data: Record<string, unknown> | null;
-    sentAt: string;
-    readAt: string | null;
-    isRead: boolean;
+    id!: number;
+    title!: string;
+    body!: string;
+    data!: Record<string, unknown> | null;
+    sentAt!: string;
+    readAt!: string | null;
+    isRead!: boolean;
 }
 
 export class UnreadCountResponseDto {
-    count: number;
+    count!: number;
 }
 
 export class BroadcastResultResponseDto {
-    sent: number;
-    failed: number;
+    sent!: number;
+    failed!: number;
 }
