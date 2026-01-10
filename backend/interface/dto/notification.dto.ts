@@ -1,4 +1,5 @@
 import { IsString, IsNotEmpty, IsOptional, IsNumber, IsObject, Min } from "class-validator";
+import { Type } from "class-transformer";
 
 /**
  * Push subscription from browser - keys from PushSubscription.getKey()
@@ -60,11 +61,13 @@ export class BroadcastNotificationDto {
 }
 
 export class GetNotificationsQueryDto {
+    @Type(() => Number)
     @IsNumber()
     @Min(1)
     @IsOptional()
     limit?: number;
 
+    @Type(() => Number)
     @IsNumber()
     @Min(0)
     @IsOptional()
