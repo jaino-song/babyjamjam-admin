@@ -13,26 +13,67 @@ import {
     Button,
     Divider,
     CircularProgress,
+    Alert,
 } from "@mui/material";
 import NotificationsIcon from "@mui/icons-material/Notifications";
-import { useUnreadCount, useNotifications, useMarkAsRead, useMarkAllAsRead, Notification } from "@/app/hooks/usePushNotification";
+import NotificationsNoneIcon from "@mui/icons-material/NotificationsNone";
+import NotificationsOffIcon from "@mui/icons-material/NotificationsOff";
+import {
+    useUnreadCount,
+    useNotifications,
+    useMarkAsRead,
+    useMarkAllAsRead,
+    usePushNotification,
+    Notification,
+} from "@/app/hooks/usePushNotification";
 import { formatDistanceToNow } from "date-fns";
 import { ko } from "date-fns/locale";
 
 /**
- * Notification Bell Component
+ * Unified Notification Bell Component
  *
- * Shows unread notification count badge and popover with recent notifications.
+ * Handles both subscription and notification display:
+ * - Not subscribed: Click to enable notifications (dark gray icon)
+ * - Subscribed: Click to view notifications (white icon with primary border)
  */
 export function NotificationBell() {
     const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
+    const [subscribeLoading, setSubscribeLoading] = useState(false);
+
+    // Subscription state
+    const {
+        isSupported,
+        isSubscribed,
+        permission,
+        isLoading: subscriptionLoading,
+        error: subscriptionError,
+        subscribe,
+    } = usePushNotification();
+
+    // Notification data (only fetch when subscribed)
     const { data: unreadCount = 0 } = useUnreadCount();
-    const { data: notifications = [], isLoading } = useNotifications(10, 0);
+    const { data: notifications = [], isLoading: notificationsLoading } = useNotifications(10, 0);
     const markAsRead = useMarkAsRead();
     const markAllAsRead = useMarkAllAsRead();
 
-    const handleOpen = (event: React.MouseEvent<HTMLButtonElement>) => {
-        setAnchorEl(event.currentTarget);
+    const open = Boolean(anchorEl);
+
+    const handleClick = async (event: React.MouseEvent<HTMLButtonElement>) => {
+        if (!isSubscribed) {
+            // Not subscribed - try to subscribe
+            setSubscribeLoading(true);
+            const success = await subscribe();
+            setSubscribeLoading(false);
+
+            if (!success) {
+                // Show error in popover
+                setAnchorEl(event.currentTarget);
+            }
+            // If success, state will update and next click will show notifications
+        } else {
+            // Subscribed - show notifications popover
+            setAnchorEl(event.currentTarget);
+        }
     };
 
     const handleClose = () => {
@@ -54,32 +95,74 @@ export function NotificationBell() {
         markAllAsRead.mutate();
     };
 
-    const open = Boolean(anchorEl);
+    // Render error/warning content in popover
+    const renderPopoverContent = () => {
+        // Not supported
+        if (!isSupported) {
+            return (
+                <Box sx={{ p: 2 }}>
+                    <Alert severity="warning">
+                        이 브라우저는 푸시 알림을 지원하지 않습니다.
+                        <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                            Chrome, Firefox, Edge 또는 Safari에서 사용해 주세요.
+                        </Typography>
+                    </Alert>
+                </Box>
+            );
+        }
 
-    return (
-        <>
-            <IconButton onClick={handleOpen} color="inherit">
-                <Badge badgeContent={unreadCount} color="error">
-                    <NotificationsIcon />
-                </Badge>
-            </IconButton>
+        // iOS PWA requirement
+        const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const isPWA = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches;
 
-            <Popover
-                open={open}
-                anchorEl={anchorEl}
-                onClose={handleClose}
-                anchorOrigin={{
-                    vertical: 'bottom',
-                    horizontal: 'right',
-                }}
-                transformOrigin={{
-                    vertical: 'top',
-                    horizontal: 'right',
-                }}
-                PaperProps={{
-                    sx: { width: 360, maxHeight: 480 },
-                }}
-            >
+        if (isIOS && !isPWA && !isSubscribed) {
+            return (
+                <Box sx={{ p: 2 }}>
+                    <Alert severity="info">
+                        <Typography variant="body2" fontWeight="bold">
+                            iOS에서 알림을 받으려면:
+                        </Typography>
+                        <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                            1. Safari에서 공유 버튼 탭<br />
+                            2. &quot;홈 화면에 추가&quot; 선택<br />
+                            3. 홈 화면에서 앱 실행 후 알림 설정
+                        </Typography>
+                    </Alert>
+                </Box>
+            );
+        }
+
+        // Permission denied
+        if (permission === 'denied') {
+            return (
+                <Box sx={{ p: 2 }}>
+                    <Alert severity="error">
+                        알림 권한이 차단되어 있습니다.
+                        <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                            브라우저 설정에서 이 사이트의 알림 권한을 허용해 주세요.
+                        </Typography>
+                    </Alert>
+                </Box>
+            );
+        }
+
+        // Subscription error
+        if (subscriptionError && !isSubscribed) {
+            return (
+                <Box sx={{ p: 2 }}>
+                    <Alert severity="error">
+                        알림 설정 중 오류가 발생했습니다.
+                        <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                            {subscriptionError}
+                        </Typography>
+                    </Alert>
+                </Box>
+            );
+        }
+
+        // Subscribed - show notifications list
+        return (
+            <>
                 <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Typography variant="h6">알림</Typography>
                     {unreadCount > 0 && (
@@ -95,7 +178,7 @@ export function NotificationBell() {
 
                 <Divider />
 
-                {isLoading ? (
+                {notificationsLoading ? (
                     <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
                         <CircularProgress size={24} />
                     </Box>
@@ -157,6 +240,55 @@ export function NotificationBell() {
                         ))}
                     </List>
                 )}
+            </>
+        );
+    };
+
+    const isLoading = subscriptionLoading || subscribeLoading;
+
+    return (
+        <>
+            <IconButton
+                onClick={handleClick}
+                disabled={isLoading}
+                color="inherit"
+            >
+                {isLoading ? (
+                    <CircularProgress size={24} color="inherit" />
+                ) : isSubscribed ? (
+                    <Badge badgeContent={unreadCount} color="error">
+                        {/* Subscribed: White filled bell with primary.main outline */}
+                        <NotificationsIcon
+                            sx={(theme) => ({
+                                color: 'white',
+                                stroke: theme.palette.primary.main,
+                                strokeWidth: 1,
+                            })}
+                        />
+                    </Badge>
+                ) : (
+                    // Not subscribed: dark gray bell
+                    <NotificationsOffIcon sx={{ color: 'text.disabled' }} />
+                )}
+            </IconButton>
+
+            <Popover
+                open={open}
+                anchorEl={anchorEl}
+                onClose={handleClose}
+                anchorOrigin={{
+                    vertical: 'bottom',
+                    horizontal: 'right',
+                }}
+                transformOrigin={{
+                    vertical: 'top',
+                    horizontal: 'right',
+                }}
+                PaperProps={{
+                    sx: { width: 360, maxHeight: 480 },
+                }}
+            >
+                {renderPopoverContent()}
             </Popover>
         </>
     );

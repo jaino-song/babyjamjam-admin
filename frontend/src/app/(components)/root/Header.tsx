@@ -7,7 +7,7 @@ import { NavBar } from "../nav-bar/NavBar";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { useGetAuthUser, AuthUser } from "@/app/hooks/useGetAuthUser";
-import { NotificationBell, NotificationSubscribeButton } from "../notifications";
+import { NotificationBell } from "../notifications";
 
 interface HeaderProps {
   // 서버에서 prefetch된 사용자 데이터 (duplicate fetch 방지)
@@ -61,12 +61,7 @@ export const Header = ({ initialUser }: HeaderProps) => {
             </Typography>
           </Box>
           {/* Notifications */}
-          {user && (
-            <>
-              <NotificationSubscribeButton />
-              <NotificationBell />
-            </>
-          )}
+          {user && <NotificationBell />}
           {/* User Profile */}
           {/* initialUser가 있으면 로딩 상태 없이 즉시 렌더링 */}
           <IconButton color="inherit" aria-label={user ? "user" : "login"} disabled={!initialUser && isLoading}>
