@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const isProduction = process.env.NODE_ENV === "production";
+const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 const API_URL = isProduction
     ? process.env.NEXT_PUBLIC_API_BASE_URL
     : process.env.DEVELOPMENT_API_BASE_URL;

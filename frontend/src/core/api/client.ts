@@ -91,9 +91,9 @@ api.interceptors.response.use(
                 return axios(originalRequest);
             } catch (refreshError) {
                 processQueue(refreshError as AxiosError);
-                
-                // Clear auth state and redirect to login
-                if (typeof window !== "undefined") {
+
+                // Clear auth state and redirect to login (skip in dev/preview mode)
+                if (typeof window !== "undefined" && process.env.NODE_ENV !== 'development' && process.env.NEXT_PUBLIC_VERCEL_ENV !== 'preview') {
                     sessionStorage.removeItem("eformsign_auth_time");
                     if (!window.location.pathname.includes("/login")) {
                         window.location.href = "/login";

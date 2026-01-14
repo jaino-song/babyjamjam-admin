@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/app/lib/axios/server";
 
+// Development/Preview 환경 체크
+const isDevMode = process.env.NODE_ENV === 'development' || process.env.VERCEL_ENV === 'preview';
+
 // Helper to get auth token from request
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
@@ -15,7 +18,8 @@ function getAuthHeaders(token: string | null): Record<string, string> {
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
-        if (!token) {
+        // Development 모드에서는 인증 bypass
+        if (!token && !isDevMode) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
@@ -47,7 +51,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
-        if (!token) {
+        // Development 모드에서는 인증 bypass
+        if (!token && !isDevMode) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
