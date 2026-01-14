@@ -5,17 +5,36 @@
 # Configuration
 WEBHOOK_URL="${1:-http://localhost:4000/webhooks/eformsign}"
 DOCUMENT_ID="${2:-test-doc-$(date +%s)}"
+WEBHOOK_SECRET="${EFORMSIGN_WEBHOOK_SECRET:-}"
 
 echo "=== Eformsign Webhook Test ==="
 echo "URL: $WEBHOOK_URL"
 echo "Document ID: $DOCUMENT_ID"
+if [ -n "$WEBHOOK_SECRET" ]; then
+    echo "Auth: Bearer token configured"
+else
+    echo "Auth: No token (set EFORMSIGN_WEBHOOK_SECRET env var)"
+fi
 echo ""
+
+# Helper function to make authenticated webhook calls
+webhook_call() {
+    local payload="$1"
+    if [ -n "$WEBHOOK_SECRET" ]; then
+        curl -s -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $WEBHOOK_SECRET" \
+            -d "$payload"
+    else
+        curl -s -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$payload"
+    fi
+}
 
 # Test 1: Document Created
 echo "1. Testing doc_create event..."
-curl -s -X POST "$WEBHOOK_URL" \
-  -H "Content-Type: application/json" \
-  -d '{
+webhook_call '{
     "webhook_id": "test-webhook-001",
     "webhook_name": "Test Webhook",
     "company_id": "test-company",
@@ -36,15 +55,13 @@ curl -s -X POST "$WEBHOOK_URL" \
   }' | jq .
 echo ""
 
-# Test 2: Participant Requested
-echo "2. Testing doc_request_participant event..."
-curl -s -X POST "$WEBHOOK_URL" \
-  -H "Content-Type: application/json" \
-  -d '{
+# Test 2: Document Action - Participant Opened
+echo "2. Testing document_action (doc_open_participant) event..."
+webhook_call '{
     "webhook_id": "test-webhook-001",
     "webhook_name": "Test Webhook",
     "company_id": "test-company",
-    "event_type": "document",
+    "event_type": "document_action",
     "document": {
       "id": "'"$DOCUMENT_ID"'",
       "document_title": "테스트 계약서",
@@ -52,7 +69,7 @@ curl -s -X POST "$WEBHOOK_URL" \
       "template_name": "산모 돌봄 서비스 계약서",
       "workflow_seq": 2,
       "workflow_name": "산모 서명",
-      "status": "doc_request_participant",
+      "action": "doc_open_participant",
       "updated_date": '"$(date +%s000)"'
     }
   }' | jq .
@@ -60,9 +77,7 @@ echo ""
 
 # Test 3: Participant Accepted (Signed)
 echo "3. Testing doc_accept_participant event..."
-curl -s -X POST "$WEBHOOK_URL" \
-  -H "Content-Type: application/json" \
-  -d '{
+webhook_call '{
     "webhook_id": "test-webhook-001",
     "webhook_name": "Test Webhook",
     "company_id": "test-company",
@@ -82,9 +97,7 @@ echo ""
 
 # Test 4: Document Complete
 echo "4. Testing doc_complete event..."
-curl -s -X POST "$WEBHOOK_URL" \
-  -H "Content-Type: application/json" \
-  -d '{
+webhook_call '{
     "webhook_id": "test-webhook-001",
     "webhook_name": "Test Webhook",
     "company_id": "test-company",
@@ -104,9 +117,7 @@ echo ""
 
 # Test 5: Rejection scenario (optional)
 echo "5. Testing doc_reject_participant event..."
-curl -s -X POST "$WEBHOOK_URL" \
-  -H "Content-Type: application/json" \
-  -d '{
+webhook_call '{
     "webhook_id": "test-webhook-001",
     "webhook_name": "Test Webhook",
     "company_id": "test-company",
@@ -126,9 +137,7 @@ echo ""
 
 # Test 6: PDF Ready event
 echo "6. Testing ready_document_pdf event..."
-curl -s -X POST "$WEBHOOK_URL" \
-  -H "Content-Type: application/json" \
-  -d '{
+webhook_call '{
     "webhook_id": "test-webhook-001",
     "webhook_name": "Test Webhook",
     "company_id": "test-company",

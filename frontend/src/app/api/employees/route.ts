@@ -34,18 +34,19 @@ export async function POST(request: NextRequest) {
         // Check if backend returned an error status
         if (response.status >= 400) {
             console.error("[API] Backend error creating employee:", response.data);
-            const errorMessage = response.data?.message || "Failed to create employee";
-            return NextResponse.json(
-                { error: errorMessage },
-                { status: response.status }
-            );
+            // Pass through the backend response as-is for consistent error structure
+            return NextResponse.json(response.data, { status: response.status });
         }
 
         return NextResponse.json(response.data, { status: 201 });
-    } catch (error) {
-        console.error("[API] Error creating employee:", error);
+    } catch (error: any) {
+        console.error("[API] Error creating employee:", error.response?.data || error.message);
+        // Pass through actual backend error response or create error object
+        if (error.response?.data) {
+            return NextResponse.json(error.response.data, { status: error.response.status || 500 });
+        }
         return NextResponse.json(
-            { error: "Failed to create employee" },
+            { message: error.message || "Failed to create employee", error: "Internal Server Error" },
             { status: 500 }
         );
     }
@@ -72,17 +73,17 @@ export async function PATCH(request: NextRequest) {
         // Check if backend returned an error status
         if (response.status >= 400) {
             console.error("[API] Backend error updating employee:", response.data);
-            return NextResponse.json(
-                { error: response.data?.message || "Failed to update employee" },
-                { status: response.status }
-            );
+            return NextResponse.json(response.data, { status: response.status });
         }
 
         return NextResponse.json(response.data);
-    } catch (error) {
-        console.error("[API] Error updating employee:", error);
+    } catch (error: any) {
+        console.error("[API] Error updating employee:", error.response?.data || error.message);
+        if (error.response?.data) {
+            return NextResponse.json(error.response.data, { status: error.response.status || 500 });
+        }
         return NextResponse.json(
-            { error: "Failed to update employee" },
+            { message: error.message || "Failed to update employee", error: "Internal Server Error" },
             { status: 500 }
         );
     }

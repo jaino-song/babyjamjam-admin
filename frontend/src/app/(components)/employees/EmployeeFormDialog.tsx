@@ -23,6 +23,7 @@ import {
 } from "@mui/material";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
+import { getErrorMessage } from "@/app/lib/errors/prisma-error-mapper";
 import {
     Employee,
     CreateEmployeeDto,
@@ -151,13 +152,10 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                 const updatedEmployee = await updateMutation.mutateAsync({ id: employee.id, dto });
                 console.log("[EmployeeFormDialog] Update result:", updatedEmployee);
 
-                // Check if the response is an error (has statusCode or error property)
-                if (updatedEmployee && ('error' in updatedEmployee || 'statusCode' in updatedEmployee)) {
-                    const errorMessage = (updatedEmployee as { error?: string; message?: string }).error
-                        || (updatedEmployee as { message?: string }).message
-                        || t(locale, "employees.form.error-update-failed");
+                // Check if the response is an error (has statusCode or code property)
+                if (updatedEmployee && ('code' in updatedEmployee || 'statusCode' in updatedEmployee)) {
                     console.error("[EmployeeFormDialog] Update returned error:", updatedEmployee);
-                    setError(errorMessage);
+                    setError(getErrorMessage(updatedEmployee, locale, "employees.form.error-update-failed"));
                     return;
                 }
 
@@ -176,21 +174,10 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                 const newEmployee = await createMutation.mutateAsync(dto);
                 console.log("[EmployeeFormDialog] Create result:", newEmployee);
 
-                // Check if the response is an error (has statusCode or error property)
-                if (newEmployee && ('error' in newEmployee || 'statusCode' in newEmployee)) {
-                    const errorMessage = (newEmployee as { error?: string; message?: string }).error
-                        || (newEmployee as { message?: string }).message
-                        || t(locale, "employees.form.error-create-failed");
-
-                    // Check for duplicate phone error
-                    if (errorMessage.toLowerCase().includes('unique constraint') ||
-                        errorMessage.toLowerCase().includes('phone') ||
-                        errorMessage.toLowerCase().includes('duplicate')) {
-                        setError(t(locale, "employees.form.error-phone-duplicate"));
-                    } else {
-                        setError(errorMessage);
-                    }
+                // Check if the response is an error (has statusCode or code property)
+                if (newEmployee && ('code' in newEmployee || 'statusCode' in newEmployee)) {
                     console.error("[EmployeeFormDialog] Create returned error:", newEmployee);
+                    setError(getErrorMessage(newEmployee, locale, "employees.form.error-create-failed"));
                     return;
                 }
 
@@ -203,8 +190,7 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
             onClose();
         } catch (error: unknown) {
             console.error("[EmployeeFormDialog] Failed to save employee:", error);
-            const errorMessage = error instanceof Error ? error.message : t(locale, "employees.form.error-save-failed");
-            setError(errorMessage);
+            setError(getErrorMessage(error, locale, "employees.form.error-save-failed"));
         }
     };
 

@@ -75,4 +75,50 @@ export class SbClientRepository implements IClientRepository {
             where: { id },
         });
     }
+
+    async findByStartDate(date: Date): Promise<ClientEntity[]> {
+        // Normalize to start of day for date comparison
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                start_date: {
+                    gte: startOfDay,
+                    lte: endOfDay,
+                },
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findByEndDate(date: Date): Promise<ClientEntity[]> {
+        // Normalize to start of day for date comparison
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                end_date: {
+                    gte: startOfDay,
+                    lte: endOfDay,
+                },
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findByCreatedDate(date: Date): Promise<ClientEntity[]> {
+        // Note: Client model doesn't have created_at field in schema
+        // For now, this returns empty array. To enable payment reminders,
+        // add created_at field to client model in schema.prisma
+        console.warn('[ClientRepository] findByCreatedDate: client model lacks created_at field');
+        return [];
+    }
 }

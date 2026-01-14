@@ -270,7 +270,11 @@
       "section-document": "E-Contract",
       "document-status": "Signing Status",
       "document-signed": "Signed",
-      "document-not-signed": "Not Signed"
+      "document-not-signed": "Not Signed",
+      "doc-not-sent": "Not Sent",
+      "doc-created": "Created",
+      "doc-opened": "Opened",
+      "doc-completed": "Completed"
     }
   },
   "employees": {
@@ -313,7 +317,8 @@
     },
     "delete-confirm": {
       "title": "Delete Provider",
-      "message": "Are you sure you want to delete this provider? This action cannot be undone."
+      "message": "Are you sure you want to delete this provider? This action cannot be undone.",
+      "error": "Failed to delete provider. Please try again."
     }
   },
   "settings": {
@@ -374,6 +379,32 @@
         "parse-failed": "Failed to parse image",
         "update-failed": "Update failed"
       }
+    }
+  },
+  "errors": {
+    "generic": "An error occurred. Please try again.",
+    "network": "A network error occurred.",
+    "prisma": {
+      "P2002": "{field} already exists.",
+      "P2002.phone": "This phone number is already registered. Please enter a different phone number.",
+      "P2002.email": "This email is already registered.",
+      "P2003": "Referenced data does not exist.",
+      "P2025": "Requested data not found.",
+      "P2011": "Required field is missing.",
+      "P2006": "Invalid value for {field}.",
+      "unknown": "A database error occurred."
+    },
+    "fields": {
+      "phone": "phone number",
+      "email": "email",
+      "name": "name",
+      "address": "address",
+      "birthday": "birthday",
+      "work_area": "work area",
+      "document_id": "document ID",
+      "endpoint": "notification endpoint",
+      "kakao_id": "Kakao ID",
+      "year_type_duration": "year/type/duration"
     }
   }
 }

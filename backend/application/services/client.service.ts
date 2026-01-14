@@ -12,6 +12,9 @@ import { PaginatedResult } from "domain/repositories/client.repository.interface
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
 
+// Document status type for eformsign documents
+export type DocumentStatusType = 'created' | 'opened' | 'completed' | null;
+
 // Response type that includes employee information
 export interface ClientWithEmployees {
     id: number;
@@ -32,6 +35,7 @@ export interface ClientWithEmployees {
     breastPump: boolean;
     eDocId: string | null;
     hasSigned: boolean;
+    documentStatus: DocumentStatusType;
     primaryEmployee: { id: number; name: string } | null;
     secondaryEmployee: { id: number; name: string } | null;
 }
@@ -166,6 +170,16 @@ export class ClientService {
         // Create a map of client_id to schedule
         const scheduleMap = new Map(schedules.map(s => [s.client_id, s]));
 
+        // Batch fetch eformsign_docs for all clients with eDocId
+        const eDocIds = clients.map(c => c.eDocId).filter((id): id is string => id !== null);
+        const docs = eDocIds.length > 0
+            ? await this.prismaService.eformsign_doc.findMany({
+                where: { document_id: { in: eDocIds } },
+                select: { document_id: true, status_type: true },
+            })
+            : [];
+        const docStatusMap = new Map(docs.map(d => [d.document_id, d.status_type]));
+
         // Compute and update service status for each client (lazy update strategy)
         const clientsNeedingUpdate: { id: number; newStatus: ServiceStatusType }[] = [];
 
@@ -203,6 +217,7 @@ export class ClientService {
                 breastPump: client.breastPump,
                 eDocId: client.eDocId,
                 hasSigned: client.eDocId !== null,
+                documentStatus: this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? '')),
                 primaryEmployee: schedule?.primary_employee
                     ? { id: schedule.primary_employee.id, name: schedule.primary_employee.name }
                     : null,
@@ -243,6 +258,19 @@ export class ClientService {
         ).catch(error => {
             this.logger.error(`Error in background status updates: ${error}`);
         });
+    }
+
+    /**
+     * Map eformsign_doc status_type to user-friendly document status
+     * @param statusType - DB status_type (010=created, 020=opened, 050=completed)
+     */
+    private mapStatusTypeToDocumentStatus(statusType?: string): DocumentStatusType {
+        switch (statusType) {
+            case '010': return 'created';
+            case '020': return 'opened';
+            case '050': return 'completed';
+            default: return null;
+        }
     }
 
     async update(id: number, params: {

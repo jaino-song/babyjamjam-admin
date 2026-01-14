@@ -117,4 +117,43 @@ export class MockClientRepository implements IClientRepository {
         }
         this.clients.delete(id);
     }
+
+    /**
+     * Find clients by start date (P3 scheduler support)
+     */
+    async findByStartDate(date: Date): Promise<ClientEntity[]> {
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.startDate) return false;
+            return client.startDate >= startOfDay && client.startDate <= endOfDay;
+        });
+    }
+
+    /**
+     * Find clients by end date (P3 scheduler support)
+     */
+    async findByEndDate(date: Date): Promise<ClientEntity[]> {
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.endDate) return false;
+            return client.endDate >= startOfDay && client.endDate <= endOfDay;
+        });
+    }
+
+    /**
+     * Find clients by created date (P3 scheduler support)
+     * Note: Mock doesn't have created_at field, returns empty array
+     */
+    async findByCreatedDate(_date: Date): Promise<ClientEntity[]> {
+        // Mock doesn't track created_at, similar to real implementation
+        return [];
+    }
 }

@@ -63,8 +63,9 @@ export class EformsignWebhookService {
         }
 
         // Handle document_action events (open, view actions)
-        if (event_type === EVENT_TYPES.DOCUMENT_ACTION && document_action) {
-            await this.handleDocumentActionEvent(document_action);
+        // Note: eformsign sends action data inside the `document` object (document.action field)
+        if (event_type === EVENT_TYPES.DOCUMENT_ACTION && document) {
+            await this.handleDocumentActionEvent(document);
             return;
         }
 
@@ -128,16 +129,18 @@ export class EformsignWebhookService {
     /**
      * Handle document_action events (when document is opened or viewed)
      * Updates status to reflect document has been opened
+     * Note: eformsign sends action in document.action field (e.g., "doc_open_participant")
      */
     private async handleDocumentActionEvent(
-        action: NonNullable<EformsignWebhookPayloadDto["document_action"]>
+        document: NonNullable<EformsignWebhookPayloadDto["document"]>
     ): Promise<void> {
-        const { document_id: documentId, action_type, workflow_seq, workflow_name } = action;
+        const { id: documentId, action, workflow_seq, workflow_name } = document;
 
-        this.logger.log(`Document action event: ${documentId} -> action=${action_type}, workflow=${workflow_name}`);
+        this.logger.log(`Document action event: ${documentId} -> action=${action}, workflow=${workflow_name}`);
 
         // Map action type to status (opened = 서명 페이지 열림)
-        const statusDetail = action_type === "open" ? "서명 페이지 열림" : `액션: ${action_type}`;
+        const isOpenAction = action?.includes("open");
+        const statusDetail = isOpenAction ? "서명 페이지 열림" : `액션: ${action}`;
 
         try {
             await this.updateStatusUsecase.execute({
@@ -150,7 +153,7 @@ export class EformsignWebhookService {
                 expired: false,
             });
 
-            this.logger.log(`Document ${documentId} action recorded: ${action_type}`);
+            this.logger.log(`Document ${documentId} action recorded: ${action}`);
         } catch (error) {
             this.logger.warn(
                 `[document_action] Document ${documentId} not found in DB. ` +

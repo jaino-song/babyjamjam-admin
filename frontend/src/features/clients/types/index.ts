@@ -4,6 +4,9 @@ export interface EmployeeSummary {
     name: string;
 }
 
+// Document status type for eformsign documents
+export type DocumentStatus = 'created' | 'opened' | 'completed' | null;
+
 // Client entity types
 export interface Client {
     id: number;
@@ -26,6 +29,7 @@ export interface Client {
     serviceStatus: string | null;      // Renamed from contractStatus
     eDocId: string | null;
     hasSigned: boolean;
+    documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
 }
 
 // Create client DTO - Frontend sends employeeId, backend converts to scheduleId

@@ -80,7 +80,7 @@ export default async function Dashboard() {
             primaryActionLabel={t(locale, "actions.send_contract")}
             secondaryActionLabel={t(locale, "actions.write_message")}
             primaryActionHref="/contracts/creation"
-            secondaryActionHref="/messages/greeting"
+            secondaryActionHref="/messages"
           />
 
           <StatsGrid stats={stats} disabled={true} />

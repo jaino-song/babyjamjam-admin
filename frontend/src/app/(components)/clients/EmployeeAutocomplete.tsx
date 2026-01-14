@@ -74,10 +74,13 @@ export function EmployeeAutocomplete({
     useEffect(() => {
         if (selectedEmployee) {
             setInputValue(selectedEmployee.name);
-        } else if (value === null) {
-            // Only clear input if value is explicitly null (not when waiting for employees to load)
+        } else if (value === null || value === undefined) {
+            // Clear input when value is explicitly cleared (null/undefined)
             setInputValue("");
         }
+        // Note: When value is a non-null number but employee not found (e.g., deleted employee),
+        // we don't clear input to allow the useEmployees query to finish loading first.
+        // The selectedEmployee will update once employees are loaded.
     }, [selectedEmployee, value]);
 
     const handleChange = (
@@ -116,8 +119,19 @@ export function EmployeeAutocomplete({
         newInputValue: string,
         reason: string
     ) => {
+        // Accept input changes for:
+        // - "input": user typing
+        // - "clear": user clicked X button
+        // - "reset": MUI resets input (e.g., on blur, selection change)
+        //   But for "reset", only update if it's clearing or syncing with selection
         if (reason === "input" || reason === "clear") {
             setInputValue(newInputValue);
+        } else if (reason === "reset") {
+            // Allow reset to clear the input (when value becomes empty)
+            // or sync with selected employee name
+            if (newInputValue === "" || newInputValue === selectedEmployee?.name) {
+                setInputValue(newInputValue);
+            }
         }
     };
 

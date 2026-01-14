@@ -14,9 +14,10 @@ import {
     IconButton,
 } from "@mui/material";
 import { Pencil, Trash2, X } from "lucide-react";
-import { Client, CONTRACT_STATUS_OPTIONS } from "@/app/lib/client/types";
+import { Client, CONTRACT_STATUS_OPTIONS, DocumentStatus } from "@/app/lib/client/types";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
+import { Locale } from "@/app/actions/locale";
 
 interface ClientDetailModalProps {
     open: boolean;
@@ -57,6 +58,24 @@ const formatPrice = (price: string | null): string => {
     const num = parseInt(cleaned, 10);
     if (isNaN(num)) return "-";
     return `${num.toLocaleString("ko-KR")}원`;
+};
+
+/**
+ * Get document status chip based on eformsign document status
+ * @param status - Document status: created, opened, completed, or null
+ * @param locale - Current locale for translations
+ */
+const getDocStatusChip = (status: DocumentStatus, locale: Locale) => {
+    switch (status) {
+        case 'completed':
+            return <Chip label={t(locale, "clients.form.doc-completed")} color="success" size="small" />;
+        case 'opened':
+            return <Chip label={t(locale, "clients.form.doc-opened")} color="warning" size="small" />;
+        case 'created':
+            return <Chip label={t(locale, "clients.form.doc-created")} color="default" size="small" />;
+        default:
+            return <Chip label={t(locale, "clients.form.doc-not-sent")} color="default" size="small" variant="outlined" />;
+    }
 };
 
 interface InfoRowProps {
@@ -190,15 +209,7 @@ export function ClientDetailModal({
                     </Typography>
                     <InfoRow
                         label={t(locale, "clients.form.document-status")}
-                        value={
-                            <Chip
-                                label={client.hasSigned
-                                    ? t(locale, "clients.form.document-signed")
-                                    : t(locale, "clients.form.document-not-signed")}
-                                color={client.hasSigned ? "success" : "default"}
-                                size="small"
-                            />
-                        }
+                        value={getDocStatusChip(client.documentStatus, locale)}
                     />
                 </Box>
             </DialogContent>

@@ -8,6 +8,7 @@ import { AuthService } from "application/services/auth.service";
 import { EformsignService } from "application/services/eformsign.service";
 import { ConfigModule } from "@nestjs/config";
 import { PassportModule } from "@nestjs/passport";
+import { ScheduleModule } from "@nestjs/schedule";
 import { BankAccountInfoModule } from "module/bank-account-info.module";
 import { UserModule } from "module/user.module";
 import { MessageModule } from "module/message.module";
@@ -19,6 +20,7 @@ import { EformsignDocModule } from "module/eformsign-doc.module";
 import { EformsignWebhookModule } from "module/eformsign-webhook.module";
 import { AreaTemplateModule } from "module/area-template.module";
 import { NotificationModule } from "module/notification.module";
+import { ChannelTalkModule } from "module/channeltalk.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 @Module({
@@ -26,6 +28,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         ConfigModule.forRoot({
             isGlobal: true,
         }),
+        ScheduleModule.forRoot(),
         PassportModule,
         JwtModule.register({
             secret: process.env['JWT_SECRET'],
@@ -42,6 +45,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         EformsignWebhookModule,
         AreaTemplateModule,
         NotificationModule,
+        ChannelTalkModule,
     ],
     controllers: [AuthController, EformsignController],
     providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],

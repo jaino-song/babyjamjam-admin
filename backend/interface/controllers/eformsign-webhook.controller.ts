@@ -1,13 +1,15 @@
-import { Body, Controller, Post, HttpCode, HttpStatus, Logger } from "@nestjs/common";
+import { Body, Controller, Post, HttpCode, HttpStatus, Logger, UseGuards } from "@nestjs/common";
 import { EformsignWebhookService } from "application/services/eformsign-webhook.service";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
+import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 
 /**
  * Controller for handling eformsign webhook callbacks
  * This endpoint is called by eformsign when document status changes
- * No authentication required as eformsign calls this directly
+ * Protected by bearer token authentication configured in eformsign console
  */
 @Controller("webhooks/eformsign")
+@UseGuards(WebhookGuard)
 export class EformsignWebhookController {
     private readonly logger = new Logger(EformsignWebhookController.name);
 

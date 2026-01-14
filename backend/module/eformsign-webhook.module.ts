@@ -10,10 +10,13 @@ import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interfa
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 
 @Module({
     controllers: [EformsignWebhookController],
     providers: [
+        // Guards
+        WebhookGuard,
         // Service
         EformsignWebhookService,
         // Use cases

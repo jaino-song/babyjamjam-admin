@@ -38,7 +38,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                     <NavButton href="/contracts" label={t(locale, "nav-bar.contracts")} icon={<File size={15} />} active={isContracts} onClick={onClose} />
                     <NavButton href="/clients" label={t(locale, "nav-bar.clients")} icon={<PeopleOutlineIcon fontSize="small" />} active={isClients} onClick={onClose} />
                     <NavButton href="/employees" label={t(locale, "nav-bar.employees")} icon={<AssignmentIndOutlinedIcon fontSize="small" />} active={isEmployees} onClick={onClose} />
-                    <NavButton disabled={true} href="/settings" label={t(locale, "nav-bar.settings")} icon={<Settings size={15} />} active={isSettings} onClick={onClose} />
+                    <NavButton href="/settings" label={t(locale, "nav-bar.settings")} icon={<Settings size={15} />} active={isSettings} onClick={onClose} />
                 </Stack>
             </Box>
             <LanguageSwitcher />

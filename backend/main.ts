@@ -2,6 +2,7 @@ import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
+import { PrismaExceptionFilter } from "./infrastructure/filters/prisma-exception.filter";
 
 // Catch any unhandled errors
 process.on('uncaughtException', (error) => {
@@ -21,6 +22,7 @@ async function bootstrap() {
     const app = await NestFactory.create(AppModule);
     app.use(cookieParser());
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalFilters(new PrismaExceptionFilter());
     // CORS configuration - support both production and development origins
     const allowedOrigins = [
         process.env['PRODUCTION_FRONTEND_URL'],

@@ -10,6 +10,7 @@ describe("SbEmployeeRepository", () => {
     const createMockPrismaEmployee = () => ({
         findUnique: jest.fn(),
         findMany: jest.fn(),
+        findFirst: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
         delete: jest.fn(),
@@ -158,15 +159,21 @@ describe("SbEmployeeRepository", () => {
                     grade: "B",
                     open_to_next_work: false,
                 });
+                // Mock findFirst for ID generation (returns last employee with id: 4)
+                employeeModel.findFirst.mockResolvedValue({ id: 4 });
                 employeeModel.create.mockResolvedValue(createdRow);
 
                 // Act
                 const result = await repository.create(entity);
 
                 // Assert
+                expect(employeeModel.findFirst).toHaveBeenCalledWith({
+                    orderBy: { id: "desc" },
+                    select: { id: true },
+                });
                 expect(employeeModel.create).toHaveBeenCalledWith({
                     data: {
-                        id: 0,
+                        id: 5, // Next ID after 4
                         name: "Test Employee",
                         work_area: ["Seoul"],
                         phone: "010-0000-0000",
@@ -176,6 +183,25 @@ describe("SbEmployeeRepository", () => {
                     },
                 });
                 expect(result).toMatchObject({ id: 5, name: "Test Employee" });
+            });
+        });
+
+        describe("given no employees exist yet", () => {
+            it("should start with id 1", async () => {
+                // Arrange
+                const entity = createEmployeeEntity();
+                const createdRow = createEmployeeRow({ id: 1, name: "Test Employee" });
+                employeeModel.findFirst.mockResolvedValue(null); // No employees
+                employeeModel.create.mockResolvedValue(createdRow);
+
+                // Act
+                const result = await repository.create(entity);
+
+                // Assert
+                expect(employeeModel.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({ id: 1 }),
+                });
+                expect(result.id).toBe(1);
             });
         });
     });

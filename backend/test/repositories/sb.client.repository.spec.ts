@@ -31,7 +31,7 @@ describe("SbClientRepository", () => {
         care_center: true,
         voucher_client: false,
         birthday: "900101",
-        contract_status: "completed",
+        service_status: "completed",
         breast_pump: true,
         e_doc_id: null,
         ...overrides,
@@ -94,7 +94,7 @@ describe("SbClientRepository", () => {
                     address: "Incheon",
                     careCenter: true,
                     birthday: "900101",
-                    contractStatus: "completed",
+                    serviceStatus: "completed",
                     breastPump: true,
                 });
             });
@@ -342,7 +342,7 @@ describe("SbClientRepository", () => {
                         care_center: false,
                         voucher_client: true,
                         birthday: "950315",
-                        contract_status: "pending",
+                        service_status: "waiting",
                         breast_pump: false,
                         e_doc_id: null,
                     },
@@ -360,7 +360,7 @@ describe("SbClientRepository", () => {
                     phone: null,
                     type: null,
                     birthday: null,
-                    contractStatus: null,
+                    serviceStatus: null,
                 });
                 const createdRow = createClientRow({
                     id: 6,
@@ -368,7 +368,7 @@ describe("SbClientRepository", () => {
                     phone: null,
                     type: null,
                     birthday: null,
-                    contract_status: null,
+                    service_status: null,
                 });
                 clientModel.create.mockResolvedValue(createdRow);
 
@@ -382,7 +382,7 @@ describe("SbClientRepository", () => {
                         phone: null,
                         type: null,
                         birthday: null,
-                        contract_status: null,
+                        service_status: null,
                     }),
                 });
                 expect(result.address).toBeNull();
@@ -442,7 +442,7 @@ describe("SbClientRepository", () => {
                         care_center: true,
                         voucher_client: false,
                         birthday: "880520",
-                        contract_status: "in_progress",
+                        service_status: "in_progress",
                         breast_pump: true,
                         e_doc_id: null,
                     },

@@ -63,6 +63,10 @@ class WebhookDocumentDto {
     @IsOptional()
     @IsString()
     mass_job_request_id?: string;
+
+    @IsOptional()
+    @IsString()
+    action?: string; // "doc_open_participant", etc. (sent with document_action event_type)
 }
 
 /**

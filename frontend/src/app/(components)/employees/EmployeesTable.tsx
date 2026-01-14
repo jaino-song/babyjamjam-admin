@@ -62,14 +62,19 @@ export function EmployeesTable() {
         setFormDialogOpen(true);
     };
 
-    const handleDelete = async (id: number) => {
+    const handleDelete = async (id: number): Promise<boolean> => {
         if (window.confirm(t(locale, "employees.delete-confirm.message"))) {
             try {
                 await deleteEmployee.mutateAsync(id);
+                return true; // Deletion succeeded
             } catch (err) {
                 console.error("Failed to delete employee:", err);
+                // Show error to user
+                alert(t(locale, "employees.delete-confirm.error"));
+                return false; // Deletion failed
             }
         }
+        return false; // User cancelled
     };
 
     const handleFormDialogClose = () => {

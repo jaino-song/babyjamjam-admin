@@ -36,6 +36,7 @@ import {
 } from "@/app/lib/client/types";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
+import { getErrorMessage } from "@/app/lib/errors/prisma-error-mapper";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
 interface ClientFormDialogProps {
@@ -324,9 +325,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 onSuccess?.(newClient);
             }
             onClose();
-        } catch (err) {
-            setError(t(locale, "clients.form.error-save-failed"));
-            console.error("Failed to save client:", err);
+        } catch (error: unknown) {
+            console.error("Failed to save client:", error);
+            setError(getErrorMessage(error, locale, "clients.form.error-save-failed"));
         }
     };
 
@@ -405,8 +406,8 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
                     <Grid size={{ xs: 12, sm: 6 }}>
                         <EmployeeAutocomplete
-                            value={formData.primaryEmployeeId ?? null}
-                            onChange={(id) => handleChange("primaryEmployeeId", id ?? 0)}
+                            value={formData.primaryEmployeeId}
+                            onChange={(id) => handleChange("primaryEmployeeId", id)}
                             label={t(locale, "clients.form.primary-employee")}
                             required
                             excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}

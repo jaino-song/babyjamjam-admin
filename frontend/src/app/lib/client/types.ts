@@ -1,6 +1,7 @@
 // Re-export all types from the feature module to avoid duplication
 export {
     type EmployeeSummary,
+    type DocumentStatus,
     type Client,
     type CreateClientDto,
     type UpdateClientDto,

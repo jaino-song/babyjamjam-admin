@@ -273,7 +273,11 @@
       "section-document": "전자계약서",
       "document-status": "서명 상태",
       "document-signed": "서명 완료",
-      "document-not-signed": "미서명"
+      "document-not-signed": "미서명",
+      "doc-not-sent": "미발송",
+      "doc-created": "생성됨",
+      "doc-opened": "열람됨",
+      "doc-completed": "완료"
     }
   },
   "employees": {
@@ -316,7 +320,8 @@
     },
     "delete-confirm": {
       "title": "제공인력 삭제",
-      "message": "정말로 이 제공인력을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다."
+      "message": "정말로 이 제공인력을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+      "error": "제공인력 삭제에 실패했습니다. 다시 시도해주세요."
     }
   },
   "settings": {
@@ -377,6 +382,32 @@
         "parse-failed": "이미지 파싱에 실패했습니다",
         "update-failed": "업데이트에 실패했습니다"
       }
+    }
+  },
+  "errors": {
+    "generic": "오류가 발생했습니다. 다시 시도해주세요.",
+    "network": "네트워크 오류가 발생했습니다.",
+    "prisma": {
+      "P2002": "{field}이(가) 이미 존재합니다.",
+      "P2002.phone": "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+      "P2002.email": "이미 등록된 이메일입니다.",
+      "P2003": "참조된 데이터가 존재하지 않습니다.",
+      "P2025": "요청한 데이터를 찾을 수 없습니다.",
+      "P2011": "필수 필드가 누락되었습니다.",
+      "P2006": "{field}에 유효하지 않은 값이 입력되었습니다.",
+      "unknown": "데이터베이스 오류가 발생했습니다."
+    },
+    "fields": {
+      "phone": "연락처",
+      "email": "이메일",
+      "name": "이름",
+      "address": "주소",
+      "birthday": "생년월일",
+      "work_area": "근무 지역",
+      "document_id": "문서 ID",
+      "endpoint": "알림 엔드포인트",
+      "kakao_id": "카카오 ID",
+      "year_type_duration": "연도/유형/기간"
     }
   }
 }
