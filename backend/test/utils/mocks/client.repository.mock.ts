@@ -156,4 +156,45 @@ export class MockClientRepository implements IClientRepository {
         // Mock doesn't track created_at, similar to real implementation
         return [];
     }
+
+    async findStartingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.startDate) return false;
+            return client.startDate >= today && client.startDate <= endDate;
+        });
+    }
+
+    async findEndingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.endDate) return false;
+            return client.endDate >= today && client.endDate <= endDate;
+        });
+    }
+
+    async findWithIncompleteContractsStartingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.startDate) return false;
+            const isStartingSoon = client.startDate >= today && client.startDate <= endDate;
+            const hasIncompleteContract = !client.eDocId;
+            return isStartingSoon && hasIncompleteContract;
+        });
+    }
 }

@@ -2,6 +2,7 @@ import { ClientService } from "application/services/client.service";
 import { CreateClientUsecase, UpdateClientUsecase, FindClientByIdUsecase, ListClientsUsecase, ListClientsPaginatedUsecase, DeleteClientUsecase } from "application/usecases/client";
 import { ClientEntity } from "domain/entities/client.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { AlimtalkService } from "application/services/alimtalk.service";
 
 describe("ClientService", () => {
     // ============================================
@@ -48,6 +49,10 @@ describe("ClientService", () => {
         },
     });
 
+    const createMockAlimtalkService = () => ({
+        sendClientCreatedAlimtalk: jest.fn().mockResolvedValue(undefined),
+    });
+
     const createClientEntity = (): ClientEntity => new ClientEntity(
         1,
         "Test Client",
@@ -76,6 +81,7 @@ describe("ClientService", () => {
     let listClientsPaginatedUsecase: ReturnType<typeof createMockListClientsPaginatedUsecase>;
     let deleteClientUsecase: ReturnType<typeof createMockDeleteClientUsecase>;
     let prismaService: ReturnType<typeof createMockPrismaService>;
+    let alimtalkService: ReturnType<typeof createMockAlimtalkService>;
 
     beforeEach(() => {
         createClientUsecase = createMockCreateClientUsecase();
@@ -85,6 +91,7 @@ describe("ClientService", () => {
         listClientsPaginatedUsecase = createMockListClientsPaginatedUsecase();
         deleteClientUsecase = createMockDeleteClientUsecase();
         prismaService = createMockPrismaService();
+        alimtalkService = createMockAlimtalkService();
 
         service = new ClientService(
             createClientUsecase as unknown as CreateClientUsecase,
@@ -94,6 +101,7 @@ describe("ClientService", () => {
             updateClientUsecase as unknown as UpdateClientUsecase,
             deleteClientUsecase as unknown as DeleteClientUsecase,
             prismaService as unknown as PrismaService,
+            alimtalkService as unknown as AlimtalkService,
         );
     });
 

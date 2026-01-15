@@ -21,6 +21,9 @@ import { EformsignWebhookModule } from "module/eformsign-webhook.module";
 import { AreaTemplateModule } from "module/area-template.module";
 import { NotificationModule } from "module/notification.module";
 import { ChannelTalkModule } from "module/channeltalk.module";
+import { SystemSettingModule } from "module/system-setting.module";
+import { AligoModule } from "module/aligo.module";
+import { AlimtalkModule } from "module/alimtalk.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 @Module({
@@ -46,6 +49,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         AreaTemplateModule,
         NotificationModule,
         ChannelTalkModule,
+        SystemSettingModule,
+        AligoModule,
+        AlimtalkModule,
     ],
     controllers: [AuthController, EformsignController],
     providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],

@@ -11,21 +11,17 @@ import { SbEformsignDocRepository } from "infrastructure/database/repositories/s
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
+import { AlimtalkModule } from "./alimtalk.module";
 
 @Module({
+    imports: [AlimtalkModule],
     controllers: [EformsignWebhookController],
     providers: [
-        // Guards
         WebhookGuard,
-        // Service
         EformsignWebhookService,
-        // Use cases
         UpdateEformsignDocStatusUsecase,
         LinkDocumentToClientUsecase,
-        // NOTE: UpdateClientContractStatusUsecase removed - service status is now computed from dates
-        // Infrastructure
         PrismaService,
-        // Repository bindings
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
             useClass: SbEformsignDocRepository,

@@ -72,3 +72,22 @@ export const eformsignApi = {
         return data;
     },
 }
+
+export type AlimtalkProvider = 'aligo' | 'channeltalk' | 'none';
+
+export interface AlimtalkProviderResponse {
+    provider: AlimtalkProvider;
+    enabled: boolean;
+    updatedAt?: string;
+}
+
+export const settingsApi = {
+    getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {
+        const { data } = await api.get('/settings/alimtalk-provider');
+        return data;
+    },
+    updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
+        const { data } = await api.put('/settings/alimtalk-provider', { provider });
+        return data;
+    },
+}

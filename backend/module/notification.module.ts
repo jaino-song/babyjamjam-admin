@@ -9,13 +9,18 @@ import {
     GetVapidKeyUsecase,
 } from "application/usecases/notification";
 import { NotificationService } from "application/services/notification.service";
+import { PwaNotificationSchedulerService } from "application/services/pwa-notification-scheduler.service";
 import { NotificationController } from "interface/controllers/notification.controller";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbPushSubscriptionRepository } from "infrastructure/database/repositories/sb.push-subscription.repository";
 import { SbNotificationRepository } from "infrastructure/database/repositories/sb.notification.repository";
+import { SbUserRepository } from "infrastructure/database/repositories/sb.user.repository";
+import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { WebPushAdapter } from "infrastructure/api/web-push.adapter";
 import { PUSH_SUBSCRIPTION_REPOSITORY } from "domain/repositories/push-subscription.repository.interface";
 import { NOTIFICATION_REPOSITORY } from "domain/repositories/notification.repository.interface";
+import { USER_REPOSITORY } from "domain/repositories/user.repository.interface";
+import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
 
 @Module({
@@ -29,8 +34,9 @@ import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
         GetNotificationsUsecase,
         MarkNotificationReadUsecase,
         GetVapidKeyUsecase,
-        // Service
+        // Services
         NotificationService,
+        PwaNotificationSchedulerService,
         // Infrastructure
         PrismaService,
         // Repository bindings (Port -> Adapter)
@@ -41,6 +47,14 @@ import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
         {
             provide: NOTIFICATION_REPOSITORY,
             useClass: SbNotificationRepository,
+        },
+        {
+            provide: USER_REPOSITORY,
+            useClass: SbUserRepository,
+        },
+        {
+            provide: CLIENT_REPOSITORY,
+            useClass: SbClientRepository,
         },
         // External service binding (Port -> Adapter)
         {

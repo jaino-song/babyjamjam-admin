@@ -119,6 +119,7 @@ export function ImageDropzone({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         sx={{
+          position: "relative",
           p: 4,
           border: "2px dashed",
           borderColor: isDragOver

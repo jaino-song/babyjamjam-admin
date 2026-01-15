@@ -1,68 +1,27 @@
 # Notification Guidelines
 
-## When to send notifications
+## Daily Summary Notifications (PWA Push)
 
-### Client CRUD Operations
+매일 오전 9시(KST)에 admin/manager 역할의 사용자에게 PWA 푸시 알림을 전송합니다.
+해당 조건을 만족하는 클라이언트가 있을 때만 알림이 전송됩니다.
 
-1. **When a new client is added**, send a notification about it:
-- Korean: {client_name} 님이 이용자로 추가되었습니다
-- English: {client_name} is added as a client.
+### 1. 서비스 시작 예정 알림
+- **조건**: 일주일 내 시작 예정인 서비스가 1건 이상
+- **제목**: 서비스 시작 예정
+- **내용**: 일주일 내로 시작되는 서비스 {count}건을 확인해 보세요
+- **링크**: /clients?filter=starting-soon
 
-2. **When a client is deleted**, send a notification about it:
-- Korean: {client_name} 님이 이용자에서 삭제되었습니다
-- English: {client_name} is deleted.
+### 2. 서비스 종료 예정 알림
+- **조건**: 일주일 내 종료 예정인 서비스가 1건 이상
+- **제목**: 서비스 종료 예정
+- **내용**: 일주일 내로 종료되는 서비스 {count}건을 확인해 보세요
+- **링크**: /clients?filter=ending-soon
 
-3. **When a client's info is edited**, send a notification about it:
-- Korean: {client_name} 님의 정보가 수정되었습니다
-- English: {client_name}'s info is edited.
-
-### Start Date Reminders
-
-4. **If a client's start date is in 7 days**, send a notification about it:
-- Korean: {client_name} 님의 서비스 시작일이 7일 남았습니다 ({start_date})
-- English: {client_name}'s service start date is in 7 days ({start_date}).
-
-5. **If a client's start date is in 3 days**, send a notification about it:
-- Korean: {client_name} 님의 서비스 시작일이 3일 남았습니다 ({start_date})
-- English: {client_name}'s service start date is in 3 days ({start_date}).
-
-6. **If a client's start date is in 1 day**, send a notification about it:
-- Korean: {client_name} 님의 서비스 시작일이 내일입니다 ({start_date})
-- English: {client_name}'s service starts tomorrow ({start_date}).
-
-### Contract/Document Warnings
-
-7. **If a client's start date is in 3 days, but the eformsign document is not completed**, send a warning notification:
-- Korean: ⚠️ {client_name} 님의 서비스 시작일이 3일 남았으나, 계약서가 아직 완료되지 않았습니다
-- English: ⚠️ {client_name}'s service starts in 3 days, but the contract is not yet completed.
-
-8. **If a client's start date is in 1 day, but the eformsign document is not completed**, send an urgent warning notification:
-- Korean: 🚨 {client_name} 님의 서비스 시작일이 내일이지만, 계약서가 아직 완료되지 않았습니다
-- English: 🚨 {client_name}'s service starts tomorrow, but the contract is not yet completed.
-
-### End Date Reminders
-
-9. **If a client's end date is in 7 days**, send a notification about it:
-- Korean: {client_name} 님의 서비스 종료일이 7일 남았습니다 ({end_date})
-- English: {client_name}'s service end date is in 7 days ({end_date}).
-
-10. **If a client's end date is in 3 days**, send a notification about it:
-- Korean: {client_name} 님의 서비스 종료일이 3일 남았습니다 ({end_date})
-- English: {client_name}'s service end date is in 3 days ({end_date}).
-
-11. **If a client's end date is in 1 day**, send a notification about it:
-- Korean: {client_name} 님의 서비스가 내일 종료됩니다 ({end_date})
-- English: {client_name}'s service ends tomorrow ({end_date}).
-
-### Eformsign Document Status
-
-12. **If a client's eformsign document status changes to completed**, send a notification about it:
-- Korean: ✅ {client_name} 님의 계약서가 완료되었습니다
-- English: ✅ {client_name}'s contract has been completed.
-
-13. **If a client's eformsign document status changes to rejected**, send a notification about it:
-- Korean: ❌ {client_name} 님의 계약서가 거부되었습니다/
-- English: ❌ {client_name}'s contract has been rejected.
+### 3. 계약서 미완료 경고 알림
+- **조건**: 일주일 내 시작 예정이지만 eformsign 계약서가 미완료인 클라이언트가 1건 이상
+- **제목**: ⚠️ 계약서 미완료
+- **내용**: 서비스 시작 예정이지만 계약서가 미완료된 클라이언트 {count}건이 있습니다
+- **링크**: /clients?filter=incomplete-contracts
 
 ---
 
@@ -70,16 +29,23 @@
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `{client_name}` | Client's full name | 홍길동 |
-| `{start_date}` | Service start date | 2025-01-20 |
-| `{end_date}` | Service end date | 2025-12-31 |
+| `{count}` | 해당 조건의 클라이언트 수 | 3 |
 
-## Notification Priority Levels
+## Target Roles
 
-| Priority | Use Case | Icon |
-|----------|----------|------|
-| High | Urgent contract warnings (1 day before) | 🚨 |
-| Medium | Contract warnings (3 days before) | ⚠️ |
-| Normal | Date reminders, status updates | (none) |
-| Success | Contract completed | ✅ |
-| Error | Contract rejected | ❌ |
+| Role | Receives Notifications |
+|------|------------------------|
+| `admin` | Yes |
+| `manager` | Yes |
+| `user` | Yes |
+
+## Technical Implementation
+
+- **Scheduler**: `PwaNotificationSchedulerService`
+- **Cron**: `0 9 * * *` (매일 오전 9시 KST)
+- **Method**: `notificationService.sendToRoles(['admin', 'manager'], ...)`
+
+### Related Files
+- `backend/application/services/pwa-notification-scheduler.service.ts`
+- `backend/application/services/notification.service.ts`
+- `backend/domain/repositories/client.repository.interface.ts`

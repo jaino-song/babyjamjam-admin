@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Inject } from "@nestjs/common";
 import {
     SubscribePushUsecase,
     UnsubscribePushUsecase,
@@ -9,6 +9,7 @@ import {
 } from "application/usecases/notification";
 import { PushSubscriptionEntity } from "domain/entities/push-subscription.entity";
 import { NotificationEntity } from "domain/entities/notification.entity";
+import { IUserRepository, USER_REPOSITORY } from "domain/repositories/user.repository.interface";
 
 @Injectable()
 export class NotificationService {
@@ -19,6 +20,8 @@ export class NotificationService {
         private readonly getNotificationsUsecase: GetNotificationsUsecase,
         private readonly markNotificationReadUsecase: MarkNotificationReadUsecase,
         private readonly getVapidKeyUsecase: GetVapidKeyUsecase,
+        @Inject(USER_REPOSITORY)
+        private readonly userRepository: IUserRepository,
     ) {}
 
     // VAPID Key
@@ -82,5 +85,19 @@ export class NotificationService {
 
     markAllAsRead(userId: string): Promise<void> {
         return this.markNotificationReadUsecase.markAllAsRead(userId);
+    }
+
+    async sendToRoles(
+        roles: string[],
+        title: string,
+        body: string,
+        data?: Record<string, unknown>,
+    ): Promise<{ sent: number; failed: number }> {
+        const users = await this.userRepository.findByRoles(roles);
+        if (users.length === 0) {
+            return { sent: 0, failed: 0 };
+        }
+        const userIds = users.map(u => u.id);
+        return this.sendNotificationUsecase.sendToUsers({ userIds, title, body, data });
     }
 }

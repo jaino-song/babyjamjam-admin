@@ -34,6 +34,24 @@ export interface IClientRepository {
      * Used to send payment reminders X days after registration
      */
     findByCreatedDate(date: Date): Promise<ClientEntity[]>;
+
+    /**
+     * Find clients whose service starts within the next N days (inclusive)
+     * Used for daily summary notifications
+     */
+    findStartingWithinDays(days: number): Promise<ClientEntity[]>;
+
+    /**
+     * Find clients whose service ends within the next N days (inclusive)
+     * Used for daily summary notifications
+     */
+    findEndingWithinDays(days: number): Promise<ClientEntity[]>;
+
+    /**
+     * Find clients with incomplete contracts (eformsign doc not completed)
+     * whose service starts within the next N days
+     */
+    findWithIncompleteContractsStartingWithinDays(days: number): Promise<ClientEntity[]>;
 }
 
 export const CLIENT_REPOSITORY = "CLIENT_REPOSITORY";

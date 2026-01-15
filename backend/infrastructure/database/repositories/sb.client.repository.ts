@@ -121,4 +121,72 @@ export class SbClientRepository implements IClientRepository {
         console.warn('[ClientRepository] findByCreatedDate: client model lacks created_at field');
         return [];
     }
+
+    async findStartingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                start_date: {
+                    gte: today,
+                    lte: endDate,
+                },
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findEndingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                end_date: {
+                    gte: today,
+                    lte: endDate,
+                },
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findWithIncompleteContractsStartingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                start_date: {
+                    gte: today,
+                    lte: endDate,
+                },
+                OR: [
+                    { e_doc_id: null },
+                    {
+                        signed_doc: {
+                            status_type: { not: '050' },
+                        },
+                    },
+                ],
+            },
+            include: {
+                signed_doc: true,
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
 }

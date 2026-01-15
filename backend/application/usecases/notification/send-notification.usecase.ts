@@ -23,6 +23,13 @@ export interface SendBroadcastParams {
     data?: Record<string, unknown>;
 }
 
+export interface SendToUsersParams {
+    userIds: string[];
+    title: string;
+    body: string;
+    data?: Record<string, unknown>;
+}
+
 /**
  * Send Notification Use Case
  *
@@ -113,6 +120,46 @@ export class SendNotificationUsecase {
             }
         }
 
+        return { sent, failed };
+    }
+
+    async sendToUsers(params: SendToUsersParams): Promise<{ sent: number; failed: number }> {
+        const { userIds, title, body, data } = params;
+
+        if (userIds.length === 0) {
+            this.logger.warn('No user IDs provided for notification');
+            return { sent: 0, failed: 0 };
+        }
+
+        const subscriptions = await this.pushSubscriptionRepository.findByUserIds(userIds);
+
+        if (subscriptions.length === 0) {
+            this.logger.warn(`No push subscriptions found for users: ${userIds.join(', ')}`);
+            return { sent: 0, failed: 0 };
+        }
+
+        const payload = JSON.stringify({
+            title,
+            body,
+            icon: '/icon-192.png',
+            badge: '/badge-72.png',
+            data,
+        });
+
+        const results = await this.webPushPort.sendNotificationToMany(subscriptions, payload);
+
+        let sent = 0;
+        let failed = 0;
+        for (const [endpoint, success] of results) {
+            if (success) {
+                sent++;
+            } else {
+                failed++;
+                await this.pushSubscriptionRepository.deleteByEndpoint(endpoint);
+            }
+        }
+
+        this.logger.log(`Sent notifications to ${sent} subscriptions (${failed} failed) for ${userIds.length} users`);
         return { sent, failed };
     }
 }

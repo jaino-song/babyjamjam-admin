@@ -1,7 +1,10 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Inject } from "@nestjs/common";
 import { UpdateEformsignDocStatusUsecase } from "application/usecases/eformsign-doc/update-eformsign-doc-status.usecase";
 import { LinkDocumentToClientUsecase } from "application/usecases/eformsign-doc/link-document-to-client.usecase";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
+import { AlimtalkService } from "./alimtalk.service";
+import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 
 /**
  * Eformsign document status codes (from document.status field)
@@ -48,7 +51,11 @@ export class EformsignWebhookService {
     constructor(
         private readonly updateStatusUsecase: UpdateEformsignDocStatusUsecase,
         private readonly linkDocumentUsecase: LinkDocumentToClientUsecase,
-        // NOTE: UpdateClientContractStatusUsecase removed - service status is now computed from dates
+        private readonly alimtalkService: AlimtalkService,
+        @Inject(CLIENT_REPOSITORY)
+        private readonly clientRepository: IClientRepository,
+        @Inject(EFORMSIGN_DOC_REPOSITORY)
+        private readonly eformsignDocRepository: IEformsignDocRepository,
     ) {}
 
     async processWebhook(payload: EformsignWebhookPayloadDto): Promise<void> {
@@ -114,12 +121,13 @@ export class EformsignWebhookService {
             return;
         }
 
-        // If document is completed, link it to the client (updates client.eDocId)
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
             this.logger.log(`Document ${documentId} completed (from PDF event), linking to client`);
             try {
                 await this.linkDocumentUsecase.execute(documentId);
                 this.logger.log(`Document ${documentId} successfully linked to client`);
+
+                await this.sendContractSignedAlimtalkByDocumentId(documentId, workflow_name);
             } catch (error) {
                 this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
             }
@@ -192,21 +200,58 @@ export class EformsignWebhookService {
             return;
         }
 
-        // If document is completed, link it to the client (updates client.eDocId)
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
             this.logger.log(`Document ${documentId} completed, linking to client`);
             try {
                 await this.linkDocumentUsecase.execute(documentId);
                 this.logger.log(`Document ${documentId} successfully linked to client`);
+
+                await this.sendContractSignedAlimtalkByDocumentId(documentId, workflow_name);
             } catch (error) {
                 this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
             }
         }
     }
 
-    /**
-     * Map eformsign document status to internal status type and Korean detail
-     */
+    private async sendContractSignedAlimtalkByDocumentId(
+        documentId: string,
+        workflowName: string
+    ): Promise<void> {
+        try {
+            const doc = await this.eformsignDocRepository.findByDocumentId(documentId);
+            if (!doc) {
+                this.logger.warn(`Cannot send alimtalk: document ${documentId} not found`);
+                return;
+            }
+
+            const client = await this.clientRepository.findById(doc.clientId);
+            if (!client) {
+                this.logger.warn(`Cannot send alimtalk: client ${doc.clientId} not found`);
+                return;
+            }
+
+            const today = new Date();
+            const contractInfo = {
+                contractType: workflowName || "방문요양 계약서",
+                signedDate: this.formatDate(today),
+                serviceStartDate: client.startDate ? this.formatDate(client.startDate) : this.formatDate(today),
+                employeeName: "담당자",
+            };
+
+            await this.alimtalkService.sendContractSignedAlimtalk(client, contractInfo);
+            this.logger.log(`Contract signed alimtalk sent for client ${client.id}`);
+        } catch (error) {
+            this.logger.error(`Failed to send contract signed alimtalk: ${error}`);
+        }
+    }
+
+    private formatDate(date: Date): string {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+    }
+
     private mapStatus(status: string): { statusType: string; statusDetail: string } {
         switch (status) {
             // Completed states

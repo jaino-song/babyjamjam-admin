@@ -82,6 +82,9 @@ export class NotificationController {
         @Request() req: { user: JwtPayload },
         @Query() query: GetNotificationsQueryDto,
     ): Promise<NotificationResponseDto[]> {
+        if (req.user.userId === 'dev-user') {
+            return [];
+        }
         const notifications = await this.notificationService.getNotifications(
             req.user.userId,
             { limit: query.limit, offset: query.offset },
@@ -95,6 +98,9 @@ export class NotificationController {
     @Get("unread/count")
     @UseGuards(JwtGuard)
     async getUnreadCount(@Request() req: { user: JwtPayload }): Promise<UnreadCountResponseDto> {
+        if (req.user.userId === 'dev-user') {
+            return { count: 0 };
+        }
         const count = await this.notificationService.countUnreadNotifications(req.user.userId);
         return { count };
     }

@@ -11,6 +11,7 @@ import { ClientEntity } from "domain/entities/client.entity";
 import { PaginatedResult } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
+import { AlimtalkService } from "./alimtalk.service";
 
 // Document status type for eformsign documents
 export type DocumentStatusType = 'created' | 'opened' | 'completed' | null;
@@ -60,6 +61,7 @@ export class ClientService {
         private readonly updateClientUsecase: UpdateClientUsecase,
         private readonly deleteClientUsecase: DeleteClientUsecase,
         private readonly prismaService: PrismaService,
+        private readonly alimtalkService: AlimtalkService,
     ) {}
 
     async create(params: {
@@ -116,6 +118,10 @@ export class ClientService {
                 end_date: endDate,
                 replaced: false,
             },
+        });
+
+        this.alimtalkService.sendClientCreatedAlimtalk(client).catch((error) => {
+            this.logger.error(`Failed to send client created alimtalk: ${error}`);
         });
 
         return client;

@@ -50,4 +50,12 @@ export class SbPushSubscriptionRepository implements IPushSubscriptionRepository
         });
         return rows.map(PushSubscriptionMapper.toDomain);
     }
+
+    async findByUserIds(userIds: string[]): Promise<PushSubscriptionEntity[]> {
+        const rows = await this.prismaService.push_subscription.findMany({
+            where: { user_id: { in: userIds } },
+            orderBy: { created_at: 'desc' },
+        });
+        return rows.map(PushSubscriptionMapper.toDomain);
+    }
 }

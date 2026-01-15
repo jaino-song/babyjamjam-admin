@@ -12,10 +12,10 @@ import { SbClientRepository } from "infrastructure/database/repositories/sb.clie
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientService } from "application/services/client.service";
 import { ClientController } from "interface/controllers/client.controller";
-import { ChannelTalkModule } from "./channeltalk.module";
+import { AlimtalkModule } from "./alimtalk.module";
 
 @Module({
-    imports: [ChannelTalkModule],
+    imports: [AlimtalkModule],
     controllers: [ClientController],
     providers: [
         CreateClientUsecase,

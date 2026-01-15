@@ -30,6 +30,11 @@ export interface IPushSubscriptionRepository {
      * Get all subscriptions (for broadcast notifications)
      */
     findAll(): Promise<PushSubscriptionEntity[]>;
+
+    /**
+     * Get subscriptions for multiple users (for role-based notifications)
+     */
+    findByUserIds(userIds: string[]): Promise<PushSubscriptionEntity[]>;
 }
 
 export const PUSH_SUBSCRIPTION_REPOSITORY = 'PUSH_SUBSCRIPTION_REPOSITORY';
