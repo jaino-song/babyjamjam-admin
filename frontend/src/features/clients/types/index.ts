@@ -5,7 +5,7 @@ export interface EmployeeSummary {
 }
 
 // Document status type for eformsign documents
-export type DocumentStatus = 'created' | 'opened' | 'completed' | null;
+export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
 
 // Client entity types
 export interface Client {

@@ -14,7 +14,15 @@ import { computeServiceStatus, SERVICE_STATUS, ServiceStatusType } from "domain/
 import { AlimtalkService } from "./alimtalk.service";
 
 // Document status type for eformsign documents
-export type DocumentStatusType = 'created' | 'opened' | 'completed' | null;
+// Maps to eformsign_doc.status_type values:
+// - 010: created (문서 생성됨)
+// - 020: opened (서명 페이지 열림)
+// - 050: completed (완료)
+// - 060: requested (서명 요청됨/진행중)
+// - 080: rejected (거부됨)
+// - 090: revoked (철회됨)
+// - 099: deleted (삭제됨)
+export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
 
 // Response type that includes employee information
 export interface ClientWithEmployees {
@@ -168,8 +176,8 @@ export class ClientService {
                 replaced: false,
             },
             include: {
-                primary_employee: true,
-                secondary_employee: true,
+                employee_employee_schedule_primary_employee_idToemployee: true,
+                employee_employee_schedule_secondary_employee_idToemployee: true,
             },
         });
 
@@ -224,11 +232,11 @@ export class ClientService {
                 eDocId: client.eDocId,
                 hasSigned: client.eDocId !== null,
                 documentStatus: this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? '')),
-                primaryEmployee: schedule?.primary_employee
-                    ? { id: schedule.primary_employee.id, name: schedule.primary_employee.name }
+                primaryEmployee: schedule?.employee_employee_schedule_primary_employee_idToemployee
+                    ? { id: schedule.employee_employee_schedule_primary_employee_idToemployee.id, name: schedule.employee_employee_schedule_primary_employee_idToemployee.name }
                     : null,
-                secondaryEmployee: schedule?.secondary_employee
-                    ? { id: schedule.secondary_employee.id, name: schedule.secondary_employee.name }
+                secondaryEmployee: schedule?.employee_employee_schedule_secondary_employee_idToemployee
+                    ? { id: schedule.employee_employee_schedule_secondary_employee_idToemployee.id, name: schedule.employee_employee_schedule_secondary_employee_idToemployee.name }
                     : null,
             };
         });
@@ -266,15 +274,15 @@ export class ClientService {
         });
     }
 
-    /**
-     * Map eformsign_doc status_type to user-friendly document status
-     * @param statusType - DB status_type (010=created, 020=opened, 050=completed)
-     */
     private mapStatusTypeToDocumentStatus(statusType?: string): DocumentStatusType {
         switch (statusType) {
             case '010': return 'created';
             case '020': return 'opened';
             case '050': return 'completed';
+            case '060': return 'requested';
+            case '080': return 'rejected';
+            case '090': return 'revoked';
+            case '099': return 'deleted';
             default: return null;
         }
     }

@@ -52,6 +52,12 @@ export interface IClientRepository {
      * whose service starts within the next N days
      */
     findWithIncompleteContractsStartingWithinDays(days: number): Promise<ClientEntity[]>;
+
+    /**
+     * Find clients without any contract sent (eDocId is null)
+     * whose service starts within the next N days
+     */
+    findWithoutContractSentStartingWithinDays(days: number): Promise<ClientEntity[]>;
 }
 
 export const CLIENT_REPOSITORY = "CLIENT_REPOSITORY";

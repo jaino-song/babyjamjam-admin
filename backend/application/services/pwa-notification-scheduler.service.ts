@@ -24,6 +24,7 @@ export class PwaNotificationSchedulerService {
             this.notifyUpcomingServices(),
             this.notifyEndingServices(),
             this.notifyIncompleteContracts(),
+            this.notifyContractsNotSent(),
         ]);
 
         this.logger.log("[PWA Scheduler] Daily summary notifications completed");
@@ -92,6 +93,30 @@ export class PwaNotificationSchedulerService {
             this.logger.log(`[PWA Scheduler] Incomplete contracts notification: ${result.sent} sent, ${result.failed} failed`);
         } catch (error) {
             this.logger.error("[PWA Scheduler] Failed to send incomplete contracts notification", error);
+        }
+    }
+
+    private async notifyContractsNotSent(): Promise<void> {
+        try {
+            const clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(DAYS_THRESHOLD);
+
+            if (clients.length === 0) {
+                this.logger.log("[PWA Scheduler] No clients without contracts sent");
+                return;
+            }
+
+            for (const client of clients) {
+                await this.notificationService.sendToRoles(
+                    TARGET_ROLES,
+                    "📄 계약서 미발송",
+                    `${client.name} 님에게 계약서가 발송되지 않았습니다. 계약서를 발송해 주세요.`,
+                    { url: `/clients/${client.id}` },
+                );
+            }
+
+            this.logger.log(`[PWA Scheduler] Contracts not sent notification: ${clients.length} clients notified`);
+        } catch (error) {
+            this.logger.error("[PWA Scheduler] Failed to send contracts not sent notification", error);
         }
     }
 }
