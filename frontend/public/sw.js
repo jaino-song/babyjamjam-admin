@@ -11,11 +11,9 @@
 const CACHE_VERSION = 'v1';
 const CACHE_NAME = `imirae-back-office-${CACHE_VERSION}`;
 
-// Install event - cache essential assets
+// Install event - wait for message to activate (allows overlay to show)
 self.addEventListener('install', (event) => {
     console.log('[SW] Installing service worker...');
-    // Skip waiting to activate immediately
-    self.skipWaiting();
 });
 
 // Activate event - clean up old caches

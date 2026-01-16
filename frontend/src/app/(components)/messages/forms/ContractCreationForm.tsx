@@ -37,8 +37,10 @@ import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import dayjs, { Dayjs } from "dayjs";
 import "dayjs/locale/ko";
 import { useState, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEformsign } from "@/app/lib/eformsign/useEformsign";
 import type { EformsignDocumentOption } from "@/app/lib/eformsign/types";
+import { eformsignQueryKeys } from "@/app/hooks/useEformsignDocuments";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/app/hooks";
 import voucherOptions from "../templates/json/voucher.json";
 import { MoonLoader } from "react-spinners";
@@ -94,6 +96,7 @@ function formatPrice(price: string): string {
 
 export const ContractCreationForm = () => {
   const locale = useLocale();
+  const queryClient = useQueryClient();
   const [activeStep, setActiveStep] = useState(0);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -519,6 +522,7 @@ export const ContractCreationForm = () => {
               }
             }
 
+            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
             setDocumentCreated(true);
             alert(`계약서가 성공적으로 생성되었습니다.`);
             handleDialogClose();

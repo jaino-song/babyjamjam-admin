@@ -8,6 +8,8 @@ interface ServiceWorkerUpdateState {
     registration: ServiceWorkerRegistration | null;
 }
 
+const OVERLAY_MIN_DISPLAY_TIME = 1000;
+
 export function useServiceWorkerUpdate() {
     const [state, setState] = useState<ServiceWorkerUpdateState>({
         isUpdating: false,
@@ -20,7 +22,9 @@ export function useServiceWorkerUpdate() {
 
         setState(prev => ({ ...prev, isUpdating: true }));
 
-        state.registration.waiting.postMessage('skipWaiting');
+        setTimeout(() => {
+            state.registration?.waiting?.postMessage('skipWaiting');
+        }, OVERLAY_MIN_DISPLAY_TIME);
     }, [state.registration]);
 
     useEffect(() => {
@@ -28,8 +32,17 @@ export function useServiceWorkerUpdate() {
             return;
         }
 
+        let reloadTimeout: NodeJS.Timeout | null = null;
+
         const handleControllerChange = () => {
-            window.location.reload();
+            if (state.isUpdating) {
+                window.location.reload();
+            } else {
+                setState(prev => ({ ...prev, isUpdating: true }));
+                reloadTimeout = setTimeout(() => {
+                    window.location.reload();
+                }, OVERLAY_MIN_DISPLAY_TIME);
+            }
         };
 
         navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
@@ -39,7 +52,9 @@ export function useServiceWorkerUpdate() {
 
             if (registration.waiting) {
                 setState(prev => ({ ...prev, isUpdateAvailable: true, isUpdating: true }));
-                registration.waiting.postMessage('skipWaiting');
+                setTimeout(() => {
+                    registration.waiting?.postMessage('skipWaiting');
+                }, OVERLAY_MIN_DISPLAY_TIME);
             }
 
             registration.addEventListener('updatefound', () => {
@@ -49,7 +64,9 @@ export function useServiceWorkerUpdate() {
                 newWorker.addEventListener('statechange', () => {
                     if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
                         setState(prev => ({ ...prev, isUpdateAvailable: true, isUpdating: true }));
-                        newWorker.postMessage('skipWaiting');
+                        setTimeout(() => {
+                            newWorker.postMessage('skipWaiting');
+                        }, OVERLAY_MIN_DISPLAY_TIME);
                     }
                 });
             });
@@ -59,8 +76,9 @@ export function useServiceWorkerUpdate() {
 
         return () => {
             navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
+            if (reloadTimeout) clearTimeout(reloadTimeout);
         };
-    }, []);
+    }, [state.isUpdating]);
 
     return {
         ...state,
