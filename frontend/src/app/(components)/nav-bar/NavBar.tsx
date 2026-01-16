@@ -1,14 +1,18 @@
 "use client";
+import { useEffect } from "react";
 import { Box, Stack, IconButton } from "@mui/material";
 import CloseIcon from '@mui/icons-material/Close';
 import { House, MessageCircle, File, Settings } from 'lucide-react';
 import { t } from "@/app/lib/i18n/translations";
 import { usePathname } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { NavButton } from "./NavButton";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import AssignmentIndOutlinedIcon from '@mui/icons-material/AssignmentIndOutlined';
 import { useLocale } from "@/app/(components)/LocaleProvider";
+import { eformsignQueryKeys } from "@/app/hooks/useEformsignDocuments";
+import { eformsignApi } from "@/services/api";
 
 interface NavBarProps {
     onClose: () => void;
@@ -17,6 +21,15 @@ interface NavBarProps {
 export const NavBar = ({ onClose }: NavBarProps) => {
     const locale = useLocale();
     const pathname = usePathname();
+    const queryClient = useQueryClient();
+
+    useEffect(() => {
+        queryClient.prefetchQuery({
+            queryKey: eformsignQueryKeys.allDocuments(),
+            queryFn: () => eformsignApi.getAllDocuments(),
+            staleTime: 1000 * 60 * 5,
+        });
+    }, [queryClient]);
     const isDashboard = pathname === "/dashboard";
     const isMessages = pathname?.includes("/messages");
     const isContracts = pathname === "/contracts";
