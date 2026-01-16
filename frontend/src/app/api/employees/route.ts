@@ -1,10 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/app/lib/axios/server";
 
+function getAuthToken(request: NextRequest): string | null {
+    return request.cookies.get("auth_token")?.value || null;
+}
+
+function getAuthHeaders(token: string | null): Record<string, string> {
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 // GET /api/employees - Get all employees
 export async function GET(request: NextRequest) {
     try {
-        const response = await serverAPIClient.get("/employees");
+        const token = getAuthToken(request);
+        if (!token) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
+        const response = await serverAPIClient.get("/employees", {
+            headers: getAuthHeaders(token),
+        });
 
         // Check if backend returned an error status
         if (response.status >= 400) {
@@ -28,8 +43,15 @@ export async function GET(request: NextRequest) {
 // POST /api/employees - Create a new employee
 export async function POST(request: NextRequest) {
     try {
+        const token = getAuthToken(request);
+        if (!token) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const body = await request.json();
-        const response = await serverAPIClient.post("/employees", body);
+        const response = await serverAPIClient.post("/employees", body, {
+            headers: getAuthHeaders(token),
+        });
 
         // Check if backend returned an error status
         if (response.status >= 400) {
@@ -65,9 +87,15 @@ export async function PATCH(request: NextRequest) {
             );
         }
 
+        const token = getAuthToken(request);
+        if (!token) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const body = await request.json();
         const response = await serverAPIClient.patch("/employees", body, {
-            params: { id }
+            params: { id },
+            headers: getAuthHeaders(token),
         });
 
         // Check if backend returned an error status
@@ -102,8 +130,14 @@ export async function DELETE(request: NextRequest) {
             );
         }
 
+        const token = getAuthToken(request);
+        if (!token) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const response = await serverAPIClient.delete("/employees", {
-            params: { id }
+            params: { id },
+            headers: getAuthHeaders(token),
         });
 
         // Check if backend returned an error status

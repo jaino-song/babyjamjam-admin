@@ -7,9 +7,11 @@ import {
     GetNotificationsUsecase,
     MarkNotificationReadUsecase,
     GetVapidKeyUsecase,
+    CleanupNotificationsUsecase,
 } from "application/usecases/notification";
 import { NotificationService } from "application/services/notification.service";
 import { PwaNotificationSchedulerService } from "application/services/pwa-notification-scheduler.service";
+import { NotificationCleanupSchedulerService } from "application/services/notification-cleanup-scheduler.service";
 import { NotificationController } from "interface/controllers/notification.controller";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbPushSubscriptionRepository } from "infrastructure/database/repositories/sb.push-subscription.repository";
@@ -34,9 +36,11 @@ import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
         GetNotificationsUsecase,
         MarkNotificationReadUsecase,
         GetVapidKeyUsecase,
+        CleanupNotificationsUsecase,
         // Services
         NotificationService,
         PwaNotificationSchedulerService,
+        NotificationCleanupSchedulerService,
         // Infrastructure
         PrismaService,
         // Repository bindings (Port -> Adapter)

@@ -37,8 +37,11 @@ export class ClientController {
         @Query("page") page?: string,
         @Query("limit") limit?: string,
         @Query("search") search?: string,
+        @Query("filter") filter?: string,
     ) {
-        // If pagination params provided, use paginated query
+        if (filter) {
+            return this.clientService.findByFilter(filter);
+        }
         if (page && limit) {
             return this.clientService.findAllPaginated(
                 Number(page),
@@ -46,7 +49,6 @@ export class ClientController {
                 search,
             );
         }
-        // Otherwise return all (for backwards compatibility)
         return this.clientService.findAll();
     }
 

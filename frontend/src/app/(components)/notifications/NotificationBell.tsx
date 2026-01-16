@@ -26,8 +26,44 @@ import {
     usePushNotification,
     Notification,
 } from "@/app/hooks/usePushNotification";
-import { formatDistanceToNow } from "date-fns";
+import { format, isToday, isYesterday } from "date-fns";
 import { ko } from "date-fns/locale";
+
+interface GroupedNotifications {
+    date: string;
+    label: string;
+    notifications: Notification[];
+}
+
+function formatDateLabel(date: Date): string {
+    if (isToday(date)) {
+        return "오늘";
+    }
+    if (isYesterday(date)) {
+        return "어제";
+    }
+    return format(date, "M월 d일 EEEE", { locale: ko });
+}
+
+function groupNotificationsByDate(notifications: Notification[]): GroupedNotifications[] {
+    const groups = new Map<string, Notification[]>();
+
+    notifications.forEach((notification) => {
+        const date = new Date(notification.sentAt);
+        const dateKey = format(date, "yyyy-MM-dd");
+
+        if (!groups.has(dateKey)) {
+            groups.set(dateKey, []);
+        }
+        groups.get(dateKey)!.push(notification);
+    });
+
+    return Array.from(groups.entries()).map(([dateKey, items]) => ({
+        date: dateKey,
+        label: formatDateLabel(new Date(dateKey)),
+        notifications: items,
+    }));
+}
 
 /**
  * Unified Notification Bell Component
@@ -190,53 +226,67 @@ export function NotificationBell() {
                     </Box>
                 ) : (
                     <List sx={{ py: 0 }}>
-                        {notifications.map((notification) => (
-                            <ListItem
-                                key={notification.id}
-                                onClick={() => handleNotificationClick(notification)}
-                                sx={{
-                                    cursor: 'pointer',
-                                    bgcolor: notification.isRead ? 'transparent' : 'action.hover',
-                                    '&:hover': {
-                                        bgcolor: 'action.selected',
-                                    },
-                                }}
-                                divider
-                            >
-                                <ListItemText
-                                    primary={
-                                        <Typography
-                                            variant="body2"
-                                            fontWeight={notification.isRead ? 'normal' : 'bold'}
-                                        >
-                                            {notification.title}
-                                        </Typography>
-                                    }
-                                    secondary={
-                                        <>
-                                            <Typography
-                                                variant="caption"
-                                                color="text.secondary"
-                                                component="span"
-                                                display="block"
-                                                sx={{
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                            >
-                                                {notification.body}
-                                            </Typography>
-                                            <Typography variant="caption" color="text.disabled">
-                                                {formatDistanceToNow(new Date(notification.sentAt), {
-                                                    addSuffix: true,
-                                                    locale: ko,
-                                                })}
-                                            </Typography>
-                                        </>
-                                    }
-                                />
-                            </ListItem>
+                        {groupNotificationsByDate(notifications).map((group) => (
+                            <Box key={group.date}>
+                                <Box
+                                    sx={{
+                                        px: 2,
+                                        py: 1,
+                                        bgcolor: 'grey.100',
+                                        position: 'sticky',
+                                        top: 0,
+                                    }}
+                                >
+                                    <Typography variant="caption" fontWeight="bold" color="text.secondary">
+                                        {group.label}
+                                    </Typography>
+                                </Box>
+                                {group.notifications.map((notification) => (
+                                    <ListItem
+                                        key={notification.id}
+                                        onClick={() => handleNotificationClick(notification)}
+                                        sx={{
+                                            cursor: 'pointer',
+                                            bgcolor: notification.isRead ? 'transparent' : 'action.hover',
+                                            '&:hover': {
+                                                bgcolor: 'action.selected',
+                                            },
+                                        }}
+                                        divider
+                                    >
+                                        <ListItemText
+                                            primary={
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <Typography
+                                                        variant="body2"
+                                                        fontWeight={notification.isRead ? 'normal' : 'bold'}
+                                                    >
+                                                        {notification.title}
+                                                    </Typography>
+                                                    <Typography variant="caption" color="text.disabled" sx={{ ml: 1, flexShrink: 0 }}>
+                                                        {format(new Date(notification.sentAt), "a h:mm", { locale: ko })}
+                                                    </Typography>
+                                                </Box>
+                                            }
+                                            secondary={
+                                                <Typography
+                                                    variant="caption"
+                                                    color="text.secondary"
+                                                    component="span"
+                                                    display="block"
+                                                    sx={{
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis',
+                                                        whiteSpace: 'nowrap',
+                                                    }}
+                                                >
+                                                    {notification.body}
+                                                </Typography>
+                                            }
+                                        />
+                                    </ListItem>
+                                ))}
+                            </Box>
                         ))}
                     </List>
                 )}

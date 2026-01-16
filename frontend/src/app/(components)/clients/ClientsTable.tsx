@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
     Box,
     Table,
@@ -17,7 +18,7 @@ import {
     Divider,
 } from "@mui/material";
 import { Search, Plus } from "lucide-react";
-import { useClients, useDeleteClient } from "@/app/hooks/useClients";
+import { useClients, useDeleteClient, useClient } from "@/app/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/app/lib/client/types";
 import { ComponentContainer } from "../root/ComponentContainer";
 import { ClientFormDialog } from "./ClientFormDialog";
@@ -45,6 +46,10 @@ const formatDate = (dateStr: string | null): string => {
 
 export function ClientsTable() {
     const locale = useLocale();
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const clientIdParam = searchParams.get("id");
+
     const [page, setPage] = useState(0);
     const [rowsPerPage] = useState(10);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
@@ -58,6 +63,15 @@ export function ClientsTable() {
         undefined
     );
     const deleteClient = useDeleteClient();
+
+    const { data: clientFromParam } = useClient(clientIdParam ? Number(clientIdParam) : 0);
+
+    useEffect(() => {
+        if (clientIdParam && clientFromParam) {
+            setSelectedClient(clientFromParam);
+            setDetailModalOpen(true);
+        }
+    }, [clientIdParam, clientFromParam]);
 
     const handleChangePage = (_event: unknown, newPage: number) => {
         setPage(newPage);
@@ -96,6 +110,9 @@ export function ClientsTable() {
     const handleDetailModalClose = () => {
         setDetailModalOpen(false);
         setSelectedClient(null);
+        if (clientIdParam) {
+            router.replace("/clients");
+        }
     };
 
     if (isLoading) {
@@ -154,6 +171,7 @@ export function ClientsTable() {
                             size="medium"
                             sx={{ color: "#1e88e5" }}
                             onClick={handleAddNew}
+                            data-testid="add-client-button"
                         >
                             <Plus size={30} strokeWidth={2} />
                         </IconButton>

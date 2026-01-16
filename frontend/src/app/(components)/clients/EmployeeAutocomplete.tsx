@@ -19,7 +19,7 @@ import { useEmployeeDialogStore } from "@/app/store/employee-dialog-store";
 import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 
 interface EmployeeAutocompleteProps {
-    "data-component"?: string;
+    "data-testid"?: string;
     value: number | null;
     onChange: (employeeId: number | null, employee: Employee | null) => void;
     label: string;
@@ -41,7 +41,7 @@ export function EmployeeAutocomplete({
     excludeIds = [],
     allowManualEntry = false,
     onManualEntry,
-    "data-component": dataComponent,
+    "data-testid": dataTestId,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
     const { data: employees, isLoading } = useEmployees();
@@ -137,7 +137,7 @@ export function EmployeeAutocomplete({
 
     return (
         <Autocomplete<Employee, false, false, false>
-            data-component={dataComponent ?? "EmployeeAutocomplete"}
+            data-testid={dataTestId ?? "employee-autocomplete"}
             value={selectedEmployee}
             onChange={handleChange}
             inputValue={inputValue}
@@ -217,13 +217,13 @@ export function EmployeeAutocomplete({
             }
             slots={{
                 paper: (props) => (
-                    <Paper {...props} elevation={8} data-component="EmployeeAutocomplete-Dropdown">
+                    <Paper {...props} elevation={8} data-testid="employee-autocomplete-dropdown">
                         {props.children}
                         {allowManualEntry && (
                             <>
                                 <Divider />
                                 <ButtonBase
-                                    data-component="EmployeeAutocomplete-AddNewButton"
+                                    data-testid="employee-autocomplete-add-button"
                                     onMouseDown={handleManualEntry}
                                     sx={{
                                         width: "100%",
