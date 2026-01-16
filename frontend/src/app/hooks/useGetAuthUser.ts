@@ -8,6 +8,7 @@ export interface AuthUser {
     name: string;
     email?: string;
     profile_image?: string;
+    role?: string;
 }
 
 interface UseGetAuthUserOptions {

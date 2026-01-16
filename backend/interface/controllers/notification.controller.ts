@@ -168,6 +168,19 @@ export class NotificationController {
         );
     }
 
+    /**
+     * Test broadcast - development only, no auth required
+     * 개발/테스트용 엔드포인트
+     */
+    @Post("test-broadcast")
+    async testBroadcast(): Promise<BroadcastResultResponseDto> {
+        return this.notificationService.broadcastNotification(
+            "🎉 테스트 알림",
+            "PWA 푸시 알림이 정상 작동합니다!",
+            { url: "/clients", timestamp: new Date().toISOString() },
+        );
+    }
+
     private toResponseDto(notification: import("domain/entities/notification.entity").NotificationEntity): NotificationResponseDto {
         return {
             id: notification.id,
