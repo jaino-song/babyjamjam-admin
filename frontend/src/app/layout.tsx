@@ -11,6 +11,7 @@ import { LocaleProvider } from "./(components)/LocaleProvider";
 import { getLocale } from "./actions/locale";
 import { getCurrentUser } from "./lib/auth/cookies";
 import { UserProvider } from "./(components)/providers/UserProvider";
+import { ServiceWorkerUpdateOverlay } from "./(components)/ServiceWorkerUpdateOverlay";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",
@@ -55,6 +56,7 @@ export default async function RootLayout({
             <QueryProvider>
               <LocaleProvider locale={locale}>
                 <UserProvider user={user}>
+                  <ServiceWorkerUpdateOverlay />
                   <ConditionalHeader />
                   <AnimatedContainer>
                     <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1, width: "100%" }}>
