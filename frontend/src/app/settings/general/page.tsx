@@ -13,10 +13,12 @@ import {
   Alert,
   Snackbar,
 } from "@mui/material";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { settingsApi, AlimtalkProvider } from "@/services/api";
 import { MessageSquare } from "lucide-react";
+import { useGetAuthUser } from "@/app/hooks/useGetAuthUser";
+import { NotificationTestSection } from "@/app/(components)/settings/NotificationTestSection";
 
 const PROVIDER_OPTIONS: { value: AlimtalkProvider; label: string; description: string }[] = [
   {
@@ -46,6 +48,8 @@ export default function GeneralSettingsPage() {
   });
 
   const queryClient = useQueryClient();
+  const { data: user } = useGetAuthUser();
+  const isOwner = user?.role === 'owner';
 
   const { data: alimtalkSettings, isLoading: isLoadingAlimtalk, error: alimtalkError } = useQuery({
     queryKey: ["settings", "alimtalk-provider"],
@@ -178,6 +182,12 @@ export default function GeneralSettingsPage() {
           </Typography>
         </Box>
       </Paper>
+
+      {isOwner && (
+        <Paper elevation={2} sx={{ p: 3 }}>
+          <NotificationTestSection />
+        </Paper>
+      )}
 
       <Snackbar
         open={snackbar.open}
