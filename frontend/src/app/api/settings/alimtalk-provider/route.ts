@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/app/lib/axios/server";
 
-const isDevMode = process.env.NODE_ENV === 'development' || process.env.VERCEL_ENV === 'preview';
-
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
 }
@@ -14,7 +12,7 @@ function getAuthHeaders(token: string | null): Record<string, string> {
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
-        if (!token && !isDevMode) {
+        if (!token) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
@@ -34,7 +32,7 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
     try {
         const token = getAuthToken(request);
-        if (!token && !isDevMode) {
+        if (!token) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 

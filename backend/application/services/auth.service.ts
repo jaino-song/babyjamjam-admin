@@ -69,11 +69,14 @@ export class AuthService {
             role: user.role,
         };
 
-        const signOptions = user.role === "owner"
+        const privilegedRoles = ["owner", "admin", "manager"];
+        const isPrivileged = user.role !== null && privilegedRoles.includes(user.role);
+
+        const signOptions = isPrivileged
             ? { expiresIn: "30d" }
             : { expiresIn: "3d" };
 
-        const refreshSignOptions = user.role === "owner"
+        const refreshSignOptions = isPrivileged
             ? { expiresIn: "7d" }
             : { expiresIn: "1d" };
 

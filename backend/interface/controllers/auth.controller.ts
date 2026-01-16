@@ -44,16 +44,6 @@ export class AuthController {
     @Get("me")
     @UseGuards(JwtGuard)
     async getCurrentUser(@Request() req: any) {
-        if (req.user.userId === 'dev-user') {
-            return {
-                id: 'dev-user',
-                name: '개발자',
-                email: 'dev@example.com',
-                profile_image: null,
-                role: 'owner',
-            };
-        }
-
         const user = await this.prisma.user.findUnique({
             where: { id: req.user.userId },
             select: {

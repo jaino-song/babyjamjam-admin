@@ -11,6 +11,7 @@ import { LocaleProvider } from "./(components)/LocaleProvider";
 import { getLocale } from "./actions/locale";
 import { getCurrentUser } from "./lib/auth/cookies";
 import { UserProvider } from "./(components)/providers/UserProvider";
+import { ServiceWorkerUpdateOverlay } from "./(components)/ServiceWorkerUpdateOverlay";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",
@@ -19,13 +20,16 @@ const Pretendard = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Incheon Imirae Back Office",
-  description: "Incheon Imirae Back Office",
+  title: "인천 아이미래로 백오피스",
+  description: "인천 아이미래로 업무 관리 시스템",
   manifest: "/manifest.json",
+  icons: {
+    apple: "/apple-touch-icon.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "이미래 인천",
+    title: "인천 아이미래로",
   },
   formatDetection: {
     telephone: false,
@@ -55,6 +59,7 @@ export default async function RootLayout({
             <QueryProvider>
               <LocaleProvider locale={locale}>
                 <UserProvider user={user}>
+                  <ServiceWorkerUpdateOverlay />
                   <ConditionalHeader />
                   <AnimatedContainer>
                     <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1, width: "100%" }}>
