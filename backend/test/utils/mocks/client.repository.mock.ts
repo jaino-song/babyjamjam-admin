@@ -193,8 +193,23 @@ export class MockClientRepository implements IClientRepository {
         return Array.from(this.clients.values()).filter(client => {
             if (!client.startDate) return false;
             const isStartingSoon = client.startDate >= today && client.startDate <= endDate;
-            const hasIncompleteContract = !client.eDocId;
-            return isStartingSoon && hasIncompleteContract;
+            const hasContractButIncomplete = client.eDocId !== null;
+            return isStartingSoon && hasContractButIncomplete;
+        });
+    }
+
+    async findWithoutContractSentStartingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.startDate) return false;
+            const isStartingSoon = client.startDate >= today && client.startDate <= endDate;
+            const noContractSent = client.eDocId === null;
+            return isStartingSoon && noContractSent;
         });
     }
 }

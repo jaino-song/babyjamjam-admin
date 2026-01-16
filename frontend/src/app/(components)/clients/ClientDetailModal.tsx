@@ -60,11 +60,6 @@ const formatPrice = (price: string | null): string => {
     return `${num.toLocaleString("ko-KR")}원`;
 };
 
-/**
- * Get document status chip based on eformsign document status
- * @param status - Document status: created, opened, completed, or null
- * @param locale - Current locale for translations
- */
 const getDocStatusChip = (status: DocumentStatus, locale: Locale) => {
     switch (status) {
         case 'completed':
@@ -73,6 +68,14 @@ const getDocStatusChip = (status: DocumentStatus, locale: Locale) => {
             return <Chip label={t(locale, "clients.form.doc-opened")} color="warning" size="small" />;
         case 'created':
             return <Chip label={t(locale, "clients.form.doc-created")} color="default" size="small" />;
+        case 'requested':
+            return <Chip label={t(locale, "clients.form.doc-requested")} color="info" size="small" />;
+        case 'rejected':
+            return <Chip label={t(locale, "clients.form.doc-rejected")} color="error" size="small" />;
+        case 'revoked':
+            return <Chip label={t(locale, "clients.form.doc-revoked")} color="error" size="small" variant="outlined" />;
+        case 'deleted':
+            return <Chip label={t(locale, "clients.form.doc-deleted")} color="default" size="small" variant="outlined" />;
         default:
             return <Chip label={t(locale, "clients.form.doc-not-sent")} color="default" size="small" variant="outlined" />;
     }

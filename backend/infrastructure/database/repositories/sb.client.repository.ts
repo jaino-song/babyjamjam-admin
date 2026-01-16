@@ -174,17 +174,33 @@ export class SbClientRepository implements IClientRepository {
                     gte: today,
                     lte: endDate,
                 },
-                OR: [
-                    { e_doc_id: null },
-                    {
-                        signed_doc: {
-                            status_type: { not: '050' },
-                        },
-                    },
-                ],
+                e_doc_id: { not: null },
+                eformsign_doc_client_e_doc_idToeformsign_doc: {
+                    status_type: { not: '050' },
+                },
             },
             include: {
-                signed_doc: true,
+                eformsign_doc_client_e_doc_idToeformsign_doc: true,
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findWithoutContractSentStartingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                start_date: {
+                    gte: today,
+                    lte: endDate,
+                },
+                e_doc_id: null,
             },
         });
         return clients.map(ClientMapper.toDomain);

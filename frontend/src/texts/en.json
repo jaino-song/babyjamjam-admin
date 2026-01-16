@@ -274,7 +274,11 @@
       "doc-not-sent": "Not Sent",
       "doc-created": "Created",
       "doc-opened": "Opened",
-      "doc-completed": "Completed"
+      "doc-completed": "Completed",
+      "doc-requested": "Requested",
+      "doc-rejected": "Rejected",
+      "doc-revoked": "Revoked",
+      "doc-deleted": "Deleted"
     }
   },
   "employees": {
