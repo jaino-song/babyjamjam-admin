@@ -19,5 +19,5 @@
       "noUncheckedIndexedAccess": true,
       "noPropertyAccessFromIndexSignature": true
     },
-    "exclude": ["scripts"]
+    "exclude": ["scripts", "test", "dist"]
   }

@@ -24,11 +24,11 @@ test.describe('Client Creation Flow', () => {
     test.describe('Dialog Opening', () => {
         test('should open ClientFormDialog when clicking add button', async ({ page }) => {
             // Find and click the add button
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
 
             // Verify dialog opens
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
             await expect(dialog).toBeVisible();
 
             // Verify it's in create mode (check title if visible)
@@ -37,16 +37,16 @@ test.describe('Client Creation Flow', () => {
 
         test('should close dialog when clicking cancel button', async ({ page }) => {
             // Open dialog
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
-            await expect(page.locator('[role="dialog"]')).toBeVisible();
+            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
 
             // Click cancel
-            const cancelButton = page.locator('[role="dialog"]').getByRole('button', { name: /취소|cancel/i });
+            const cancelButton = page.locator('[data-testid="client-form-dialog"]').getByRole('button', { name: /취소|cancel/i });
             await cancelButton.click();
 
             // Dialog should be closed
-            await expect(page.locator('[role="dialog"]')).not.toBeVisible();
+            await expect(page.locator('[data-testid="client-form-dialog"]')).not.toBeVisible();
         });
     });
 
@@ -56,23 +56,23 @@ test.describe('Client Creation Flow', () => {
     test.describe('Form Validation', () => {
         test.beforeEach(async ({ page }) => {
             // Open dialog before each validation test
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
-            await expect(page.locator('[role="dialog"]')).toBeVisible();
+            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
         });
 
         test('should show error when submitting empty form', async ({ page }) => {
             // Click submit without filling any fields
-            const submitButton = page.locator('[role="dialog"]').getByRole('button', { name: /등록|생성|create|저장|save/i });
+            const submitButton = page.locator('[data-testid="client-form-dialog"]').getByRole('button', { name: /등록|생성|create|저장|save/i });
             await submitButton.click();
 
             // Should show error alert
-            const errorAlert = page.locator('[role="dialog"]').locator('[role="alert"]');
+            const errorAlert = page.locator('[data-testid="client-form-dialog"]').locator('[role="alert"]');
             await expect(errorAlert).toBeVisible({ timeout: 3000 });
         });
 
         test('should validate required fields one by one', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Fill name only and try to submit
             const nameInput = dialog.locator('input').first();
@@ -92,13 +92,13 @@ test.describe('Client Creation Flow', () => {
     // ============================================
     test.describe('Basic Info Section', () => {
         test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
-            await expect(page.locator('[role="dialog"]')).toBeVisible();
+            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
         });
 
         test('should accept name input', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
             const nameInput = dialog.locator('input').first();
 
             await nameInput.fill('홍길동');
@@ -106,7 +106,7 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should format birthday as YYMMDD', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find birthday input (usually has placeholder YYMMDD)
             const birthdayInput = dialog.locator('input[placeholder*="YYMMDD"], input').nth(1);
@@ -121,7 +121,7 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should format phone number as XXX-XXXX-XXXX', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find phone input (look for placeholder pattern)
             const phoneInput = dialog.locator('input[placeholder*="010"], input').nth(2);
@@ -135,7 +135,7 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should accept address input', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find address input
             const inputs = dialog.locator('input[type="text"]');
@@ -151,13 +151,13 @@ test.describe('Client Creation Flow', () => {
     // ============================================
     test.describe('Voucher Type and Duration Select Boxes', () => {
         test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
-            await expect(page.locator('[role="dialog"]')).toBeVisible();
+            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
         });
 
         test('should display voucher type select with grouped options', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find the voucher type select (first dropdown in service section)
             const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
@@ -176,7 +176,7 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should enable duration select after selecting voucher type', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Duration select should be disabled initially
             const selects = dialog.locator('.MuiFormControl-root').filter({ has: page.locator('.MuiSelect-select') });
@@ -202,7 +202,7 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should show loading indicator while fetching durations', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Click on voucher type select
             const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
@@ -222,10 +222,10 @@ test.describe('Client Creation Flow', () => {
     // ============================================
     test.describe('Price Auto-fill', () => {
         test('should auto-fill prices when type and duration selected', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Open dialog
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
             await expect(dialog).toBeVisible();
 
@@ -257,10 +257,10 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should show "Auto-filled" chip when prices are auto-filled', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Open dialog
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
             await expect(dialog).toBeVisible();
 
@@ -285,10 +285,10 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should hide auto-fill chip when user manually edits price', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Open dialog and select type/duration to trigger auto-fill
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
             await expect(dialog).toBeVisible();
 
@@ -306,10 +306,12 @@ test.describe('Client Creation Flow', () => {
             await page.waitForTimeout(500);
 
             // Manually edit a price field (find price inputs in the pricing section)
-            // Price inputs typically follow after duration select
-            const priceInput = dialog.locator('input[type="text"]').filter({ has: page.locator('..text=원') }).first();
-            if (await priceInput.count() > 0) {
-                await priceInput.fill('1000000');
+            // Price inputs are typically labeled with "원" (won) suffix
+            const priceInputs = dialog.locator('input[type="text"]');
+            const priceInputCount = await priceInputs.count();
+            if (priceInputCount > 4) {
+                // Price inputs are usually after the first few text fields (name, birthday, phone, address)
+                await priceInputs.nth(4).fill('1000000');
             }
         });
     });
@@ -319,13 +321,13 @@ test.describe('Client Creation Flow', () => {
     // ============================================
     test.describe('Toggle Switches', () => {
         test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
-            await expect(page.locator('[role="dialog"]')).toBeVisible();
+            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
         });
 
         test('should have voucherClient toggle defaulted to ON', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find the switch for voucherClient
             const voucherSwitch = dialog.locator('[role="checkbox"]').first();
@@ -335,7 +337,7 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should toggle careCenter switch', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find care center switch (typically labeled with Korean text)
             const switches = dialog.locator('.MuiSwitch-root');
@@ -348,7 +350,7 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should toggle breastPump switch', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find breast pump switch (typically the third toggle)
             const switches = dialog.locator('.MuiSwitch-root');
@@ -364,13 +366,13 @@ test.describe('Client Creation Flow', () => {
     // ============================================
     test.describe('Date Fields', () => {
         test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
-            await expect(page.locator('[role="dialog"]')).toBeVisible();
+            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
         });
 
         test('should accept start date input', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find date inputs
             const dateInputs = dialog.locator('input[type="date"]');
@@ -383,7 +385,7 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('should accept end date input', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find date inputs
             const dateInputs = dialog.locator('input[type="date"]');
@@ -401,13 +403,13 @@ test.describe('Client Creation Flow', () => {
     // ============================================
     test.describe('Service Status Select', () => {
         test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
-            await expect(page.locator('[role="dialog"]')).toBeVisible();
+            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
         });
 
         test('should display service status options', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Find the service status select (usually labeled as 계약 상태 or similar)
             // It's typically in the contract section
@@ -430,35 +432,35 @@ test.describe('Client Creation Flow', () => {
     // ============================================
     test.describe('Employee Selection', () => {
         test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+            const addButton = page.locator('[data-testid="add-client-button"]');
             await addButton.click();
-            await expect(page.locator('[role="dialog"]')).toBeVisible();
+            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
         });
 
         test('should have primary employee autocomplete', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
-            const employeeAutocomplete = dialog.locator('[data-component="EmployeeAutocomplete"]').first();
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
+            const employeeAutocomplete = dialog.locator('[data-testid="employee-autocomplete"]').first();
 
             await expect(employeeAutocomplete).toBeVisible();
         });
 
         test('should have secondary employee autocomplete', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
-            const employeeAutocompletes = dialog.locator('[data-component="EmployeeAutocomplete"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
+            const employeeAutocompletes = dialog.locator('[data-testid="employee-autocomplete"]');
 
             // Should have 2 autocompletes (primary and secondary)
             await expect(employeeAutocompletes).toHaveCount(2);
         });
 
         test('should exclude selected primary employee from secondary options', async ({ page }) => {
-            const dialog = page.locator('[role="dialog"]');
+            const dialog = page.locator('[data-testid="client-form-dialog"]');
 
             // Focus on primary employee autocomplete
-            const primaryAutocomplete = dialog.locator('[data-component="EmployeeAutocomplete"] input').first();
+            const primaryAutocomplete = dialog.locator('[data-testid="employee-autocomplete"] input').first();
             await primaryAutocomplete.click();
 
             // Wait for dropdown
-            await expect(page.locator('[data-component="EmployeeAutocomplete-Dropdown"]')).toBeVisible({ timeout: 5000 });
+            await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible({ timeout: 5000 });
 
             // Type to search
             await primaryAutocomplete.fill('김');
@@ -485,10 +487,10 @@ test.describe('Complete Client Creation Flow', () => {
         await page.waitForLoadState('networkidle');
 
         // Open dialog
-        const addButton = page.locator('button').filter({ has: page.locator('svg') }).first();
+        const addButton = page.locator('[data-testid="add-client-button"]');
         await addButton.click();
 
-        const dialog = page.locator('[role="dialog"]');
+        const dialog = page.locator('[data-testid="client-form-dialog"]');
         await expect(dialog).toBeVisible();
 
         // Fill basic info
@@ -499,9 +501,9 @@ test.describe('Complete Client Creation Flow', () => {
         await inputs.nth(3).fill('인천시 연수구'); // address
 
         // Select primary employee (type and select)
-        const primaryEmployeeInput = dialog.locator('[data-component="EmployeeAutocomplete"] input').first();
+        const primaryEmployeeInput = dialog.locator('[data-testid="employee-autocomplete"] input').first();
         await primaryEmployeeInput.click();
-        await expect(page.locator('[data-component="EmployeeAutocomplete-Dropdown"]')).toBeVisible({ timeout: 5000 });
+        await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible({ timeout: 5000 });
         await primaryEmployeeInput.fill('김');
         await page.waitForTimeout(500);
 

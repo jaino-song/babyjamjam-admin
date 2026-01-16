@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/app/lib/axios/server";
-import { errorResponse } from "@/app/lib/api/route-utils";
 
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
+}
+
+function getAuthHeaders(token: string | null): Record<string, string> {
+    return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export async function POST(request: NextRequest) {
@@ -14,13 +17,15 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-
-        const response = await serverAPIClient.post("/eformsign-docs", body, {
-            headers: { Authorization: `Bearer ${token}` },
+        const response = await serverAPIClient.post("/notifications/subscribe", body, {
+            headers: getAuthHeaders(token),
         });
-
         return NextResponse.json(response.data);
-    } catch (error) {
-        return errorResponse(error, "create eformsign doc record");
+    } catch (error: any) {
+        console.error("[API] Error subscribing to notifications:", error.message);
+        return NextResponse.json(
+            { error: "Failed to subscribe to notifications" },
+            { status: error.response?.status || 500 }
+        );
     }
 }

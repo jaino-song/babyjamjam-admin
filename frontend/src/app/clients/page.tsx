@@ -1,7 +1,20 @@
 import { Box } from "@mui/material";
+import { redirect } from "next/navigation";
 import { ClientsTable } from "../(components)/clients/ClientsTable";
 
-export default function ClientsPage() {
+interface ClientsPageProps {
+    searchParams: Promise<{ filter?: string; id?: string }>;
+}
+
+export default async function ClientsPage({ searchParams }: ClientsPageProps) {
+    const params = await searchParams;
+
+    // Redirect old notification URLs to new filtered page
+    // Old: /clients?filter=xxx → New: /clients/filtered?filter=xxx
+    if (params.filter) {
+        redirect(`/clients/filtered?filter=${params.filter}`);
+    }
+
     return (
         <Box sx={{ bgcolor: "background.paper" }}>
             <Box

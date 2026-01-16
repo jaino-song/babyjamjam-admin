@@ -171,6 +171,7 @@ export function ClientsTable() {
                             size="medium"
                             sx={{ color: "#1e88e5" }}
                             onClick={handleAddNew}
+                            data-testid="add-client-button"
                         >
                             <Plus size={30} strokeWidth={2} />
                         </IconButton>
