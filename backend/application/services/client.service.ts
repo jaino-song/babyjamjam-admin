@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
 import {
     CreateClientUsecase,
     DeleteClientUsecase,
@@ -8,10 +8,12 @@ import {
     UpdateClientUsecase,
 } from "application/usecases/client";
 import { ClientEntity } from "domain/entities/client.entity";
-import { PaginatedResult } from "domain/repositories/client.repository.interface";
+import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { AlimtalkService } from "./alimtalk.service";
+
+const FILTER_DAYS_THRESHOLD = 7;
 
 // Document status type for eformsign documents
 // Maps to eformsign_doc.status_type values:
@@ -70,6 +72,8 @@ export class ClientService {
         private readonly deleteClientUsecase: DeleteClientUsecase,
         private readonly prismaService: PrismaService,
         private readonly alimtalkService: AlimtalkService,
+        @Inject(CLIENT_REPOSITORY)
+        private readonly clientRepository: IClientRepository,
     ) {}
 
     async create(params: {
@@ -158,6 +162,30 @@ export class ClientService {
 
         const [withEmployees] = await this.attachEmployeesToClients([client]);
         return withEmployees ?? null;
+    }
+
+    async findByFilter(filter: string): Promise<ClientWithEmployees[]> {
+        let clients: ClientEntity[];
+
+        switch (filter) {
+            case 'starting-soon':
+                clients = await this.clientRepository.findStartingWithinDays(FILTER_DAYS_THRESHOLD);
+                break;
+            case 'ending-soon':
+                clients = await this.clientRepository.findEndingWithinDays(FILTER_DAYS_THRESHOLD);
+                break;
+            case 'incomplete-contracts':
+                clients = await this.clientRepository.findWithIncompleteContractsStartingWithinDays(FILTER_DAYS_THRESHOLD);
+                break;
+            case 'no-contract':
+                clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(FILTER_DAYS_THRESHOLD);
+                break;
+            default:
+                this.logger.warn(`Unknown filter: ${filter}`);
+                clients = [];
+        }
+
+        return this.attachEmployeesToClients(clients);
     }
 
     /**
