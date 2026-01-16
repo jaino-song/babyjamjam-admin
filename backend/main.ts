@@ -23,9 +23,10 @@ async function bootstrap() {
     app.use(cookieParser());
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     app.useGlobalFilters(new PrismaExceptionFilter());
-    // CORS configuration - support both production and development origins
+    // CORS configuration - support production, preview, and development origins
     const allowedOrigins = [
         process.env['PRODUCTION_FRONTEND_URL'],
+        process.env['PREVIEW_FRONTEND_URL'],
         process.env['DEVELOPMENT_FRONTEND_URL'],
         "http://localhost:3000", // Fallback for local development
     ].filter((origin): origin is string => Boolean(origin)); // Remove undefined values
