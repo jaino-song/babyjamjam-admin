@@ -1,7 +1,7 @@
 {
-  "name": "이미래 인천 Back Office",
-  "short_name": "이미래 인천",
-  "description": "이미래 인천지점 관리 시스템",
+  "name": "인천 아이미래로 백오피스",
+  "short_name": "인천 아이미래로",
+  "description": "인천 아이미래로 업무 관리 시스템",
   "start_url": "/",
   "id": "/",
   "display": "standalone",

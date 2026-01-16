@@ -20,13 +20,16 @@ const Pretendard = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Incheon Imirae Back Office",
-  description: "Incheon Imirae Back Office",
+  title: "인천 아이미래로 백오피스",
+  description: "인천 아이미래로 업무 관리 시스템",
   manifest: "/manifest.json",
+  icons: {
+    apple: "/apple-touch-icon.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "이미래 인천",
+    title: "인천 아이미래로",
   },
   formatDetection: {
     telephone: false,
