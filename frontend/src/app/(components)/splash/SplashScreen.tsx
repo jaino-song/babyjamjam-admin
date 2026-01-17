@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useServiceWorkerUpdate } from "@/app/hooks/useServiceWorkerUpdate";
 
 const MIN_SPLASH_TIME = 1500;
+const SPLASH_SHOWN_KEY = "pwa_splash_shown";
 
 function isPWAStandalone(): boolean {
   if (typeof window === "undefined") return false;
@@ -16,22 +17,41 @@ function isPWAStandalone(): boolean {
   return isStandalone || isIOSStandalone;
 }
 
+function wasSplashAlreadyShown(): boolean {
+  if (typeof window === "undefined") return false;
+  return sessionStorage.getItem(SPLASH_SHOWN_KEY) === "true";
+}
+
+function markSplashAsShown(): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(SPLASH_SHOWN_KEY, "true");
+}
+
 export default function SplashScreen() {
   const [isPWA, setIsPWA] = useState(false);
   const [minTimeElapsed, setMinTimeElapsed] = useState(false);
+  const [alreadyShown, setAlreadyShown] = useState(false);
   const { isUpdating } = useServiceWorkerUpdate();
 
   useEffect(() => {
-    setIsPWA(isPWAStandalone());
+    const pwaMode = isPWAStandalone();
+    setIsPWA(pwaMode);
+    
+    if (pwaMode && wasSplashAlreadyShown()) {
+      setAlreadyShown(true);
+    }
   }, []);
 
   useEffect(() => {
-    if (!isPWA) return;
-    const timer = setTimeout(() => setMinTimeElapsed(true), MIN_SPLASH_TIME);
+    if (!isPWA || alreadyShown) return;
+    const timer = setTimeout(() => {
+      setMinTimeElapsed(true);
+      markSplashAsShown();
+    }, MIN_SPLASH_TIME);
     return () => clearTimeout(timer);
-  }, [isPWA]);
+  }, [isPWA, alreadyShown]);
 
-  const shouldShow = isPWA && (!minTimeElapsed || isUpdating);
+  const shouldShow = isPWA && !alreadyShown && (!minTimeElapsed || isUpdating);
 
   return (
     <AnimatePresence>

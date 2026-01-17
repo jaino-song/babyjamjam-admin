@@ -18,12 +18,24 @@ interface NavBarProps {
     onClose: () => void;
 }
 
+function isEformsignAuthenticated(): boolean {
+    if (typeof window === "undefined") return false;
+    const authTimeStr = sessionStorage.getItem("eformsign_auth_time");
+    if (!authTimeStr) return false;
+    const authTime = parseInt(authTimeStr, 10);
+    const tokenExpiryMs = 60 * 60 * 1000;
+    const bufferMs = 5 * 60 * 1000;
+    return Date.now() - authTime < tokenExpiryMs - bufferMs;
+}
+
 export const NavBar = ({ onClose }: NavBarProps) => {
     const locale = useLocale();
     const pathname = usePathname();
     const queryClient = useQueryClient();
 
     useEffect(() => {
+        if (!isEformsignAuthenticated()) return;
+        
         queryClient.prefetchQuery({
             queryKey: eformsignQueryKeys.allDocuments(),
             queryFn: () => eformsignApi.getAllDocuments(),
