@@ -29,6 +29,31 @@ import {
 } from "@/app/hooks/usePushNotification";
 import { format, isToday, isYesterday } from "date-fns";
 import { ko } from "date-fns/locale";
+import { FilteredClientsDialog } from "./FilteredClientsDialog";
+
+type FilterType = "starting-soon" | "ending-soon" | "incomplete-contracts" | "no-contract";
+
+export type ParsedNotificationUrl = 
+    | { type: "filter"; filterType: FilterType }
+    | { type: "client"; clientId: number }
+    | null;
+
+export function parseNotificationUrl(url: string): ParsedNotificationUrl {
+    // Match both formats:
+    // - /clients/filtered?filter=starting-soon (new format)
+    // - /clients?filter=starting-soon (old format)
+    const filteredMatch = url.match(/\/clients(?:\/filtered)?\?filter=(.+)/);
+    if (filteredMatch) {
+        return { type: "filter", filterType: filteredMatch[1] as FilterType };
+    }
+    
+    const clientMatch = url.match(/\/clients\?id=(\d+)/);
+    if (clientMatch) {
+        return { type: "client", clientId: parseInt(clientMatch[1]) };
+    }
+    
+    return null;
+}
 
 interface GroupedNotifications {
     date: string;
@@ -77,6 +102,10 @@ export function NotificationBell() {
     const router = useRouter();
     const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
     const [subscribeLoading, setSubscribeLoading] = useState(false);
+    
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [dialogFilterType, setDialogFilterType] = useState<FilterType | null>(null);
+    const [dialogClientId, setDialogClientId] = useState<number | undefined>(undefined);
 
     // Subscription state
     const {
@@ -123,10 +152,30 @@ export function NotificationBell() {
             markAsRead.mutate(notification.id);
         }
         handleClose();
-        // Navigate to URL if present
+        
         if (notification.data?.url) {
-            router.push(notification.data.url as string);
+            const url = notification.data.url as string;
+            const parsed = parseNotificationUrl(url);
+            
+            if (parsed) {
+                if (parsed.type === "filter") {
+                    setDialogFilterType(parsed.filterType);
+                    setDialogClientId(undefined);
+                } else {
+                    setDialogFilterType(null);
+                    setDialogClientId(parsed.clientId);
+                }
+                setDialogOpen(true);
+            } else {
+                router.push(url);
+            }
         }
+    };
+    
+    const handleDialogClose = () => {
+        setDialogOpen(false);
+        setDialogFilterType(null);
+        setDialogClientId(undefined);
     };
 
     const handleMarkAllAsRead = () => {
@@ -345,6 +394,13 @@ export function NotificationBell() {
             >
                 {renderPopoverContent()}
             </Popover>
+            
+            <FilteredClientsDialog
+                open={dialogOpen}
+                onClose={handleDialogClose}
+                filterType={dialogFilterType}
+                clientId={dialogClientId}
+            />
         </>
     );
 }

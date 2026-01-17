@@ -133,7 +133,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 start_date: {
-                    gte: today,
+                    gt: today,
                     lte: endDate,
                 },
             },
@@ -171,7 +171,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 start_date: {
-                    gte: today,
+                    gt: today,
                     lte: endDate,
                 },
                 e_doc_id: { not: null },
@@ -197,7 +197,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 start_date: {
-                    gte: today,
+                    gt: today,
                     lte: endDate,
                 },
                 e_doc_id: null,

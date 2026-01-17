@@ -23,11 +23,13 @@ export async function GET(request: NextRequest) {
         const page = searchParams.get("page");
         const limit = searchParams.get("limit");
         const search = searchParams.get("search");
+        const filter = searchParams.get("filter");
 
         const params: Record<string, string> = {};
         if (page) params.page = page;
         if (limit) params.limit = limit;
         if (search) params.search = search;
+        if (filter) params.filter = filter;
 
         const response = await serverAPIClient.get("/clients", { 
             params,
