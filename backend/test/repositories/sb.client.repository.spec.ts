@@ -478,6 +478,123 @@ describe("SbClientRepository", () => {
     });
 
     // ============================================
+    // findStartingWithinDays
+    // ============================================
+    describe("findStartingWithinDays", () => {
+        describe("given clients with start dates within the specified days", () => {
+            it("should query with gt (not gte) to exclude clients starting today", async () => {
+                // Arrange
+                const rows = [createClientRow({ id: 1, name: "Future Client" })];
+                clientModel.findMany.mockResolvedValue(rows);
+
+                // Act
+                await repository.findStartingWithinDays(7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.start_date.gt).toBeDefined();
+                expect(callArgs.where.start_date.gte).toBeUndefined();
+                expect(callArgs.where.start_date.lte).toBeDefined();
+            });
+
+            it("should return mapped ClientEntity array", async () => {
+                // Arrange
+                const rows = [
+                    createClientRow({ id: 1, name: "Client A" }),
+                    createClientRow({ id: 2, name: "Client B" }),
+                ];
+                clientModel.findMany.mockResolvedValue(rows);
+
+                // Act
+                const result = await repository.findStartingWithinDays(7);
+
+                // Assert
+                expect(result).toHaveLength(2);
+                expect(result[0]).toBeInstanceOf(ClientEntity);
+                expect(result[0]!.name).toBe("Client A");
+            });
+        });
+
+        describe("given no clients within date range", () => {
+            it("should return empty array", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                const result = await repository.findStartingWithinDays(7);
+
+                // Assert
+                expect(result).toEqual([]);
+            });
+        });
+    });
+
+    // ============================================
+    // findWithIncompleteContractsStartingWithinDays
+    // ============================================
+    describe("findWithIncompleteContractsStartingWithinDays", () => {
+        describe("given clients with incomplete contracts starting soon", () => {
+            it("should query with gt (not gte) to exclude clients starting today", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                await repository.findWithIncompleteContractsStartingWithinDays(7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.start_date.gt).toBeDefined();
+                expect(callArgs.where.start_date.gte).toBeUndefined();
+            });
+
+            it("should filter by e_doc_id not null and status_type not 050", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                await repository.findWithIncompleteContractsStartingWithinDays(7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.e_doc_id).toEqual({ not: null });
+                expect(callArgs.where.eformsign_doc_client_e_doc_idToeformsign_doc.status_type).toEqual({ not: '050' });
+            });
+        });
+    });
+
+    // ============================================
+    // findWithoutContractSentStartingWithinDays
+    // ============================================
+    describe("findWithoutContractSentStartingWithinDays", () => {
+        describe("given clients without contracts sent starting soon", () => {
+            it("should query with gt (not gte) to exclude clients starting today", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                await repository.findWithoutContractSentStartingWithinDays(7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.start_date.gt).toBeDefined();
+                expect(callArgs.where.start_date.gte).toBeUndefined();
+            });
+
+            it("should filter by e_doc_id being null", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                await repository.findWithoutContractSentStartingWithinDays(7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.e_doc_id).toBeNull();
+            });
+        });
+    });
+
+    // ============================================
     // delete
     // ============================================
     describe("delete", () => {

@@ -8,6 +8,10 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
+jest.mock('../FilteredClientsDialog', () => ({
+  FilteredClientsDialog: () => null,
+}));
+
 const mockMarkAsReadMutate = jest.fn();
 const mockMarkAllAsReadMutate = jest.fn();
 let mockNotifications: Notification[] = [];
@@ -48,6 +52,26 @@ const mockNotificationWithDataButNoUrl: Notification = {
   title: 'Data without URL',
   body: 'Has data object but no url property',
   data: { otherProp: 'value' },
+  sentAt: new Date().toISOString(),
+  readAt: null,
+  isRead: false,
+};
+
+const mockFilteredNotification: Notification = {
+  id: 5,
+  title: '서비스 시작 예정',
+  body: '일주일 내로 시작되는 서비스 3건을 확인해 보세요',
+  data: { url: '/clients/filtered?filter=starting-soon' },
+  sentAt: new Date().toISOString(),
+  readAt: null,
+  isRead: false,
+};
+
+const mockIndividualClientNotification: Notification = {
+  id: 6,
+  title: '계약서 미발송',
+  body: '홍길동 님에게 계약서가 발송되지 않았습니다',
+  data: { url: '/clients?id=123' },
   sentAt: new Date().toISOString(),
   readAt: null,
   isRead: false,
@@ -205,5 +229,37 @@ describe('NotificationBell', () => {
 
     expect(mockPush).not.toHaveBeenCalled();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('should NOT call router.push when clicking filtered notification URL', async () => {
+    mockNotifications = [mockFilteredNotification];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    fireEvent.click(screen.getByTestId('notification-item-unread'));
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('should NOT call router.push when clicking individual client notification URL', async () => {
+    mockNotifications = [mockIndividualClientNotification];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    fireEvent.click(screen.getByTestId('notification-item-unread'));
+
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });

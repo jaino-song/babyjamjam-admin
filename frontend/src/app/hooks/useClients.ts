@@ -70,7 +70,7 @@ export function useFilteredClients(filter: string) {
             return data;
         },
         enabled: !!filter,
-        staleTime: 1000 * 60 * 5,
+        staleTime: 1000 * 60,
     });
 }
 
