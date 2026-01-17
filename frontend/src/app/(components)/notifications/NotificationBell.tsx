@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
     Badge,
     IconButton,
@@ -73,6 +74,7 @@ function groupNotificationsByDate(notifications: Notification[]): GroupedNotific
  * - Subscribed: Click to view notifications (white icon with primary border)
  */
 export function NotificationBell() {
+    const router = useRouter();
     const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
     const [subscribeLoading, setSubscribeLoading] = useState(false);
 
@@ -120,11 +122,11 @@ export function NotificationBell() {
         if (!notification.isRead) {
             markAsRead.mutate(notification.id);
         }
+        handleClose();
         // Navigate to URL if present
         if (notification.data?.url) {
-            window.location.href = notification.data.url as string;
+            router.push(notification.data.url as string);
         }
-        handleClose();
     };
 
     const handleMarkAllAsRead = () => {
@@ -245,6 +247,7 @@ export function NotificationBell() {
                                     <ListItem
                                         key={notification.id}
                                         onClick={() => handleNotificationClick(notification)}
+                                        data-testid={notification.isRead ? 'notification-item' : 'notification-item-unread'}
                                         sx={{
                                             cursor: 'pointer',
                                             bgcolor: notification.isRead ? 'transparent' : 'action.hover',
@@ -302,11 +305,12 @@ export function NotificationBell() {
                 onClick={handleClick}
                 disabled={isLoading}
                 color="inherit"
+                data-testid="notification-bell"
             >
                 {isLoading ? (
                     <CircularProgress size={24} color="inherit" />
                 ) : isSubscribed ? (
-                    <Badge badgeContent={unreadCount} color="error">
+                    <Badge badgeContent={unreadCount} color="error" data-testid="notification-badge">
                         {/* Subscribed: White filled bell with primary.main outline */}
                         <NotificationsIcon
                             sx={(theme) => ({
@@ -326,6 +330,7 @@ export function NotificationBell() {
                 open={open}
                 anchorEl={anchorEl}
                 onClose={handleClose}
+                data-testid="notification-popover"
                 anchorOrigin={{
                     vertical: 'bottom',
                     horizontal: 'right',
