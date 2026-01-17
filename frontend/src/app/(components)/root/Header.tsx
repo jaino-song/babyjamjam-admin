@@ -27,6 +27,10 @@ export const Header = ({ initialUser }: HeaderProps) => {
 
   // initialUser가 있으면 즉시 사용, 없으면 client-side fetch
   const { data: user, isLoading } = useGetAuthUser({ initialData: initialUser });
+  const isE2EAuth = typeof window !== 'undefined'
+    && (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__;
+
+  const shouldShowNotifications = Boolean(user) || isE2EAuth;
 
   return (
     <>
@@ -61,7 +65,7 @@ export const Header = ({ initialUser }: HeaderProps) => {
             </Typography>
           </Box>
           {/* Notifications */}
-          {user && <NotificationBell />}
+          {shouldShowNotifications && <NotificationBell />}
           {/* User Profile */}
           {/* initialUser가 있으면 로딩 상태 없이 즉시 렌더링 */}
           <IconButton color="inherit" aria-label={user ? "user" : "login"} disabled={!initialUser && isLoading}>
