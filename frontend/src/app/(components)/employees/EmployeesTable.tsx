@@ -18,7 +18,7 @@ import {
 import { Search, Plus } from "lucide-react";
 import { useLocale } from "../LocaleProvider";
 import { t, Locale } from "@/app/lib/i18n/translations";
-import { ComponentContainer } from "../root/ComponentContainer";
+import { ContentPaper } from "../root/ContentPaper";
 import {
     Employee,
     useEmployees,
@@ -89,24 +89,36 @@ export function EmployeesTable() {
 
     if (isLoading) {
         return (
-            <ComponentContainer textJSON="employees">
+            <ContentPaper 
+                title={t(locale, "employees.title")} 
+                subtitle={t(locale, "employees.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
                     <CircularProgress />
                 </Box>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
     if (error) {
         return (
-            <ComponentContainer textJSON="employees">
+            <ContentPaper 
+                title={t(locale, "employees.title")} 
+                subtitle={t(locale, "employees.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Alert severity="error">{t(locale, "common.error")}</Alert>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
     return (
-        <ComponentContainer textJSON="employees">
+        <ContentPaper 
+            title={t(locale, "employees.title")} 
+            subtitle={t(locale, "employees.subtitle")}
+            sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+        >
             <Box data-component="employees-table-container">
                 {/* Toolbar */}
                 <Box
@@ -243,6 +255,6 @@ export function EmployeesTable() {
                 />
                 </Box>
             </Box>
-        </ComponentContainer>
+        </ContentPaper>
     );
 }

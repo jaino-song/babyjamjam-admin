@@ -1,4 +1,5 @@
-import { Box, LinearProgress, Paper, Stack, Typography } from "@mui/material";
+import { Box, LinearProgress, Stack, Typography } from "@mui/material";
+import { ContentPaper } from "../root/ContentPaper";
 
 export interface PerformanceMetric {
   label: string;
@@ -14,7 +15,7 @@ interface PerformanceOverviewProps {
 
 export const PerformanceOverview = ({ metrics, title, subtitle }: PerformanceOverviewProps) => {
   return (
-    <Paper elevation={0} sx={{ flex: 2, p: { xs: 2.5, sm: 3 } }}>
+    <ContentPaper elevation={0} disableAnimation sx={{ flex: 2, p: { xs: 2.5, sm: 3 } }}>
       <Typography variant="subtitle1" fontWeight={600}>
         {title}
       </Typography>
@@ -40,7 +41,7 @@ export const PerformanceOverview = ({ metrics, title, subtitle }: PerformanceOve
           </Box>
         ))}
       </Stack>
-    </Paper>
+    </ContentPaper>
   );
 };
 

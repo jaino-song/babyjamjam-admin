@@ -2,7 +2,6 @@
 
 import {
   Box,
-  Paper,
   Typography,
   Switch,
   FormControlLabel,
@@ -13,6 +12,7 @@ import {
   Alert,
   Snackbar,
 } from "@mui/material";
+import { ContentPaper } from "@/app/(components)/root/ContentPaper";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { settingsApi, AlimtalkProvider } from "@/services/api";
@@ -86,7 +86,7 @@ export default function GeneralSettingsPage() {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <Paper elevation={2} sx={{ p: 3 }}>
+      <ContentPaper>
         <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2 }}>
           <MessageSquare size={24} className="text-yellow-600" />
           <Box>
@@ -139,9 +139,9 @@ export default function GeneralSettingsPage() {
             마지막 수정: {new Date(alimtalkSettings.updatedAt).toLocaleString("ko-KR")}
           </Typography>
         )}
-      </Paper>
+      </ContentPaper>
 
-      <Paper elevation={2} sx={{ p: 3 }}>
+      <ContentPaper>
         <Box sx={{ mb: 3 }}>
           <Typography variant="h6" gutterBottom>
             기타 설정
@@ -181,12 +181,12 @@ export default function GeneralSettingsPage() {
             어두운 테마로 전환합니다. (추후 지원 예정)
           </Typography>
         </Box>
-      </Paper>
+      </ContentPaper>
 
       {isOwner && (
-        <Paper elevation={2} sx={{ p: 3 }}>
+        <ContentPaper>
           <NotificationTestSection />
-        </Paper>
+        </ContentPaper>
       )}
 
       <Snackbar

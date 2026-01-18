@@ -20,7 +20,7 @@ import {
 import { Search, Plus } from "lucide-react";
 import { useClients, useDeleteClient, useClient } from "@/app/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/app/lib/client/types";
-import { ComponentContainer } from "../root/ComponentContainer";
+import { ContentPaper } from "../root/ContentPaper";
 import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "../LocaleProvider";
@@ -117,19 +117,27 @@ export function ClientsTable() {
 
     if (isLoading) {
         return (
-            <ComponentContainer textJSON="clients">
+            <ContentPaper 
+                title={t(locale, "clients.title")} 
+                subtitle={t(locale, "clients.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
                     <CircularProgress />
                 </Box>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
     if (error) {
         return (
-            <ComponentContainer textJSON="clients">
+            <ContentPaper 
+                title={t(locale, "clients.title")} 
+                subtitle={t(locale, "clients.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Alert severity="error">{t(locale, "clients.load-error")}</Alert>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
@@ -137,7 +145,11 @@ export function ClientsTable() {
     const total = data?.total || 0;
 
     return (
-        <ComponentContainer textJSON="clients">
+        <ContentPaper 
+            title={t(locale, "clients.title")} 
+            subtitle={t(locale, "clients.subtitle")}
+            sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+        >
             <Box data-component="clients-table-container">
                 {/* Toolbar */}
                 <Box
@@ -298,6 +310,6 @@ export function ClientsTable() {
                     client={editingClient}
                 />
             </Box>
-        </ComponentContainer>
+        </ContentPaper>
     );
 }

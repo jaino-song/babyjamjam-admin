@@ -30,7 +30,7 @@ import {
   mapStatusToLabel, 
   getStatusColor 
 } from "@/app/lib/eformsign/status-codes";
-import { ComponentContainer } from "../root/ComponentContainer";
+import { ContentPaper } from "../root/ContentPaper";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "../LocaleProvider";
 import Link from "next/link";
@@ -163,7 +163,11 @@ export function DocumentsList() {
   );
 
   return (
-    <ComponentContainer textJSON="documents-list">
+    <ContentPaper 
+      title={t(locale, "documents-list.title")} 
+      subtitle={t(locale, "documents-list.subtitle")}
+      sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+    >
       <Box data-component="documents-list-container">
         {/* Toolbar */}
         <Box
@@ -365,6 +369,6 @@ export function DocumentsList() {
           )}
         </Box>
       </Box>
-    </ComponentContainer>
+    </ContentPaper>
   );
 }

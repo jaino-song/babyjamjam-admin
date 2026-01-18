@@ -19,7 +19,7 @@ import {
 import { Search, Plus } from "lucide-react";
 import { useLocale } from "@/core/providers";
 import { t, Locale } from "@/app/lib/i18n/translations";
-import { ComponentContainer } from "@/app/(components)/root/ComponentContainer";
+import { ContentPaper } from "@/app/(components)/root/ContentPaper";
 import { useEmployees, useDeleteEmployee } from "../hooks/use-employees";
 import type { Employee } from "../types";
 import { EmployeeFormDialog } from "./EmployeeFormDialog";
@@ -104,24 +104,36 @@ export function EmployeesTable() {
 
     if (isLoading) {
         return (
-            <ComponentContainer textJSON="employees">
+            <ContentPaper 
+                title={t(locale, "employees.title")} 
+                subtitle={t(locale, "employees.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
                     <CircularProgress />
                 </Box>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
     if (error) {
         return (
-            <ComponentContainer textJSON="employees">
+            <ContentPaper 
+                title={t(locale, "employees.title")} 
+                subtitle={t(locale, "employees.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Alert severity="error">{t(locale, "common.error")}</Alert>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
     return (
-        <ComponentContainer textJSON="employees">
+        <ContentPaper 
+            title={t(locale, "employees.title")} 
+            subtitle={t(locale, "employees.subtitle")}
+            sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+        >
             <Box data-component="employees-table-container">
                 {/* Toolbar */}
                 <Box
@@ -219,6 +231,6 @@ export function EmployeesTable() {
                     employee={editingEmployee}
                 />
             </Box>
-        </ComponentContainer>
+        </ContentPaper>
     );
 }
