@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   Box,
   Table,
@@ -20,6 +20,8 @@ import {
   ListItemText,
   Radio,
   Skeleton,
+  TextField,
+  InputAdornment,
 } from "@mui/material";
 import { Search, Filter, Plus } from "lucide-react";
 import { useEformsignDocumentsByType } from "@/app/hooks/useEformsignDocuments";
@@ -32,6 +34,7 @@ import {
 } from "@/app/lib/eformsign/status-codes";
 import { ContentPaper } from "../root/ContentPaper";
 import { t } from "@/app/lib/i18n/translations";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 import { useLocale } from "../LocaleProvider";
 import Link from "next/link";
 
@@ -97,6 +100,8 @@ export function DocumentsList() {
   const [page, setPage] = useState(0);
   const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedFilter, setSelectedFilter] = useState<DocumentFilterType>(null);
+  const [searchInput, setSearchInput] = useState("");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // Auth hook - checks existing token before making API call
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth();
@@ -128,6 +133,21 @@ export function DocumentsList() {
     handleFilterClose();
   };
 
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchInput(e.target.value);
+    setPage(0);
+  };
+
+  const handleSearchIconClick = () => {
+    setIsSearchOpen(true);
+  };
+
+  const handleSearchBlur = () => {
+    if (!searchInput.trim()) {
+      setIsSearchOpen(false);
+    }
+  };
+
   const filterOpen = Boolean(filterAnchorEl);
   const currentFilterLabel = STATUS_OPTIONS.find(opt => opt.value === selectedFilter)?.label || "전체";
 
@@ -148,7 +168,15 @@ export function DocumentsList() {
     .map(transformDocument)
     .filter((doc): doc is EformsignDocumentView => doc !== null);
 
-  const paginatedDocuments = documents.slice(
+  const filteredDocuments = useMemo(() => {
+    if (!searchInput.trim()) return documents;
+    const searchTerm = searchInput.trim();
+    return documents.filter((doc) =>
+      matchesKoreanSearch(doc.customer_name || '', searchTerm)
+    );
+  }, [documents, searchInput]);
+
+  const paginatedDocuments = filteredDocuments.slice(
     page * rowsPerPage,
     page * rowsPerPage + rowsPerPage
   );
@@ -175,14 +203,41 @@ export function DocumentsList() {
               display: "flex",
               justifyContent: "space-around",
               alignItems: "center",
-              gap: 1,
+              gap: 0,
               width: "100%"
             }}
           >
-            {/* Search Button */}
-            <IconButton size="medium" sx={{ color: "grey.600" }}>
-              <Search size={24} strokeWidth={2} />
-            </IconButton>
+            {isSearchOpen ? (
+              <TextField
+                size="small"
+                placeholder="이름 검색"
+                value={searchInput}
+                onChange={handleSearchChange}
+                onBlur={handleSearchBlur}
+                autoFocus
+                sx={{
+                  width: 60,
+                  "& .MuiOutlinedInput-root": {
+                    backgroundColor: "transparent",
+                  },
+                  "& .MuiOutlinedInput-notchedOutline": {
+                    border: "none",
+                  },
+                  "& .MuiInputBase-input": {
+                    padding: "8px 0",
+                  },
+                }}
+              />
+            ) : (
+              <IconButton
+                size="medium"
+                sx={{ color: "grey.600", width: 60 }}
+                onClick={handleSearchIconClick}
+                aria-label="search"
+              >
+                <Search size={24} strokeWidth={2} />
+              </IconButton>
+            )}
 
             {/* Filter Button */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
@@ -244,7 +299,7 @@ export function DocumentsList() {
 
         {/* Table */}
         <Box sx={{ minHeight: 200, width: "100%" }}>
-          {documents.length > 0 || isInitialLoading ? (
+          {filteredDocuments.length > 0 || isInitialLoading ? (
             <>
               <TableContainer>
                 <Table sx={{ tableLayout: "fixed", width: "100%" }}>
@@ -336,7 +391,7 @@ export function DocumentsList() {
 
               <TablePagination
                 component="div"
-                count={isInitialLoading ? 0 : documents.length}
+                count={isInitialLoading ? 0 : filteredDocuments.length}
                 rowsPerPage={rowsPerPage}
                 page={page}
                 onPageChange={handleChangePage}
