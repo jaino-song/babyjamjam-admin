@@ -180,17 +180,17 @@ export default function FilteredClientsPage() {
                                     >
                                         <TableCell
                                             align="center"
-                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
+                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
                                         >
                                             {client.name}
                                         </TableCell>
                                         <TableCell
                                             align="center"
-                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
+                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
                                         >
                                             {formatDate(client.startDate)}
                                         </TableCell>
-                                        <TableCell align="center">
+                                        <TableCell align="center" sx={{ px: 1 }}>
                                             {getDocumentStatusChip(client.documentStatus)}
                                         </TableCell>
                                     </TableRow>

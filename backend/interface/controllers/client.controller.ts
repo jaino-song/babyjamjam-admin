@@ -52,6 +52,12 @@ export class ClientController {
         return this.clientService.findAll();
     }
 
+
+    @Get("stats")
+    getStats() {
+        return this.clientService.getStats();
+    }
+
     @Get(":id")
     findById(@Param("id") id: string) {
         return this.clientService.findById(Number(id));

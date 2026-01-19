@@ -151,6 +151,19 @@ model user {
   kakao_id          String              @unique(map: "user_kakaoId_key") @db.VarChar
   notification      notification[]
   push_subscription push_subscription[]
+  chat_session      chat_session[]
+}
+
+model chat_session {
+  id         String   @id @default(cuid())
+  user_id    String   @db.Uuid
+  messages   Json
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  expires_at DateTime @db.Timestamptz(6)
+  user       user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([expires_at])
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.

@@ -10,7 +10,6 @@ import {
   TableHead,
   TableRow,
   Chip,
-  CircularProgress,
   Alert,
   IconButton,
   TablePagination,
@@ -20,17 +19,18 @@ import {
   ListItemIcon,
   ListItemText,
   Radio,
+  Skeleton,
 } from "@mui/material";
 import { Search, Filter, Plus } from "lucide-react";
 import { useEformsignDocumentsByType } from "@/app/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/app/hooks/useEformsignAuth";
 import { EformsignDocument, EformsignDocumentView } from "@/app/lib/eformsign/types";
-import { 
-  DocumentFilterType, 
-  mapStatusToLabel, 
-  getStatusColor 
+import {
+  DocumentFilterType,
+  mapStatusToLabel,
+  getStatusColor
 } from "@/app/lib/eformsign/status-codes";
-import { ComponentContainer } from "../root/ComponentContainer";
+import { ContentPaper } from "../root/ContentPaper";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "../LocaleProvider";
 import Link from "next/link";
@@ -56,7 +56,7 @@ const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null
   // 2. last_editor.name (when document is completed/rejected)
   // 3. creator.name (fallback)
   let customerName: string | null = null;
-  
+
   if (stepRecipients && stepRecipients.length > 0 && stepRecipients[0]?.name) {
     customerName = stepRecipients[0].name;
   } else if (doc.last_editor?.name) {
@@ -100,15 +100,15 @@ export function DocumentsList() {
 
   // Auth hook - checks existing token before making API call
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth();
-  
+
   // Documents hook
   const { data, isLoading, error, isFetching } = useEformsignDocumentsByType(
-    isAuthenticated, 
+    isAuthenticated,
     selectedFilter
   );
 
-  // Dynamic rows per page: 10 for all, 5 for filtered
-  const rowsPerPage = selectedFilter === null ? 10 : 5;
+  const rowsPerPage = 5;
+  const isInitialLoading = isLoadingAuth || isLoading;
 
   const handleChangePage = (_event: unknown, newPage: number) => {
     setPage(newPage);
@@ -130,15 +130,6 @@ export function DocumentsList() {
 
   const filterOpen = Boolean(filterAnchorEl);
   const currentFilterLabel = STATUS_OPTIONS.find(opt => opt.value === selectedFilter)?.label || "전체";
-
-  // Initial auth loading state only (not filter changes)
-  if (isLoadingAuth) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-      </Box>
-    );
-  }
 
   // Error state
   if (authError || error) {
@@ -163,7 +154,11 @@ export function DocumentsList() {
   );
 
   return (
-    <ComponentContainer textJSON="documents-list">
+    <ContentPaper
+      title={t(locale, "documents-list.title")}
+      subtitle={t(locale, "documents-list.subtitle")}
+      sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+    >
       <Box data-component="documents-list-container">
         {/* Toolbar */}
         <Box
@@ -174,14 +169,14 @@ export function DocumentsList() {
             justifyContent: "space-around",
           }}
         >
-          <Box 
-            data-component="documents-list-toolbar-buttons" 
-            sx={{ 
-              display: "flex", 
-              justifyContent: "space-around", 
-              alignItems: "center", 
-              gap: 1, 
-              width: "100%" 
+          <Box
+            data-component="documents-list-toolbar-buttons"
+            sx={{
+              display: "flex",
+              justifyContent: "space-around",
+              alignItems: "center",
+              gap: 1,
+              width: "100%"
             }}
           >
             {/* Search Button */}
@@ -215,8 +210,8 @@ export function DocumentsList() {
               anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
             >
               {STATUS_OPTIONS.map((option) => (
-                <MenuItem 
-                  key={option.value ?? "all"} 
+                <MenuItem
+                  key={option.value ?? "all"}
                   onClick={() => handleFilterSelect(option.value)}
                 >
                   <ListItemIcon>
@@ -234,9 +229,9 @@ export function DocumentsList() {
             </Menu>
 
             {/* New Document Button */}
-            <IconButton 
-              size="medium" 
-              sx={{ color: "#1e88e5" }} 
+            <IconButton
+              size="medium"
+              sx={{ color: "#1e88e5" }}
               LinkComponent={Link}
               href="/contracts/creation"
             >
@@ -249,106 +244,110 @@ export function DocumentsList() {
 
         {/* Table */}
         <Box sx={{ minHeight: 200, width: "100%" }}>
-          {documents.length > 0 || isFetching ? (
-          <>
-            <TableContainer>
-              <Table sx={{ tableLayout: "fixed", width: "100%" }}>
-                <TableHead>
-                  <TableRow>
-                    <TableCell
-                      align="center"
-                      sx={{ 
-                        fontWeight: 500, 
-                        color: "rgba(0, 0, 0, 0.6)", 
-                        fontSize: "0.875rem",
-                        width: "30%",
-                      }}
-                    >
-                      {t(locale, "documents-list.document-title")}
-                    </TableCell>
-                    <TableCell
-                      align="center"
-                      sx={{ 
-                        fontWeight: 500, 
-                        color: "rgba(0, 0, 0, 0.6)", 
-                        fontSize: "0.875rem",
-                        width: "40%",
-                      }}
-                    >
-                      {t(locale, "documents-list.created-date")}
-                    </TableCell>
-                    <TableCell
-                      align="center"
-                      sx={{ 
-                        fontWeight: 500, 
-                        color: "rgba(0, 0, 0, 0.6)", 
-                        fontSize: "0.875rem",
-                        width: "30%",
-                      }}
-                    >
-                      {t(locale, "documents-list.status")}
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {/* Loading spinner - only covers table body */}
-                  {isFetching && (
+          {documents.length > 0 || isInitialLoading ? (
+            <>
+              <TableContainer>
+                <Table sx={{ tableLayout: "fixed", width: "100%" }}>
+                  <TableHead>
                     <TableRow>
-                      <TableCell colSpan={3} sx={{ border: 0, p: 0 }}>
-                        <Box
-                          sx={{
-                            display: "flex",
-                            justifyContent: "center",
-                            alignItems: "center",
-                            py: 8,
-                          }}
+                      <TableCell
+                        align="center"
+                        sx={{
+                          fontWeight: 500,
+                          color: "rgba(0, 0, 0, 0.6)",
+                          fontSize: "0.875rem",
+                          width: "35%",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {t(locale, "documents-list.document-title")}
+                      </TableCell>
+                      <TableCell
+                        align="center"
+                        sx={{
+                          fontWeight: 500,
+                          color: "rgba(0, 0, 0, 0.6)",
+                          fontSize: "0.875rem",
+                          width: "40%",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {t(locale, "documents-list.created-date")}
+                      </TableCell>
+                      <TableCell
+                        align="center"
+                        sx={{
+                          fontWeight: 500,
+                          color: "rgba(0, 0, 0, 0.6)",
+                          fontSize: "0.875rem",
+                          width: "25%",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {t(locale, "documents-list.status")}
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {/* Skeleton rows during initial loading */}
+                    {isInitialLoading && Array.from({ length: rowsPerPage }).map((_, index) => (
+                      <TableRow key={`skeleton-${index}`}>
+                        <TableCell align="center" sx={{ px: 1 }}>
+                          <Skeleton variant="text" width="60%" sx={{ mx: "auto" }} />
+                        </TableCell>
+                        <TableCell align="center" sx={{ px: 1 }}>
+                          <Skeleton variant="text" width="70%" sx={{ mx: "auto" }} />
+                        </TableCell>
+                        <TableCell align="center" sx={{ px: 1 }}>
+                          <Skeleton variant="rounded" width={50} height={24} sx={{ mx: "auto" }} />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {!isInitialLoading && paginatedDocuments.map((doc, index) => (
+                      <TableRow
+                        key={`${doc.doc_id}-${index}`}
+                        hover
+                        sx={{ "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
+                      >
+                        <TableCell
+                          align="center"
+                          sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", whiteSpace: "nowrap", px: 1 }}
                         >
-                          <CircularProgress size={40} />
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {!isFetching && paginatedDocuments.map((doc, index) => (
-                    <TableRow
-                      key={`${doc.doc_id}-${index}`}
-                      hover
-                      sx={{ "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
-                    >
-                      <TableCell
-                        align="center"
-                        sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
-                      >
-                        {doc.customer_name}
-                      </TableCell>
-                      <TableCell
-                        align="center"
-                        sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
-                      >
-                        {formatDate(doc.created_date)}
-                      </TableCell>
-                      <TableCell align="center">
-                        <Chip
-                          label={doc.status}
-                          color={getStatusColor(doc.status)}
-                          size="small"
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                          {doc.customer_name}
+                        </TableCell>
+                        <TableCell
+                          align="center"
+                          sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", whiteSpace: "nowrap", px: 1 }}
+                        >
+                          {formatDate(doc.created_date)}
+                        </TableCell>
+                        <TableCell align="center" sx={{ px: 1 }}>
+                          <Chip
+                            label={doc.status}
+                            color={getStatusColor(doc.status)}
+                            size="small"
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
 
-            {/* Pagination - hidden during loading */}
-            {!isFetching && (
               <TablePagination
                 component="div"
-                count={documents.length}
+                count={isInitialLoading ? 0 : documents.length}
                 rowsPerPage={rowsPerPage}
                 page={page}
                 onPageChange={handleChangePage}
                 rowsPerPageOptions={[]}
                 labelRowsPerPage=""
+                slotProps={{
+                  actions: {
+                    previousButton: { disabled: isInitialLoading },
+                    nextButton: { disabled: isInitialLoading },
+                  },
+                }}
                 sx={{
                   "& .MuiTablePagination-selectLabel": { display: "none" },
                   "& .MuiTablePagination-select": { display: "none" },
@@ -356,15 +355,14 @@ export function DocumentsList() {
                   "& .MuiTablePagination-displayedRows": { margin: 0 },
                 }}
               />
-            )}
-          </>
-        ) : (
-          <Box sx={{ py: 3 }}>
-            <Alert severity="info">문서가 없습니다</Alert>
-          </Box>
+            </>
+          ) : (
+            <Box sx={{ py: 3 }}>
+              <Alert severity="info">문서가 없습니다</Alert>
+            </Box>
           )}
         </Box>
       </Box>
-    </ComponentContainer>
+    </ContentPaper>
   );
 }

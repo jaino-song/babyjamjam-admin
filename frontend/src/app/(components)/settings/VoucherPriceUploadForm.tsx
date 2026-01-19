@@ -3,7 +3,6 @@
 import { useState, useCallback } from "react";
 import {
   Box,
-  Paper,
   Typography,
   Button,
   Stepper,
@@ -18,6 +17,7 @@ import {
   Select,
   MenuItem,
 } from "@mui/material";
+import { ContentPaper } from "@/app/(components)/root/ContentPaper";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -130,7 +130,7 @@ export function VoucherPriceUploadForm() {
   }, [parseImageMutation]);
 
   return (
-    <Paper elevation={2} sx={{ p: 3 }}>
+    <ContentPaper>
       {/* 헤더 */}
       <Box sx={{ mb: 3 }}>
         <Typography variant="h6" gutterBottom>
@@ -293,6 +293,6 @@ export function VoucherPriceUploadForm() {
           </Button>
         </Box>
       )}
-    </Paper>
+    </ContentPaper>
   );
 }

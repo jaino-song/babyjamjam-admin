@@ -3,7 +3,6 @@ import {
   Button,
   Card,
   CardContent,
-  Paper,
   Stack,
   TextField,
   Typography,
@@ -26,6 +25,7 @@ import {
   Checkbox,
   Divider,
 } from "@mui/material";
+import { ContentPaper } from "@/app/(components)/root/ContentPaper";
 import CloseIcon from "@mui/icons-material/Close";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
@@ -573,14 +573,12 @@ export const ContractCreationForm = () => {
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="ko">
 
-      <Paper
-        elevation={2}
+      <ContentPaper
         data-component="contract-creation-form"
         sx={{
           display: "flex",
           flexDirection: "column",
           justifyContent: "flex-start",
-          p: 3,
           flexGrow: 1,
           width: "100%",
           bgcolor: "background.default",
@@ -1088,7 +1086,7 @@ export const ContractCreationForm = () => {
             </Stack>
           </Box>
         </Fade>
-      </Paper>
+      </ContentPaper>
 
       {/* eformsign Document Dialog */}
       <Dialog

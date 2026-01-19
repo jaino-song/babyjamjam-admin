@@ -1,6 +1,7 @@
 "use client";
 
-import { Avatar, Button, Divider, List, ListItem, ListItemAvatar, ListItemText, Paper, Stack, Typography } from "@mui/material";
+import { Avatar, Button, Divider, List, ListItem, ListItemAvatar, ListItemText, Stack, Typography } from "@mui/material";
+import { ContentPaper } from "../root/ContentPaper";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import { Fragment } from "react";
 
@@ -17,7 +18,7 @@ interface RecentActivityProps {
 
 export const RecentActivity = ({ items, title, actionLabel }: RecentActivityProps) => {
   return (
-    <Paper elevation={0} sx={{ p: { xs: 2.5, sm: 3 } }}>
+    <ContentPaper elevation={0} disableAnimation sx={{ p: { xs: 2.5, sm: 3 } }}>
       <Stack direction="row" justifyContent="space-between" alignItems="center">
         <Typography variant="subtitle1" fontWeight={600}>
           {title}
@@ -52,7 +53,7 @@ export const RecentActivity = ({ items, title, actionLabel }: RecentActivityProp
           </Fragment>
         ))}
       </List>
-    </Paper>
+    </ContentPaper>
   );
 };
 

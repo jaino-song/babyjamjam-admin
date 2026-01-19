@@ -20,7 +20,7 @@ import {
 import { Search, Plus } from "lucide-react";
 import { useClients, useDeleteClient, useClient } from "@/app/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/app/lib/client/types";
-import { ComponentContainer } from "../root/ComponentContainer";
+import { ContentPaper } from "../root/ContentPaper";
 import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "../LocaleProvider";
@@ -117,19 +117,27 @@ export function ClientsTable() {
 
     if (isLoading) {
         return (
-            <ComponentContainer textJSON="clients">
+            <ContentPaper
+                title={t(locale, "clients.title")}
+                subtitle={t(locale, "clients.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
                     <CircularProgress />
                 </Box>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
     if (error) {
         return (
-            <ComponentContainer textJSON="clients">
+            <ContentPaper
+                title={t(locale, "clients.title")}
+                subtitle={t(locale, "clients.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Alert severity="error">{t(locale, "clients.load-error")}</Alert>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
@@ -137,7 +145,11 @@ export function ClientsTable() {
     const total = data?.total || 0;
 
     return (
-        <ComponentContainer textJSON="clients">
+        <ContentPaper
+            title={t(locale, "clients.title")}
+            subtitle={t(locale, "clients.subtitle")}
+            sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+        >
             <Box data-component="clients-table-container">
                 {/* Toolbar */}
                 <Box
@@ -182,104 +194,104 @@ export function ClientsTable() {
 
                 {/* Table */}
                 <Box sx={{ minHeight: 200, width: "100%" }}>
-                <TableContainer>
-                    <Table sx={{ tableLayout: "fixed", width: "100%" }}>
-                        <TableHead>
-                            <TableRow>
-                                <TableCell
-                                    align="center"
-                                    sx={{
-                                        fontWeight: 500,
-                                        color: "rgba(0, 0, 0, 0.6)",
-                                        fontSize: "0.875rem",
-                                        width: "30%",
-                                    }}
-                                >
-                                    {t(locale, "clients.table.name")}
-                                </TableCell>
-                                <TableCell
-                                    align="center"
-                                    sx={{
-                                        fontWeight: 500,
-                                        color: "rgba(0, 0, 0, 0.6)",
-                                        fontSize: "0.875rem",
-                                        width: "40%",
-                                    }}
-                                >
-                                    {t(locale, "clients.table.status")}
-                                </TableCell>
-                                <TableCell
-                                    align="center"
-                                    sx={{
-                                        fontWeight: 500,
-                                        color: "rgba(0, 0, 0, 0.6)",
-                                        fontSize: "0.875rem",
-                                        width: "30%",
-                                    }}
-                                >
-                                    {t(locale, "clients.table.start-date")}
-                                </TableCell>
-                            </TableRow>
-                        </TableHead>
-                        <TableBody>
-                            {isFetching && !clients.length ? (
+                    <TableContainer>
+                        <Table sx={{ tableLayout: "fixed", width: "100%" }}>
+                            <TableHead>
                                 <TableRow>
-                                    <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                                        <CircularProgress size={30} />
-                                    </TableCell>
-                                </TableRow>
-                            ) : clients.length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                                        {t(locale, "clients.no-data")}
-                                    </TableCell>
-                                </TableRow>
-                            ) : (
-                                clients.map((client) => (
-                                    <TableRow
-                                        key={client.id}
-                                        hover
-                                        onClick={() => handleRowClick(client)}
-                                        sx={{ cursor: "pointer", "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
+                                    <TableCell
+                                        align="center"
+                                        sx={{
+                                            fontWeight: 500,
+                                            color: "rgba(0, 0, 0, 0.6)",
+                                            fontSize: "0.875rem",
+                                            width: "30%",
+                                        }}
                                     >
-                                        <TableCell
-                                            align="center"
-                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
-                                        >
-                                            {client.name}
-                                        </TableCell>
-                                        <TableCell align="center">
-                                            {getStatusChip(client.serviceStatus)}
-                                        </TableCell>
-                                        <TableCell
-                                            align="center"
-                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
-                                        >
-                                            {formatDate(client.startDate)}
+                                        {t(locale, "clients.table.name")}
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{
+                                            fontWeight: 500,
+                                            color: "rgba(0, 0, 0, 0.6)",
+                                            fontSize: "0.875rem",
+                                            width: "40%",
+                                        }}
+                                    >
+                                        {t(locale, "clients.table.status")}
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{
+                                            fontWeight: 500,
+                                            color: "rgba(0, 0, 0, 0.6)",
+                                            fontSize: "0.875rem",
+                                            width: "30%",
+                                        }}
+                                    >
+                                        {t(locale, "clients.table.start-date")}
+                                    </TableCell>
+                                </TableRow>
+                            </TableHead>
+                            <TableBody>
+                                {isFetching && !clients.length ? (
+                                    <TableRow>
+                                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
+                                            <CircularProgress size={30} />
                                         </TableCell>
                                     </TableRow>
-                                ))
-                            )}
-                        </TableBody>
-                    </Table>
-                </TableContainer>
+                                ) : clients.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
+                                            {t(locale, "clients.no-data")}
+                                        </TableCell>
+                                    </TableRow>
+                                ) : (
+                                    clients.map((client) => (
+                                        <TableRow
+                                            key={client.id}
+                                            hover
+                                            onClick={() => handleRowClick(client)}
+                                            sx={{ cursor: "pointer", "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
+                                        >
+                                            <TableCell
+                                                align="center"
+                                                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
+                                            >
+                                                {client.name}
+                                            </TableCell>
+                                            <TableCell align="center" sx={{ px: 1 }}>
+                                                {getStatusChip(client.serviceStatus)}
+                                            </TableCell>
+                                            <TableCell
+                                                align="center"
+                                                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
+                                            >
+                                                {formatDate(client.startDate)}
+                                            </TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
+                            </TableBody>
+                        </Table>
+                    </TableContainer>
 
-                {/* Pagination */}
-                <TablePagination
-                    component="div"
-                    count={total}
-                    page={page}
-                    onPageChange={handleChangePage}
-                    rowsPerPage={rowsPerPage}
-                    rowsPerPageOptions={[]}
-                    labelRowsPerPage=""
-                    sx={{
-                        "& .MuiTablePagination-selectLabel": { display: "none" },
-                        "& .MuiTablePagination-select": { display: "none" },
-                        "& .MuiTablePagination-spacer": { display: "none" },
-                        "& .MuiTablePagination-displayedRows": { margin: 0 },
-                    }}
-                />
+                    {/* Pagination */}
+                    <TablePagination
+                        component="div"
+                        count={total}
+                        page={page}
+                        onPageChange={handleChangePage}
+                        rowsPerPage={rowsPerPage}
+                        rowsPerPageOptions={[]}
+                        labelRowsPerPage=""
+                        sx={{
+                            "& .MuiTablePagination-selectLabel": { display: "none" },
+                            "& .MuiTablePagination-select": { display: "none" },
+                            "& .MuiTablePagination-spacer": { display: "none" },
+                            "& .MuiTablePagination-displayedRows": { margin: 0 },
+                        }}
+                    />
                 </Box>
 
                 {/* Detail Modal */}
@@ -298,6 +310,6 @@ export function ClientsTable() {
                     client={editingClient}
                 />
             </Box>
-        </ComponentContainer>
+        </ContentPaper>
     );
 }

@@ -1,5 +1,7 @@
 // Employee entity types
 
+export type EmployeeStatus = 'available' | 'working' | 'unavailable';
+
 export interface Employee {
     id: number;
     name: string;
@@ -8,6 +10,7 @@ export interface Employee {
     grade: string;
     openToNextWork: boolean;
     registeredDate: string;
+    status: EmployeeStatus;
 }
 
 export interface CreateEmployeeDto {

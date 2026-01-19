@@ -1,4 +1,10 @@
+// Employee status type - computed from openToNextWork and active schedules
+export type EmployeeStatus = 'available' | 'working' | 'unavailable';
+
 export class EmployeeEntity {
+    // Computed status field (not persisted, set by repository)
+    public status?: EmployeeStatus;
+
     constructor(
         public readonly id: number,
         public name: string,

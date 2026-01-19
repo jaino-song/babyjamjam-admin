@@ -161,34 +161,34 @@ export function ParsedDataPreview({
                   }}
                 >
                   {/* 유형 */}
-                  <TableCell>
+                  <TableCell sx={{ px: 1 }}>
                     <Typography variant="body2" fontWeight="medium">
                       {item.type}
                     </Typography>
                   </TableCell>
 
                   {/* 기간 */}
-                  <TableCell align="right">
+                  <TableCell align="right" sx={{ px: 1 }}>
                     {item.duration}일
                   </TableCell>
 
                   {/* 서비스가격 */}
-                  <TableCell align="right">
+                  <TableCell align="right" sx={{ px: 1 }}>
                     {formatPrice(item.fullPrice)}원
                   </TableCell>
 
                   {/* 정부지원금 */}
-                  <TableCell align="right">
+                  <TableCell align="right" sx={{ px: 1 }}>
                     {formatPrice(item.grant)}원
                   </TableCell>
 
                   {/* 본인부담금 */}
-                  <TableCell align="right">
+                  <TableCell align="right" sx={{ px: 1 }}>
                     {formatPrice(item.actualPrice)}원
                   </TableCell>
 
                   {/* 검증 상태 */}
-                  <TableCell align="center">
+                  <TableCell align="center" sx={{ px: 1 }}>
                     {isValid ? (
                       <Tooltip title="가격 계산 일치">
                         <CheckCircleIcon color="success" fontSize="small" />
@@ -202,7 +202,7 @@ export function ParsedDataPreview({
 
                   {/* 수정 버튼 */}
                   {onDataChange && (
-                    <TableCell align="center">
+                    <TableCell align="center" sx={{ px: 1 }}>
                       <IconButton
                         size="small"
                         onClick={() => handleStartEdit(index)}

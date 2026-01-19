@@ -19,17 +19,30 @@ import {
 import { Search, Plus } from "lucide-react";
 import { useLocale } from "@/core/providers";
 import { t, Locale } from "@/app/lib/i18n/translations";
-import { ComponentContainer } from "@/app/(components)/root/ComponentContainer";
+import { ContentPaper } from "@/app/(components)/root/ContentPaper";
 import { useEmployees, useDeleteEmployee } from "../hooks/use-employees";
-import type { Employee } from "../types";
+import type { Employee, EmployeeStatus } from "../types";
 import { EmployeeFormDialog } from "./EmployeeFormDialog";
 import { EmployeeDetailModal } from "./EmployeeDetailModal";
 
-const getStatusChip = (openToNextWork: boolean, locale: Locale) => {
-    if (openToNextWork) {
-        return <Chip label={t(locale, "employees.status.available")} color="success" size="small" />;
+const formatPhoneNumber = (phone: string | null | undefined): string => {
+    if (!phone) return "-";
+    const numbers = phone.replace(/[^\d]/g, "");
+    if (numbers.length <= 3) return numbers || "-";
+    if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
+    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
+};
+
+const getStatusChip = (status: EmployeeStatus | undefined, locale: Locale) => {
+    switch (status) {
+        case "available":
+            return <Chip label={t(locale, "employees.status.available")} color="success" size="small" />;
+        case "working":
+            return <Chip label={t(locale, "employees.status.working")} color="warning" size="small" />;
+        case "unavailable":
+        default:
+            return <Chip label={t(locale, "employees.status.unavailable")} color="default" size="small" />;
     }
-    return <Chip label={t(locale, "employees.status.unavailable")} color="default" size="small" />;
 };
 
 export function EmployeesTable() {
@@ -104,24 +117,36 @@ export function EmployeesTable() {
 
     if (isLoading) {
         return (
-            <ComponentContainer textJSON="employees">
+            <ContentPaper 
+                title={t(locale, "employees.title")} 
+                subtitle={t(locale, "employees.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
                     <CircularProgress />
                 </Box>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
     if (error) {
         return (
-            <ComponentContainer textJSON="employees">
+            <ContentPaper 
+                title={t(locale, "employees.title")} 
+                subtitle={t(locale, "employees.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Alert severity="error">{t(locale, "common.error")}</Alert>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
     return (
-        <ComponentContainer textJSON="employees">
+        <ContentPaper 
+            title={t(locale, "employees.title")} 
+            subtitle={t(locale, "employees.subtitle")}
+            sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+        >
             <Box data-component="employees-table-container">
                 {/* Toolbar */}
                 <Box
@@ -173,7 +198,7 @@ export function EmployeesTable() {
                             <TableRow>
                                 <TableCell sx={{ fontWeight: 600 }}>{t(locale, "employees.table.name")}</TableCell>
                                 <TableCell sx={{ fontWeight: 600 }}>{t(locale, "employees.table.open-status")}</TableCell>
-                                <TableCell sx={{ fontWeight: 600 }}>{t(locale, "employees.table.assigned-client")}</TableCell>
+                                <TableCell sx={{ fontWeight: 600 }}>{t(locale, "employees.table.contact")}</TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
@@ -192,9 +217,9 @@ export function EmployeesTable() {
                                         sx={{ cursor: "pointer" }}
                                     >
                                         <TableCell>{employee.name}</TableCell>
-                                        <TableCell>{getStatusChip(employee.openToNextWork, locale)}</TableCell>
+                                        <TableCell>{getStatusChip(employee.status, locale)}</TableCell>
                                         <TableCell sx={{ color: "text.secondary" }}>
-                                            {t(locale, "employees.schedule-not-implemented")}
+                                            {formatPhoneNumber(employee.phone)}
                                         </TableCell>
                                     </TableRow>
                                 ))
@@ -219,6 +244,6 @@ export function EmployeesTable() {
                     employee={editingEmployee}
                 />
             </Box>
-        </ComponentContainer>
+        </ContentPaper>
     );
 }

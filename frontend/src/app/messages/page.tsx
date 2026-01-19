@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
-import { Box, MenuItem, Paper, Select, SelectChangeEvent, Typography } from "@mui/material";
+import { Box, MenuItem, Select, SelectChangeEvent, Typography } from "@mui/material";
+import { ContentPaper } from "@/app/(components)/root/ContentPaper";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 
@@ -56,43 +57,38 @@ export default function MessagesPage() {
           mx: "auto",
         }}
       >
-        <Paper elevation={2} sx={{ bgcolor: "background.default", p: 3, display: "flex", flexDirection: "column", gap: 3 }}>
-          <Box>
-            {/* title */}
-            <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-              {t(locale, "msg-form.title")}
-            </Typography>
-            {/* subtitle */}
-            <Typography variant="body2" color="text.secondary">
-              {t(locale, "msg-form.select-msg-type")}
-            </Typography>
-          </Box>
-            <Select
-              id="msg-type-select"
-              value={selectedTemplate}
-              onChange={handleChange}
-              fullWidth
-              size="small"
-              sx={{
+        <ContentPaper
+          title={t(locale, "msg-form.title")}
+          subtitle={t(locale, "msg-form.select-msg-type")}
+          sx={{ display: "flex", flexDirection: "column", gap: 3 }}
+        >
+          <Select
+            id="msg-type-select"
+            value={selectedTemplate}
+            onChange={handleChange}
+            fullWidth
+            size="small"
+            sx={{
+              marginBottom: "24px",
+              borderRadius: "20px",
+              "& .MuiSelect-select": {
+                color: "primary.main",
+                fontWeight: 500,
+              },
+              "& .MuiOutlinedInput-notchedOutline": {
                 borderRadius: "20px",
-                "& .MuiSelect-select": {
-                  color: "primary.main",
-                  fontWeight: 500,
-                },
-                "& .MuiOutlinedInput-notchedOutline": {
-                  borderRadius: "20px",
-                  borderColor: "primary.main",
-                },
-              }}
-            >
-              {templateConfigs.map((config) => (
-                <MenuItem key={config.id} value={config.id}>
-                  {t(locale, config.labelKey)}
-                </MenuItem>
-              ))}
-            </Select>
+                borderColor: "primary.main",
+              },
+            }}
+          >
+            {templateConfigs.map((config) => (
+              <MenuItem key={config.id} value={config.id}>
+                {t(locale, config.labelKey)}
+              </MenuItem>
+            ))}
+          </Select>
           <SelectedForm />
-        </Paper>
+        </ContentPaper>
       </Box>
     </Box>
   );
