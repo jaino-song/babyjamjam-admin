@@ -70,23 +70,23 @@ export function FilteredClientsDialog({
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
 
-    const { data: filteredClients, isLoading: filteredLoading, error: filteredError } = 
+    const { data: filteredClients, isLoading: filteredLoading, error: filteredError } =
         useFilteredClients(filterType || "");
-    
-    const { data: singleClient, isLoading: singleLoading, error: singleError } = 
+
+    const { data: singleClient, isLoading: singleLoading, error: singleError } =
         useClient(clientId || 0);
-    
+
     const deleteClient = useDeleteClient();
 
     const isIndividualClient = !filterType && clientId;
-    const clients = isIndividualClient 
-        ? (singleClient ? [singleClient] : []) 
+    const clients = isIndividualClient
+        ? (singleClient ? [singleClient] : [])
         : (filteredClients || []);
     const isLoading = isIndividualClient ? singleLoading : filteredLoading;
     const error = isIndividualClient ? singleError : filteredError;
 
-    const title = filterType 
-        ? FILTER_CONFIG[filterType]?.title 
+    const title = filterType
+        ? FILTER_CONFIG[filterType]?.title
         : (singleClient?.name || "클라이언트 상세");
 
     const handleRowClick = (client: Client) => {
@@ -121,16 +121,16 @@ export function FilteredClientsDialog({
 
     return (
         <>
-            <Dialog 
-                open={open} 
-                onClose={onClose} 
-                maxWidth="sm" 
+            <Dialog
+                open={open}
+                onClose={onClose}
+                maxWidth="sm"
                 fullWidth
                 PaperProps={{ sx: { maxHeight: "80vh" } }}
             >
-                <DialogTitle sx={{ 
-                    display: "flex", 
-                    justifyContent: "space-between", 
+                <DialogTitle sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
                     alignItems: "center",
                     borderBottom: "1px solid",
                     borderColor: "divider",
@@ -208,17 +208,17 @@ export function FilteredClientsDialog({
                                         >
                                             <TableCell
                                                 align="center"
-                                                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
+                                                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
                                             >
                                                 {client.name}
                                             </TableCell>
                                             <TableCell
                                                 align="center"
-                                                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)" }}
+                                                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
                                             >
                                                 {formatDate(client.startDate)}
                                             </TableCell>
-                                            <TableCell align="center">
+                                            <TableCell align="center" sx={{ px: 1 }}>
                                                 {getDocumentStatusChip(client.documentStatus)}
                                             </TableCell>
                                         </TableRow>

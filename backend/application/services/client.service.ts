@@ -536,4 +536,48 @@ export class ClientService {
     delete(id: number): Promise<void> {
         return this.deleteClientUsecase.execute(id);
     }
+
+    async getStats(): Promise<{
+        activeClients: number;
+        contractsNotSent: number;
+        contractsPendingSignature: number;
+        upcomingThisMonth: number;
+        upcomingNextMonth: number;
+    }> {
+        const now = new Date();
+        const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        const nextMonthEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59);
+
+        const [activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth] = 
+            await Promise.all([
+                this.prismaService.client.count({
+                    where: { service_status: SERVICE_STATUS.ACTIVE },
+                }),
+                this.prismaService.client.count({
+                    where: { e_doc_id: null, service_status: SERVICE_STATUS.WAITING },
+                }),
+                this.prismaService.client.count({
+                    where: {
+                        e_doc_id: { not: null },
+                        eformsign_doc_client_e_doc_idToeformsign_doc: { status_type: { not: '050' } },
+                    },
+                }),
+                this.prismaService.client.count({
+                    where: {
+                        service_status: SERVICE_STATUS.WAITING,
+                        start_date: { gte: thisMonthStart, lte: thisMonthEnd },
+                    },
+                }),
+                this.prismaService.client.count({
+                    where: {
+                        service_status: SERVICE_STATUS.WAITING,
+                        start_date: { gte: nextMonthStart, lte: nextMonthEnd },
+                    },
+                }),
+            ]);
+
+        return { activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth };
+    }
 }

@@ -10,6 +10,9 @@ import {
     FetchEformsignDocFromApiUsecase,
     CreateEformsignDocUsecase,
     CreateEformsignDocParams,
+    CreateAndSendContractUsecase,
+    CreateAndSendContractParams,
+    CreateAndSendContractResult,
 } from "application/usecases/eformsign-doc";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import {
@@ -33,6 +36,8 @@ export class EformsignDocService {
         private readonly refreshEformsignAccessTokenUsecase: RefreshEformsignAccessTokenUsecase,
         private readonly fetchAllEformsignDocsFromApiUsecase: FetchAllEformsignDocsFromApiUsecase,
         private readonly fetchEformsignDocFromApiUsecase: FetchEformsignDocFromApiUsecase,
+        // Contract creation
+        private readonly createAndSendContractUsecase: CreateAndSendContractUsecase,
     ) {}
 
     // ============ Local DB Operations ============
@@ -111,6 +116,10 @@ export class EformsignDocService {
      */
     fetchFromApi(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse> {
         return this.fetchEformsignDocFromApiUsecase.execute(accessToken, documentId);
+    }
+
+    createAndSendContract(params: CreateAndSendContractParams): Promise<CreateAndSendContractResult> {
+        return this.createAndSendContractUsecase.execute(params);
     }
 }
 

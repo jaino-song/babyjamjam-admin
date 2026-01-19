@@ -47,8 +47,45 @@ export class SbEmployeeRepository implements IEmployeeRepository {
     }
 
     async findAll(): Promise<EmployeeEntity[]> {
-        const employees = await this.prismaService.employee.findMany();
-        return employees.map((employee) => EmployeeMapper.toDomain(employee));
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const employees = await this.prismaService.employee.findMany({
+            include: {
+                employee_schedule_employee_schedule_primary_employee_idToemployee: {
+                    where: {
+                        start_date: { lte: today },
+                        end_date: { gte: today },
+                        replaced: false,
+                    },
+                    take: 1,
+                },
+                employee_schedule_employee_schedule_secondary_employee_idToemployee: {
+                    where: {
+                        start_date: { lte: today },
+                        end_date: { gte: today },
+                        replaced: false,
+                    },
+                    take: 1,
+                },
+            },
+        });
+
+        return employees.map((emp) => {
+            const entity = EmployeeMapper.toDomain(emp);
+
+            if (!entity.openToNextWork) {
+                entity.status = "unavailable";
+            } else {
+                const hasPrimarySchedule =
+                    emp.employee_schedule_employee_schedule_primary_employee_idToemployee.length > 0;
+                const hasSecondarySchedule =
+                    emp.employee_schedule_employee_schedule_secondary_employee_idToemployee.length > 0;
+                entity.status = hasPrimarySchedule || hasSecondarySchedule ? "working" : "available";
+            }
+
+            return entity;
+        });
     }
 
     async findByWorkArea(workArea: string): Promise<EmployeeEntity[]> {

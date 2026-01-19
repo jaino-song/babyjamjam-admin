@@ -290,11 +290,12 @@
     "schedule-not-implemented": "Schedule feature coming soon",
     "table": {
       "name": "Name",
-      "open-status": "Availability",
-      "assigned-client": "Assigned Client"
+      "open-status": "Status",
+      "contact": "Contact"
     },
     "status": {
       "available": "Available",
+      "working": "Working",
       "unavailable": "Unavailable"
     },
     "form": {

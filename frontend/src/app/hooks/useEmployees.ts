@@ -3,6 +3,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/app/lib/axios/client";
 
+// Employee status type
+export type EmployeeStatus = 'available' | 'working' | 'unavailable';
+
 // Employee type
 export interface Employee {
     id: number;
@@ -12,6 +15,7 @@ export interface Employee {
     grade: string;
     openToNextWork: boolean;
     registeredDate: string;
+    status: EmployeeStatus;
 }
 
 export interface CreateEmployeeDto {

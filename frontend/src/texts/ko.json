@@ -293,12 +293,13 @@
     "schedule-not-implemented": "스케줄 기능 준비 중",
     "table": {
       "name": "이름",
-      "open-status": "근무 가능",
-      "assigned-client": "배당된 고객"
+      "open-status": "상태",
+      "contact": "연락처"
     },
     "status": {
-      "available": "가능",
-      "unavailable": "불가능"
+      "available": "근무 가능",
+      "working": "근무 중",
+      "unavailable": "근무 불가"
     },
     "form": {
       "create-title": "새 제공인력 등록",

@@ -16,5 +16,8 @@ export * from "./refresh-eformsign-access-token.usecase";
 export * from "./fetch-all-eformsign-docs-from-api.usecase";
 export * from "./fetch-eformsign-doc-from-api.usecase";
 
+// Contract creation
+export * from "./create-and-send-contract.usecase";
+
 
 

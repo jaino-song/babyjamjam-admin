@@ -22,6 +22,15 @@ const theme = createTheme({
       },
     },
     shape: { borderRadius: 14 },
+    components: {
+      MuiTableCell: {
+        styleOverrides: {
+          root: {
+            padding: "8px 16px",
+          },
+        },
+      },
+    },
   });
 
 export const MuiThemeProvider = ({ children }: { children: React.ReactNode }) => {

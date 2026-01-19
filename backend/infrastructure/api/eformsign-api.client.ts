@@ -6,6 +6,8 @@ import {
     EformsignTokenResponse,
     EformsignApiDocumentResponse,
     EformsignApiListResponse,
+    CreateDocumentPayload,
+    CreateDocumentResponse,
 } from "domain/repositories/eformsign.client.interface";
 
 /**
@@ -200,6 +202,49 @@ export class EformsignApiClient implements IEformsignClientRepository {
         }
 
         return await response.json();
+    }
+
+    async createDocument(accessToken: string, payload: CreateDocumentPayload): Promise<CreateDocumentResponse> {
+        const requestBody = {
+            template_id: payload.templateId,
+            document: {
+                document_name: payload.documentName,
+                fields: payload.prefillFields.map(f => ({
+                    id: f.id,
+                    value: f.value,
+                })),
+                recipients: [
+                    {
+                        step_idx: "2",
+                        step_type: "05",
+                        name: payload.recipient.name,
+                        id: "",
+                        sms: payload.recipient.sms,
+                        use_sms: true,
+                    },
+                ],
+            },
+        };
+
+        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify(requestBody),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to create document: ${response.status} - ${errorData}`);
+        }
+
+        const data = await response.json();
+        return {
+            documentId: data.document_id || data.id,
+            status: data.status || "created",
+        };
     }
 }
 

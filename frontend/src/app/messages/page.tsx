@@ -57,35 +57,36 @@ export default function MessagesPage() {
           mx: "auto",
         }}
       >
-        <ContentPaper 
+        <ContentPaper
           title={t(locale, "msg-form.title")}
           subtitle={t(locale, "msg-form.select-msg-type")}
           sx={{ display: "flex", flexDirection: "column", gap: 3 }}
         >
-            <Select
-              id="msg-type-select"
-              value={selectedTemplate}
-              onChange={handleChange}
-              fullWidth
-              size="small"
-              sx={{
+          <Select
+            id="msg-type-select"
+            value={selectedTemplate}
+            onChange={handleChange}
+            fullWidth
+            size="small"
+            sx={{
+              marginBottom: "24px",
+              borderRadius: "20px",
+              "& .MuiSelect-select": {
+                color: "primary.main",
+                fontWeight: 500,
+              },
+              "& .MuiOutlinedInput-notchedOutline": {
                 borderRadius: "20px",
-                "& .MuiSelect-select": {
-                  color: "primary.main",
-                  fontWeight: 500,
-                },
-                "& .MuiOutlinedInput-notchedOutline": {
-                  borderRadius: "20px",
-                  borderColor: "primary.main",
-                },
-              }}
-            >
-              {templateConfigs.map((config) => (
-                <MenuItem key={config.id} value={config.id}>
-                  {t(locale, config.labelKey)}
-                </MenuItem>
-              ))}
-            </Select>
+                borderColor: "primary.main",
+              },
+            }}
+          >
+            {templateConfigs.map((config) => (
+              <MenuItem key={config.id} value={config.id}>
+                {t(locale, config.labelKey)}
+              </MenuItem>
+            ))}
+          </Select>
           <SelectedForm />
         </ContentPaper>
       </Box>
