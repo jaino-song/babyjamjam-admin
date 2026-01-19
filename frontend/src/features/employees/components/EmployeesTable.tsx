@@ -24,6 +24,7 @@ import { useEmployees, useDeleteEmployee } from "../hooks/use-employees";
 import type { Employee, EmployeeStatus } from "../types";
 import { EmployeeFormDialog } from "./EmployeeFormDialog";
 import { EmployeeDetailModal } from "./EmployeeDetailModal";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 
 const formatPhoneNumber = (phone: string | null | undefined): string => {
     if (!phone) return "-";
@@ -62,10 +63,10 @@ export function EmployeesTable() {
         if (!employees) return [];
         if (!search.trim()) return employees;
 
-        const query = search.toLowerCase();
+        const query = search.trim();
         return employees.filter((emp) =>
-            emp.name.toLowerCase().includes(query) ||
-            emp.workArea?.some(area => area.toLowerCase().includes(query)) ||
+            matchesKoreanSearch(emp.name, query) ||
+            emp.workArea?.some(area => matchesKoreanSearch(area, query)) ||
             emp.phone?.includes(query)
         );
     }, [employees, search]);
@@ -117,8 +118,8 @@ export function EmployeesTable() {
 
     if (isLoading) {
         return (
-            <ContentPaper 
-                title={t(locale, "employees.title")} 
+            <ContentPaper
+                title={t(locale, "employees.title")}
                 subtitle={t(locale, "employees.subtitle")}
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
@@ -131,8 +132,8 @@ export function EmployeesTable() {
 
     if (error) {
         return (
-            <ContentPaper 
-                title={t(locale, "employees.title")} 
+            <ContentPaper
+                title={t(locale, "employees.title")}
                 subtitle={t(locale, "employees.subtitle")}
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
@@ -142,8 +143,8 @@ export function EmployeesTable() {
     }
 
     return (
-        <ContentPaper 
-            title={t(locale, "employees.title")} 
+        <ContentPaper
+            title={t(locale, "employees.title")}
             subtitle={t(locale, "employees.subtitle")}
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
