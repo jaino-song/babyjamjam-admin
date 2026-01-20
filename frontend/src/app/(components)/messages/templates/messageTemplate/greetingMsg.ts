@@ -1,3 +1,11 @@
+/**
+ * @deprecated Use SystemTemplate from database instead.
+ * This file is kept as fallback only.
+ * See: /system-templates API and useSystemTemplate hook
+ * 
+ * To edit this template, go to: /messages/system-templates
+ */
+
 export const greetingMsgTemplate = (): string => 
 `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)

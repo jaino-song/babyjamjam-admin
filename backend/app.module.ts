@@ -25,6 +25,8 @@ import { SystemSettingModule } from "module/system-setting.module";
 import { AligoModule } from "module/aligo.module";
 import { AlimtalkModule } from "module/alimtalk.module";
 import { AIChatModule } from "module/ai-chat.module";
+import { MessageTemplateModule } from "module/message-template.module";
+import { SystemTemplateModule } from "module/system-template.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 @Module({
@@ -54,6 +56,8 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         AligoModule,
         AlimtalkModule,
         AIChatModule,
+        MessageTemplateModule,
+        SystemTemplateModule,
     ],
     controllers: [AuthController, EformsignController],
     providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],

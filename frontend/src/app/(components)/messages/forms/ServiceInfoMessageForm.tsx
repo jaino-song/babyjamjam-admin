@@ -10,6 +10,8 @@ import { serviceInfoMsgTemplate } from "../templates/messageTemplate/serviceInfo
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
 import { useLocale } from "@/app/(components)/LocaleProvider";
+import { useSystemTemplate } from "@/features/system-templates/hooks";
+import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { NameInput } from "./form-components/NameInput";
 
@@ -18,10 +20,14 @@ export const ServiceInfoMessageForm = () => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const { name, setName } = useFormStore();
-
-
+  const { data: systemTemplate } = useSystemTemplate("SERVICE_INFO");
+ 
+ 
   const handleGenerate = () => {
-    const message = serviceInfoMsgTemplate({ name });
+    const message = systemTemplate?.content
+      ? renderTemplate(systemTemplate.content, { name })
+      : serviceInfoMsgTemplate({ name });
+
     setGeneratedMessage(message);
   };
 

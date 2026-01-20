@@ -10,6 +10,8 @@ import { thanksMsgTemplate } from "../templates/messageTemplate/thanksMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
 import { useLocale } from "@/app/(components)/LocaleProvider";
+import { useSystemTemplate } from "@/features/system-templates/hooks";
+import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { NameInput } from "./form-components/NameInput";
 
@@ -18,10 +20,14 @@ export const ThanksMessageForm = () => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const { name, setName } = useFormStore();
-
-
+  const { data: systemTemplate } = useSystemTemplate("THANKS");
+ 
+ 
   const handleGenerate = () => {
-    const message = thanksMsgTemplate({ name });
+    const message = systemTemplate?.content
+      ? renderTemplate(systemTemplate.content, { name })
+      : thanksMsgTemplate({ name });
+
     setGeneratedMessage(message);
   };
 
