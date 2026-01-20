@@ -1,12 +1,11 @@
 import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from "@nestjs/common";
 import { SystemTemplateWithRegistryDto } from "application/dto/system-template-with-registry.dto";
 import { SystemTemplateService } from "application/services/system-template.service";
-import { AdminGuard } from "infrastructure/auth/admin.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { PreviewTemplateDto, UpdateSystemTemplateDto, ValidateTemplateDto } from "interface/dto/system-template.dto";
 
 @Controller("system-templates")
-@UseGuards(JwtGuard, AdminGuard)
+@UseGuards(JwtGuard)
 export class SystemTemplateController {
     constructor(private readonly service: SystemTemplateService) {}
 
