@@ -20,4 +20,3 @@ export const ConditionalHeader = () => {
 
   return <Header initialUser={initialUser} />;
 };
-
