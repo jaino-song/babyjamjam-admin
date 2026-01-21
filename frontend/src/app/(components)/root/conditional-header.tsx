@@ -1,6 +1,6 @@
 "use client";
 import { usePathname } from "next/navigation";
-import { Header } from "./header";
+import { Header } from "./Header";
 import { useInitialUser } from "@/app/(components)/providers/UserProvider";
 
 // ConditionalHeader는 UserProvider 내부에서 렌더링될 때
