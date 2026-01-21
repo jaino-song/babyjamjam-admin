@@ -1,3 +1,11 @@
+/**
+ * @deprecated Use SystemTemplate from database instead.
+ * This file is kept as fallback only.
+ * See: /system-templates API and useSystemTemplate hook
+ * 
+ * To edit this template, go to: /messages/system-templates
+ */
+
 interface ThanksMessageData {
   name: string;
 }

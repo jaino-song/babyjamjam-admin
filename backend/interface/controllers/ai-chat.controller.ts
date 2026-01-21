@@ -5,17 +5,24 @@ import {
     Delete,
     Body,
     Param,
+    Query,
     Req,
     Res,
     UseGuards,
     HttpStatus,
     NotFoundException,
+    BadRequestException,
     Logger,
+    DefaultValuePipe,
+    ParseIntPipe,
 } from "@nestjs/common";
 import { Request, Response } from "express";
 import { AIChatService } from "application/services/ai-chat.service";
+import { GetChatHistoryUsecase } from "application/usecases/ai-chat/get-chat-history.usecase";
+import { CleanupChatSessionsUsecase } from "application/usecases/ai-chat/cleanup-chat-sessions.usecase";
 import { ChatStreamDto, SessionIdParamDto, SessionResponse } from "interface/dto/ai-chat.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { AdminGuard } from "infrastructure/auth/admin.guard";
 
 interface JwtUser {
     userId: string;
@@ -27,7 +34,11 @@ interface JwtUser {
 export class AIChatController {
     private readonly logger = new Logger(AIChatController.name);
 
-    constructor(private readonly aiChatService: AIChatService) {}
+    constructor(
+        private readonly aiChatService: AIChatService,
+        private readonly getChatHistoryUsecase: GetChatHistoryUsecase,
+        private readonly cleanupChatSessionsUsecase: CleanupChatSessionsUsecase,
+    ) {}
 
     @Post("stream")
     async streamChat(
@@ -92,6 +103,29 @@ export class AIChatController {
             createdAt: session.createdAt.toISOString(),
             expiresAt: session.expiresAt.toISOString(),
         };
+    }
+
+    @Get("history")
+    async getChatHistory(
+        @Query("offset", new DefaultValuePipe(0), ParseIntPipe) offset: number,
+        @Query("limit", new DefaultValuePipe(20), ParseIntPipe) limit: number,
+        @Req() req: Request,
+    ) {
+        if (offset < 0) {
+            throw new BadRequestException("offset must be >= 0");
+        }
+        if (limit < 1 || limit > 50) {
+            throw new BadRequestException("limit must be between 1 and 50");
+        }
+
+        const user = req.user as JwtUser;
+        return this.getChatHistoryUsecase.execute(user.userId, offset, limit);
+    }
+
+    @Post("cleanup")
+    @UseGuards(AdminGuard)
+    async cleanupSessions() {
+        return this.cleanupChatSessionsUsecase.execute();
     }
 
     @Delete("sessions/:id")

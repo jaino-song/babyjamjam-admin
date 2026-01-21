@@ -14,6 +14,10 @@ export interface ChatMessage {
 export class ChatSessionEntity {
     public static readonly MAX_MESSAGES = 100;
     public static readonly SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 1 day
+    public static readonly retention_duration_ms = 3 * 24 * 60 * 60 * 1000; // 3 days
+
+    // Backwards-compatible alias
+    public static readonly RETENTION_DURATION_MS = ChatSessionEntity.retention_duration_ms;
 
     constructor(
         public readonly id: string,
@@ -60,6 +64,49 @@ export class ChatSessionEntity {
      */
     getMessageCount(): number {
         return this.messages.length;
+    }
+
+    /**
+     * get total message count
+     */
+    gettotalmessagecount(): number {
+        return this.messages.length;
+    }
+
+    /**
+     * get paginated messages from the end of the array (newest first for pagination)
+     * offset=0, limit=20 -> returns last 20 messages
+     * offset=20, limit=20 -> returns messages before those
+     *
+     * @param offset - number of messages to skip from the end
+     * @param limit - maximum number of messages to return
+     * @returns array of messages in chronological order
+     */
+    getmessagespaginated(offset: number, limit: number): ChatMessage[] {
+        const total = this.messages.length;
+        if (offset >= total) {
+            return [];
+        }
+
+        // calculate slice indices from the end
+        const endindex = total - offset;
+        const startindex = Math.max(0, endindex - limit);
+
+        return this.messages.slice(startindex, endindex);
+    }
+
+    getTotalMessageCount(): number {
+        return this.messages.length;
+    }
+
+    getMessagesPaginated(offset: number, limit: number): ChatMessage[] {
+        const total = this.messages.length;
+        if (offset >= total) {
+            return [];
+        }
+        const endIndex = total - offset;
+        const startIndex = Math.max(0, endIndex - limit);
+        return this.messages.slice(startIndex, endIndex);
     }
 
     /**

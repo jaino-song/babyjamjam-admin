@@ -3,7 +3,7 @@ import { AppBar, Toolbar, IconButton, Box, Typography, Avatar, Drawer } from "@m
 import MenuIcon from "@mui/icons-material/Menu";
 import LoginIcon from '@mui/icons-material/Login';
 import { useState } from "react";
-import { NavBar } from "../nav-bar/NavBar";
+import { NavBar } from "../nav-bar/nav-bar";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { useGetAuthUser, AuthUser } from "@/app/hooks/useGetAuthUser";

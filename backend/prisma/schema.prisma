@@ -190,3 +190,39 @@ model voucher_price_info_2025 {
   grant        String?
   actual_price String?
 }
+
+model message_template {
+  id         String   @id @default(cuid())
+  name       String
+  content    String
+  variables  Json     @default("[]")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+}
+
+model system_template {
+  id          String   @id @default(cuid())
+  templateKey String   @unique @map("template_key")
+  content     String   @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  versions    system_template_version[]
+
+  @@map("system_template")
+}
+
+model system_template_version {
+  id            String   @id @default(cuid())
+  templateId    String   @map("template_id")
+  content       String   @db.Text
+  versionNumber Int      @map("version_number")
+  createdBy     String?  @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  template      system_template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, versionNumber])
+  @@index([templateId])
+  @@map("system_template_version")
+}

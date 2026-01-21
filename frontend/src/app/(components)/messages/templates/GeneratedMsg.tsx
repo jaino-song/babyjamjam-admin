@@ -1,6 +1,7 @@
-import { Button, Paper, Stack, Typography } from "@mui/material"
+import { Button, Stack, Typography } from "@mui/material"
 import { MsgField } from "./MsgField"
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import { ContentPaper } from "@/app/(components)/root/content-paper";
 
 interface GeneratedMsgProps {
   title: string;
@@ -13,7 +14,7 @@ interface GeneratedMsgProps {
 export const GeneratedMsg = ({ title, copyButtonText, message, onMessageChange, handleCopy }: GeneratedMsgProps) => {
 
     return (
-        <Paper elevation={0} data-component="generated-msg" sx={{ bgcolor: "background.default" }}>
+        <ContentPaper elevation={0} disableAnimation sx={{ px: 0 }}>
           <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
             {/* title */}
             <Typography variant="h6" color="primary.main" fontWeight={600}>
@@ -32,6 +33,6 @@ export const GeneratedMsg = ({ title, copyButtonText, message, onMessageChange, 
           </Stack>
           {/* message */}
           <MsgField value={message} onChange={onMessageChange} />
-        </Paper>    
+        </ContentPaper>    
     )
 }

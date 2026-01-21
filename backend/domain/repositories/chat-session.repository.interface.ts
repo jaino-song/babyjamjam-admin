@@ -8,6 +8,7 @@ export interface IChatSessionRepository {
     update(session: ChatSessionEntity): Promise<ChatSessionEntity>;
     delete(id: string): Promise<void>;
     deleteExpired(): Promise<number>;
+    deleteOlderThan(cutoffDate: Date): Promise<number>;
 }
 
 export const CHAT_SESSION_REPOSITORY = 'CHAT_SESSION_REPOSITORY';

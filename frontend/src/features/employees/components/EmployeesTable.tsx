@@ -19,7 +19,7 @@ import {
 import { Search, Plus } from "lucide-react";
 import { useLocale } from "@/core/providers";
 import { t, Locale } from "@/app/lib/i18n/translations";
-import { ContentPaper } from "@/app/(components)/root/ContentPaper";
+import { ContentPaper } from "@/app/(components)/root/content-paper";
 import { useEmployees, useDeleteEmployee } from "../hooks/use-employees";
 import type { Employee, EmployeeStatus } from "../types";
 import { EmployeeFormDialog } from "./EmployeeFormDialog";

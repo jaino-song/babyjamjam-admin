@@ -1,25 +1,32 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
-  Paper,
   Fade,
   Box,
 } from "@mui/material";
 import { greetingMsgTemplate } from "../templates/messageTemplate/greetingMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
+import { useSystemTemplate } from "@/features/system-templates/hooks";
+import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 
 
 export const GreetingMessageForm = () => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
-
+  const [isDirty, setIsDirty] = useState(false);
+  const { data: systemTemplate } = useSystemTemplate("GREETING");
 
   useEffect(() => {
-    const message = greetingMsgTemplate();
+    if (isDirty) return;
+
+    const message = systemTemplate?.content
+      ? renderTemplate(systemTemplate.content, {})
+      : greetingMsgTemplate();
+
     setGeneratedMessage(message);
-  }, []);
+  }, [isDirty, systemTemplate?.content]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
@@ -36,7 +43,10 @@ export const GreetingMessageForm = () => {
               title={t(locale, "common.generated-message-title")} 
               copyButtonText={t(locale, "common.copy-button")} 
               message={generatedMessage}
-              onMessageChange={setGeneratedMessage}
+              onMessageChange={(message) => {
+                setIsDirty(true);
+                setGeneratedMessage(message);
+              }}
               handleCopy={handleCopy}
             />
           )}

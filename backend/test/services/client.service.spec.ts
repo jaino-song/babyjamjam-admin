@@ -1,8 +1,16 @@
-import { ClientService } from "application/services/client.service";
-import { CreateClientUsecase, UpdateClientUsecase, FindClientByIdUsecase, ListClientsUsecase, ListClientsPaginatedUsecase, DeleteClientUsecase } from "application/usecases/client";
-import { ClientEntity } from "domain/entities/client.entity";
-import { PrismaService } from "infrastructure/database/prisma.service";
-import { AlimtalkService } from "application/services/alimtalk.service";
+import { ClientService } from "../../application/services/client.service";
+import {
+    CreateClientUsecase,
+    DeleteClientUsecase,
+    FindClientByIdUsecase,
+    ListClientsPaginatedUsecase,
+    ListClientsUsecase,
+    UpdateClientUsecase,
+} from "../../application/usecases/client";
+import { AlimtalkService } from "../../application/services/alimtalk.service";
+import { ClientEntity } from "../../domain/entities/client.entity";
+import { IClientRepository } from "../../domain/repositories/client.repository.interface";
+import { PrismaService } from "../../infrastructure/database/prisma.service";
 
 describe("ClientService", () => {
     // ============================================
@@ -53,6 +61,22 @@ describe("ClientService", () => {
         sendClientCreatedAlimtalk: jest.fn().mockResolvedValue(undefined),
     });
 
+    const createMockClientRepository = (): jest.Mocked<IClientRepository> => ({
+        findById: jest.fn(),
+        findAll: jest.fn(),
+        findAllPaginated: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+        findByStartDate: jest.fn(),
+        findByEndDate: jest.fn(),
+        findByCreatedDate: jest.fn(),
+        findStartingWithinDays: jest.fn().mockResolvedValue([]),
+        findEndingWithinDays: jest.fn().mockResolvedValue([]),
+        findWithIncompleteContractsStartingWithinDays: jest.fn().mockResolvedValue([]),
+        findWithoutContractSentStartingWithinDays: jest.fn().mockResolvedValue([]),
+    });
+
     const createClientEntity = (): ClientEntity => new ClientEntity(
         1,
         "Test Client",
@@ -82,6 +106,7 @@ describe("ClientService", () => {
     let deleteClientUsecase: ReturnType<typeof createMockDeleteClientUsecase>;
     let prismaService: ReturnType<typeof createMockPrismaService>;
     let alimtalkService: ReturnType<typeof createMockAlimtalkService>;
+    let clientRepository: ReturnType<typeof createMockClientRepository>;
 
     beforeEach(() => {
         createClientUsecase = createMockCreateClientUsecase();
@@ -92,6 +117,7 @@ describe("ClientService", () => {
         deleteClientUsecase = createMockDeleteClientUsecase();
         prismaService = createMockPrismaService();
         alimtalkService = createMockAlimtalkService();
+        clientRepository = createMockClientRepository();
 
         service = new ClientService(
             createClientUsecase as unknown as CreateClientUsecase,
@@ -102,6 +128,7 @@ describe("ClientService", () => {
             deleteClientUsecase as unknown as DeleteClientUsecase,
             prismaService as unknown as PrismaService,
             alimtalkService as unknown as AlimtalkService,
+            clientRepository,
         );
     });
 
@@ -475,7 +502,7 @@ describe("ClientService", () => {
                 prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
 
                 // Act
-                const result = await service.terminateService(1);
+                await service.terminateService(1);
 
                 // Assert
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(1, expect.objectContaining({
@@ -611,7 +638,7 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(completedClient);
 
                 // Act
-                const result = await service.completeReplacement(1);
+                await service.completeReplacement(1);
 
                 // Assert
                 expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(1);
@@ -635,7 +662,7 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(mockClient);
 
                 // Act
-                const result = await service.completeReplacement(1);
+                await service.completeReplacement(1);
 
                 // Assert
                 // Should still update status

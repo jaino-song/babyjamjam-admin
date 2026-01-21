@@ -1,6 +1,6 @@
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import { Button, Stack, Typography } from "@mui/material";
-import { ContentPaper } from "../root/ContentPaper";
+import { ContentPaper } from "../root/content-paper";
 
 interface HeroBannerProps {
   title: string;

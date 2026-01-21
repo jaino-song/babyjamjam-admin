@@ -10,6 +10,9 @@ node_modules/
 
 # testing
 coverage/
+test-results/
+frontend/test-results/
+frontend/playwright-report/
 
 # next.js
 **/.next/
@@ -29,6 +32,12 @@ backend/prisma/seed.ts
 # misc
 .DS_Store
 *.pem
+
+# paul planning files (local only)
+.paul/
+
+# sisyphus working files (local only)
+.sisyphus/
 
 # debug
 npm-debug.log*

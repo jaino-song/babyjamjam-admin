@@ -7,18 +7,26 @@ import {
 import { infoMsgTemplate } from "../templates/messageTemplate/infoMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
+import { useSystemTemplate } from "@/features/system-templates/hooks";
+import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 
 
 export const InfoMessageForm = () => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
-
+  const [isDirty, setIsDirty] = useState(false);
+  const { data: systemTemplate } = useSystemTemplate("INFO");
 
   useEffect(() => {
-    const message = infoMsgTemplate();
+    if (isDirty) return;
+
+    const message = systemTemplate?.content
+      ? renderTemplate(systemTemplate.content, {})
+      : infoMsgTemplate();
+
     setGeneratedMessage(message);
-  }, []);
+  }, [isDirty, systemTemplate?.content]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
@@ -34,9 +42,12 @@ export const InfoMessageForm = () => {
             <GeneratedMsg
               title={t(locale, "common.generated-message-title")}
               copyButtonText={t(locale, "common.copy-button")}
-              message={generatedMessage}
-              onMessageChange={setGeneratedMessage}
-              handleCopy={handleCopy}
+               message={generatedMessage}
+               onMessageChange={(message) => {
+                 setIsDirty(true);
+                 setGeneratedMessage(message);
+               }}
+               handleCopy={handleCopy}
             />
           )}
         </Box>

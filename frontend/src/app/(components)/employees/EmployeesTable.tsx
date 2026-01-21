@@ -18,7 +18,7 @@ import {
 import { Search, Plus } from "lucide-react";
 import { useLocale } from "../LocaleProvider";
 import { t, Locale } from "@/app/lib/i18n/translations";
-import { ContentPaper } from "../root/ContentPaper";
+import { ContentPaper } from "../root/content-paper";
 import {
     Employee,
     EmployeeStatus,

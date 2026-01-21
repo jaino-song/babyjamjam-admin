@@ -1,11 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { QueryProvider } from "./query-provider";
-import { ConditionalHeader } from "./(components)/root/ConditionalHeader";
+import { ConditionalHeader } from "./(components)/root/conditional-header";
 import { MuiThemeProvider as ThemeProvider } from "./(components)/mui-theme-provider";
 import EmotionRegistry from "./(components)/EmotionRegistry";
 import localFont from "next/font/local";
-import AnimatedContainer from "./(components)/root/AnimatedContainer";
+import AnimatedContainer from "./(components)/root/animated-container";
 import { Box } from "@mui/material";
 import { LocaleProvider } from "./(components)/LocaleProvider";
 import { getLocale } from "./actions/locale";
