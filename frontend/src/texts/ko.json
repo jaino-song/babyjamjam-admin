@@ -21,7 +21,35 @@
     "back": "이전",
     "saving": "저장 중...",
     "deleting": "삭제 중...",
-    "close": "닫기"
+    "close": "닫기",
+    "delete-confirm": "정말로 삭제하시겠습니까?",
+    "no-data": "데이터가 없습니다.",
+    "error-loading": "데이터를 불러오는데 실패했습니다.",
+    "view": "보기"
+  },
+  "nav": {
+    "my-templates": "내 메시지 템플릿"
+  },
+  "template-list": {
+    "subtitle": "사용자 정의 메시지 템플릿을 관리합니다"
+  },
+  "template-editor": {
+    "create-title": "새 템플릿 만들기",
+    "create-subtitle": "새로운 메시지 템플릿을 작성합니다",
+    "edit-title": "템플릿 수정",
+    "edit-subtitle": "기존 메시지 템플릿을 수정합니다",
+    "name-label": "템플릿 이름",
+    "name-placeholder": "예: VIP 고객 환영 메시지",
+    "content-label": "템플릿 내용",
+    "content-placeholder": "메시지 내용을 입력하세요. {{변수명}} 형식을 사용하여 변수를 삽입할 수 있습니다.",
+    "quick-insert": "변수 빠른 삽입:",
+    "variable-settings": "변수 설정",
+    "variable-label": "라벨 (표시 이름)",
+    "variable-type": "입력 타입",
+    "required-label": "필수 입력",
+    "option-settings": "옵션 설정",
+    "no-variables-hint": "내용에 {{변수}}를 입력하면 자동으로 감지되어 설정창이 나타납니다.",
+    "preview": "실시간 미리보기"
   },
   "header": {
     "companyName": "인천 아이미래로",

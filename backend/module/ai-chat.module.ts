@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { AIChatController } from "interface/controllers/ai-chat.controller";
 import { AIChatService } from "application/services/ai-chat.service";
+import { GetChatHistoryUsecase } from "application/usecases/ai-chat/get-chat-history.usecase";
+import { CleanupChatSessionsUsecase } from "application/usecases/ai-chat/cleanup-chat-sessions.usecase";
 import { ToolExecutorService } from "application/ai-chat/tool-executor.service";
 import { GeminiChatGateway } from "infrastructure/api/gemini-chat.gateway";
 import { ChatSessionModule } from "./chat-session.module";
@@ -32,6 +34,8 @@ import { EmployeeScheduleModule } from "./employee-schedule.module";
         GeminiChatGateway,
         ToolExecutorService,
         AIChatService,
+        GetChatHistoryUsecase,
+        CleanupChatSessionsUsecase,
     ],
     exports: [AIChatService],
 })

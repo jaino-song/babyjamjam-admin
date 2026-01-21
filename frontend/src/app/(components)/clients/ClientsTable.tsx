@@ -20,7 +20,7 @@ import {
 import { Search, Plus } from "lucide-react";
 import { useClients, useDeleteClient, useClient } from "@/app/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/app/lib/client/types";
-import { ContentPaper } from "../root/ContentPaper";
+import { ContentPaper } from "../root/content-paper";
 import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "../LocaleProvider";

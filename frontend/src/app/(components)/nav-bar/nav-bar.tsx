@@ -2,12 +2,12 @@
 import { useEffect } from "react";
 import { Box, Stack, IconButton } from "@mui/material";
 import CloseIcon from '@mui/icons-material/Close';
-import { House, MessageCircle, File, Settings } from 'lucide-react';
+import { House, MessageCircle, File, Settings, LayoutTemplate } from 'lucide-react';
 import { t } from "@/app/lib/i18n/translations";
 import { usePathname } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { NavButton } from "./NavButton";
-import { LanguageSwitcher } from "./LanguageSwitcher";
+import { NavButton } from "./nav-button";
+import { LanguageSwitcher } from "./language-switcher";
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import AssignmentIndOutlinedIcon from '@mui/icons-material/AssignmentIndOutlined';
 import { useLocale } from "@/app/(components)/LocaleProvider";
@@ -43,7 +43,8 @@ export const NavBar = ({ onClose }: NavBarProps) => {
         });
     }, [queryClient]);
     const isDashboard = pathname === "/dashboard";
-    const isMessages = pathname?.includes("/messages");
+    const isMessages = pathname === "/messages";
+    const isTemplates = pathname?.includes("/messages/templates");
     const isContracts = pathname === "/contracts";
     const isClients = pathname === "/clients";
     const isSettings = pathname === "/settings";
@@ -60,6 +61,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                 <Stack spacing={1}>
                     <NavButton href="/dashboard" label={t(locale, "nav-bar.dashboard")} icon={<House size={15} />} active={isDashboard} onClick={onClose} />
                     <NavButton href="/messages" label={t(locale, "nav-bar.messages")} icon={<MessageCircle size={15} />} active={isMessages} onClick={onClose} />
+                    <NavButton href="/messages/templates" label={t(locale, "nav.my-templates")} icon={<LayoutTemplate size={15} />} active={isTemplates} onClick={onClose} />
                     <NavButton href="/contracts" label={t(locale, "nav-bar.contracts")} icon={<File size={15} />} active={isContracts} onClick={onClose} />
                     <NavButton href="/clients" label={t(locale, "nav-bar.clients")} icon={<PeopleOutlineIcon fontSize="small" />} active={isClients} onClick={onClose} />
                     <NavButton href="/employees" label={t(locale, "nav-bar.employees")} icon={<AssignmentIndOutlinedIcon fontSize="small" />} active={isEmployees} onClick={onClose} />

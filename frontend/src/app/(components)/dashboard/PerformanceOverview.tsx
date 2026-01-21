@@ -1,5 +1,5 @@
 import { Box, LinearProgress, Stack, Typography } from "@mui/material";
-import { ContentPaper } from "../root/ContentPaper";
+import { ContentPaper } from "../root/content-paper";
 
 export interface PerformanceMetric {
   label: string;

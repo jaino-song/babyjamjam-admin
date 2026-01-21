@@ -74,8 +74,8 @@ export const ContentPaper = ({
   return (
     <Paper
       elevation={elevation}
-      data-component="content-paper"
-      data-testid="content-paper"
+      data-component="ContentPaper"
+      data-testid="ContentPaper"
       sx={mergedSx}
       {...paperProps}
     >

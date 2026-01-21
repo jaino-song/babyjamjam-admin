@@ -27,9 +27,13 @@ interface UseChatStreamReturn {
     sessionId: string | null;
     error: string | null;
     sendMessage: (message: string) => Promise<void>;
+    loadHistory: (offset?: number) => Promise<void>;
     clearSession: () => void;
     isToolExecuting: boolean;
     currentTool: string | null;
+    isLoadingHistory: boolean;
+    hasMoreHistory: boolean;
+    totalMessages: number;
 }
 
 const SESSION_STORAGE_KEY = "ai_chat_session_id";
@@ -68,8 +72,45 @@ export function useChatStream(): UseChatStreamReturn {
     const [error, setError] = useState<string | null>(null);
     const [isToolExecuting, setIsToolExecuting] = useState(false);
     const [currentTool, setCurrentTool] = useState<string | null>(null);
+
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    const [hasMoreHistory, setHasMoreHistory] = useState(true);
+    const [totalMessages, setTotalMessages] = useState(0);
+    const isLoadingRef = useRef<boolean>(false);
     
     const abortControllerRef = useRef<AbortController | null>(null);
+
+    const loadHistory = useCallback(async (offset: number = 0) => {
+        if (isLoadingRef.current) return;
+        isLoadingRef.current = true;
+        setIsLoadingHistory(true);
+        try {
+            const res = await fetch(`/api/ai/chat/history?offset=${offset}&limit=20`);
+            if (!res.ok) {
+                console.error("failed to load history:", res.status);
+                setHasMoreHistory(false);
+                return;
+            }
+            const data = await res.json();
+            if (offset === 0) {
+                setMessages(data.messages);
+                if (data.sessionId) {
+                    setSessionId(data.sessionId);
+                    localStorage.setItem(SESSION_STORAGE_KEY, data.sessionId);
+                }
+            } else {
+                setMessages((prev) => [...data.messages, ...prev]);
+            }
+            setHasMoreHistory(data.hasMore);
+            setTotalMessages(data.total);
+        } catch (err) {
+            console.error("error loading history:", err);
+            setHasMoreHistory(false);
+        } finally {
+            isLoadingRef.current = false;
+            setIsLoadingHistory(false);
+        }
+    }, []);
 
     const sendMessage = useCallback(async (message: string) => {
         if (state === "streaming" || state === "connecting") {
@@ -263,8 +304,12 @@ export function useChatStream(): UseChatStreamReturn {
         sessionId,
         error,
         sendMessage,
+        loadHistory,
         clearSession,
         isToolExecuting,
         currentTool,
+        isLoadingHistory,
+        hasMoreHistory,
+        totalMessages,
     };
 }

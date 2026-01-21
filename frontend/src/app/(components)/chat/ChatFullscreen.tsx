@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import {
     Box,
     IconButton,
@@ -94,14 +94,58 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
         clearSession,
         isToolExecuting,
         currentTool,
+        loadHistory,
+        isLoadingHistory,
+        hasMoreHistory,
     } = useChatStream();
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const prevScrollHeightRef = useRef(0);
+    const lastMessageRef = useRef<ChatMessage | null>(null);
 
     useEffect(() => {
-        if (messagesEndRef.current) {
+        if (open) {
+            loadHistory(0);
+        }
+    }, [open, loadHistory]);
+
+    const handleScroll = useCallback(() => {
+        const container = scrollContainerRef.current;
+        if (!container) return;
+
+        if (container.scrollTop < 100 && hasMoreHistory && !isLoadingHistory) {
+            prevScrollHeightRef.current = container.scrollHeight;
+            loadHistory(messages.length);
+        }
+    }, [hasMoreHistory, isLoadingHistory, messages.length, loadHistory]);
+
+    useEffect(() => {
+        const container = scrollContainerRef.current;
+        if (container) {
+            container.addEventListener("scroll", handleScroll);
+            return () => container.removeEventListener("scroll", handleScroll);
+        }
+    }, [handleScroll]);
+
+    useLayoutEffect(() => {
+        const container = scrollContainerRef.current;
+        const lastMessage = messages[messages.length - 1];
+        const isNewMessage = lastMessage !== lastMessageRef.current;
+
+        if (!isNewMessage && container && prevScrollHeightRef.current > 0) {
+            const diff = container.scrollHeight - prevScrollHeightRef.current;
+            if (diff > 0) {
+                requestAnimationFrame(() => {
+                    container.scrollTop = diff;
+                });
+            }
+            prevScrollHeightRef.current = 0;
+        } else if (isNewMessage && messagesEndRef.current) {
             messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
         }
+        
+        lastMessageRef.current = lastMessage || null;
     }, [messages]);
 
     const handleConfirm = () => {
@@ -166,6 +210,7 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                 </Box>
 
                 <Box
+                    ref={scrollContainerRef}
                     sx={{
                         flex: 1,
                         overflow: "auto",
@@ -176,6 +221,11 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                         MozUserSelect: "text",
                     }}
                 >
+                    {isLoadingHistory && messages.length > 0 && (
+                        <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
+                            <CircularProgress size={20} />
+                        </Box>
+                    )}
                     {messages.length === 0 ? (
                         <Fade in>
                             <Box

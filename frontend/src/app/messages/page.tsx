@@ -2,11 +2,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Box, MenuItem, Select, SelectChangeEvent, ListSubheader, Divider, CircularProgress } from "@mui/material";
-import { ContentPaper } from "@/app/(components)/root/ContentPaper";
+import { ContentPaper } from "@/app/(components)/root/content-paper";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
-import { useMessageTemplates } from "@/features/message-templates";
-import { UserTemplateForm } from "@/app/(components)/message-templates/UserTemplateForm";
+import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
+import { CustomTemplateForm } from "@/app/(components)/messages/forms/custom-template-form";
 
 import { GreetingMessageForm } from "@/app/(components)/messages/forms/GreetingMessageForm";
 import { ServiceInfoMessageForm } from "@/app/(components)/messages/forms/ServiceInfoMessageForm";
@@ -145,7 +145,7 @@ export default function MessagesPage() {
 
           {SelectedBuiltinForm && <SelectedBuiltinForm />}
 
-          {selectedUserTemplate && <UserTemplateForm template={selectedUserTemplate} />}
+          {selectedUserTemplate && <CustomTemplateForm template={selectedUserTemplate as any} />}
         </ContentPaper>
       </Box>
     </Box>

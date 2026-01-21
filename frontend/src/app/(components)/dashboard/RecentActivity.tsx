@@ -1,7 +1,7 @@
 "use client";
 
 import { Avatar, Button, Divider, List, ListItem, ListItemAvatar, ListItemText, Stack, Typography } from "@mui/material";
-import { ContentPaper } from "../root/ContentPaper";
+import { ContentPaper } from "../root/content-paper";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import { Fragment } from "react";
 

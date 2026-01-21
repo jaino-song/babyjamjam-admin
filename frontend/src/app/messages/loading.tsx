@@ -2,7 +2,7 @@
 
 import { MoonLoader } from "react-spinners";
 import { Box } from "@mui/material";
-import { ContentPaper } from "@/app/(components)/root/ContentPaper";
+import { ContentPaper } from "@/app/(components)/root/content-paper";
 
 export default function Loading() {
     return (

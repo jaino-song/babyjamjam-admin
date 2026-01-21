@@ -32,7 +32,7 @@ import {
   mapStatusToLabel,
   getStatusColor
 } from "@/app/lib/eformsign/status-codes";
-import { ContentPaper } from "../root/ContentPaper";
+import { ContentPaper } from "../root/content-paper";
 import { t } from "@/app/lib/i18n/translations";
 import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 import { useLocale } from "../LocaleProvider";

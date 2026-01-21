@@ -25,7 +25,7 @@ import {
   Checkbox,
   Divider,
 } from "@mui/material";
-import { ContentPaper } from "@/app/(components)/root/ContentPaper";
+import { ContentPaper } from "@/app/(components)/root/content-paper";
 import CloseIcon from "@mui/icons-material/Close";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";

@@ -30,9 +30,9 @@ describe('ContentPaper', () => {
     it('renders with data-component attribute for testing', () => {
       renderWithTheme(<ContentPaper>Content</ContentPaper>);
 
-      expect(screen.getByTestId('content-paper')).toHaveAttribute(
+      expect(screen.getByTestId('ContentPaper')).toHaveAttribute(
         'data-component',
-        'content-paper'
+        'ContentPaper'
       );
     });
 
@@ -59,7 +59,7 @@ describe('ContentPaper', () => {
   describe('Elevation', () => {
     it('applies default elevation of 2', () => {
       renderWithTheme(<ContentPaper>Content</ContentPaper>);
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       // MUI Paper with elevation > 0 has box-shadow
       const computedStyle = window.getComputedStyle(paper);
@@ -68,7 +68,7 @@ describe('ContentPaper', () => {
 
     it('allows elevation override to 0', () => {
       renderWithTheme(<ContentPaper elevation={0}>Content</ContentPaper>);
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       // MUI 7+ uses CSS variables for shadows - elevation 0 still sets the variable
       // We verify the prop is accepted and element renders correctly
@@ -77,7 +77,7 @@ describe('ContentPaper', () => {
 
     it('allows elevation override to higher values', () => {
       renderWithTheme(<ContentPaper elevation={8}>Content</ContentPaper>);
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       const computedStyle = window.getComputedStyle(paper);
       expect(computedStyle.boxShadow).not.toBe('none');
@@ -160,7 +160,7 @@ describe('ContentPaper', () => {
   describe('Styling and sx Props', () => {
     it('applies default padding (p: 3 = 24px)', () => {
       renderWithTheme(<ContentPaper>Content</ContentPaper>);
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       const computedStyle = window.getComputedStyle(paper);
       expect(computedStyle.padding).toBe('24px');
@@ -168,7 +168,7 @@ describe('ContentPaper', () => {
 
     it('custom padding via sx overrides default', () => {
       renderWithTheme(<ContentPaper sx={{ p: 2 }}>Content</ContentPaper>);
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       const computedStyle = window.getComputedStyle(paper);
       expect(computedStyle.padding).toBe('16px');
@@ -178,7 +178,7 @@ describe('ContentPaper', () => {
       renderWithTheme(
         <ContentPaper sx={{ minHeight: '70vh' }}>Content</ContentPaper>
       );
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       const computedStyle = window.getComputedStyle(paper);
       expect(computedStyle.minHeight).toBe('70vh');
@@ -187,7 +187,7 @@ describe('ContentPaper', () => {
 
     it('applies bgcolor background.default by default', () => {
       renderWithTheme(<ContentPaper>Content</ContentPaper>);
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       const computedStyle = window.getComputedStyle(paper);
       expect(computedStyle.backgroundColor).toBeTruthy();
@@ -202,7 +202,7 @@ describe('ContentPaper', () => {
 
       jest.advanceTimersByTime(500);
 
-      expect(screen.getByTestId('content-paper')).toBeInTheDocument();
+      expect(screen.getByTestId('ContentPaper')).toBeInTheDocument();
       jest.useRealTimers();
     });
 
@@ -220,14 +220,14 @@ describe('ContentPaper', () => {
       renderWithTheme(
         <ContentPaper component="section">Content</ContentPaper>
       );
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       expect(paper.tagName).toBe('SECTION');
     });
 
     it('forwards id prop to Paper', () => {
       renderWithTheme(<ContentPaper id="test-section">Content</ContentPaper>);
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       expect(paper).toHaveAttribute('id', 'test-section');
     });
@@ -236,7 +236,7 @@ describe('ContentPaper', () => {
       renderWithTheme(
         <ContentPaper className="custom-class">Content</ContentPaper>
       );
-      const paper = screen.getByTestId('content-paper');
+      const paper = screen.getByTestId('ContentPaper');
 
       expect(paper).toHaveClass('custom-class');
     });

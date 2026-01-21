@@ -66,4 +66,11 @@ export class SbChatSessionRepository implements IChatSessionRepository {
         });
         return result.count;
     }
+
+    async deleteOlderThan(cutoffDate: Date): Promise<number> {
+        const result = await this.prismaService.chat_session.deleteMany({
+            where: { created_at: { lt: cutoffDate } },
+        });
+        return result.count;
+    }
 }

@@ -1,7 +1,7 @@
 import { Button, Stack, Typography } from "@mui/material"
 import { MsgField } from "./MsgField"
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import { ContentPaper } from "@/app/(components)/root/ContentPaper";
+import { ContentPaper } from "@/app/(components)/root/content-paper";
 
 interface GeneratedMsgProps {
   title: string;

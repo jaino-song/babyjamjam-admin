@@ -22,7 +22,7 @@ export default function AnimatedContainer({
     return (
         <Box
             component={motion.article}
-            data-component="animated-container"
+            data-component="AnimatedContainer"
             key={pathname}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
