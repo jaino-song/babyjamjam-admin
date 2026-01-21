@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter, useParams } from "next/navigation";
-import { Box, CircularProgress, Alert } from "@mui/material";
+import { Box, CircularProgress, Alert, IconButton } from "@mui/material";
+import { ArrowLeft } from "lucide-react";
+import Link from "next/link";
 import { TemplateEditor } from "@/app/(components)/my-templates/template-editor";
 import { useMessageTemplate } from "@/app/hooks/use-message-templates";
 import { ContentPaper } from "@/app/(components)/root/content-paper";
@@ -16,10 +18,23 @@ export default function EditTemplatePage() {
 
     const { data: template, isLoading, error } = useMessageTemplate(id);
 
+    const BackButton = () => (
+        <Box sx={{ mb: 2 }}>
+            <IconButton
+                component={Link}
+                href="/messages/templates"
+                sx={{ color: "text.secondary" }}
+            >
+                <ArrowLeft size={24} />
+            </IconButton>
+        </Box>
+    );
+
     if (isLoading) {
         return (
             <Box sx={{ bgcolor: "background.paper" }}>
                 <Box sx={{ px: { xs: 2, sm: 3, md: 6 }, py: { xs: 3, sm: 4 }, mx: "auto" }}>
+                    <BackButton />
                     <ContentPaper
                         title={t(locale, "template-editor.edit-title")}
                         sx={{ minHeight: "70vh", display: "flex", justifyContent: "center", alignItems: "center" }}
@@ -35,6 +50,7 @@ export default function EditTemplatePage() {
         return (
             <Box sx={{ bgcolor: "background.paper" }}>
                 <Box sx={{ px: { xs: 2, sm: 3, md: 6 }, py: { xs: 3, sm: 4 }, mx: "auto" }}>
+                    <BackButton />
                     <ContentPaper
                         title={t(locale, "template-editor.edit-title")}
                         sx={{ minHeight: "70vh" }}
@@ -56,6 +72,7 @@ export default function EditTemplatePage() {
                     mx: "auto",
                 }}
             >
+                <BackButton />
                 <ContentPaper
                     title={t(locale, "template-editor.edit-title")}
                     subtitle={t(locale, "template-editor.edit-subtitle")}
@@ -67,3 +84,4 @@ export default function EditTemplatePage() {
         </Box>
     );
 }
+

@@ -1,122 +1,195 @@
 "use client";
 
-import { 
-    Box, 
-    Typography, 
-    Button, 
-    Card, 
-    CardContent, 
-    CardActions, 
-    Grid, 
-    IconButton, 
-    Tooltip,
+import {
+    Box,
+    Table,
+    TableBody,
+    TableCell,
+    TableContainer,
+    TableHead,
+    TableRow,
+    IconButton,
     CircularProgress,
-    Stack,
-    Chip
+    Alert,
+    Divider,
+    Skeleton,
 } from "@mui/material";
-import { Edit as EditIcon, Delete as DeleteIcon, Visibility as VisibilityIcon, Add as AddIcon } from "@mui/icons-material";
+import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMessageTemplates, useDeleteMessageTemplate } from "@/app/hooks/use-message-templates";
+import { useMessageTemplates } from "@/app/hooks/use-message-templates";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { MessageTemplate } from "@/lib/template/types";
+
+// Date formatting helper
+const formatDate = (dateString: string): string => {
+    return new Date(dateString).toLocaleDateString("ko-KR", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    });
+};
 
 export const TemplateList = () => {
     const router = useRouter();
     const locale = useLocale();
     const { data: templates, isLoading } = useMessageTemplates();
-    const { mutate: deleteTemplate } = useDeleteMessageTemplate();
 
-    const handleEdit = (id: string) => {
+    const handleRowClick = (id: string) => {
         router.push(`/messages/templates/${id}/edit`);
-    };
-
-    const handleDelete = (id: string) => {
-        if (confirm(t(locale, "common.delete-confirm"))) {
-            deleteTemplate(id);
-        }
     };
 
     const handleCreate = () => {
         router.push("/messages/templates/new");
     };
 
-    if (isLoading) {
-        return (
-            <Box sx={{ display: "flex", justifyContent: "center", p: 5 }}>
-                <CircularProgress />
-            </Box>
-        );
-    }
+    const rowsPerPage = 5;
 
     return (
-        <Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-                <Typography variant="h5" fontWeight={600}>
-                    {t(locale, "nav.my-templates")}
-                </Typography>
-                <Button 
-                    variant="contained" 
-                    startIcon={<AddIcon />} 
+        <Box data-component="template-list-container">
+            {/* Toolbar */}
+            <Box
+                data-component="template-list-toolbar"
+                sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                }}
+            >
+                {/* New Template Button */}
+                <IconButton
+                    size="medium"
+                    sx={{ color: "#1e88e5" }}
                     onClick={handleCreate}
                 >
-                    {t(locale, "common.create")}
-                </Button>
+                    <Plus size={30} strokeWidth={2} />
+                </IconButton>
             </Box>
 
-            <Grid container spacing={2}>
-                {templates?.map((template: MessageTemplate) => (
-                    <Grid key={template.id} size={{ xs: 12, sm: 6, md: 4 }}>
-                        <Card sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-                            <CardContent sx={{ flexGrow: 1 }}>
-                                <Typography variant="h6" gutterBottom noWrap>
-                                    {template.name}
-                                </Typography>
-                                <Typography variant="body2" color="text.secondary" sx={{ 
-                                    display: "-webkit-box",
-                                    WebkitLineClamp: 3,
-                                    WebkitBoxOrient: "vertical",
-                                    overflow: "hidden",
-                                    mb: 2
-                                }}>
-                                    {template.content}
-                                </Typography>
-                                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                    {template.variables.map(v => (
-                                        <Chip key={v.key} label={v.label} size="small" variant="outlined" />
-                                    ))}
-                                </Stack>
-                            </CardContent>
-                            <CardActions sx={{ justifyContent: "flex-end", borderTop: 1, borderColor: "divider" }}>
-                                <Tooltip title={t(locale, "common.view")}>
-                                    <IconButton size="small" color="primary">
-                                        <VisibilityIcon />
-                                    </IconButton>
-                                </Tooltip>
-                                <Tooltip title={t(locale, "common.edit")}>
-                                    <IconButton size="small" color="primary" onClick={() => handleEdit(template.id)}>
-                                        <EditIcon />
-                                    </IconButton>
-                                </Tooltip>
-                                <Tooltip title={t(locale, "common.delete")}>
-                                    <IconButton size="small" color="error" onClick={() => handleDelete(template.id)}>
-                                        <DeleteIcon />
-                                    </IconButton>
-                                </Tooltip>
-                            </CardActions>
-                        </Card>
-                    </Grid>
-                ))}
-                {templates?.length === 0 && (
-                    <Grid size={{ xs: 12 }}>
-                        <Box sx={{ textAlign: "center", py: 10, bgcolor: "background.paper", borderRadius: 2 }}>
-                            <Typography color="text.secondary">
-                                {t(locale, "common.no-data")}
-                            </Typography>
-                        </Box>
-                    </Grid>
+            <Divider />
+
+            {/* Table */}
+            <Box sx={{ minHeight: 200, width: "100%" }}>
+                {isLoading ? (
+                    <TableContainer>
+                        <Table sx={{ tableLayout: "fixed", width: "100%" }}>
+                            <TableHead>
+                                <TableRow>
+                                    <TableCell
+                                        align="center"
+                                        sx={{
+                                            fontWeight: 500,
+                                            color: "rgba(0, 0, 0, 0.6)",
+                                            fontSize: "0.875rem",
+                                            width: "60%",
+                                            whiteSpace: "nowrap",
+                                        }}
+                                    >
+                                        템플릿 이름
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{
+                                            fontWeight: 500,
+                                            color: "rgba(0, 0, 0, 0.6)",
+                                            fontSize: "0.875rem",
+                                            width: "40%",
+                                            whiteSpace: "nowrap",
+                                        }}
+                                    >
+                                        최근 수정일
+                                    </TableCell>
+                                </TableRow>
+                            </TableHead>
+                            <TableBody>
+                                {Array.from({ length: rowsPerPage }).map((_, index) => (
+                                    <TableRow key={`skeleton-${index}`}>
+                                        <TableCell align="center" sx={{ px: 1 }}>
+                                            <Skeleton variant="text" width="60%" sx={{ mx: "auto" }} />
+                                        </TableCell>
+                                        <TableCell align="center" sx={{ px: 1 }}>
+                                            <Skeleton variant="text" width="70%" sx={{ mx: "auto" }} />
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </TableContainer>
+                ) : templates && templates.length > 0 ? (
+                    <TableContainer>
+                        <Table sx={{ tableLayout: "fixed", width: "100%" }}>
+                            <TableHead>
+                                <TableRow>
+                                    <TableCell
+                                        align="center"
+                                        sx={{
+                                            fontWeight: 500,
+                                            color: "rgba(0, 0, 0, 0.6)",
+                                            fontSize: "0.875rem",
+                                            width: "60%",
+                                            whiteSpace: "nowrap",
+                                        }}
+                                    >
+                                        템플릿 이름
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{
+                                            fontWeight: 500,
+                                            color: "rgba(0, 0, 0, 0.6)",
+                                            fontSize: "0.875rem",
+                                            width: "40%",
+                                            whiteSpace: "nowrap",
+                                        }}
+                                    >
+                                        최근 수정일
+                                    </TableCell>
+                                </TableRow>
+                            </TableHead>
+                            <TableBody>
+                                {templates.map((template: MessageTemplate) => (
+                                    <TableRow
+                                        key={template.id}
+                                        hover
+                                        onClick={() => handleRowClick(template.id)}
+                                        sx={{
+                                            cursor: "pointer",
+                                            "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" }
+                                        }}
+                                    >
+                                        <TableCell
+                                            align="center"
+                                            sx={{
+                                                fontSize: "0.875rem",
+                                                color: "rgba(0, 0, 0, 0.87)",
+                                                whiteSpace: "nowrap",
+                                                px: 1
+                                            }}
+                                        >
+                                            {template.name}
+                                        </TableCell>
+                                        <TableCell
+                                            align="center"
+                                            sx={{
+                                                fontSize: "0.875rem",
+                                                color: "rgba(0, 0, 0, 0.87)",
+                                                whiteSpace: "nowrap",
+                                                px: 1
+                                            }}
+                                        >
+                                            {formatDate(template.updatedAt)}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </TableContainer>
+                ) : (
+                    <Box sx={{ py: 3 }}>
+                        <Alert severity="info">{t(locale, "common.no-data")}</Alert>
+                    </Box>
                 )}
-            </Grid>
+            </Box>
         </Box>
     );
 };

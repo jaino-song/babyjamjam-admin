@@ -1,6 +1,8 @@
 "use client";
 
-import { Box } from "@mui/material";
+import { Box, IconButton } from "@mui/material";
+import { ArrowLeft } from "lucide-react";
+import Link from "next/link";
 import { ContentPaper } from "@/app/(components)/root/content-paper";
 import { TemplateEditor } from "@/app/(components)/my-templates/template-editor";
 import { useLocale } from "@/app/(components)/LocaleProvider";
@@ -19,6 +21,15 @@ export default function NewTemplatePage() {
                     mx: "auto",
                 }}
             >
+                <Box sx={{ mb: 2 }}>
+                    <IconButton
+                        component={Link}
+                        href="/messages/templates"
+                        sx={{ color: "text.secondary" }}
+                    >
+                        <ArrowLeft size={24} />
+                    </IconButton>
+                </Box>
                 <ContentPaper
                     title={t(locale, "template-editor.create-title")}
                     subtitle={t(locale, "template-editor.create-subtitle")}
@@ -30,3 +41,4 @@ export default function NewTemplatePage() {
         </Box>
     );
 }
+
