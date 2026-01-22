@@ -11,7 +11,6 @@ import { LocaleProvider } from "./(components)/LocaleProvider";
 import { getLocale } from "./actions/locale";
 import { getCurrentUser } from "./lib/auth/cookies";
 import { UserProvider } from "./(components)/providers/UserProvider";
-import SplashScreen from "./(components)/splash/SplashScreen";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",
@@ -37,7 +36,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#ffffff",
+  themeColor: "#0047ab",
   width: "device-width",
 };
 
@@ -59,7 +58,6 @@ export default async function RootLayout({
             <QueryProvider>
               <LocaleProvider locale={locale}>
                 <UserProvider user={user}>
-                  <SplashScreen />
                   <ConditionalHeader />
                   <AnimatedContainer>
                     <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1, width: "100%" }}>

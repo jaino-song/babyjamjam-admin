@@ -8,12 +8,30 @@
  */
 
 // Cache version - increment to force update
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `imirae-back-office-${CACHE_VERSION}`;
 
-// Install event - wait for message to activate (allows overlay to show)
+// Assets to precache during install
+const PRECACHE_ASSETS = [
+    '/manifest.json',
+    '/assets/icon-192.png',
+    '/assets/icon-512.png',
+    '/assets/badge-72.png',
+    '/apple-touch-icon.png',
+    '/splash/splash-1290x2796.png',
+    '/splash/splash-1170x2532.png',
+    '/splash/splash-1125x2436.png',
+];
+
+// Install event - precache static assets
 self.addEventListener('install', (event) => {
     console.log('[SW] Installing service worker...');
+    event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => {
+            console.log('[SW] Precaching assets...');
+            return cache.addAll(PRECACHE_ASSETS);
+        })
+    );
 });
 
 // Activate event - clean up old caches
@@ -29,6 +47,38 @@ self.addEventListener('activate', (event) => {
         }).then(() => {
             // Take control of all pages immediately
             return self.clients.claim();
+        })
+    );
+});
+
+/**
+ * Fetch Event Handler
+ *
+ * Caches static assets using cache-first strategy.
+ * Excludes API requests from caching.
+ */
+self.addEventListener('fetch', (event) => {
+    const { request } = event;
+    const url = new URL(request.url);
+
+    if (request.method !== 'GET') return;
+    if (url.pathname.startsWith('/api/')) return;
+
+    event.respondWith(
+        caches.match(request).then((cachedResponse) => {
+            if (cachedResponse) {
+                return cachedResponse;
+            }
+            return fetch(request).then((networkResponse) => {
+                if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+                    return networkResponse;
+                }
+                const responseToCache = networkResponse.clone();
+                caches.open(CACHE_NAME).then((cache) => {
+                    cache.put(request, responseToCache);
+                });
+                return networkResponse;
+            });
         })
     );
 });
