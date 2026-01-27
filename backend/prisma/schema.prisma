@@ -145,3 +145,23 @@ model voucher_price_info_2025 {
   grant        String?
   actual_price String?
 }
+
+model document {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  category    String
+  tags        String[]
+  mimeType    String   @map("mime_type")
+  fileSize    Int      @map("file_size")
+  storagePath String   @map("storage_path")
+  storageUrl  String?  @map("storage_url")
+  orgId       String?  @map("org_id")
+  uploadedBy  String   @map("uploaded_by")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([category])
+  @@index([uploadedBy])
+  @@index([orgId])
+}

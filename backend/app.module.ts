@@ -17,6 +17,7 @@ import { ClientModule } from "module/client.module";
 import { EmployeeScheduleModule } from "module/employee-schedule.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { AreaTemplateModule } from "module/area-template.module";
+import { DocumentModule } from "module/document.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 @Module({
@@ -38,6 +39,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         EmployeeScheduleModule,
         EformsignDocModule,
         AreaTemplateModule,
+        DocumentModule,
     ],
     controllers: [AuthController, EformsignController],
     providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],
