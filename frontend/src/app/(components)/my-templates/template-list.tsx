@@ -71,7 +71,7 @@ export const TemplateList = () => {
             {/* Table */}
             <Box sx={{ minHeight: 200, width: "100%" }}>
                 {isLoading ? (
-                    <TableContainer>
+                    <TableContainer data-component="template-list-loading-container">
                         <Table sx={{ tableLayout: "fixed", width: "100%" }}>
                             <TableHead>
                                 <TableRow>
@@ -116,7 +116,7 @@ export const TemplateList = () => {
                         </Table>
                     </TableContainer>
                 ) : templates && templates.length > 0 ? (
-                    <TableContainer>
+                    <TableContainer data-component="template-list-table-container">
                         <Table sx={{ tableLayout: "fixed", width: "100%" }}>
                             <TableHead>
                                 <TableRow>

@@ -56,8 +56,8 @@ export function ClientsTable() {
     const [editingClient, setEditingClient] = useState<Client | null>(null);
 
     const { data, isLoading, error, isFetching } = useClients(
-        page + 1, 
-        rowsPerPage, 
+        page + 1,
+        rowsPerPage,
         search || undefined
     );
     const deleteClient = useDeleteClient();
@@ -114,8 +114,8 @@ export function ClientsTable() {
 
     if (isLoading) {
         return (
-            <ContentPaper 
-                title={t(locale, "clients.title")} 
+            <ContentPaper
+                title={t(locale, "clients.title")}
                 subtitle={t(locale, "clients.subtitle")}
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
@@ -128,8 +128,8 @@ export function ClientsTable() {
 
     if (error) {
         return (
-            <ContentPaper 
-                title={t(locale, "clients.title")} 
+            <ContentPaper
+                title={t(locale, "clients.title")}
                 subtitle={t(locale, "clients.subtitle")}
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
@@ -142,8 +142,9 @@ export function ClientsTable() {
     const total = data?.total || 0;
 
     return (
-        <ContentPaper 
-            title={t(locale, "clients.title")} 
+        <ContentPaper
+            data-component="ClientsTable"
+            title={t(locale, "clients.title")}
             subtitle={t(locale, "clients.subtitle")}
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
@@ -181,8 +182,8 @@ export function ClientsTable() {
                     <IconButton
                         color="primary"
                         onClick={handleAddNew}
-                        sx={{ 
-                            bgcolor: "primary.main", 
+                        sx={{
+                            bgcolor: "primary.main",
                             color: "white",
                             "&:hover": { bgcolor: "primary.dark" }
                         }}
@@ -192,7 +193,7 @@ export function ClientsTable() {
                 </Box>
 
                 {/* Table */}
-                <TableContainer>
+                <TableContainer data-component="clients-table-container">
                     <Table size="small">
                         <TableHead>
                             <TableRow>
@@ -216,8 +217,8 @@ export function ClientsTable() {
                                 </TableRow>
                             ) : (
                                 clients.map((client) => (
-                                    <TableRow 
-                                        key={client.id} 
+                                    <TableRow
+                                        key={client.id}
                                         hover
                                         onClick={() => handleRowClick(client)}
                                         sx={{ cursor: "pointer" }}

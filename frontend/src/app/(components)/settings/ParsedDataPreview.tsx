@@ -82,7 +82,7 @@ export function ParsedDataPreview({
   }
 
   return (
-    <Box>
+    <Box data-component="ParsedDataPreview">
       {/* 경고 메시지 */}
       {warnings.length > 0 && (
         <Alert severity="warning" sx={{ mb: 2 }}>
@@ -125,7 +125,7 @@ export function ParsedDataPreview({
       </Box>
 
       {/* 데이터 테이블 */}
-      <TableContainer component={Paper} variant="outlined">
+      <TableContainer data-component="parsed-data-table-container" component={Paper} variant="outlined">
         <Table size="small">
           <TableHead>
             <TableRow sx={{ backgroundColor: "action.hover" }}>

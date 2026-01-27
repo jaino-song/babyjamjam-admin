@@ -1,14 +1,22 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
-import { SystemTemplateKey, SYSTEM_TEMPLATE_REGISTRY } from "domain/constants/system-template-registry";
+import { SystemTemplateKey, SYSTEM_TEMPLATE_REGISTRY, CustomVariable } from "domain/constants/system-template-registry";
 import { SystemTemplateEntity, VariableValidationResult } from "domain/entities/system-template.entity";
 import { ISystemTemplateRepository, SYSTEM_TEMPLATE_REPOSITORY } from "domain/repositories/system-template.repository.interface";
 
-function validateTemplateContent(key: SystemTemplateKey, content: string): VariableValidationResult {
+function validateTemplateContent(key: SystemTemplateKey, content: string, customVariables: CustomVariable[] = []): VariableValidationResult {
   const contract = SYSTEM_TEMPLATE_REGISTRY[key];
-  const allowedKeys = contract.requiredVariables.map(v => v.key);
-  const requiredKeys = contract.requiredVariables.filter(v => v.required).map(v => v.key);
+  const registryKeys = contract.requiredVariables.map(v => v.key);
+  const registryRequiredKeys = contract.requiredVariables.filter(v => v.required).map(v => v.key);
 
-  const tempEntity = SystemTemplateEntity.create(key, content);
+  // Combine registry keys with custom variable keys for allowed list
+  const customVarKeys = customVariables.map(cv => cv.key);
+  const allowedKeys = [...registryKeys, ...customVarKeys];
+
+  // Required custom variables (where required: true) should be checked as missing if not in content
+  const requiredCustomVarKeys = customVariables.filter(cv => cv.required).map(cv => cv.key);
+  const requiredKeys = [...registryRequiredKeys, ...requiredCustomVarKeys];
+
+  const tempEntity = SystemTemplateEntity.create(key, content, customVariables);
   const contentVars = tempEntity.extractVariables();
 
   const contentSet = new Set(contentVars);
@@ -38,8 +46,8 @@ export class UpdateSystemTemplateUseCase {
     private readonly repository: ISystemTemplateRepository,
   ) {}
 
-  async execute(key: SystemTemplateKey, content: string, userId: string): Promise<SystemTemplateEntity> {
-    const validation = validateTemplateContent(key, content);
+  async execute(key: SystemTemplateKey, content: string, userId: string, customVariables: CustomVariable[] = []): Promise<SystemTemplateEntity> {
+    const validation = validateTemplateContent(key, content, customVariables);
     if (!validation.valid) {
       throw new BadRequestException({
         message: "Template validation failed",
@@ -55,7 +63,7 @@ export class UpdateSystemTemplateUseCase {
 
     let template = await this.repository.findByKey(key);
     if (!template) {
-      template = SystemTemplateEntity.create(key, contract.defaultContent);
+      template = SystemTemplateEntity.create(key, contract.defaultContent, customVariables);
     }
 
     template = await this.repository.save(template);
@@ -63,6 +71,14 @@ export class UpdateSystemTemplateUseCase {
     await this.repository.createVersion(template.id, template.content, userId);
 
     template.updateContent(content);
-    return this.repository.save(template);
+    const updatedTemplate = SystemTemplateEntity.reconstitute(
+      template.id,
+      template.templateKey,
+      content,
+      template.createdAt,
+      new Date(),
+      customVariables
+    );
+    return this.repository.save(updatedTemplate);
   }
 }

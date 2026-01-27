@@ -31,12 +31,12 @@ export function NotificationTestSection() {
     };
 
     return (
-        <Box sx={{ p: 3, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+        <Box data-component="NotificationTestSection" sx={{ p: 3, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
             <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Bell size={20} />
                 알림 테스트
             </Typography>
-            
+
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 모든 구독된 디바이스에 테스트 알림을 전송합니다.
             </Typography>

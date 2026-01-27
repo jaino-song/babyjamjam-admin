@@ -32,7 +32,7 @@ export function TerminateConfirmDialog({
     const locale = useLocale();
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+        <Dialog data-component="TerminateConfirmDialog" open={open} onClose={onClose} maxWidth="xs" fullWidth>
             <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                 <AlertTriangle size={24} color="#d32f2f" />
                 {t(locale, "clients.terminate.title")}

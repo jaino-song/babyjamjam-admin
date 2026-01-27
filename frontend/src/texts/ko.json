@@ -209,14 +209,15 @@
       "계약\n정보"
     ]
   },
-  "nav-bar": {
-    "dashboard": "대시보드",
-    "messages": "메시지",
-    "contracts": "계약서",
-    "clients": "고객 관리",
-    "employees": "제공인력 관리",
-    "settings": "설정"
-  },
+   "nav-bar": {
+     "dashboard": "대시보드",
+     "messages": "메시지",
+     "contracts": "계약서",
+     "clients": "고객 관리",
+     "employees": "제공인력 관리",
+     "file-storage": "문서",
+     "settings": "설정"
+   },
   "login": {
     "title": "로그인 후 시작하기",
     "subtitle": "아래의 소셜 로그인 방법 중 하나를 선택해서 로그인을 해주세요",

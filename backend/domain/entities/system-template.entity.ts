@@ -1,4 +1,4 @@
-import { SystemTemplateKey } from '../constants/system-template-registry';
+import { SystemTemplateKey, CustomVariable } from '../constants/system-template-registry';
 
 export interface VariableValidationResult {
   valid: boolean;
@@ -14,6 +14,7 @@ export class SystemTemplateEntity {
     public content: string,
     public readonly createdAt: Date,
     public updatedAt: Date,
+    public readonly customVariables: CustomVariable[] = [],
   ) {}
 
   updateContent(newContent: string): void {
@@ -27,13 +28,22 @@ export class SystemTemplateEntity {
     return [...new Set(matches.map(m => m[1]?.trim() ?? '').filter(Boolean))];
   }
 
-  validateVariables(requiredVariableKeys: string[]): VariableValidationResult {
+  validateVariables(requiredVariableKeys: string[], customVariables?: CustomVariable[]): VariableValidationResult {
     const contentVars = this.extractVariables();
-    const requiredSet = new Set(requiredVariableKeys);
+    const customVars = customVariables ?? this.customVariables;
+    
+    // Combine registry required keys with custom variable keys for allowed list
+    const customVarKeys = customVars.map(cv => cv.key);
+    const allowedKeys = new Set([...requiredVariableKeys, ...customVarKeys]);
+    
+    // Required custom variables (where required: true) should be included in missing check
+    const requiredCustomVarKeys = customVars.filter(cv => cv.required).map(cv => cv.key);
+    const allRequiredKeys = [...requiredVariableKeys, ...requiredCustomVarKeys];
+    
     const contentSet = new Set(contentVars);
     
-    const missingVariables = requiredVariableKeys.filter(v => !contentSet.has(v));
-    const unknownVariables = contentVars.filter(v => !requiredSet.has(v));
+    const missingVariables = allRequiredKeys.filter(v => !contentSet.has(v));
+    const unknownVariables = contentVars.filter(v => !allowedKeys.has(v));
     const syntaxErrors = this.findSyntaxErrors();
     
     return {
@@ -53,11 +63,11 @@ export class SystemTemplateEntity {
     return errors;
   }
 
-  static create(templateKey: SystemTemplateKey, content: string): SystemTemplateEntity {
-    return new SystemTemplateEntity('', templateKey, content, new Date(), new Date());
+  static create(templateKey: SystemTemplateKey, content: string, customVariables?: CustomVariable[]): SystemTemplateEntity {
+    return new SystemTemplateEntity('', templateKey, content, new Date(), new Date(), customVariables ?? []);
   }
 
-  static reconstitute(id: string, templateKey: SystemTemplateKey, content: string, createdAt: Date, updatedAt: Date): SystemTemplateEntity {
-    return new SystemTemplateEntity(id, templateKey, content, createdAt, updatedAt);
+  static reconstitute(id: string, templateKey: SystemTemplateKey, content: string, createdAt: Date, updatedAt: Date, customVariables?: CustomVariable[]): SystemTemplateEntity {
+    return new SystemTemplateEntity(id, templateKey, content, createdAt, updatedAt, customVariables ?? []);
   }
 }

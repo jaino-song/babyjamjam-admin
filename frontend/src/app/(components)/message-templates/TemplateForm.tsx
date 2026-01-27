@@ -209,6 +209,7 @@ export function TemplateForm({ mode, initialData, onSubmit, isPending }: Templat
                         </Box>
 
                         <Paper
+                            data-component="template-variable-list-paper"
                             variant="outlined"
                             sx={{
                                 flex: 1,

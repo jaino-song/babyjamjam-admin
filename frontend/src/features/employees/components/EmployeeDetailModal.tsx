@@ -87,7 +87,7 @@ export function EmployeeDetailModal({
     };
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+        <Dialog data-component="EmployeeDetailModal" open={open} onClose={onClose} maxWidth="sm" fullWidth>
             <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <Box component="span" sx={{ fontWeight: 600, fontSize: "1.25rem" }}>
                     {employee.name}
@@ -137,8 +137,8 @@ export function EmployeeDetailModal({
                                     toggleStatus.isPending
                                         ? "..."
                                         : employee.openToNextWork
-                                          ? t(locale, "employees.status.available")
-                                          : t(locale, "employees.status.unavailable")
+                                            ? t(locale, "employees.status.available")
+                                            : t(locale, "employees.status.unavailable")
                                 }
                             />
                         }

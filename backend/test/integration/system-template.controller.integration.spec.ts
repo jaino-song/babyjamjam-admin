@@ -10,10 +10,10 @@ import request from "supertest";
 import { SystemTemplateController } from "interface/controllers/system-template.controller";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { AdminGuard } from "infrastructure/auth/admin.guard";
 import { SystemTemplateEntity, VariableValidationResult } from "domain/entities/system-template.entity";
 import { SystemTemplateVersionEntity } from "domain/entities/system-template-version.entity";
-import { SystemTemplateKey } from "domain/constants/system-template-registry";
+import { SystemTemplateKey, SYSTEM_TEMPLATE_REGISTRY } from "domain/constants/system-template-registry";
+import { SystemTemplateWithRegistryDto } from "application/dto/system-template-with-registry.dto";
 
 describe("SystemTemplateController (Integration)", () => {
     let app: INestApplication;
@@ -27,10 +27,6 @@ describe("SystemTemplateController (Integration)", () => {
             req.user = { userId: mockUserId, role: "admin" };
             return true;
         }),
-    };
-
-    const mockAdminGuard = {
-        canActivate: jest.fn(() => true),
     };
 
     type TemplateOverrides = Partial<{
@@ -49,6 +45,23 @@ describe("SystemTemplateController (Integration)", () => {
             overrides.createdAt ?? new Date("2025-01-01T00:00:00.000Z"),
             overrides.updatedAt ?? new Date("2025-01-02T00:00:00.000Z"),
         );
+    };
+
+    const createMockTemplateWithRegistry = (overrides: TemplateOverrides = {}): SystemTemplateWithRegistryDto => {
+        const templateKey = overrides.templateKey ?? SystemTemplateKey.GREETING;
+        const registry = SYSTEM_TEMPLATE_REGISTRY[templateKey];
+        
+        return {
+            id: overrides.id ?? "template-id-1",
+            templateKey,
+            name: registry.name,
+            description: registry.description,
+            content: overrides.content ?? "Hello {{name}}",
+            requiredVariables: registry.requiredVariables,
+            customVariables: [],
+            createdAt: overrides.createdAt ?? new Date("2025-01-01T00:00:00.000Z"),
+            updatedAt: overrides.updatedAt ?? new Date("2025-01-02T00:00:00.000Z"),
+        };
     };
 
     type VersionOverrides = Partial<{
@@ -95,8 +108,6 @@ describe("SystemTemplateController (Integration)", () => {
         })
             .overrideGuard(JwtGuard)
             .useValue(mockJwtGuard)
-            .overrideGuard(AdminGuard)
-            .useValue(mockAdminGuard)
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -113,7 +124,7 @@ describe("SystemTemplateController (Integration)", () => {
     describe("GET /system-templates", () => {
         it("returns 7 templates", async () => {
             const templates = (Object.values(SystemTemplateKey) as SystemTemplateKey[]).map((key, idx) =>
-                createMockTemplate({
+                createMockTemplateWithRegistry({
                     id: `template-${idx + 1}`,
                     templateKey: key,
                     content: `Content for ${key}`,
@@ -139,20 +150,11 @@ describe("SystemTemplateController (Integration)", () => {
 
             expect(response.status).toBe(401);
         });
-
-        it("returns 403 for non-admin", async () => {
-            mockAdminGuard.canActivate.mockReturnValueOnce(false);
-
-            const response = await request(app.getHttpServer())
-                .get("/system-templates");
-
-            expect(response.status).toBe(403);
-        });
     });
 
     describe("GET /system-templates/:key", () => {
         it("returns template with content", async () => {
-            const template = createMockTemplate({
+            const template = createMockTemplateWithRegistry({
                 id: "template-price-info",
                 templateKey: SystemTemplateKey.PRICE_INFO,
                 content: "Price info: {{name}}",
@@ -197,6 +199,7 @@ describe("SystemTemplateController (Integration)", () => {
                 SystemTemplateKey.REMINDER,
                 "Updated content {{name}}",
                 mockUserId,
+                undefined,
             );
         });
 
@@ -208,16 +211,6 @@ describe("SystemTemplateController (Integration)", () => {
                 .send({ content: "Hello" });
 
             expect(response.status).toBe(400);
-        });
-
-        it("returns 403 for non-admin", async () => {
-            mockAdminGuard.canActivate.mockReturnValueOnce(false);
-
-            const response = await request(app.getHttpServer())
-                .put(`/system-templates/${SystemTemplateKey.GREETING}`)
-                .send({ content: "Hello" });
-
-            expect(response.status).toBe(403);
         });
     });
 

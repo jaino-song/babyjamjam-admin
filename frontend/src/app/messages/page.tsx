@@ -9,7 +9,7 @@ import { useMessageTemplates } from "@/features/message-templates/hooks/use-mess
 import { CustomTemplateForm } from "@/app/(components)/messages/forms/custom-template-form";
 
 import { GreetingMessageForm } from "@/app/(components)/messages/forms/GreetingMessageForm";
-import { ServiceInfoMessageForm } from "@/app/(components)/messages/forms/ServiceInfoMessageForm";
+import { ServiceInfoMessageForm } from "@/app/(components)/messages/forms/service-info-message-form";
 import { PriceInfoMessageForm } from "@/app/(components)/messages/forms/PriceInfoMessageForm";
 import { ReminderMessageForm } from "@/app/(components)/messages/forms/ReminderMessageForm";
 import { ThanksMessageForm } from "@/app/(components)/messages/forms/ThanksMessageForm";
@@ -50,10 +50,6 @@ export default function MessagesPage() {
     const value = event.target.value;
     if (value === "__create__") {
       router.push("/messages/templates/new");
-      return;
-    }
-    if (value === "__manage_system__") {
-      router.push("/messages/system-templates");
       return;
     }
     if (value === "__manage__") {
@@ -126,9 +122,6 @@ export default function MessagesPage() {
             ))}
 
             <Divider sx={{ my: 1 }} />
-            <MenuItem value="__manage_system__" sx={{ color: "text.secondary" }}>
-              🧩 시스템 템플릿 관리
-            </MenuItem>
             <MenuItem value="__manage__" sx={{ color: "text.secondary" }}>
               📋 템플릿 관리
             </MenuItem>

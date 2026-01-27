@@ -1,1 +1,1 @@
-export { SystemTemplateEditor } from './SystemTemplateEditor';
+export { SystemTemplateEditor } from './system-template-editor';

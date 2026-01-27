@@ -11,7 +11,7 @@ import {
     UpdateSystemTemplateUseCase,
     ValidateTemplateContentUseCase,
 } from "application/usecases/system-template";
-import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
+import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey, CustomVariable } from "domain/constants/system-template-registry";
 import { SystemTemplateEntity, VariableValidationResult } from "domain/entities/system-template.entity";
 import { SystemTemplateVersionEntity } from "domain/entities/system-template-version.entity";
 
@@ -39,8 +39,8 @@ export class SystemTemplateService {
         return this.enrichFromRegistry(entity);
     }
 
-    update(key: string, content: string, userId: string): Promise<SystemTemplateEntity> {
-        return this.updateUseCase.execute(this.toKey(key), content, userId);
+    update(key: string, content: string, userId: string, customVariables?: CustomVariable[]): Promise<SystemTemplateEntity> {
+        return this.updateUseCase.execute(this.toKey(key), content, userId, customVariables);
     }
 
     validate(key: string, content: string): Promise<VariableValidationResult> {
@@ -84,6 +84,7 @@ export class SystemTemplateService {
             description: registryEntry?.description ?? "",
             content: entity.content,
             requiredVariables: registryEntry?.requiredVariables ?? [],
+            customVariables: entity.customVariables ?? [],
             createdAt: entity.createdAt,
             updatedAt: entity.updatedAt,
         };

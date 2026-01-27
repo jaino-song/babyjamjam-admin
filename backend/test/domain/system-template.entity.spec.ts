@@ -201,6 +201,69 @@ describe("SystemTemplateEntity", () => {
             expect(Array.isArray(result.unknownVariables)).toBe(true);
             expect(Array.isArray(result.syntaxErrors)).toBe(true);
         });
+
+        describe("custom variables", () => {
+            it("should accept custom variables as allowed keys", () => {
+                // #given
+                const customVariables = [{ key: "phone", label: "연락처", required: false }];
+                const entity = new SystemTemplateEntity(
+                    "id",
+                    SystemTemplateKey.SERVICE_INFO,
+                    "안내 {{name}} {{phone}}",
+                    new Date(),
+                    new Date(),
+                    customVariables
+                );
+
+                // #when
+                const result = entity.validateVariables(["name"], customVariables);
+
+                // #then
+                expect(result.valid).toBe(true);
+                expect(result.missingVariables).toEqual([]);
+                expect(result.unknownVariables).toEqual([]);
+            });
+
+            it("should require required custom variables to be present in content", () => {
+                // #given
+                const customVariables = [{ key: "phone", label: "연락처", required: true }];
+                const entity = new SystemTemplateEntity(
+                    "id",
+                    SystemTemplateKey.SERVICE_INFO,
+                    "안내 {{name}}",
+                    new Date(),
+                    new Date(),
+                    customVariables
+                );
+
+                // #when
+                const result = entity.validateVariables(["name"], customVariables);
+
+                // #then
+                expect(result.valid).toBe(false);
+                expect(result.missingVariables).toEqual(["phone"]);
+            });
+
+            it("should report unknown variables not in registry or custom variables", () => {
+                // #given
+                const customVariables = [{ key: "phone", label: "연락처", required: false }];
+                const entity = new SystemTemplateEntity(
+                    "id",
+                    SystemTemplateKey.SERVICE_INFO,
+                    "안내 {{name}} {{fax}}",
+                    new Date(),
+                    new Date(),
+                    customVariables
+                );
+
+                // #when
+                const result = entity.validateVariables(["name"], customVariables);
+
+                // #then
+                expect(result.valid).toBe(false);
+                expect(result.unknownVariables).toEqual(["fax"]);
+            });
+        });
     });
 
     describe("updateContent", () => {

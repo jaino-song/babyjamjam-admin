@@ -179,7 +179,7 @@ export function EmployeesTable() {
 
                 {/* Table */}
                 <Box sx={{ minHeight: 200, width: "100%" }}>
-                    <TableContainer>
+                    <TableContainer data-component="employees-table-container-old">
                         <Table sx={{ tableLayout: "fixed", width: "100%" }}>
                             <TableHead>
                                 <TableRow>

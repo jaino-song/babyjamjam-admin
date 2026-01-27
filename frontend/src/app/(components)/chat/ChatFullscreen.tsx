@@ -29,6 +29,7 @@ function UserMessage({ message }: { message: ChatMessage }) {
     return (
         <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 2 }}>
             <Paper
+                data-component="user-message-paper"
                 elevation={0}
                 sx={{
                     maxWidth: "80%",
@@ -144,7 +145,7 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
         } else if (isNewMessage && messagesEndRef.current) {
             messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
         }
-        
+
         lastMessageRef.current = lastMessage || null;
     }, [messages]);
 
@@ -181,126 +182,126 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                         WebkitUserSelect: "text",
                     }}
                 >
-                <Box
-                    sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        px: 2,
-                        py: 1.5,
-                        borderBottom: 1,
-                        borderColor: "divider",
-                        bgcolor: "background.paper",
-                    }}
-                >
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                        <AutoAwesomeIcon color="primary" />
-                        <Typography variant="h6" fontWeight={600}>
-                            AI 어시스턴트
-                        </Typography>
-                    </Box>
-                    <Box>
-                        <IconButton onClick={clearSession} size="small" sx={{ mr: 1 }}>
-                            <DeleteOutlineIcon />
-                        </IconButton>
-                        <IconButton onClick={onClose} size="small">
-                            <CloseIcon />
-                        </IconButton>
-                    </Box>
-                </Box>
-
-                <Box
-                    ref={scrollContainerRef}
-                    sx={{
-                        flex: 1,
-                        overflow: "auto",
-                        px: { xs: 2, sm: 4 },
-                        py: 3,
-                        userSelect: "text",
-                        WebkitUserSelect: "text",
-                        MozUserSelect: "text",
-                    }}
-                >
-                    {isLoadingHistory && messages.length > 0 && (
-                        <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
-                            <CircularProgress size={20} />
+                    <Box
+                        sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            px: 2,
+                            py: 1.5,
+                            borderBottom: 1,
+                            borderColor: "divider",
+                            bgcolor: "background.paper",
+                        }}
+                    >
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                            <AutoAwesomeIcon color="primary" />
+                            <Typography variant="h6" fontWeight={600}>
+                                AI 어시스턴트
+                            </Typography>
                         </Box>
-                    )}
-                    {messages.length === 0 ? (
-                        <Fade in>
-                            <Box
-                                sx={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    height: "100%",
-                                    textAlign: "center",
-                                    color: "text.secondary",
-                                }}
-                            >
-                                <AutoAwesomeIcon sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
-                                <Typography variant="h6" gutterBottom>
-                                    무엇을 도와드릴까요?
-                                </Typography>
-                                <Typography variant="body2">
-                                    고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.
-                                </Typography>
-                            </Box>
-                        </Fade>
-                    ) : (
-                        <>
-                            {messages.map((msg, idx) =>
-                                msg.role === "user" ? (
-                                    <UserMessage key={idx} message={msg} />
-                                ) : (
-                                    <AssistantMessage key={idx} message={msg} />
-                                )
-                            )}
-                            {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
-                            <StateIndicator state={state} />
-                            {showConfirmButtons && (
-                                <Stack direction="row" spacing={1} sx={{ mb: 2, px: 2 }}>
-                                    <Button
-                                        variant="contained"
-                                        size="small"
-                                        onClick={handleConfirm}
-                                        disabled={state === "streaming"}
-                                    >
-                                        확인
-                                    </Button>
-                                    <Button
-                                        variant="outlined"
-                                        size="small"
-                                        onClick={handleCancel}
-                                        disabled={state === "streaming"}
-                                    >
-                                        취소
-                                    </Button>
-                                </Stack>
-                            )}
-                            <div ref={messagesEndRef} />
-                        </>
-                    )}
-                </Box>
+                        <Box>
+                            <IconButton onClick={clearSession} size="small" sx={{ mr: 1 }}>
+                                <DeleteOutlineIcon />
+                            </IconButton>
+                            <IconButton onClick={onClose} size="small">
+                                <CloseIcon />
+                            </IconButton>
+                        </Box>
+                    </Box>
 
-                <Box
-                    sx={{
-                        px: { xs: 2, sm: 4 },
-                        py: 2,
-                        borderTop: 1,
-                        borderColor: "divider",
-                        bgcolor: "background.paper",
-                    }}
-                >
-                    <ChatInput
-                        onSubmit={sendMessage}
-                        disabled={state === "streaming" || state === "connecting"}
-                        compact={false}
-                    />
+                    <Box
+                        ref={scrollContainerRef}
+                        sx={{
+                            flex: 1,
+                            overflow: "auto",
+                            px: { xs: 2, sm: 4 },
+                            py: 3,
+                            userSelect: "text",
+                            WebkitUserSelect: "text",
+                            MozUserSelect: "text",
+                        }}
+                    >
+                        {isLoadingHistory && messages.length > 0 && (
+                            <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
+                                <CircularProgress size={20} />
+                            </Box>
+                        )}
+                        {messages.length === 0 ? (
+                            <Fade in>
+                                <Box
+                                    sx={{
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        height: "100%",
+                                        textAlign: "center",
+                                        color: "text.secondary",
+                                    }}
+                                >
+                                    <AutoAwesomeIcon sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
+                                    <Typography variant="h6" gutterBottom>
+                                        무엇을 도와드릴까요?
+                                    </Typography>
+                                    <Typography variant="body2">
+                                        고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.
+                                    </Typography>
+                                </Box>
+                            </Fade>
+                        ) : (
+                            <>
+                                {messages.map((msg, idx) =>
+                                    msg.role === "user" ? (
+                                        <UserMessage key={idx} message={msg} />
+                                    ) : (
+                                        <AssistantMessage key={idx} message={msg} />
+                                    )
+                                )}
+                                {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
+                                <StateIndicator state={state} />
+                                {showConfirmButtons && (
+                                    <Stack direction="row" spacing={1} sx={{ mb: 2, px: 2 }}>
+                                        <Button
+                                            variant="contained"
+                                            size="small"
+                                            onClick={handleConfirm}
+                                            disabled={state === "streaming"}
+                                        >
+                                            확인
+                                        </Button>
+                                        <Button
+                                            variant="outlined"
+                                            size="small"
+                                            onClick={handleCancel}
+                                            disabled={state === "streaming"}
+                                        >
+                                            취소
+                                        </Button>
+                                    </Stack>
+                                )}
+                                <div ref={messagesEndRef} />
+                            </>
+                        )}
+                    </Box>
+
+                    <Box
+                        sx={{
+                            px: { xs: 2, sm: 4 },
+                            py: 2,
+                            borderTop: 1,
+                            borderColor: "divider",
+                            bgcolor: "background.paper",
+                        }}
+                    >
+                        <ChatInput
+                            onSubmit={sendMessage}
+                            disabled={state === "streaming" || state === "connecting"}
+                            compact={false}
+                        />
+                    </Box>
                 </Box>
-            </Box>
-        </Slide>
+            </Slide>
         </Portal>
     );
 }

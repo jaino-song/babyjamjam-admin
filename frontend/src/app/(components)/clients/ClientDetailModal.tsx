@@ -30,19 +30,19 @@ interface ClientDetailModalProps {
 const getStatusChip = (status: string | null) => {
     const option = CONTRACT_STATUS_OPTIONS.find(o => o.value === status);
     if (!option) return <Chip label="-" size="small" />;
-    
+
     const colorMap: Record<string, "default" | "warning" | "info" | "success" | "error"> = {
         pending: "warning",
         in_progress: "info",
         completed: "success",
         cancelled: "error",
     };
-    
+
     return (
-        <Chip 
-            label={option.label} 
-            color={colorMap[status || ""] || "default"} 
-            size="small" 
+        <Chip
+            label={option.label}
+            color={colorMap[status || ""] || "default"}
+            size="small"
         />
     );
 };
@@ -97,12 +97,12 @@ const InfoRow = ({ label, value }: InfoRowProps) => (
     </Box>
 );
 
-export function ClientDetailModal({ 
-    open, 
-    onClose, 
-    client, 
-    onEdit, 
-    onDelete 
+export function ClientDetailModal({
+    open,
+    onClose,
+    client,
+    onEdit,
+    onDelete
 }: ClientDetailModalProps) {
     const locale = useLocale();
 
@@ -119,7 +119,7 @@ export function ClientDetailModal({
     };
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+        <Dialog data-component="ClientDetailModal" open={open} onClose={onClose} maxWidth="sm" fullWidth>
             <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <Box component="span" sx={{ fontWeight: 600, fontSize: "1.25rem" }}>
                     {client.name}
@@ -155,9 +155,9 @@ export function ClientDetailModal({
                         {t(locale, "clients.form.section-service")}
                     </Typography>
                     <InfoRow label={t(locale, "clients.form.voucher-type")} value={client.type} />
-                    <InfoRow 
-                        label={t(locale, "clients.form.duration")} 
-                        value={client.duration ? `${client.duration}일` : "-"} 
+                    <InfoRow
+                        label={t(locale, "clients.form.duration")}
+                        value={client.duration ? `${client.duration}일` : "-"}
                     />
 
                     <Divider sx={{ my: 2 }} />

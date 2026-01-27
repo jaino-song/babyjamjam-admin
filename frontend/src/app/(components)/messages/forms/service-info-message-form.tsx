@@ -1,35 +1,27 @@
 "use client";
-import { useState } from "react";
-import {
-  Button,
-  Stack,
-  Fade,
-  Box,
-} from "@mui/material";
+import { useEffect, useState } from "react";
+import { Fade, Box, TextField } from "@mui/material";
 import { serviceInfoMsgTemplate } from "../templates/messageTemplate/serviceInfoMsg";
 import { t } from "@/app/lib/i18n/translations";
-import { useFormStore } from "@/app/store/form-store";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
-import { NameInput } from "./form-components/NameInput";
-
 
 export const ServiceInfoMessageForm = () => {
   const locale = useLocale();
+  const [name, setName] = useState("");
   const [generatedMessage, setGeneratedMessage] = useState("");
-  const { name, setName } = useFormStore();
-  const { data: systemTemplate } = useSystemTemplate("SERVICE_INFO");
- 
- 
-  const handleGenerate = () => {
-    const message = systemTemplate?.content
-      ? renderTemplate(systemTemplate.content, { name })
-      : serviceInfoMsgTemplate({ name });
+  const [isDirty, setIsDirty] = useState(false);
+  const { data: systemTemplate } = useSystemTemplate("service_info");
 
+  useEffect(() => {
+    if (isDirty) return;
+    const message = systemTemplate?.content
+      ? renderTemplate(systemTemplate.content, { name: name || "{{name}}" })
+      : serviceInfoMsgTemplate({ name: name || "{{name}}" });
     setGeneratedMessage(message);
-  };
+  }, [isDirty, systemTemplate?.content, name]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
@@ -39,28 +31,23 @@ export const ServiceInfoMessageForm = () => {
   return (
     <Box data-component="service-info-message-form" sx={{ display: "flex", flexDirection: "column", flexGrow: 1, height: "100%", bgcolor: "background.default" }}>
       <Fade in appear timeout={500}>
-        <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1 }}>
-          {/* form */}
-          <Stack spacing={3}>
-            <NameInput name={name} setName={setName} label={t(locale, "service-info-msg.name-label")} placeholder={t(locale, "service-info-msg.name-placeholder")} />
-            <Button
-              variant="contained"
-              size="large"
-              onClick={handleGenerate}
-              disabled={!name}
-              data-component="service-info-message-form-generate-button"
-            >
-              {t(locale, "common.generate-button")}
-            </Button>
-          </Stack>
-
-          {/* generated message */}
+        <Box sx={{ display: "flex", flexDirection: "column", height: "100%", gap: 2 }}>
+          <TextField
+            label={t(locale, "form.client-name")}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            fullWidth
+            size="small"
+          />
           {generatedMessage && (
             <GeneratedMsg
               title={t(locale, "common.generated-message-title")}
               copyButtonText={t(locale, "common.copy-button")}
               message={generatedMessage}
-              onMessageChange={setGeneratedMessage}
+              onMessageChange={(message) => {
+                setIsDirty(true);
+                setGeneratedMessage(message);
+              }}
               handleCopy={handleCopy}
             />
           )}

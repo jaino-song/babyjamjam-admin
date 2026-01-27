@@ -301,7 +301,7 @@ export function DocumentsList() {
         <Box sx={{ minHeight: 200, width: "100%" }}>
           {filteredDocuments.length > 0 || isInitialLoading ? (
             <>
-              <TableContainer>
+              <TableContainer data-component="documents-list-table-container">
                 <Table sx={{ tableLayout: "fixed", width: "100%" }}>
                   <TableHead>
                     <TableRow>

@@ -201,11 +201,12 @@ model message_template {
 }
 
 model system_template {
-  id          String   @id @default(cuid())
-  templateKey String   @unique @map("template_key")
-  content     String   @db.Text
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id              String   @id @default(cuid())
+  templateKey     String   @unique @map("template_key")
+  content         String   @db.Text
+  customVariables Json?    @map("custom_variables")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   versions    system_template_version[]
 
@@ -225,4 +226,24 @@ model system_template_version {
   @@unique([templateId, versionNumber])
   @@index([templateId])
   @@map("system_template_version")
+}
+
+model document {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  category    String   // predefined category (Contract, Invoice, Receipt, Report, Certificate, Form, Notice, EmployeeContract)
+  tags        String[] // custom tags
+  mimeType    String   @map("mime_type") // image/png, image/jpeg, application/pdf
+  fileSize    Int      @map("file_size") // bytes
+  storagePath String   @map("storage_path") // Supabase storage path
+  storageUrl  String?  @map("storage_url") // Public URL (nullable - use download endpoint instead)
+  orgId       String?  @map("org_id") // For future org-specific access (nullable for now)
+  uploadedBy  String   @map("uploaded_by") // User ID
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([category])
+  @@index([uploadedBy])
+  @@index([orgId])
 }

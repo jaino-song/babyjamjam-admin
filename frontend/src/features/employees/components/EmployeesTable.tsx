@@ -148,7 +148,7 @@ export function EmployeesTable() {
             subtitle={t(locale, "employees.subtitle")}
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
-            <Box data-component="employees-table-container">
+            <Box data-component="EmployeesTable">
                 {/* Toolbar */}
                 <Box
                     sx={{
@@ -193,7 +193,7 @@ export function EmployeesTable() {
                 </Box>
 
                 {/* Table */}
-                <TableContainer>
+                <TableContainer data-component="employees-table-container">
                     <Table size="small">
                         <TableHead>
                             <TableRow>

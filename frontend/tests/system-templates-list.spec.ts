@@ -112,22 +112,45 @@ function mockSystemTemplatesApi(page: Page) {
   });
 }
 
-test.describe('System Templates List', () => {
-  test('should display all 7 templates', async ({ page }) => {
+test.describe('Templates List', () => {
+  test('should display templates with type chips', async ({ page }) => {
     await mockSystemTemplatesApi(page);
+    
+    // Mock user templates API (empty for this test)
+    await page.route('**/api/message-templates', async (route: Route, request: Request) => {
+      if (request.method() !== 'GET') return route.continue();
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
 
-    await page.goto('/messages/system-templates');
+    await page.goto('/messages/templates');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByRole('heading', { name: '시스템 템플릿 관리' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: '비용 안내' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: '인사(소개)' })).toBeVisible();
-
-    await expect(page.getByRole('button', { name: '편집' })).toHaveCount(7);
+    await expect(page.getByRole('heading', { name: '템플릿 관리' })).toBeVisible();
+    
+    // System templates appear with system chip
+    await expect(page.locator('[data-type="system"]').first()).toBeVisible();
+    
+     // Verify template names are displayed
+     await expect(page.getByText('비용 안내', { exact: true })).toBeVisible();
+     await expect(page.getByText('인사(소개)')).toBeVisible();
   });
 
-  test('should navigate to editor on click', async ({ page }) => {
+  test('should navigate to system template editor on click', async ({ page }) => {
     await mockSystemTemplatesApi(page);
+    
+    // Mock user templates API (empty for this test)
+    await page.route('**/api/message-templates', async (route: Route, request: Request) => {
+      if (request.method() !== 'GET') return route.continue();
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
 
     await page.route('**/api/system-templates/PRICE_INFO', async (route: Route, request: Request) => {
       if (request.method() !== 'GET') return route.continue();
@@ -138,10 +161,10 @@ test.describe('System Templates List', () => {
       });
     });
 
-    await page.goto('/messages/system-templates');
-    await page.getByRole('button', { name: '편집' }).first().click();
+     await page.goto('/messages/templates');
+     await page.getByText('비용 안내', { exact: true }).click();
 
     await expect(page).toHaveURL(/\/messages\/system-templates\/PRICE_INFO/);
-    await expect(page.getByRole('heading', { name: /비용 안내 편집/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '비용 안내' })).toBeVisible();
   });
 });

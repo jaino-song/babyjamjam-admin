@@ -1,6 +1,7 @@
 import { api } from '@/core/api/client';
 
 import type {
+    CustomVariable,
     SystemTemplate,
     ValidationResult,
     VersionDetail,
@@ -12,8 +13,8 @@ export const systemTemplateService = {
 
     getByKey: (key: string) => api.get<SystemTemplate>(`/system-templates/${key}`),
 
-    update: (key: string, content: string) =>
-        api.put<SystemTemplate>(`/system-templates/${key}`, { content }),
+    update: (key: string, content: string, customVariables?: CustomVariable[]) =>
+        api.put<SystemTemplate>(`/system-templates/${key}`, { content, customVariables }),
 
     validate: (key: string, content: string) =>
         api.post<ValidationResult>(`/system-templates/${key}/validate`, { content }),
