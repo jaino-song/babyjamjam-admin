@@ -1,106 +1,115 @@
-import { IsString, IsOptional, IsArray, IsNumber, Min } from "class-validator";
+import {
+  IsString,
+  IsOptional,
+  IsArray,
+  IsNumber,
+  IsDateString,
+} from "class-validator";
 
+/**
+ * 문서 생성 요청 DTO
+ */
 export class CreateDocumentDto {
-    @IsString()
-    name!: string;
+  @IsString()
+  category!: string;
 
-    @IsOptional()
-    @IsString()
-    description?: string;
+  @IsArray()
+  @IsString({ each: true })
+  tags!: string[];
 
-    @IsString()
-    categoryId!: string;
-
-    @IsArray()
-    @IsString({ each: true })
-    tags!: string[];
-
-    @IsString()
-    mimetype!: string;
-
-    @IsNumber()
-    @Min(0)
-    filesize!: number;
-
-    @IsString()
-    storagepath!: string;
-
-    @IsOptional()
-    @IsString()
-    storageurl?: string;
-
-    @IsOptional()
-    @IsString()
-    orgid?: string;
-
-    @IsString()
-    uploadedby!: string;
+  @IsOptional()
+  @IsString()
+  description?: string;
 }
 
+/**
+ * 문서 메타데이터 업데이트 요청 DTO
+ */
 export class UpdateDocumentDto {
-    @IsOptional()
-    @IsString()
-    name?: string;
+  @IsOptional()
+  @IsString()
+  name?: string;
 
-    @IsOptional()
-    @IsString()
-    description?: string;
+  @IsOptional()
+  @IsString()
+  description?: string;
 
-    @IsOptional()
-    @IsString()
-    categoryId?: string;
+  @IsOptional()
+  @IsString()
+  category?: string;
 
-    @IsOptional()
-    @IsArray()
-    @IsString({ each: true })
-    tags?: string[];
-
-    @IsOptional()
-    @IsString()
-    mimetype?: string;
-
-    @IsOptional()
-    @IsNumber()
-    @Min(0)
-    filesize?: number;
-
-    @IsOptional()
-    @IsString()
-    storagepath?: string;
-
-    @IsOptional()
-    @IsString()
-    storageurl?: string;
-
-    @IsOptional()
-    @IsString()
-    orgid?: string;
-
-    @IsOptional()
-    @IsString()
-    uploadedby?: string;
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 }
 
-export class UploadDocumentDto {
-    @IsOptional()
-    @IsString()
-    name?: string;
+/**
+ * 문서 조회 필터 DTO (쿼리 파라미터)
+ */
+export class DocumentFilterDto {
+  @IsOptional()
+  @IsString()
+  category?: string;
 
-    @IsOptional()
-    @IsString()
-    description?: string;
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 
-    @IsString()
-    categoryId!: string;
+  @IsOptional()
+  @IsString()
+  uploadedBy?: string;
 
-    @IsOptional()
-    tags?: string[] | string;
+  @IsOptional()
+  @IsString()
+  orgId?: string;
+}
 
-    @IsOptional()
-    @IsString()
-    orgid?: string;
+/**
+ * 문서 응답 DTO
+ */
+export class DocumentResponseDto {
+  @IsString()
+  id!: string;
 
-    @IsOptional()
-    @IsString()
-    uploadedby?: string;
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  description!: string | null;
+
+  @IsString()
+  category!: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  tags!: string[];
+
+  @IsString()
+  mimeType!: string;
+
+  @IsNumber()
+  fileSize!: number;
+
+  @IsString()
+  storagePath!: string;
+
+  @IsOptional()
+  @IsString()
+  storageUrl!: string | null;
+
+  @IsOptional()
+  @IsString()
+  orgId!: string | null;
+
+  @IsString()
+  uploadedBy!: string;
+
+  @IsDateString()
+  createdAt!: Date;
+
+  @IsDateString()
+  updatedAt!: Date;
 }

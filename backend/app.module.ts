@@ -19,14 +19,6 @@ import { EmployeeScheduleModule } from "module/employee-schedule.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { EformsignWebhookModule } from "module/eformsign-webhook.module";
 import { AreaTemplateModule } from "module/area-template.module";
-import { NotificationModule } from "module/notification.module";
-import { ChannelTalkModule } from "module/channeltalk.module";
-import { SystemSettingModule } from "module/system-setting.module";
-import { AligoModule } from "module/aligo.module";
-import { AlimtalkModule } from "module/alimtalk.module";
-import { AIChatModule } from "module/ai-chat.module";
-import { MessageTemplateModule } from "module/message-template.module";
-import { SystemTemplateModule } from "module/system-template.module";
 import { DocumentModule } from "module/document.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -51,14 +43,6 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         EformsignDocModule,
         EformsignWebhookModule,
         AreaTemplateModule,
-        NotificationModule,
-        ChannelTalkModule,
-        SystemSettingModule,
-        AligoModule,
-        AlimtalkModule,
-        AIChatModule,
-        MessageTemplateModule,
-        SystemTemplateModule,
         DocumentModule,
     ],
     controllers: [AuthController, EformsignController],
