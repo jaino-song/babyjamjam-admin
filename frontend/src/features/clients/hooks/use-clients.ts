@@ -3,7 +3,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { clientsApi } from '../api/clients.api';
 import { clientKeys } from './keys';
-import type { Client, CreateClientDto, UpdateClientDto, PaginatedResponse } from '../types';
+import type {
+  Client,
+  CreateClientDto,
+  UpdateClientDto,
+  TerminateServiceDto,
+  RequestReplacementDto,
+  PaginatedResponse
+} from '../types';
 
 /**
  * Fetch paginated clients list
@@ -81,6 +88,57 @@ export function useDeleteClient() {
     mutationFn: (id: number) => clientsApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
+    },
+  });
+}
+
+/**
+ * Terminate service mutation
+ * Sets serviceStatus to 'terminated'
+ */
+export function useTerminateService() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, dto }: { id: number; dto?: TerminateServiceDto }) =>
+      clientsApi.terminateService(id, dto).then(r => r.data),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
+    },
+  });
+}
+
+/**
+ * Request replacement mutation
+ * Sets serviceStatus to 'replacement_requested'
+ */
+export function useRequestReplacement() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, dto }: { id: number; dto: RequestReplacementDto }) =>
+      clientsApi.requestReplacement(id, dto).then(r => r.data),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
+    },
+  });
+}
+
+/**
+ * Complete replacement mutation
+ * Resets serviceStatus to computed value based on dates
+ */
+export function useCompleteReplacement() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) =>
+      clientsApi.completeReplacement(id).then(r => r.data),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
     },
   });
 }

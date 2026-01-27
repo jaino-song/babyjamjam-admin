@@ -76,4 +76,10 @@ export class MockUserRepository implements IUserRepository {
         }
         this.users.delete(id);
     }
+
+    async findByRoles(roles: string[]): Promise<UserEntity[]> {
+        return Array.from(this.users.values()).filter(
+            user => user.role !== null && roles.includes(user.role),
+        );
+    }
 }

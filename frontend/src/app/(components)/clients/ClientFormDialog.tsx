@@ -25,20 +25,25 @@ import {
 import { useCreateClient, useUpdateClient } from "@/app/hooks/useClients";
 import { useVoucherPriceInfos } from "@/app/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
-import { 
-    Client, 
-    CreateClientDto, 
+import { EmployeeFormDialog } from "../employees/EmployeeFormDialog";
+import { useClientDialogStore } from "@/app/store/client-dialog-store";
+import type { Employee } from "@/app/hooks/useEmployees";
+import {
+    Client,
+    CreateClientDto,
     UpdateClientDto,
-    CONTRACT_STATUS_OPTIONS 
+    CONTRACT_STATUS_OPTIONS
 } from "@/app/lib/client/types";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
+import { getErrorMessage } from "@/app/lib/errors/prisma-error-mapper";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
 interface ClientFormDialogProps {
     open: boolean;
     onClose: () => void;
-    client: Client | null; // null for create mode, Client for edit mode
+    client?: Client | null; // null/undefined for create mode, Client for edit mode
+    onSuccess?: (client: Client) => void; // Optional callback when client is created/updated
 }
 
 // Format number with commas (handles comma-formatted strings too)
@@ -61,7 +66,7 @@ const parsePrice = (value: string | null | undefined): string => {
 const formatPhoneNumber = (value: string): string => {
     // Remove all non-digit characters
     const digits = value.replace(/\D/g, "");
-    
+
     // Apply formatting based on length
     if (digits.length <= 3) {
         return digits;
@@ -81,10 +86,14 @@ const formatDateForInput = (dateString: string | null | undefined): string => {
     return date.toISOString().split("T")[0];
 };
 
-export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProps) {
+export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFormDialogProps) {
     const locale = useLocale();
     const isEditMode = !!client;
-    
+
+    // Read pre-filled name from Zustand store (when opened from ClientAutocomplete)
+    const prefillName = useClientDialogStore((state) => state.prefillName);
+    const clearPrefillName = useClientDialogStore((state) => state.clearPrefillName);
+
     const createClient = useCreateClient();
     const updateClient = useUpdateClient();
 
@@ -106,11 +115,15 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
         careCenter: false,
         voucherClient: true,
         breastPump: false,
-        contractStatus: "pending",
+        serviceStatus: "waiting",
     });
 
     const [error, setError] = useState<string | null>(null);
-    
+
+    // State for EmployeeFormDialog
+    const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
+    const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
+
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
 
@@ -183,15 +196,16 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     careCenter: client.careCenter,
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
-                    contractStatus: client.contractStatus || "pending",
+                    serviceStatus: client.serviceStatus || "waiting",
                 });
                 // In edit mode, consider prices as manually set
                 if (client.fullPrice || client.grant || client.actualPrice) {
                     setPricesManuallyEdited(true);
                 }
             } else {
+                // In create mode, use prefillName from store if available
                 setFormData({
-                    name: "",
+                    name: prefillName || "",
                     birthday: "",
                     address: "",
                     phone: "",
@@ -207,8 +221,10 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                    contractStatus: "pending",
+                    serviceStatus: "waiting",
                 });
+                // Clear the prefill name after using it
+                clearPrefillName();
             }
             setError(null);
         }
@@ -294,9 +310,10 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
-                    contractStatus: formData.contractStatus,
+                    serviceStatus: formData.serviceStatus,
                 };
-                await updateClient.mutateAsync({ id: client.id, dto: updateDto });
+                const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
+                onSuccess?.(updatedClient);
             } else {
                 const createDto: CreateClientDto = {
                     ...formData,
@@ -304,21 +321,22 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     startDate: formData.startDate || null,
                     endDate: formData.endDate || null,
                 };
-                await createClient.mutateAsync(createDto);
+                const newClient = await createClient.mutateAsync(createDto);
+                onSuccess?.(newClient);
             }
             onClose();
-        } catch (err) {
-            setError(t(locale, "clients.form.error-save-failed"));
-            console.error("Failed to save client:", err);
+        } catch (error: unknown) {
+            console.error("Failed to save client:", error);
+            setError(getErrorMessage(error, locale, "clients.form.error-save-failed"));
         }
     };
 
     const isSubmitting = createClient.isPending || updateClient.isPending;
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+        <Dialog data-component="ClientFormDialog" open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ 'data-testid': 'client-form-dialog' }}>
             <DialogTitle>
-                {isEditMode 
+                {isEditMode
                     ? t(locale, "clients.form.edit-title")
                     : t(locale, "clients.form.add-title")
                 }
@@ -337,7 +355,7 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                             {t(locale, "clients.form.section-basic")}
                         </Typography>
                     </Grid>
-                    
+
                     <Grid size={{ xs: 12, sm: 6 }}>
                         <TextField
                             fullWidth
@@ -388,11 +406,16 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
 
                     <Grid size={{ xs: 12, sm: 6 }}>
                         <EmployeeAutocomplete
-                            value={formData.primaryEmployeeId ?? null}
-                            onChange={(id) => handleChange("primaryEmployeeId", id ?? 0)}
+                            value={formData.primaryEmployeeId}
+                            onChange={(id) => handleChange("primaryEmployeeId", id)}
                             label={t(locale, "clients.form.primary-employee")}
                             required
                             excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
+                            allowManualEntry
+                            onManualEntry={() => {
+                                setEmployeeDialogTarget("primary");
+                                setIsEmployeeDialogOpen(true);
+                            }}
                         />
                     </Grid>
                     <Grid size={{ xs: 12, sm: 6 }}>
@@ -401,6 +424,11 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                             onChange={(id) => handleChange("secondaryEmployeeId", id)}
                             label={t(locale, "clients.form.secondary-employee")}
                             excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
+                            allowManualEntry
+                            onManualEntry={() => {
+                                setEmployeeDialogTarget("secondary");
+                                setIsEmployeeDialogOpen(true);
+                            }}
                         />
                     </Grid>
 
@@ -454,14 +482,14 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                                 ))}
                             </Select>
                             {isPriceLoading && (
-                                <CircularProgress 
-                                    size={20} 
-                                    sx={{ 
-                                        position: "absolute", 
-                                        right: 40, 
-                                        top: "50%", 
-                                        marginTop: "-10px" 
-                                    }} 
+                                <CircularProgress
+                                    size={20}
+                                    sx={{
+                                        position: "absolute",
+                                        right: 40,
+                                        top: "50%",
+                                        marginTop: "-10px"
+                                    }}
                                 />
                             )}
                         </FormControl>
@@ -476,10 +504,10 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                                 {t(locale, "clients.form.section-pricing")}
                             </Typography>
                             {selectedPriceInfo && !pricesManuallyEdited && (
-                                <Chip 
-                                    label={t(locale, "clients.form.auto-filled")} 
-                                    size="small" 
-                                    color="info" 
+                                <Chip
+                                    label={t(locale, "clients.form.auto-filled")}
+                                    size="small"
+                                    color="info"
                                     variant="outlined"
                                 />
                             )}
@@ -536,9 +564,9 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                         <FormControl fullWidth>
                             <InputLabel>{t(locale, "clients.form.contract-status")}</InputLabel>
                             <Select
-                                value={formData.contractStatus || ""}
+                                value={formData.serviceStatus || ""}
                                 label={t(locale, "clients.form.contract-status")}
-                                onChange={(e) => handleChange("contractStatus", e.target.value)}
+                                onChange={(e) => handleChange("serviceStatus", e.target.value)}
                             >
                                 {CONTRACT_STATUS_OPTIONS.map((status) => (
                                     <MenuItem key={status.value} value={status.value}>
@@ -615,8 +643,8 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                 <Button onClick={onClose} disabled={isSubmitting}>
                     {t(locale, "common.cancel")}
                 </Button>
-                <Button 
-                    variant="contained" 
+                <Button
+                    variant="contained"
                     onClick={handleSubmit}
                     disabled={isSubmitting}
                 >
@@ -629,6 +657,23 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     )}
                 </Button>
             </DialogActions>
+
+            {/* Nested EmployeeFormDialog for adding new employees */}
+            <EmployeeFormDialog
+                open={isEmployeeDialogOpen}
+                onClose={() => {
+                    setIsEmployeeDialogOpen(false);
+                    setEmployeeDialogTarget(null);
+                }}
+                onSuccess={(newEmployee: Employee) => {
+                    // Auto-select the newly created employee in the appropriate field
+                    if (employeeDialogTarget === "primary") {
+                        handleChange("primaryEmployeeId", newEmployee.id);
+                    } else if (employeeDialogTarget === "secondary") {
+                        handleChange("secondaryEmployeeId", newEmployee.id);
+                    }
+                }}
+            />
         </Dialog>
     );
 }

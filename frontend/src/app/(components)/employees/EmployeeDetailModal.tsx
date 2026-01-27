@@ -22,7 +22,7 @@ interface EmployeeDetailModalProps {
     onClose: () => void;
     employee: Employee | null;
     onEdit: (employee: Employee) => void;
-    onDelete: (id: number) => void;
+    onDelete: (id: number) => Promise<boolean>; // Returns true if deletion succeeded
 }
 
 const formatDate = (dateStr: string | null | undefined): string => {
@@ -70,9 +70,11 @@ export function EmployeeDetailModal({
         onClose();
     };
 
-    const handleDelete = () => {
-        onDelete(employee.id);
-        onClose();
+    const handleDelete = async () => {
+        const success = await onDelete(employee.id);
+        if (success) {
+            onClose(); // Only close modal if deletion succeeded
+        }
     };
 
     const getStatusChip = (openToNextWork: boolean) => {

@@ -59,7 +59,7 @@ export class CreateClientDto {
 
     @IsOptional()
     @IsString()
-    contractStatus?: string | null;
+    serviceStatus?: string | null;
 
     @IsBoolean()
     breastPump!: boolean;
@@ -132,7 +132,7 @@ export class UpdateClientDto {
 
     @IsOptional()
     @IsString()
-    contractStatus?: string | null;
+    serviceStatus?: string | null;
 
     @IsOptional()
     @IsBoolean()
@@ -141,4 +141,25 @@ export class UpdateClientDto {
     @IsOptional()
     @IsString()
     eDocId?: string | null;
+}
+
+/**
+ * DTO for terminating a client's service
+ */
+export class TerminateServiceDto {
+    @IsOptional()
+    @IsString()
+    reason?: string;
+}
+
+/**
+ * DTO for requesting a provider replacement
+ */
+export class RequestReplacementDto {
+    @IsInt()
+    newPrimaryEmployeeId!: number;
+
+    @IsOptional()
+    @IsInt()
+    newSecondaryEmployeeId?: number | null;
 }

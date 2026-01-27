@@ -1,5 +1,4 @@
 import { Metadata } from "next";
-import { Container } from "@mui/material";
 
 export const metadata: Metadata = {
     title: "Incheon Imirae Back Office - 고객 관리",
@@ -11,10 +10,6 @@ export default function ClientsLayout({
 }: {
     children: React.ReactNode;
 }) {
-    return (
-        <Container component="section" data-component="clients-content" sx={{ p: 2 }}>
-            {children}
-        </Container>
-    );
+    return <>{children}</>;
 }
 

@@ -21,7 +21,35 @@
     "back": "이전",
     "saving": "저장 중...",
     "deleting": "삭제 중...",
-    "close": "닫기"
+    "close": "닫기",
+    "delete-confirm": "정말로 삭제하시겠습니까?",
+    "no-data": "데이터가 없습니다.",
+    "error-loading": "데이터를 불러오는데 실패했습니다.",
+    "view": "보기"
+  },
+  "nav": {
+    "my-templates": "내 메시지 템플릿"
+  },
+  "template-list": {
+    "subtitle": "사용자 정의 메시지 템플릿을 관리합니다"
+  },
+  "template-editor": {
+    "create-title": "새 템플릿 만들기",
+    "create-subtitle": "새로운 메시지 템플릿을 작성합니다",
+    "edit-title": "템플릿 수정",
+    "edit-subtitle": "기존 메시지 템플릿을 수정합니다",
+    "name-label": "템플릿 이름",
+    "name-placeholder": "예: VIP 고객 환영 메시지",
+    "content-label": "템플릿 내용",
+    "content-placeholder": "메시지 내용을 입력하세요. {{변수명}} 형식을 사용하여 변수를 삽입할 수 있습니다.",
+    "quick-insert": "변수 빠른 삽입:",
+    "variable-settings": "변수 설정",
+    "variable-label": "라벨 (표시 이름)",
+    "variable-type": "입력 타입",
+    "required-label": "필수 입력",
+    "option-settings": "옵션 설정",
+    "no-variables-hint": "내용에 {{변수}}를 입력하면 자동으로 감지되어 설정창이 나타납니다.",
+    "preview": "실시간 미리보기"
   },
   "header": {
     "companyName": "인천 아이미래로",
@@ -56,6 +84,7 @@
     "create_report": "보고서 작성",
     "schedule_meeting": "회의 일정 잡기",
     "price_calculator": "요금 계산기",
+    "send_contract": "계약서 전송",
     "write_message": "메시지 작성"
   },
   "user": {
@@ -64,11 +93,16 @@
     "logout": "로그아웃",
     "login": "로그인"
   },
+  "msg-form": {
+    "title": "메시지",
+    "select-msg-type": "원하시는 메시지를 선택해 주세요"
+  },
   "price-info-msg": {
     "title": "이용 요금 문자 생성",
     "subtitle": "해당 항목들을 모두 작성 및 선택 후에 하단에 있는 문자 생성 버튼을 클릭해 주세요",
     "name-label": "산모님 성함",
     "name-placeholder": "홍길동",
+    "voucher-year-label": "연도",
     "voucher-type-label": "바우처 유형",
     "area-label": "지역",
     "duration-label": "서비스 기간",
@@ -124,19 +158,43 @@
   },
   "contract-msg": {
     "subtitle": "전자계약서 안내 문자 메시지를 생성합니다",
+    "client-select-label": "고객 선택",
+    "client-search-placeholder": "이름, 연락처 또는 주소로 검색",
+    "no-client-found": "일치하는 고객이 없습니다",
+    "manual-entry": "새 고객 등록",
+    "manual-entry-description": "고객 정보를 직접 입력합니다",
+    "manual-entry-mode": "수동 입력 모드",
+    "switch-to-search": "고객 검색으로 전환",
+    "client-signed": "계약완료",
     "name-label": "산모님 성함",
     "name-placeholder": "홍길동",
     "phone-label": "산모님 연락처",
     "phone-placeholder": "010-1234-5678",
+    "birthday-label": "생년월일",
+    "address-label": "주소",
+    "address-placeholder": "예: 인천시 남동구",
     "doc-type-label": "계약서 선택",
     "start-date-label": "계약 시작일",
     "start-date-placeholder": "2025-01-01",
     "end-date-label": "계약 종료일",
     "end-date-placeholder": "2025-12-31",
+    "employee-select-label": "제공인력 1 선택",
+    "employee-manual-entry": "새 제공인력 등록",
+    "employee-manual-entry-description": "제공인력 정보를 직접 입력합니다",
+    "employee-manual-entry-mode": "수동 입력 모드",
+    "switch-to-employee-search": "제공인력 검색으로 전환",
     "employee-name-label": "제공인력 1 성함",
     "employee-name-placeholder": "홍길동",
     "employee-phone-label": "제공인력 1 연락처",
     "employee-phone-placeholder": "010-1234-5678",
+    "add-employee2-toggle": "제공인력 2 추가",
+    "employee2-select-label": "제공인력 2 선택",
+    "employee2-manual-entry": "새 제공인력 등록",
+    "employee2-manual-entry-description": "제공인력 2 정보를 직접 입력합니다",
+    "employee2-manual-entry-mode": "수동 입력 모드",
+    "switch-to-employee2-search": "제공인력 검색으로 전환",
+    "employee2-name-label": "제공인력 2 성함",
+    "employee2-phone-label": "제공인력 2 연락처",
     "full-price-label": "서비스 금액",
     "grant-label": "정부지원금",
     "actual-price-label": "본인부담금",
@@ -145,19 +203,21 @@
     "contract-creation": "전자계약서 생성",
     "price-placeholder": "원",
     "pagination-steps": [
-      "이용자 정보",
-      "제공인력 정보",
-      "계약 정보"
+      "이용자\n정보",
+      "제공인력\n정보",
+      "바우처\n정보",
+      "계약\n정보"
     ]
   },
-  "nav-bar": {
-    "dashboard": "대시보드",
-    "messages": "메시지",
-    "contracts": "계약서",
-    "clients": "고객 관리",
-    "employees": "제공인력 관리",
-    "settings": "설정"
-  },
+   "nav-bar": {
+     "dashboard": "대시보드",
+     "messages": "메시지",
+     "contracts": "계약서",
+     "clients": "고객 관리",
+     "employees": "제공인력 관리",
+     "file-storage": "문서",
+     "settings": "설정"
+   },
   "login": {
     "title": "로그인 후 시작하기",
     "subtitle": "아래의 소셜 로그인 방법 중 하나를 선택해서 로그인을 해주세요",
@@ -189,6 +249,12 @@
       "actions": "관리"
     },
     "form": {
+      "pagination-steps": [
+        "기본 정보",
+        "담당 인력",
+        "서비스/요금",
+        "계약 정보"
+      ],
       "add-title": "새 고객 등록",
       "edit-title": "고객 정보 수정",
       "section-basic": "기본 정보",
@@ -236,7 +302,15 @@
       "section-document": "전자계약서",
       "document-status": "서명 상태",
       "document-signed": "서명 완료",
-      "document-not-signed": "미서명"
+      "document-not-signed": "미서명",
+      "doc-not-sent": "미발송",
+      "doc-created": "생성됨",
+      "doc-opened": "열람됨",
+      "doc-completed": "완료",
+      "doc-requested": "서명 요청됨",
+      "doc-rejected": "거부됨",
+      "doc-revoked": "철회됨",
+      "doc-deleted": "삭제됨"
     }
   },
   "employees": {
@@ -248,12 +322,13 @@
     "schedule-not-implemented": "스케줄 기능 준비 중",
     "table": {
       "name": "이름",
-      "open-status": "근무 가능",
-      "assigned-client": "배당된 고객"
+      "open-status": "상태",
+      "contact": "연락처"
     },
     "status": {
-      "available": "가능",
-      "unavailable": "불가능"
+      "available": "근무 가능",
+      "working": "근무 중",
+      "unavailable": "근무 불가"
     },
     "form": {
       "create-title": "새 제공인력 등록",
@@ -266,14 +341,21 @@
       "work-area": "근무 지역",
       "grade": "등급",
       "open-to-next-work": "근무 가능 여부",
-      "registered-date": "등록일"
+      "registered-date": "등록일",
+      "phone-required": "연락처를 입력해주세요",
+      "work-area-required": "근무 지역을 선택해주세요",
+      "error-phone-duplicate": "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+      "error-create-failed": "제공인력 등록에 실패했습니다. 다시 시도해주세요.",
+      "error-update-failed": "제공인력 정보 수정에 실패했습니다. 다시 시도해주세요.",
+      "error-save-failed": "저장에 실패했습니다. 다시 시도해주세요."
     },
     "detail": {
       "title": "제공인력 상세 정보"
     },
     "delete-confirm": {
       "title": "제공인력 삭제",
-      "message": "정말로 이 제공인력을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다."
+      "message": "정말로 이 제공인력을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+      "error": "제공인력 삭제에 실패했습니다. 다시 시도해주세요."
     }
   },
   "settings": {
@@ -334,6 +416,32 @@
         "parse-failed": "이미지 파싱에 실패했습니다",
         "update-failed": "업데이트에 실패했습니다"
       }
+    }
+  },
+  "errors": {
+    "generic": "오류가 발생했습니다. 다시 시도해주세요.",
+    "network": "네트워크 오류가 발생했습니다.",
+    "prisma": {
+      "P2002": "{field}이(가) 이미 존재합니다.",
+      "P2002.phone": "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+      "P2002.email": "이미 등록된 이메일입니다.",
+      "P2003": "참조된 데이터가 존재하지 않습니다.",
+      "P2025": "요청한 데이터를 찾을 수 없습니다.",
+      "P2011": "필수 필드가 누락되었습니다.",
+      "P2006": "{field}에 유효하지 않은 값이 입력되었습니다.",
+      "unknown": "데이터베이스 오류가 발생했습니다."
+    },
+    "fields": {
+      "phone": "연락처",
+      "email": "이메일",
+      "name": "이름",
+      "address": "주소",
+      "birthday": "생년월일",
+      "work_area": "근무 지역",
+      "document_id": "문서 ID",
+      "endpoint": "알림 엔드포인트",
+      "kakao_id": "카카오 ID",
+      "year_type_duration": "연도/유형/기간"
     }
   }
 }

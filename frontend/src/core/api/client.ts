@@ -59,50 +59,52 @@ api.interceptors.response.use(
             return axios(originalRequest);
         }
 
-        // 401 Unauthorized - try token refresh
+        // 401 Unauthorized - handle eformsign token refresh only for eformsign-related endpoints
         if (err.response?.status === 401 && originalRequest && !originalRequest._retry) {
-            // Don't retry token refresh endpoints
-            if (originalRequest.url?.includes('access-token') || 
-                originalRequest.url?.includes('refresh-access-token')) {
+            const url = originalRequest.url || '';
+            
+            const isEformsignEndpoint = url.includes('/documents') || 
+                url.includes('/access-token') || 
+                url.includes('/refresh-access-token') ||
+                url.includes('/generate-document') ||
+                url.includes('/generate-signature');
+            
+            if (url.includes('access-token') || url.includes('refresh-access-token')) {
                 return Promise.reject(err);
             }
 
-            if (isRefreshing) {
-                // If already refreshing, queue this request
-                return new Promise((resolve, reject) => {
-                    failedQueue.push({ resolve, reject });
-                }).then(() => axios(originalRequest));
-            }
-
-            originalRequest._retry = true;
-            isRefreshing = true;
-
-            try {
-                // Attempt to refresh the token
-                const executionTime = Date.now();
-                await api.post('/refresh-access-token', { executionTime });
-                
-                // Update sessionStorage auth time
-                if (typeof window !== 'undefined') {
-                    sessionStorage.setItem("eformsign_auth_time", executionTime.toString());
+            if (isEformsignEndpoint) {
+                if (isRefreshing) {
+                    return new Promise((resolve, reject) => {
+                        failedQueue.push({ resolve, reject });
+                    }).then(() => axios(originalRequest));
                 }
 
-                processQueue();
-                return axios(originalRequest);
-            } catch (refreshError) {
-                processQueue(refreshError as AxiosError);
-                
-                // Clear auth state and redirect to login
-                if (typeof window !== "undefined") {
-                    sessionStorage.removeItem("eformsign_auth_time");
-                    if (!window.location.pathname.includes("/login")) {
-                        window.location.href = "/login";
+                originalRequest._retry = true;
+                isRefreshing = true;
+
+                try {
+                    const executionTime = Date.now();
+                    await api.post('/refresh-access-token', { executionTime });
+                    
+                    if (typeof window !== 'undefined') {
+                        sessionStorage.setItem("eformsign_auth_time", executionTime.toString());
                     }
+
+                    processQueue();
+                    return axios(originalRequest);
+                } catch (refreshError) {
+                    processQueue(refreshError as AxiosError);
+                    if (typeof window !== 'undefined') {
+                        sessionStorage.removeItem("eformsign_auth_time");
+                    }
+                    return Promise.reject(refreshError);
+                } finally {
+                    isRefreshing = false;
                 }
-                return Promise.reject(refreshError);
-            } finally {
-                isRefreshing = false;
             }
+            
+            return Promise.reject(err);
         }
 
         return Promise.reject(err);

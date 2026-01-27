@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
-import { CreateClientDto, UpdateClientDto } from "interface/dto/client.dto";
+import { CreateClientDto, UpdateClientDto, TerminateServiceDto, RequestReplacementDto } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
 @Controller("clients")
@@ -26,7 +26,7 @@ export class ClientController {
             careCenter: dto.careCenter,
             voucherClient: dto.voucherClient,
             birthday: dto.birthday ?? null,
-            contractStatus: dto.contractStatus ?? null,
+            serviceStatus: dto.serviceStatus ?? null,
             breastPump: dto.breastPump,
             eDocId: dto.eDocId ?? null,
         });
@@ -37,8 +37,11 @@ export class ClientController {
         @Query("page") page?: string,
         @Query("limit") limit?: string,
         @Query("search") search?: string,
+        @Query("filter") filter?: string,
     ) {
-        // If pagination params provided, use paginated query
+        if (filter) {
+            return this.clientService.findByFilter(filter);
+        }
         if (page && limit) {
             return this.clientService.findAllPaginated(
                 Number(page),
@@ -46,8 +49,13 @@ export class ClientController {
                 search,
             );
         }
-        // Otherwise return all (for backwards compatibility)
         return this.clientService.findAll();
+    }
+
+
+    @Get("stats")
+    getStats() {
+        return this.clientService.getStats();
     }
 
     @Get(":id")
@@ -73,7 +81,7 @@ export class ClientController {
             careCenter: dto.careCenter,
             voucherClient: dto.voucherClient,
             birthday: dto.birthday,
-            contractStatus: dto.contractStatus,
+            serviceStatus: dto.serviceStatus,
             breastPump: dto.breastPump,
             eDocId: dto.eDocId,
         });
@@ -82,5 +90,35 @@ export class ClientController {
     @Delete(":id")
     delete(@Param("id") id: string) {
         return this.clientService.delete(Number(id));
+    }
+
+    /**
+     * Terminate a client's service
+     * Sets status to 'terminated' and ends the service immediately
+     */
+    @Patch(":id/terminate")
+    terminate(@Param("id") id: string, @Body() dto: TerminateServiceDto) {
+        return this.clientService.terminateService(Number(id), dto.reason);
+    }
+
+    /**
+     * Request a provider replacement for a client
+     * Sets status to 'replacement_requested' and assigns new employees
+     */
+    @Patch(":id/request-replacement")
+    requestReplacement(@Param("id") id: string, @Body() dto: RequestReplacementDto) {
+        return this.clientService.requestReplacement(
+            Number(id),
+            dto.newPrimaryEmployeeId,
+            dto.newSecondaryEmployeeId,
+        );
+    }
+
+    /**
+     * Complete a replacement and restore service to normal status
+     */
+    @Patch(":id/complete-replacement")
+    completeReplacement(@Param("id") id: string) {
+        return this.clientService.completeReplacement(Number(id));
     }
 }

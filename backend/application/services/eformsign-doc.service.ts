@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import {
     FindEformsignDocByIdUsecase,
     FindEformsignDocByDocumentIdUsecase,
@@ -8,6 +8,11 @@ import {
     RefreshEformsignAccessTokenUsecase,
     FetchAllEformsignDocsFromApiUsecase,
     FetchEformsignDocFromApiUsecase,
+    CreateEformsignDocUsecase,
+    CreateEformsignDocParams,
+    CreateAndSendContractUsecase,
+    CreateAndSendContractParams,
+    CreateAndSendContractResult,
 } from "application/usecases/eformsign-doc";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import {
@@ -17,20 +22,36 @@ import {
 
 @Injectable()
 export class EformsignDocService {
+    private readonly logger = new Logger(EformsignDocService.name);
+
     constructor(
         // Local DB use cases
         private readonly findEformsignDocByIdUsecase: FindEformsignDocByIdUsecase,
         private readonly findEformsignDocByDocumentIdUsecase: FindEformsignDocByDocumentIdUsecase,
         private readonly findEformsignDocsByClientIdUsecase: FindEformsignDocsByClientIdUsecase,
         private readonly listEformsignDocsUsecase: ListEformsignDocsUsecase,
+        private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
         // External API use cases
         private readonly getEformsignAccessTokenUsecase: GetEformsignAccessTokenUsecase,
         private readonly refreshEformsignAccessTokenUsecase: RefreshEformsignAccessTokenUsecase,
         private readonly fetchAllEformsignDocsFromApiUsecase: FetchAllEformsignDocsFromApiUsecase,
         private readonly fetchEformsignDocFromApiUsecase: FetchEformsignDocFromApiUsecase,
+        // Contract creation
+        private readonly createAndSendContractUsecase: CreateAndSendContractUsecase,
     ) {}
 
     // ============ Local DB Operations ============
+
+    /**
+     * Create a new eformsign doc record in local DB
+     * @param params - document creation parameters
+     */
+    async create(params: CreateEformsignDocParams): Promise<EformsignDocEntity> {
+        this.logger.log(`Creating eformsign doc record: documentId=${params.documentId}, clientId=${params.clientId}, linkToClient=${params.linkToClient}`);
+        const result = await this.createEformsignDocUsecase.execute(params);
+        this.logger.log(`Successfully created eformsign doc record: id=${result.id}, documentId=${result.documentId}`);
+        return result;
+    }
 
     /**
      * Find a stored eformsign doc by its DB id
@@ -95,6 +116,10 @@ export class EformsignDocService {
      */
     fetchFromApi(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse> {
         return this.fetchEformsignDocFromApiUsecase.execute(accessToken, documentId);
+    }
+
+    createAndSendContract(params: CreateAndSendContractParams): Promise<CreateAndSendContractResult> {
+        return this.createAndSendContractUsecase.execute(params);
     }
 }
 

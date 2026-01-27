@@ -11,11 +11,14 @@ import {
     Chip,
     Divider,
     IconButton,
+    Switch,
+    FormControlLabel,
 } from "@mui/material";
 import { Pencil, Trash2, X } from "lucide-react";
 import { useLocale } from "@/core/providers";
 import { t } from "@/app/lib/i18n/translations";
 import type { Employee } from "../types";
+import { useToggleEmployeeOpenStatus } from "../hooks/use-employees";
 
 interface EmployeeDetailModalProps {
     open: boolean;
@@ -62,6 +65,7 @@ export function EmployeeDetailModal({
     onDelete,
 }: EmployeeDetailModalProps) {
     const locale = useLocale();
+    const toggleStatus = useToggleEmployeeOpenStatus();
 
     if (!employee) return null;
 
@@ -75,15 +79,15 @@ export function EmployeeDetailModal({
         onClose();
     };
 
-    const getStatusChip = (openToNextWork: boolean) => {
-        if (openToNextWork) {
-            return <Chip label={t(locale, "employees.status.available")} color="success" size="small" />;
-        }
-        return <Chip label={t(locale, "employees.status.unavailable")} color="default" size="small" />;
+    const handleToggle = () => {
+        toggleStatus.mutate({
+            id: employee.id,
+            openToNextWork: !employee.openToNextWork,
+        });
     };
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+        <Dialog data-component="EmployeeDetailModal" open={open} onClose={onClose} maxWidth="sm" fullWidth>
             <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <Box component="span" sx={{ fontWeight: 600, fontSize: "1.25rem" }}>
                     {employee.name}
@@ -120,7 +124,24 @@ export function EmployeeDetailModal({
                     <InfoRow label={t(locale, "employees.form.grade")} value={employee.grade} />
                     <InfoRow
                         label={t(locale, "employees.form.open-to-next-work")}
-                        value={getStatusChip(employee.openToNextWork)}
+                        value={
+                            <FormControlLabel
+                                control={
+                                    <Switch
+                                        checked={employee.openToNextWork}
+                                        onChange={handleToggle}
+                                        disabled={toggleStatus.isPending}
+                                    />
+                                }
+                                label={
+                                    toggleStatus.isPending
+                                        ? "..."
+                                        : employee.openToNextWork
+                                            ? t(locale, "employees.status.available")
+                                            : t(locale, "employees.status.unavailable")
+                                }
+                            />
+                        }
                     />
 
                     <Divider sx={{ my: 2 }} />

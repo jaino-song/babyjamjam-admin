@@ -19,29 +19,22 @@ import {
 } from "@mui/material";
 import { Search, Plus } from "lucide-react";
 import { useClients, useDeleteClient } from "../hooks/use-clients";
-import { Client, CONTRACT_STATUS_OPTIONS } from "../types";
-import { ComponentContainer } from "@/app/(components)/root/ComponentContainer";
+import { Client, SERVICE_STATUS_OPTIONS } from "../types";
+import { ContentPaper } from "@/app/(components)/root/content-paper";
 import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "@/core/providers";
 import { t } from "@/app/lib/i18n/translations";
 
 const getStatusChip = (status: string | null) => {
-    const option = CONTRACT_STATUS_OPTIONS.find(o => o.value === status);
+    const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
     if (!option) return <Chip label="-" size="small" variant="outlined" />;
-    
-    const colorMap: Record<string, "default" | "warning" | "info" | "success" | "error"> = {
-        pending: "warning",
-        in_progress: "info",
-        completed: "success",
-        cancelled: "error",
-    };
-    
+
     return (
-        <Chip 
-            label={option.label} 
-            color={colorMap[status || ""] || "default"} 
-            size="small" 
+        <Chip
+            label={option.label}
+            color={option.color}
+            size="small"
         />
     );
 };
@@ -63,8 +56,8 @@ export function ClientsTable() {
     const [editingClient, setEditingClient] = useState<Client | null>(null);
 
     const { data, isLoading, error, isFetching } = useClients(
-        page + 1, 
-        rowsPerPage, 
+        page + 1,
+        rowsPerPage,
         search || undefined
     );
     const deleteClient = useDeleteClient();
@@ -121,19 +114,27 @@ export function ClientsTable() {
 
     if (isLoading) {
         return (
-            <ComponentContainer textJSON="clients">
+            <ContentPaper
+                title={t(locale, "clients.title")}
+                subtitle={t(locale, "clients.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
                     <CircularProgress />
                 </Box>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
     if (error) {
         return (
-            <ComponentContainer textJSON="clients">
+            <ContentPaper
+                title={t(locale, "clients.title")}
+                subtitle={t(locale, "clients.subtitle")}
+                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            >
                 <Alert severity="error">{t(locale, "clients.load-error")}</Alert>
-            </ComponentContainer>
+            </ContentPaper>
         );
     }
 
@@ -141,7 +142,12 @@ export function ClientsTable() {
     const total = data?.total || 0;
 
     return (
-        <ComponentContainer textJSON="clients">
+        <ContentPaper
+            data-component="ClientsTable"
+            title={t(locale, "clients.title")}
+            subtitle={t(locale, "clients.subtitle")}
+            sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+        >
             <Box data-component="clients-table-container">
                 {/* Toolbar */}
                 <Box
@@ -176,8 +182,8 @@ export function ClientsTable() {
                     <IconButton
                         color="primary"
                         onClick={handleAddNew}
-                        sx={{ 
-                            bgcolor: "primary.main", 
+                        sx={{
+                            bgcolor: "primary.main",
                             color: "white",
                             "&:hover": { bgcolor: "primary.dark" }
                         }}
@@ -187,7 +193,7 @@ export function ClientsTable() {
                 </Box>
 
                 {/* Table */}
-                <TableContainer>
+                <TableContainer data-component="clients-table-container">
                     <Table size="small">
                         <TableHead>
                             <TableRow>
@@ -211,14 +217,14 @@ export function ClientsTable() {
                                 </TableRow>
                             ) : (
                                 clients.map((client) => (
-                                    <TableRow 
-                                        key={client.id} 
+                                    <TableRow
+                                        key={client.id}
                                         hover
                                         onClick={() => handleRowClick(client)}
                                         sx={{ cursor: "pointer" }}
                                     >
                                         <TableCell>{client.name}</TableCell>
-                                        <TableCell>{getStatusChip(client.contractStatus)}</TableCell>
+                                        <TableCell>{getStatusChip(client.serviceStatus)}</TableCell>
                                         <TableCell sx={{ p: 0 }}>{formatDate(client.startDate)}</TableCell>
                                     </TableRow>
                                 ))
@@ -254,6 +260,6 @@ export function ClientsTable() {
                     client={editingClient}
                 />
             </Box>
-        </ComponentContainer>
+        </ContentPaper>
     );
 }

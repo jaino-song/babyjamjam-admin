@@ -13,14 +13,38 @@ model area {
   name              String
   korean_name       String
   bank_account_info bank_account_info?
-  doc_templates     doc_template[]
+  doc_template      doc_template[]
 }
 
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model bank_account_info {
   area_id   String  @id(map: "bankAccountInfo_pkey")
   bank_name String?
   acc_num   String?
   area      area    @relation(fields: [area_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model client {
+  id                                            Int                 @id @default(autoincrement())
+  name                                          String
+  address                                       String?
+  phone                                         String?
+  type                                          String?
+  duration                                      Int?                @db.SmallInt
+  full_price                                    String?
+  grant                                         String?
+  actual_price                                  String?
+  start_date                                    DateTime?           @db.Date
+  end_date                                      DateTime?           @db.Date
+  care_center                                   Boolean
+  voucher_client                                Boolean
+  birthday                                      String?             @db.VarChar(6)
+  breast_pump                                   Boolean             @default(false)
+  service_status                                String?
+  e_doc_id                                      String?             @unique
+  eformsign_doc_client_e_doc_idToeformsign_doc  eformsign_doc?      @relation("client_e_doc_idToeformsign_doc", fields: [e_doc_id], references: [document_id], onUpdate: NoAction)
+  eformsign_doc_eformsign_doc_client_idToclient eformsign_doc[]     @relation("eformsign_doc_client_idToclient")
+  employee_schedule                             employee_schedule[]
 }
 
 model doc_template {
@@ -31,7 +55,52 @@ model doc_template {
   area          area    @relation(fields: [area_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model eformsign_doc {
+  id                                     Int      @id @default(autoincrement())
+  document_id                            String   @unique
+  created_date                           DateTime @db.Timestamptz(6)
+  updated_date                           DateTime @db.Timestamptz(6)
+  status_type                            String
+  status_detail                          String
+  step_type                              String
+  step_index                             String
+  step_name                              String
+  step_recipient_type                    String
+  step_recipient_name                    String
+  step_recipient_sms                     String
+  expired_date                           DateTime @db.Timestamptz(6)
+  expired                                Boolean  @default(false)
+  client_id                              Int
+  client_client_e_doc_idToeformsign_doc  client?  @relation("client_e_doc_idToeformsign_doc")
+  client_eformsign_doc_client_idToclient client   @relation("eformsign_doc_client_idToclient", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model employee {
+  id                                                                  Int                 @id @db.SmallInt
+  name                                                                String
+  work_area                                                           String[]
+  phone                                                               String              @unique
+  grade                                                               String
+  open_to_next_work                                                   Boolean             @default(true)
+  company_registered_date                                             DateTime?           @db.Date
+  employee_schedule_employee_schedule_primary_employee_idToemployee   employee_schedule[] @relation("employee_schedule_primary_employee_idToemployee")
+  employee_schedule_employee_schedule_secondary_employee_idToemployee employee_schedule[] @relation("employee_schedule_secondary_employee_idToemployee")
+}
+
+model employee_schedule {
+  id                                                         Int       @id @default(autoincrement())
+  primary_employee_id                                        Int       @db.SmallInt
+  work_address                                               String
+  start_date                                                 DateTime  @db.Date
+  end_date                                                   DateTime  @db.Date
+  replaced                                                   Boolean   @default(false)
+  client_id                                                  Int
+  secondary_employee_id                                      Int?      @db.SmallInt
+  client                                                     client    @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  employee_employee_schedule_primary_employee_idToemployee   employee  @relation("employee_schedule_primary_employee_idToemployee", fields: [primary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  employee_employee_schedule_secondary_employee_idToemployee employee? @relation("employee_schedule_secondary_employee_idToemployee", fields: [secondary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
 model message {
   id         Int       @id @default(autoincrement()) @db.SmallInt
   title      String?   @default("") @db.VarChar
@@ -40,15 +109,61 @@ model message {
   edited_at  DateTime? @db.Timestamptz(6)
 }
 
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model notification {
+  id      Int       @id @default(autoincrement())
+  user_id String    @db.Uuid
+  title   String
+  body    String
+  data    Json?
+  sent_at DateTime  @default(now()) @db.Timestamptz(6)
+  read_at DateTime? @db.Timestamptz(6)
+  user    user      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id, sent_at])
+}
+
+model push_subscription {
+  id         Int      @id @default(autoincrement())
+  user_id    String   @db.Uuid
+  endpoint   String   @unique
+  p256dh_key String
+  auth_key   String
+  user_agent String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  user       user     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id])
+}
+
+model system_setting {
+  key        String   @id
+  value      String
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
 model user {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email         String?  @db.VarChar
-  name          String?  @db.VarChar
-  profile_image String?  @db.VarChar
-  role          String?  @db.VarChar
-  created_at    DateTime @default(now()) @db.Timestamp(6)
-  kakao_id      String   @unique(map: "user_kakaoId_key") @db.VarChar
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email             String?             @db.VarChar
+  name              String?             @db.VarChar
+  profile_image     String?             @db.VarChar
+  role              String?             @db.VarChar
+  created_at        DateTime            @default(now()) @db.Timestamp(6)
+  kakao_id          String              @unique(map: "user_kakaoId_key") @db.VarChar
+  notification      notification[]
+  push_subscription push_subscription[]
+  chat_session      chat_session[]
+}
+
+model chat_session {
+  id         String   @id @default(cuid())
+  user_id    String   @db.Uuid
+  messages   Json
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  expires_at DateTime @db.Timestamptz(6)
+  user       user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([expires_at])
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -65,76 +180,6 @@ model voucher_price_info {
   @@index([type, duration, year])
 }
 
-model employee {
-  id                      Int                 @id @db.SmallInt
-  name                    String
-  work_area               String[]
-  phone                   String              @unique
-  grade                   String
-  open_to_next_work       Boolean             @default(true)
-  company_registered_date DateTime?           @db.Date
-  schedules_as_primary    employee_schedule[] @relation("schedule_primary_employee")
-  schedules_as_secondary  employee_schedule[] @relation("schedule_secondary_employee")
-}
-
-model employee_schedule {
-  id                    Int       @id @default(autoincrement())
-  primary_employee_id   Int       @db.SmallInt
-  work_address          String
-  start_date            DateTime  @db.Date
-  end_date              DateTime  @db.Date
-  replaced              Boolean   @default(false)
-  client_id             Int
-  secondary_employee_id Int?      @db.SmallInt
-  client                client    @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  primary_employee      employee  @relation("schedule_primary_employee", fields: [primary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  secondary_employee    employee? @relation("schedule_secondary_employee", fields: [secondary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-}
-
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model client {
-  id                 Int                 @id @default(autoincrement())
-  name               String
-  address            String?
-  phone              String?
-  type               String?
-  duration           Int?                @db.SmallInt
-  full_price         String?
-  grant              String?
-  actual_price       String?
-  start_date         DateTime?           @db.Date
-  end_date           DateTime?           @db.Date
-  care_center        Boolean
-  voucher_client     Boolean
-  birthday           String?             @db.VarChar(6)
-  breast_pump        Boolean             @default(false)
-  contract_status    String?
-  e_doc_id           String?             @unique
-  signed_doc         eformsign_doc?      @relation("client_signed_doc", fields: [e_doc_id], references: [document_id], onUpdate: NoAction)
-  eformsign_docs     eformsign_doc[]     @relation("eformsign_doc_client")
-  employee_schedules employee_schedule[]
-}
-
-model eformsign_doc {
-  id                  Int      @id @default(autoincrement())
-  document_id         String   @unique
-  created_date        DateTime @db.Timestamptz(6)
-  updated_date        DateTime @db.Timestamptz(6)
-  status_type         String
-  status_detail       String
-  step_type           String
-  step_index          String
-  step_name           String
-  step_recipient_type String
-  step_recipient_name String
-  step_recipient_sms  String
-  expired_date        DateTime @db.Timestamptz(6)
-  expired             Boolean  @default(false)
-  client_id           Int
-  signed_by_client    client?  @relation("client_signed_doc")
-  client              client   @relation("eformsign_doc_client", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-}
-
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model voucher_price_info_2025 {
@@ -146,18 +191,55 @@ model voucher_price_info_2025 {
   actual_price String?
 }
 
+model message_template {
+  id         String   @id @default(cuid())
+  name       String
+  content    String
+  variables  Json     @default("[]")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+}
+
+model system_template {
+  id              String   @id @default(cuid())
+  templateKey     String   @unique @map("template_key")
+  content         String   @db.Text
+  customVariables Json?    @map("custom_variables")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  versions    system_template_version[]
+
+  @@map("system_template")
+}
+
+model system_template_version {
+  id            String   @id @default(cuid())
+  templateId    String   @map("template_id")
+  content       String   @db.Text
+  versionNumber Int      @map("version_number")
+  createdBy     String?  @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  template      system_template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, versionNumber])
+  @@index([templateId])
+  @@map("system_template_version")
+}
+
 model document {
   id          String   @id @default(cuid())
   name        String
   description String?
-  category    String
-  tags        String[]
-  mimeType    String   @map("mime_type")
-  fileSize    Int      @map("file_size")
-  storagePath String   @map("storage_path")
-  storageUrl  String?  @map("storage_url")
-  orgId       String?  @map("org_id")
-  uploadedBy  String   @map("uploaded_by")
+  category    String   // predefined category (Contract, Invoice, Receipt, Report, Certificate, Form, Notice, EmployeeContract)
+  tags        String[] // custom tags
+  mimeType    String   @map("mime_type") // image/png, image/jpeg, application/pdf
+  fileSize    Int      @map("file_size") // bytes
+  storagePath String   @map("storage_path") // Supabase storage path
+  storageUrl  String?  @map("storage_url") // Public URL (nullable - use download endpoint instead)
+  orgId       String?  @map("org_id") // For future org-specific access (nullable for now)
+  uploadedBy  String   @map("uploaded_by") // User ID
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 

@@ -8,6 +8,7 @@ import { AuthService } from "application/services/auth.service";
 import { EformsignService } from "application/services/eformsign.service";
 import { ConfigModule } from "@nestjs/config";
 import { PassportModule } from "@nestjs/passport";
+import { ScheduleModule } from "@nestjs/schedule";
 import { BankAccountInfoModule } from "module/bank-account-info.module";
 import { UserModule } from "module/user.module";
 import { MessageModule } from "module/message.module";
@@ -16,7 +17,16 @@ import { EmployeeModule } from "module/employee.module";
 import { ClientModule } from "module/client.module";
 import { EmployeeScheduleModule } from "module/employee-schedule.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
+import { EformsignWebhookModule } from "module/eformsign-webhook.module";
 import { AreaTemplateModule } from "module/area-template.module";
+import { NotificationModule } from "module/notification.module";
+import { ChannelTalkModule } from "module/channeltalk.module";
+import { SystemSettingModule } from "module/system-setting.module";
+import { AligoModule } from "module/aligo.module";
+import { AlimtalkModule } from "module/alimtalk.module";
+import { AIChatModule } from "module/ai-chat.module";
+import { MessageTemplateModule } from "module/message-template.module";
+import { SystemTemplateModule } from "module/system-template.module";
 import { DocumentModule } from "module/document.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -25,6 +35,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         ConfigModule.forRoot({
             isGlobal: true,
         }),
+        ScheduleModule.forRoot(),
         PassportModule,
         JwtModule.register({
             secret: process.env['JWT_SECRET'],
@@ -38,7 +49,16 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         ClientModule,
         EmployeeScheduleModule,
         EformsignDocModule,
+        EformsignWebhookModule,
         AreaTemplateModule,
+        NotificationModule,
+        ChannelTalkModule,
+        SystemSettingModule,
+        AligoModule,
+        AlimtalkModule,
+        AIChatModule,
+        MessageTemplateModule,
+        SystemTemplateModule,
         DocumentModule,
     ],
     controllers: [AuthController, EformsignController],

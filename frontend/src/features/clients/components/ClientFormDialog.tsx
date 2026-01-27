@@ -25,11 +25,13 @@ import {
 import { useCreateClient, useUpdateClient } from "../hooks/use-clients";
 import { useVoucherPriceInfos } from "@/app/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
+import { EmployeeFormDialog } from "@/features/employees";
+import type { Employee } from "@/features/employees";
 import {
     Client,
     CreateClientDto,
     UpdateClientDto,
-    CONTRACT_STATUS_OPTIONS
+    SERVICE_STATUS_OPTIONS
 } from "../types";
 import { useLocale } from "@/core/providers";
 import { t } from "@/app/lib/i18n/translations";
@@ -61,7 +63,7 @@ const parsePrice = (value: string | null | undefined): string => {
 const formatPhoneNumber = (value: string): string => {
     // Remove all non-digit characters
     const digits = value.replace(/\D/g, "");
-    
+
     // Apply formatting based on length
     if (digits.length <= 3) {
         return digits;
@@ -84,7 +86,7 @@ const formatDateForInput = (dateString: string | null | undefined): string => {
 export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProps) {
     const locale = useLocale();
     const isEditMode = !!client;
-    
+
     const createClient = useCreateClient();
     const updateClient = useUpdateClient();
 
@@ -106,13 +108,18 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
         careCenter: false,
         voucherClient: true,
         breastPump: false,
-        contractStatus: "pending",
+        serviceStatus: "waiting",
     });
 
     const [error, setError] = useState<string | null>(null);
-    
+
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
+
+    // State for employee creation dialog
+    const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
+    // Track which employee field (primary/secondary) triggered the dialog
+    const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
 
     // Fetch voucher price info based on selected type
     const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(formData.type || "");
@@ -183,7 +190,7 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     careCenter: client.careCenter,
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
-                    contractStatus: client.contractStatus || "pending",
+                    serviceStatus: client.serviceStatus || "waiting",
                 });
                 // In edit mode, consider prices as manually set
                 if (client.fullPrice || client.grant || client.actualPrice) {
@@ -207,7 +214,7 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                    contractStatus: "pending",
+                    serviceStatus: "waiting",
                 });
             }
             setError(null);
@@ -294,7 +301,7 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
-                    contractStatus: formData.contractStatus,
+                    serviceStatus: formData.serviceStatus,
                 };
                 await updateClient.mutateAsync({ id: client.id, dto: updateDto });
             } else {
@@ -316,319 +323,346 @@ export function ClientFormDialog({ open, onClose, client }: ClientFormDialogProp
     const isSubmitting = createClient.isPending || updateClient.isPending;
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-            <DialogTitle>
-                {isEditMode 
-                    ? t(locale, "clients.form.edit-title")
-                    : t(locale, "clients.form.add-title")
-                }
-            </DialogTitle>
-            <DialogContent dividers>
-                {error && (
-                    <Alert severity="error" sx={{ mb: 2 }}>
-                        {error}
-                    </Alert>
-                )}
-
-                <Grid container spacing={2}>
-                    {/* Basic Info Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                            {t(locale, "clients.form.section-basic")}
-                        </Typography>
-                    </Grid>
-                    
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            required
-                            label={t(locale, "clients.form.name")}
-                            value={formData.name}
-                            onChange={(e) => handleChange("name", e.target.value)}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.birthday")}
-                            placeholder="YYMMDD"
-                            value={formData.birthday}
-                            onChange={(e) => handleChange("birthday", e.target.value)}
-                            inputProps={{ maxLength: 6 }}
-                            helperText={t(locale, "clients.form.birthday-helper")}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.phone")}
-                            value={formData.phone}
-                            onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
-                            placeholder="010-1234-5678"
-                            inputProps={{ maxLength: 13 }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.address")}
-                            value={formData.address}
-                            onChange={(e) => handleChange("address", e.target.value)}
-                        />
-                    </Grid>
-
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
-
-                    {/* Employee Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                            {t(locale, "clients.form.section-employee")}
-                        </Typography>
-                    </Grid>
-
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <EmployeeAutocomplete
-                            value={formData.primaryEmployeeId ?? null}
-                            onChange={(id) => handleChange("primaryEmployeeId", id ?? 0)}
-                            label={t(locale, "clients.form.primary-employee")}
-                            required
-                            excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <EmployeeAutocomplete
-                            value={formData.secondaryEmployeeId ?? null}
-                            onChange={(id) => handleChange("secondaryEmployeeId", id)}
-                            label={t(locale, "clients.form.secondary-employee")}
-                            excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
-                        />
-                    </Grid>
-
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
-
-                    {/* Service Info Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                            {t(locale, "clients.form.section-service")}
-                        </Typography>
-                    </Grid>
-
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <FormControl fullWidth>
-                            <InputLabel>{t(locale, "clients.form.voucher-type")}</InputLabel>
-                            <Select
-                                value={formData.type || ""}
-                                label={t(locale, "clients.form.voucher-type")}
-                                onChange={(e) => handleTypeChange(e.target.value)}
-                            >
-                                {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
-                                    <MenuItem key={groupName} disabled sx={{ fontWeight: 600 }}>
-                                        {groupName}
-                                    </MenuItem>,
-                                    ...Object.entries(types).map(([typeValue, typeData]) => (
-                                        <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
-                                            {typeData.label}
-                                        </MenuItem>
-                                    ))
-                                ])}
-                            </Select>
-                        </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <FormControl fullWidth disabled={!formData.type || isPriceLoading}>
-                            <InputLabel>{t(locale, "clients.form.duration")}</InputLabel>
-                            <Select
-                                value={formData.duration || ""}
-                                label={t(locale, "clients.form.duration")}
-                                onChange={(e) => {
-                                    const value = e.target.value;
-                                    handleChange("duration", value ? Number(value) : null);
-                                    // Reset manual edit flag when duration changes to allow auto-fill
-                                    setPricesManuallyEdited(false);
-                                }}
-                            >
-                                {availableDurations.map((duration) => (
-                                    <MenuItem key={duration} value={duration}>
-                                        {duration}일
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                            {isPriceLoading && (
-                                <CircularProgress 
-                                    size={20} 
-                                    sx={{ 
-                                        position: "absolute", 
-                                        right: 40, 
-                                        top: "50%", 
-                                        marginTop: "-10px" 
-                                    }} 
-                                />
-                            )}
-                        </FormControl>
-                    </Grid>
-
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
-
-                    {/* Pricing Section */}
-                    <Grid size={12}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-                            <Typography variant="subtitle2" color="primary">
-                                {t(locale, "clients.form.section-pricing")}
-                            </Typography>
-                            {selectedPriceInfo && !pricesManuallyEdited && (
-                                <Chip 
-                                    label={t(locale, "clients.form.auto-filled")} 
-                                    size="small" 
-                                    color="info" 
-                                    variant="outlined"
-                                />
-                            )}
-                        </Box>
-                    </Grid>
-
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.full-price")}
-                            value={formatPrice(formData.fullPrice || "")}
-                            onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
-                            placeholder="0"
-                            InputProps={{
-                                endAdornment: <Typography variant="caption" color="text.secondary">원</Typography>,
-                            }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.grant")}
-                            value={formatPrice(formData.grant || "")}
-                            onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
-                            placeholder="0"
-                            InputProps={{
-                                endAdornment: <Typography variant="caption" color="text.secondary">원</Typography>,
-                            }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.actual-price")}
-                            value={formatPrice(formData.actualPrice || "")}
-                            onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
-                            placeholder="0"
-                            InputProps={{
-                                endAdornment: <Typography variant="caption" color="text.secondary">원</Typography>,
-                            }}
-                        />
-                    </Grid>
-
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
-
-                    {/* Contract Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                            {t(locale, "clients.form.section-contract")}
-                        </Typography>
-                    </Grid>
-
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <FormControl fullWidth>
-                            <InputLabel>{t(locale, "clients.form.contract-status")}</InputLabel>
-                            <Select
-                                value={formData.contractStatus || ""}
-                                label={t(locale, "clients.form.contract-status")}
-                                onChange={(e) => handleChange("contractStatus", e.target.value)}
-                            >
-                                {CONTRACT_STATUS_OPTIONS.map((status) => (
-                                    <MenuItem key={status.value} value={status.value}>
-                                        {status.label}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 3 }}>
-                        <TextField
-                            fullWidth
-                            type="date"
-                            label={t(locale, "clients.form.start-date")}
-                            value={formData.startDate || ""}
-                            onChange={(e) => handleChange("startDate", e.target.value)}
-                            InputLabelProps={{ shrink: true }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 3 }}>
-                        <TextField
-                            fullWidth
-                            type="date"
-                            label={t(locale, "clients.form.end-date")}
-                            value={formData.endDate || ""}
-                            onChange={(e) => handleChange("endDate", e.target.value)}
-                            InputLabelProps={{ shrink: true }}
-                        />
-                    </Grid>
-
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
-
-                    {/* Flags Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                            {t(locale, "clients.form.section-flags")}
-                        </Typography>
-                    </Grid>
-
-                    <Grid size={12}>
-                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
-                            <FormControlLabel
-                                control={
-                                    <Switch
-                                        checked={formData.voucherClient}
-                                        onChange={(e) => handleChange("voucherClient", e.target.checked)}
-                                    />
-                                }
-                                label={t(locale, "clients.form.voucher-client")}
-                            />
-                            <FormControlLabel
-                                control={
-                                    <Switch
-                                        checked={formData.careCenter}
-                                        onChange={(e) => handleChange("careCenter", e.target.checked)}
-                                    />
-                                }
-                                label={t(locale, "clients.form.care-center")}
-                            />
-                            <FormControlLabel
-                                control={
-                                    <Switch
-                                        checked={formData.breastPump}
-                                        onChange={(e) => handleChange("breastPump", e.target.checked)}
-                                    />
-                                }
-                                label={t(locale, "clients.form.breast-pump")}
-                            />
-                        </Box>
-                    </Grid>
-                </Grid>
-            </DialogContent>
-            <DialogActions>
-                <Button onClick={onClose} disabled={isSubmitting}>
-                    {t(locale, "common.cancel")}
-                </Button>
-                <Button 
-                    variant="contained" 
-                    onClick={handleSubmit}
-                    disabled={isSubmitting}
-                >
-                    {isSubmitting ? (
-                        <CircularProgress size={24} />
-                    ) : isEditMode ? (
-                        t(locale, "common.save")
-                    ) : (
-                        t(locale, "common.create")
+        <>
+            <Dialog data-component="ClientFormDialog" open={open} onClose={onClose} maxWidth="md" fullWidth>
+                <DialogTitle>
+                    {isEditMode
+                        ? t(locale, "clients.form.edit-title")
+                        : t(locale, "clients.form.add-title")
+                    }
+                </DialogTitle>
+                <DialogContent dividers>
+                    {error && (
+                        <Alert severity="error" sx={{ mb: 2 }}>
+                            {error}
+                        </Alert>
                     )}
-                </Button>
-            </DialogActions>
-        </Dialog>
+
+                    <Grid container spacing={2}>
+                        {/* Basic Info Section */}
+                        <Grid size={12}>
+                            <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                                {t(locale, "clients.form.section-basic")}
+                            </Typography>
+                        </Grid>
+
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                            <TextField
+                                fullWidth
+                                required
+                                label={t(locale, "clients.form.name")}
+                                value={formData.name}
+                                onChange={(e) => handleChange("name", e.target.value)}
+                            />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                            <TextField
+                                fullWidth
+                                label={t(locale, "clients.form.birthday")}
+                                placeholder="YYMMDD"
+                                value={formData.birthday}
+                                onChange={(e) => handleChange("birthday", e.target.value)}
+                                inputProps={{ maxLength: 6 }}
+                                helperText={t(locale, "clients.form.birthday-helper")}
+                            />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                            <TextField
+                                fullWidth
+                                label={t(locale, "clients.form.phone")}
+                                value={formData.phone}
+                                onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
+                                placeholder="010-1234-5678"
+                                inputProps={{ maxLength: 13 }}
+                            />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                            <TextField
+                                fullWidth
+                                label={t(locale, "clients.form.address")}
+                                value={formData.address}
+                                onChange={(e) => handleChange("address", e.target.value)}
+                            />
+                        </Grid>
+
+                        <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+
+                        {/* Employee Section */}
+                        <Grid size={12}>
+                            <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                                {t(locale, "clients.form.section-employee")}
+                            </Typography>
+                        </Grid>
+
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                            <EmployeeAutocomplete
+                                value={formData.primaryEmployeeId ?? null}
+                                onChange={(id) => handleChange("primaryEmployeeId", id ?? 0)}
+                                label={t(locale, "clients.form.primary-employee")}
+                                required
+                                excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
+                                onAddNew={() => {
+                                    setEmployeeDialogTarget("primary");
+                                    setIsEmployeeDialogOpen(true);
+                                }}
+                            />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                            <EmployeeAutocomplete
+                                value={formData.secondaryEmployeeId ?? null}
+                                onChange={(id) => handleChange("secondaryEmployeeId", id)}
+                                label={t(locale, "clients.form.secondary-employee")}
+                                excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
+                                onAddNew={() => {
+                                    setEmployeeDialogTarget("secondary");
+                                    setIsEmployeeDialogOpen(true);
+                                }}
+                            />
+                        </Grid>
+
+                        <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+
+                        {/* Service Info Section */}
+                        <Grid size={12}>
+                            <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                                {t(locale, "clients.form.section-service")}
+                            </Typography>
+                        </Grid>
+
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                            <FormControl fullWidth>
+                                <InputLabel>{t(locale, "clients.form.voucher-type")}</InputLabel>
+                                <Select
+                                    value={formData.type || ""}
+                                    label={t(locale, "clients.form.voucher-type")}
+                                    onChange={(e) => handleTypeChange(e.target.value)}
+                                >
+                                    {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
+                                        <MenuItem key={groupName} disabled sx={{ fontWeight: 600 }}>
+                                            {groupName}
+                                        </MenuItem>,
+                                        ...Object.entries(types).map(([typeValue, typeData]) => (
+                                            <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
+                                                {typeData.label}
+                                            </MenuItem>
+                                        ))
+                                    ])}
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                            <FormControl fullWidth disabled={!formData.type || isPriceLoading}>
+                                <InputLabel>{t(locale, "clients.form.duration")}</InputLabel>
+                                <Select
+                                    value={formData.duration || ""}
+                                    label={t(locale, "clients.form.duration")}
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        handleChange("duration", value ? Number(value) : null);
+                                        // Reset manual edit flag when duration changes to allow auto-fill
+                                        setPricesManuallyEdited(false);
+                                    }}
+                                >
+                                    {availableDurations.map((duration) => (
+                                        <MenuItem key={duration} value={duration}>
+                                            {duration}일
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                                {isPriceLoading && (
+                                    <CircularProgress
+                                        size={20}
+                                        sx={{
+                                            position: "absolute",
+                                            right: 40,
+                                            top: "50%",
+                                            marginTop: "-10px"
+                                        }}
+                                    />
+                                )}
+                            </FormControl>
+                        </Grid>
+
+                        <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+
+                        {/* Pricing Section */}
+                        <Grid size={12}>
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+                                <Typography variant="subtitle2" color="primary">
+                                    {t(locale, "clients.form.section-pricing")}
+                                </Typography>
+                                {selectedPriceInfo && !pricesManuallyEdited && (
+                                    <Chip
+                                        label={t(locale, "clients.form.auto-filled")}
+                                        size="small"
+                                        color="info"
+                                        variant="outlined"
+                                    />
+                                )}
+                            </Box>
+                        </Grid>
+
+                        <Grid size={{ xs: 12, sm: 4 }}>
+                            <TextField
+                                fullWidth
+                                label={t(locale, "clients.form.full-price")}
+                                value={formatPrice(formData.fullPrice || "")}
+                                onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                                placeholder="0"
+                                InputProps={{
+                                    endAdornment: <Typography variant="caption" color="text.secondary">원</Typography>,
+                                }}
+                            />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 4 }}>
+                            <TextField
+                                fullWidth
+                                label={t(locale, "clients.form.grant")}
+                                value={formatPrice(formData.grant || "")}
+                                onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
+                                placeholder="0"
+                                InputProps={{
+                                    endAdornment: <Typography variant="caption" color="text.secondary">원</Typography>,
+                                }}
+                            />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 4 }}>
+                            <TextField
+                                fullWidth
+                                label={t(locale, "clients.form.actual-price")}
+                                value={formatPrice(formData.actualPrice || "")}
+                                onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
+                                placeholder="0"
+                                InputProps={{
+                                    endAdornment: <Typography variant="caption" color="text.secondary">원</Typography>,
+                                }}
+                            />
+                        </Grid>
+
+                        <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+
+                        {/* Contract Section */}
+                        <Grid size={12}>
+                            <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                                {t(locale, "clients.form.section-contract")}
+                            </Typography>
+                        </Grid>
+
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                            <FormControl fullWidth>
+                                <InputLabel>{t(locale, "clients.form.service-status")}</InputLabel>
+                                <Select
+                                    value={formData.serviceStatus || ""}
+                                    label={t(locale, "clients.form.service-status")}
+                                    onChange={(e) => handleChange("serviceStatus", e.target.value)}
+                                >
+                                    {SERVICE_STATUS_OPTIONS.map((status) => (
+                                        <MenuItem key={status.value} value={status.value}>
+                                            {status.label}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 3 }}>
+                            <TextField
+                                fullWidth
+                                type="date"
+                                label={t(locale, "clients.form.start-date")}
+                                value={formData.startDate || ""}
+                                onChange={(e) => handleChange("startDate", e.target.value)}
+                                InputLabelProps={{ shrink: true }}
+                            />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 3 }}>
+                            <TextField
+                                fullWidth
+                                type="date"
+                                label={t(locale, "clients.form.end-date")}
+                                value={formData.endDate || ""}
+                                onChange={(e) => handleChange("endDate", e.target.value)}
+                                InputLabelProps={{ shrink: true }}
+                            />
+                        </Grid>
+
+                        <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+
+                        {/* Flags Section */}
+                        <Grid size={12}>
+                            <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                                {t(locale, "clients.form.section-flags")}
+                            </Typography>
+                        </Grid>
+
+                        <Grid size={12}>
+                            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+                                <FormControlLabel
+                                    control={
+                                        <Switch
+                                            checked={formData.voucherClient}
+                                            onChange={(e) => handleChange("voucherClient", e.target.checked)}
+                                        />
+                                    }
+                                    label={t(locale, "clients.form.voucher-client")}
+                                />
+                                <FormControlLabel
+                                    control={
+                                        <Switch
+                                            checked={formData.careCenter}
+                                            onChange={(e) => handleChange("careCenter", e.target.checked)}
+                                        />
+                                    }
+                                    label={t(locale, "clients.form.care-center")}
+                                />
+                                <FormControlLabel
+                                    control={
+                                        <Switch
+                                            checked={formData.breastPump}
+                                            onChange={(e) => handleChange("breastPump", e.target.checked)}
+                                        />
+                                    }
+                                    label={t(locale, "clients.form.breast-pump")}
+                                />
+                            </Box>
+                        </Grid>
+                    </Grid>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={onClose} disabled={isSubmitting}>
+                        {t(locale, "common.cancel")}
+                    </Button>
+                    <Button
+                        variant="contained"
+                        onClick={handleSubmit}
+                        disabled={isSubmitting}
+                    >
+                        {isSubmitting ? (
+                            <CircularProgress size={24} />
+                        ) : isEditMode ? (
+                            t(locale, "common.save")
+                        ) : (
+                            t(locale, "common.create")
+                        )}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Employee Creation Dialog */}
+            <EmployeeFormDialog
+                open={isEmployeeDialogOpen}
+                onClose={() => {
+                    setIsEmployeeDialogOpen(false);
+                    setEmployeeDialogTarget(null);
+                }}
+                onSuccess={(newEmployee: Employee) => {
+                    // Auto-select the newly created employee in the appropriate field
+                    if (employeeDialogTarget === "primary") {
+                        handleChange("primaryEmployeeId", newEmployee.id);
+                    } else if (employeeDialogTarget === "secondary") {
+                        handleChange("secondaryEmployeeId", newEmployee.id);
+                    }
+                }}
+            />
+        </>
     );
 }

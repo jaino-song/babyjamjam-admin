@@ -34,43 +34,43 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return docs.map(EformsignDocMapper.toDomain);
     }
 
-    // async create(doc: EformsignDocEntity): Promise<EformsignDocEntity> {
-    //     const created = await this.prismaService.eformsign_doc.create({
-    //         data: EformsignDocMapper.toPrismaCreate(doc),
-    //     });
-    //     return EformsignDocMapper.toDomain(created);
-    // }
+    async create(doc: EformsignDocEntity): Promise<EformsignDocEntity> {
+        const created = await this.prismaService.eformsign_doc.create({
+            data: EformsignDocMapper.toPrismaCreate(doc),
+        });
+        return EformsignDocMapper.toDomain(created);
+    }
 
-    // async update(doc: EformsignDocEntity): Promise<EformsignDocEntity> {
-    //     if (!doc.id) {
-    //         throw new Error("Cannot update eformsign_doc without id");
-    //     }
-    //     const updated = await this.prismaService.eformsign_doc.update({
-    //         where: { id: doc.id },
-    //         data: EformsignDocMapper.toPrismaUpdate(doc),
-    //     });
-    //     return EformsignDocMapper.toDomain(updated);
-    // }
+    async update(doc: EformsignDocEntity): Promise<EformsignDocEntity> {
+        if (!doc.id) {
+            throw new Error("Cannot update eformsign_doc without id");
+        }
+        const updated = await this.prismaService.eformsign_doc.update({
+            where: { id: doc.id },
+            data: EformsignDocMapper.toPrismaUpdate(doc),
+        });
+        return EformsignDocMapper.toDomain(updated);
+    }
 
-    // async upsertByDocumentId(doc: EformsignDocEntity): Promise<EformsignDocEntity> {
-    //     const data = EformsignDocMapper.toPrismaCreate(doc);
-    //     const upserted = await this.prismaService.eformsign_doc.upsert({
-    //         where: { document_id: doc.documentId },
-    //         create: data,
-    //         update: data,
-    //     });
-    //     return EformsignDocMapper.toDomain(upserted);
-    // }
+    async upsertByDocumentId(doc: EformsignDocEntity): Promise<EformsignDocEntity> {
+        const data = EformsignDocMapper.toPrismaCreate(doc);
+        const upserted = await this.prismaService.eformsign_doc.upsert({
+            where: { document_id: doc.documentId },
+            create: data,
+            update: data,
+        });
+        return EformsignDocMapper.toDomain(upserted);
+    }
 
-    // async delete(id: number): Promise<void> {
-    //     await this.prismaService.eformsign_doc.delete({
-    //         where: { id },
-    //     });
-    // }
+    async delete(id: number): Promise<void> {
+        await this.prismaService.eformsign_doc.delete({
+            where: { id },
+        });
+    }
 
-    // async deleteByDocumentId(documentId: string): Promise<void> {
-    //     await this.prismaService.eformsign_doc.delete({
-    //         where: { document_id: documentId },
-    //     });
-    // }
+    async deleteByDocumentId(documentId: string): Promise<void> {
+        await this.prismaService.eformsign_doc.delete({
+            where: { document_id: documentId },
+        });
+    }
 }

@@ -1,48 +1,91 @@
-"use client";
+import { Box, Fade, Paper, PaperProps, Typography } from "@mui/material";
+import { SxProps, Theme } from "@mui/material/styles";
 
-import { Paper, PaperProps, Typography, Box } from "@mui/material";
-import { ReactNode } from "react";
-
-interface ContentPaperProps extends PaperProps {
+export interface ContentPaperProps extends Omit<PaperProps, 'elevation'> {
+  children: React.ReactNode;
   title?: string;
   subtitle?: string;
-  children: ReactNode;
+  header?: React.ReactNode;
+  elevation?: number;
+  disableAnimation?: boolean;
+  sx?: SxProps<Theme>;
 }
 
-export function ContentPaper({
+export const ContentPaper = ({
+  children,
   title,
   subtitle,
-  children,
+  header,
+  elevation = 2,
+  disableAnimation = false,
   sx,
-  ...props
-}: ContentPaperProps) {
-  return (
-    <Paper
-      elevation={0}
-      sx={{
-        p: 3,
-        borderRadius: 2,
-        border: "1px solid",
-        borderColor: "divider",
-        ...sx,
-      }}
-      {...props}
-    >
-      {(title || subtitle) && (
-        <Box sx={{ mb: 3 }}>
+  ...paperProps
+}: ContentPaperProps) => {
+  const defaultSx: SxProps<Theme> = {
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "flex-start",
+    p: 3,
+    bgcolor: "background.default",
+  };
+
+  const mergedSx = {
+    ...defaultSx,
+    ...sx,
+  } as SxProps<Theme>;
+
+  const renderHeader = () => {
+    if (header) {
+      return header;
+    }
+
+    if (title || subtitle) {
+      return (
+        <Box sx={{ mb: title || subtitle ? 3 : 0 }}>
           {title && (
-            <Typography variant="h5" component="h1" fontWeight={600}>
+            <Typography
+              variant="h5"
+              color="primary.main"
+              fontWeight={700}
+              gutterBottom
+            >
               {title}
             </Typography>
           )}
           {subtitle && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            <Typography variant="body2" color="text.secondary">
               {subtitle}
             </Typography>
           )}
         </Box>
-      )}
+      );
+    }
+
+    return null;
+  };
+
+  const content = (
+    <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {renderHeader()}
       {children}
+    </Box>
+  );
+
+  return (
+    <Paper
+      elevation={elevation}
+      data-component="ContentPaper"
+      data-testid="ContentPaper"
+      sx={mergedSx}
+      {...paperProps}
+    >
+      {disableAnimation ? (
+        content
+      ) : (
+        <Fade in appear timeout={500}>
+          {content}
+        </Fade>
+      )}
     </Paper>
   );
-}
+};

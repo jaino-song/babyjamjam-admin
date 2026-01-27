@@ -1,5 +1,6 @@
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
-import { Button, Paper, Stack, Typography } from "@mui/material";
+import { Button, Stack, Typography } from "@mui/material";
+import { ContentPaper } from "../root/content-paper";
 
 interface QuickActionsProps {
   actions: string[];
@@ -9,7 +10,7 @@ interface QuickActionsProps {
 
 export const QuickActions = ({ actions, title, subtitle }: QuickActionsProps) => {
   return (
-    <Paper elevation={0} sx={{ flex: 1, p: { xs: 2.5, sm: 3 } }}>
+    <ContentPaper elevation={0} disableAnimation sx={{ flex: 1, p: { xs: 2.5, sm: 3 } }}>
       <Typography variant="subtitle1" fontWeight={600}>
         {title}
       </Typography>
@@ -29,7 +30,7 @@ export const QuickActions = ({ actions, title, subtitle }: QuickActionsProps) =>
           </Button>
         ))}
       </Stack>
-    </Paper>
+    </ContentPaper>
   );
 };
 

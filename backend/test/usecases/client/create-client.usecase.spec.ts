@@ -31,7 +31,7 @@ describe("CreateClientUsecase", () => {
                 careCenter: false,
                 voucherClient: true,
                 birthday: "1990-01-01",
-                contractStatus: "active",
+                serviceStatus: "active",
                 breastPump: false,
                 eDocId: null,
             };
@@ -64,7 +64,7 @@ describe("CreateClientUsecase", () => {
                 careCenter: false,
                 voucherClient: false,
                 birthday: null,
-                contractStatus: null,
+                serviceStatus: null,
                 breastPump: false,
             };
 
@@ -93,7 +93,7 @@ describe("CreateClientUsecase", () => {
                 careCenter: false,
                 voucherClient: false,
                 birthday: null,
-                contractStatus: null,
+                serviceStatus: null,
                 breastPump: false,
             };
             const params2 = { ...params1, name: "고객2" };

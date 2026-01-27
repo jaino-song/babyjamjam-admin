@@ -14,9 +14,10 @@ import {
     IconButton,
 } from "@mui/material";
 import { Pencil, Trash2, X } from "lucide-react";
-import { Client, CONTRACT_STATUS_OPTIONS } from "@/app/lib/client/types";
+import { Client, CONTRACT_STATUS_OPTIONS, DocumentStatus } from "@/app/lib/client/types";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
+import { Locale } from "@/app/actions/locale";
 
 interface ClientDetailModalProps {
     open: boolean;
@@ -29,19 +30,19 @@ interface ClientDetailModalProps {
 const getStatusChip = (status: string | null) => {
     const option = CONTRACT_STATUS_OPTIONS.find(o => o.value === status);
     if (!option) return <Chip label="-" size="small" />;
-    
+
     const colorMap: Record<string, "default" | "warning" | "info" | "success" | "error"> = {
         pending: "warning",
         in_progress: "info",
         completed: "success",
         cancelled: "error",
     };
-    
+
     return (
-        <Chip 
-            label={option.label} 
-            color={colorMap[status || ""] || "default"} 
-            size="small" 
+        <Chip
+            label={option.label}
+            color={colorMap[status || ""] || "default"}
+            size="small"
         />
     );
 };
@@ -57,6 +58,27 @@ const formatPrice = (price: string | null): string => {
     const num = parseInt(cleaned, 10);
     if (isNaN(num)) return "-";
     return `${num.toLocaleString("ko-KR")}원`;
+};
+
+const getDocStatusChip = (status: DocumentStatus, locale: Locale) => {
+    switch (status) {
+        case 'completed':
+            return <Chip label={t(locale, "clients.form.doc-completed")} color="success" size="small" />;
+        case 'opened':
+            return <Chip label={t(locale, "clients.form.doc-opened")} color="warning" size="small" />;
+        case 'created':
+            return <Chip label={t(locale, "clients.form.doc-created")} color="default" size="small" />;
+        case 'requested':
+            return <Chip label={t(locale, "clients.form.doc-requested")} color="info" size="small" />;
+        case 'rejected':
+            return <Chip label={t(locale, "clients.form.doc-rejected")} color="error" size="small" />;
+        case 'revoked':
+            return <Chip label={t(locale, "clients.form.doc-revoked")} color="error" size="small" variant="outlined" />;
+        case 'deleted':
+            return <Chip label={t(locale, "clients.form.doc-deleted")} color="default" size="small" variant="outlined" />;
+        default:
+            return <Chip label={t(locale, "clients.form.doc-not-sent")} color="default" size="small" variant="outlined" />;
+    }
 };
 
 interface InfoRowProps {
@@ -75,12 +97,12 @@ const InfoRow = ({ label, value }: InfoRowProps) => (
     </Box>
 );
 
-export function ClientDetailModal({ 
-    open, 
-    onClose, 
-    client, 
-    onEdit, 
-    onDelete 
+export function ClientDetailModal({
+    open,
+    onClose,
+    client,
+    onEdit,
+    onDelete
 }: ClientDetailModalProps) {
     const locale = useLocale();
 
@@ -97,7 +119,7 @@ export function ClientDetailModal({
     };
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+        <Dialog data-component="ClientDetailModal" open={open} onClose={onClose} maxWidth="sm" fullWidth>
             <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <Box component="span" sx={{ fontWeight: 600, fontSize: "1.25rem" }}>
                     {client.name}
@@ -133,9 +155,9 @@ export function ClientDetailModal({
                         {t(locale, "clients.form.section-service")}
                     </Typography>
                     <InfoRow label={t(locale, "clients.form.voucher-type")} value={client.type} />
-                    <InfoRow 
-                        label={t(locale, "clients.form.duration")} 
-                        value={client.duration ? `${client.duration}일` : "-"} 
+                    <InfoRow
+                        label={t(locale, "clients.form.duration")}
+                        value={client.duration ? `${client.duration}일` : "-"}
                     />
 
                     <Divider sx={{ my: 2 }} />
@@ -154,9 +176,9 @@ export function ClientDetailModal({
                     <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                         {t(locale, "clients.form.section-contract")}
                     </Typography>
-                    <InfoRow 
-                        label={t(locale, "clients.form.contract-status")} 
-                        value={getStatusChip(client.contractStatus)} 
+                    <InfoRow
+                        label={t(locale, "clients.form.contract-status")}
+                        value={getStatusChip(client.serviceStatus)}
                     />
                     <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(client.startDate)} />
                     <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(client.endDate)} />
@@ -190,15 +212,7 @@ export function ClientDetailModal({
                     </Typography>
                     <InfoRow
                         label={t(locale, "clients.form.document-status")}
-                        value={
-                            <Chip
-                                label={client.hasSigned
-                                    ? t(locale, "clients.form.document-signed")
-                                    : t(locale, "clients.form.document-not-signed")}
-                                color={client.hasSigned ? "success" : "default"}
-                                size="small"
-                            />
-                        }
+                        value={getDocStatusChip(client.documentStatus, locale)}
                     />
                 </Box>
             </DialogContent>

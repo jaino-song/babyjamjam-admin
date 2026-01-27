@@ -144,9 +144,9 @@ export class EformsignService {
             prefill: {
                 document_name: "산모신생아건강관리서비스 계약서",
                 fields: [
-                    { id: "이용자 성명", value: contractData.customerName },
-                    { id: "이용자 생년월일", value: contractData.customerDOB },
-                    { id: "이용자 주소", value: contractData.customerAddress },
+                    { id: "이용자 성명", value: contractData.customerName, enabled: true },
+                    { id: "이용자 생년월일", value: '', enabled: true },
+                    { id: "이용자 주소", value: '', enabled: true },
                     { id: "계약 시작 년도", value: contractData.startYear },
                     { id: "계약 시작 월", value: contractData.startMonth },
                     { id: "계약 시작 일", value: contractData.startDay },

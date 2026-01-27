@@ -43,6 +43,11 @@ export class VoucherPriceInfoController {
         return this.voucherService.findByType(type, year ? Number(year) : undefined);
     }
 
+    @Get("years")
+    getDistinctYears() {
+        return this.voucherService.getDistinctYears();
+    }
+
     @Get("id")
     findById(@Query("id") id: string) {
         return this.voucherService.findById(Number(id));

@@ -5,6 +5,7 @@ import {
     DeleteVoucherPriceInfoUsecase,
     FindVoucherPriceInfoByIdUsecase,
     FindVoucherPriceInfoByTypeUsecase,
+    GetDistinctYearsUsecase,
     ListVoucherPriceInfoUsecase,
     ParseVoucherImageUsecase,
     UpdateVoucherPriceInfoUsecase,
@@ -29,6 +30,7 @@ export class VoucherPriceInfoService {
         private readonly createVoucherPriceInfoUsecase: CreateVoucherPriceInfoUsecase,
         private readonly findVoucherPriceInfoByIdUsecase: FindVoucherPriceInfoByIdUsecase,
         private readonly findVoucherPriceInfoByTypeUsecase: FindVoucherPriceInfoByTypeUsecase,
+        private readonly getDistinctYearsUsecase: GetDistinctYearsUsecase,
         private readonly listVoucherPriceInfoUsecase: ListVoucherPriceInfoUsecase,
         private readonly updateVoucherPriceInfoUsecase: UpdateVoucherPriceInfoUsecase,
         private readonly deleteVoucherPriceInfoUsecase: DeleteVoucherPriceInfoUsecase,
@@ -73,6 +75,10 @@ export class VoucherPriceInfoService {
 
     bulkUpdate(items: ParsedVoucherPriceData[], year: number): Promise<BulkUpdateResult> {
         return this.bulkUpdateVoucherPriceInfoUsecase.execute(items, year);
+    }
+
+    getDistinctYears(): Promise<number[]> {
+        return this.getDistinctYearsUsecase.execute();
     }
 }
 

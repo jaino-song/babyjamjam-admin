@@ -5,7 +5,7 @@ import { getAccessToken, getRefreshToken, unauthorizedResponse, errorResponse } 
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { contractData } = body;
+        const { contractData, clientId } = body;
 
         const accessToken = getAccessToken(request);
         const refreshToken = getRefreshToken(request);
@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
             contractData,
             accessToken,
             refreshToken,
+            clientId,
         });
 
         return NextResponse.json(response.data);

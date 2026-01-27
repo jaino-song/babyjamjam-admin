@@ -42,4 +42,13 @@ export class SbUserRepository implements IUserRepository {
             where: { id },
         });
     }
+
+    async findByRoles(roles: string[]): Promise<UserEntity[]> {
+        const users = await this.prismaService.user.findMany({
+            where: {
+                role: { in: roles },
+            },
+        });
+        return users.map(UserMapper.toDomain);
+    }
 }

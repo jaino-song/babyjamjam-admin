@@ -21,6 +21,8 @@ export default defineConfig({
     baseURL: process.env.BASE_URL || 'http://localhost:3000',
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
+    /* Use saved authentication state */
+    storageState: 'auth.json',
   },
 
   /* Configure projects for major browsers */
@@ -35,7 +37,10 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     url: process.env.BASE_URL || 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: true,
     timeout: 180 * 1000,
+    env: {
+      NEXT_PUBLIC_E2E_TEST: 'true',
+    },
   },
 });

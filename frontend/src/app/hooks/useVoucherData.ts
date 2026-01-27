@@ -30,6 +30,7 @@ export interface AreaTemplate {
 export const voucherQueryKeys = {
   bankAccountInfos: ["bank-account-infos"] as const,
   voucherPriceInfos: (type: string, year?: number) => ["voucher-price-infos", type, year] as const,
+  voucherYears: ["voucher-years"] as const,
   areaTemplates: ["area-templates"] as const,
 };
 
@@ -56,6 +57,18 @@ export function useVoucherPriceInfos(type: string, year?: number) {
       return data as VoucherPriceInfo[];
     },
     enabled: !!type,
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60 * 24, // 24 hours
+  });
+}
+
+export function useVoucherYears() {
+  return useQuery<number[]>({
+    queryKey: voucherQueryKeys.voucherYears,
+    queryFn: async () => {
+      const { data } = await api.get("/voucher-price-infos/years");
+      return data as number[];
+    },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60 * 24, // 24 hours
   });

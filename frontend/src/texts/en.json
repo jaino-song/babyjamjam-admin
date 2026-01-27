@@ -56,7 +56,8 @@
     "create_report": "Create Report",
     "schedule_meeting": "Schedule Meeting",
     "price_calculator": "Price Calculator",
-    "write_message": "Write Message"
+    "write_message": "Write Message",
+    "send_contract": "Send Contract"
   },
   "user": {
     "profile": "Profile",
@@ -69,6 +70,7 @@
     "subtitle": "Please fill in all fields and click the generate button below",
     "name-label": "Mother's Name",
     "name-placeholder": "Jane Doe",
+    "voucher-year-label": "Year",
     "voucher-type-label": "Voucher Type",
     "area-label": "Area",
     "duration-label": "Service Duration",
@@ -124,20 +126,44 @@
   },
   "contract-msg": {
     "subtitle": "Generate an e-contract notification message",
+    "client-select-label": "Select Client",
+    "client-search-placeholder": "Search by name, phone, or address",
+    "no-client-found": "No matching clients found",
+    "manual-entry": "Add New Client",
+    "manual-entry-description": "Enter client information manually",
+    "manual-entry-mode": "Manual Entry Mode",
+    "switch-to-search": "Switch to Client Search",
+    "client-signed": "Signed",
     "name-label": "Mother's Name",
     "name-placeholder": "Jane Doe",
     "phone-label": "Mother's Phone",
     "phone-placeholder": "010-1234-5678",
+    "birthday-label": "Birthday",
+    "address-label": "Address",
+    "address-placeholder": "e.g., Namdong-gu, Incheon",
     "doc-type-label": "Select Contract",
     "area-label": "Service Area",
     "start-date-label": "Contract Start Date",
     "start-date-placeholder": "2025-01-01",
     "end-date-label": "Contract End Date",
     "end-date-placeholder": "2025-12-31",
+    "employee-select-label": "Select Provider 1",
+    "employee-manual-entry": "Add New Provider",
+    "employee-manual-entry-description": "Enter provider information manually",
+    "employee-manual-entry-mode": "Manual Entry Mode",
+    "switch-to-employee-search": "Switch to Provider Search",
     "employee-name-label": "Provider 1 Name",
     "employee-name-placeholder": "Jane Doe",
     "employee-phone-label": "Provider 1 Phone",
     "employee-phone-placeholder": "010-1234-5678",
+    "add-employee2-toggle": "Add Provider 2",
+    "employee2-select-label": "Select Provider 2",
+    "employee2-manual-entry": "Add New Provider",
+    "employee2-manual-entry-description": "Enter provider 2 information manually",
+    "employee2-manual-entry-mode": "Manual Entry Mode",
+    "switch-to-employee2-search": "Switch to Provider Search",
+    "employee2-name-label": "Provider 2 Name",
+    "employee2-phone-label": "Provider 2 Phone",
     "full-price-label": "Service Amount",
     "grant-label": "Government Grant",
     "actual-price-label": "Out-of-Pocket",
@@ -148,17 +174,19 @@
     "pagination-steps": [
       "User Info",
       "Provider Info",
+      "Voucher Info",
       "Contract Info"
     ]
   },
-  "nav-bar": {
-    "dashboard": "Dashboard",
-    "messages": "Messages",
-    "contracts": "Contracts",
-    "clients": "Clients",
-    "employees": "Employees",
-    "settings": "Settings"
-  },
+   "nav-bar": {
+     "dashboard": "Dashboard",
+     "messages": "Messages",
+     "contracts": "Contracts",
+     "clients": "Clients",
+     "employees": "Employees",
+     "file-storage": "Documents",
+     "settings": "Settings"
+   },
   "login": {
     "title": "Login to Get Started",
     "subtitle": "Please select one of the social login options below to log in",
@@ -190,6 +218,12 @@
       "actions": "Actions"
     },
     "form": {
+      "pagination-steps": [
+        "Basic Info",
+        "Provider",
+        "Service/Pricing",
+        "Contract"
+      ],
       "add-title": "Register New Client",
       "edit-title": "Edit Client Information",
       "section-basic": "Basic Information",
@@ -237,7 +271,15 @@
       "section-document": "E-Contract",
       "document-status": "Signing Status",
       "document-signed": "Signed",
-      "document-not-signed": "Not Signed"
+      "document-not-signed": "Not Signed",
+      "doc-not-sent": "Not Sent",
+      "doc-created": "Created",
+      "doc-opened": "Opened",
+      "doc-completed": "Completed",
+      "doc-requested": "Requested",
+      "doc-rejected": "Rejected",
+      "doc-revoked": "Revoked",
+      "doc-deleted": "Deleted"
     }
   },
   "employees": {
@@ -249,11 +291,12 @@
     "schedule-not-implemented": "Schedule feature coming soon",
     "table": {
       "name": "Name",
-      "open-status": "Availability",
-      "assigned-client": "Assigned Client"
+      "open-status": "Status",
+      "contact": "Contact"
     },
     "status": {
       "available": "Available",
+      "working": "Working",
       "unavailable": "Unavailable"
     },
     "form": {
@@ -267,14 +310,21 @@
       "work-area": "Work Area",
       "grade": "Grade",
       "open-to-next-work": "Available for Next Work",
-      "registered-date": "Registered Date"
+      "registered-date": "Registered Date",
+      "phone-required": "Please enter a phone number",
+      "work-area-required": "Please select at least one work area",
+      "error-phone-duplicate": "This phone number is already registered. Please enter a different phone number.",
+      "error-create-failed": "Failed to register provider. Please try again.",
+      "error-update-failed": "Failed to update provider information. Please try again.",
+      "error-save-failed": "Failed to save. Please try again."
     },
     "detail": {
       "title": "Provider Details"
     },
     "delete-confirm": {
       "title": "Delete Provider",
-      "message": "Are you sure you want to delete this provider? This action cannot be undone."
+      "message": "Are you sure you want to delete this provider? This action cannot be undone.",
+      "error": "Failed to delete provider. Please try again."
     }
   },
   "settings": {
@@ -335,6 +385,32 @@
         "parse-failed": "Failed to parse image",
         "update-failed": "Update failed"
       }
+    }
+  },
+  "errors": {
+    "generic": "An error occurred. Please try again.",
+    "network": "A network error occurred.",
+    "prisma": {
+      "P2002": "{field} already exists.",
+      "P2002.phone": "This phone number is already registered. Please enter a different phone number.",
+      "P2002.email": "This email is already registered.",
+      "P2003": "Referenced data does not exist.",
+      "P2025": "Requested data not found.",
+      "P2011": "Required field is missing.",
+      "P2006": "Invalid value for {field}.",
+      "unknown": "A database error occurred."
+    },
+    "fields": {
+      "phone": "phone number",
+      "email": "email",
+      "name": "name",
+      "address": "address",
+      "birthday": "birthday",
+      "work_area": "work area",
+      "document_id": "document ID",
+      "endpoint": "notification endpoint",
+      "kakao_id": "Kakao ID",
+      "year_type_duration": "year/type/duration"
     }
   }
 }

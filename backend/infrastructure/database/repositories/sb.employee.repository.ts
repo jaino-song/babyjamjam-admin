@@ -8,6 +8,14 @@ import { EmployeeMapper } from "infrastructure/database/mapper/employee.mapper";
 export class SbEmployeeRepository implements IEmployeeRepository {
     constructor(private readonly prismaService: PrismaService) {}
 
+    private async getNextEmployeeId(): Promise<number> {
+        const lastEmployee = await this.prismaService.employee.findFirst({
+            orderBy: { id: "desc" },
+            select: { id: true },
+        });
+        return lastEmployee ? lastEmployee.id + 1 : 1;
+    }
+
     async findById(id: number): Promise<EmployeeEntity | null> {
         const employee = await this.prismaService.employee.findUnique({
             where: { id },
@@ -16,8 +24,10 @@ export class SbEmployeeRepository implements IEmployeeRepository {
     }
 
     async create(employee: EmployeeEntity): Promise<EmployeeEntity> {
+        const data = EmployeeMapper.toPrismaCreate(employee);
+        const id = data.id > 0 ? data.id : await this.getNextEmployeeId();
         const created = await this.prismaService.employee.create({
-            data: EmployeeMapper.toPrismaCreate(employee),
+            data: { ...data, id },
         });
         return EmployeeMapper.toDomain(created);
     }
@@ -37,8 +47,45 @@ export class SbEmployeeRepository implements IEmployeeRepository {
     }
 
     async findAll(): Promise<EmployeeEntity[]> {
-        const employees = await this.prismaService.employee.findMany();
-        return employees.map((employee) => EmployeeMapper.toDomain(employee));
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const employees = await this.prismaService.employee.findMany({
+            include: {
+                employee_schedule_employee_schedule_primary_employee_idToemployee: {
+                    where: {
+                        start_date: { lte: today },
+                        end_date: { gte: today },
+                        replaced: false,
+                    },
+                    take: 1,
+                },
+                employee_schedule_employee_schedule_secondary_employee_idToemployee: {
+                    where: {
+                        start_date: { lte: today },
+                        end_date: { gte: today },
+                        replaced: false,
+                    },
+                    take: 1,
+                },
+            },
+        });
+
+        return employees.map((emp) => {
+            const entity = EmployeeMapper.toDomain(emp);
+
+            if (!entity.openToNextWork) {
+                entity.status = "unavailable";
+            } else {
+                const hasPrimarySchedule =
+                    emp.employee_schedule_employee_schedule_primary_employee_idToemployee.length > 0;
+                const hasSecondarySchedule =
+                    emp.employee_schedule_employee_schedule_secondary_employee_idToemployee.length > 0;
+                entity.status = hasPrimarySchedule || hasSecondarySchedule ? "working" : "available";
+            }
+
+            return entity;
+        });
     }
 
     async findByWorkArea(workArea: string): Promise<EmployeeEntity[]> {
@@ -105,4 +152,3 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
 }
-

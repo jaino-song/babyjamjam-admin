@@ -3,12 +3,9 @@ import { useState, useEffect } from "react";
 import {
   Box,
   Button,
-  Card,
-  CardContent,
   FormControl,
   InputLabel,
   MenuItem,
-  Paper,
   Select,
   Stack,
   Typography,
@@ -22,6 +19,8 @@ import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { useBankAccountInfos, useVoucherPriceInfos } from "@/app/hooks";
+import { useSystemTemplate } from "@/features/system-templates/hooks";
+import { renderTemplate } from "@/lib/template-utils";
 import { NameInput } from "./form-components/NameInput";
 
 interface PriceInfoFormData {
@@ -36,15 +35,6 @@ interface PriceInfoFormData {
   area: string;
   bankName: string;
   accNum: string;
-}
-
-interface VoucherPriceInfo {
-  id: number;
-  type: string | null;
-  duration: string;
-  fullPrice: string | null;
-  grant: string | null;
-  actualPrice: string | null;
 }
 
 interface BankAccountInfo {
@@ -63,7 +53,8 @@ function formatPrice(price: string): string {
 export const PriceInfoMessageForm = () => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
-
+  const { data: systemTemplate } = useSystemTemplate("PRICE_INFO");
+ 
   // Subscribe to Zustand store
   const { name, voucherType, voucherDuration, voucherYear, setName, setVoucherType, setVoucherDuration, setFullPrice, setActualPrice, setGrant, setVoucherYear } = useFormStore();
 
@@ -92,14 +83,13 @@ export const PriceInfoMessageForm = () => {
   }, [name, voucherType, voucherDuration]);
 
   // Bank account info query
-  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading, error: bankAccountInfosError } = useBankAccountInfos();
+  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
 
   // Voucher price info query (연도 필터 적용)
-  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading, error: voucherPriceInfosError } = useVoucherPriceInfos(formData.type, voucherYear);
+  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(formData.type, voucherYear);
 
   // Voucher type change handler
   const handleVoucherTypeChange = (value: string) => {
-    console.log('Voucher type changed:', value);
     setFormData(prev => ({
       ...prev,
       type: value,
@@ -113,8 +103,6 @@ export const PriceInfoMessageForm = () => {
 
   const handleDurationChange = (duration: string) => {
     const selectedVoucher = voucherPriceInfos.find(v => v.duration === duration);
-    console.log('Selected Duration:', duration);
-
     if (selectedVoucher) {
       setFormData(prev => ({
         ...prev,
@@ -149,7 +137,21 @@ export const PriceInfoMessageForm = () => {
       grant: formatPrice(formData.grant),
       actualPrice: formatPrice(formData.actualPrice),
     };
-    const message = priceInfoMsgTemplate(formattedData);
+
+    const message = systemTemplate?.content
+      ? renderTemplate(systemTemplate.content, {
+          name: formattedData.name,
+          weeks: formattedData.weeks,
+          duration: formattedData.duration,
+          type: formattedData.type,
+          fullPrice: formattedData.fullPrice,
+          grant: formattedData.grant,
+          actualPrice: formattedData.actualPrice,
+          bankName: formattedData.bankName,
+          accNum: formattedData.accNum,
+        })
+      : priceInfoMsgTemplate(formattedData);
+
     setGeneratedMessage(message);
   };
 
@@ -159,21 +161,10 @@ export const PriceInfoMessageForm = () => {
   };
 
   return (
-    <Paper elevation={2} data-component="price-info-message-form" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", borderTopLeftRadius: 0, borderTopRightRadius: 0, p: 3, flexGrow: 1, width: "100%", height: "100%", bgcolor: "background.default" }}>
+    <Box data-component="price-info-message-form" sx={{ display: "flex", flexDirection: "column", flexGrow: 1, height: "100%", bgcolor: "background.default" }}>
       <Fade in appear timeout={500}>
-        <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-          {/* title */}
-          <Typography variant="h5" color="primary.main" fontWeight={700} gutterBottom>
-            {t(locale, "price-info-msg.title")}
-          </Typography>
-      {/* subtitle */}
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t(locale, "price-info-msg.subtitle")}
-      </Typography>
-
-      {/* form */}
-      <Card elevation={0} data-component="price-info-message-form-card" sx={{ bgcolor: "background.default" }}>
-        <CardContent>
+        <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1 }}>
+          {/* form */}
           <Stack spacing={3}>
             <NameInput name={name} setName={setName} label={t(locale, "price-info-msg.name-label")} placeholder={t(locale, "price-info-msg.name-placeholder")} />
             {/* voucher year & type */}
@@ -273,8 +264,6 @@ export const PriceInfoMessageForm = () => {
               {isVoucherPriceInfosLoading || isBankAccountInfosLoading ? t(locale, "common.generate-button-loading") : t(locale, "common.generate-button")}
             </Button>
           </Stack>
-        </CardContent>
-      </Card>
 
           {/* generated message */}
           {generatedMessage && (
@@ -288,7 +277,7 @@ export const PriceInfoMessageForm = () => {
           )}
         </Box>
       </Fade>
-    </Paper>
+    </Box>
   );
 };
 

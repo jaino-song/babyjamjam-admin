@@ -60,7 +60,13 @@ export class EformsignController {
 
     @Post("generate-document")
     async generateDocument(
-        @Body() body: { contractData: ContractDataDto; accessToken: string; refreshToken: string }
+        @Body()
+        body: {
+            contractData: ContractDataDto;
+            accessToken: string;
+            refreshToken: string;
+            clientId?: number; // Optional: link document to existing client
+        }
     ) {
         try {
             // Look up template_id based on area
@@ -76,7 +82,12 @@ export class EformsignController {
                 body.refreshToken,
                 templateId
             );
-            return documentOptions;
+
+            // Return clientId for frontend to use when creating eformsign doc record
+            return {
+                ...documentOptions,
+                clientId: body.clientId,
+            };
         } catch (error) {
             const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(

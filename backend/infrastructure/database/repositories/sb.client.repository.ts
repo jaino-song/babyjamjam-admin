@@ -75,4 +75,134 @@ export class SbClientRepository implements IClientRepository {
             where: { id },
         });
     }
+
+    async findByStartDate(date: Date): Promise<ClientEntity[]> {
+        // Normalize to start of day for date comparison
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                start_date: {
+                    gte: startOfDay,
+                    lte: endOfDay,
+                },
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findByEndDate(date: Date): Promise<ClientEntity[]> {
+        // Normalize to start of day for date comparison
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                end_date: {
+                    gte: startOfDay,
+                    lte: endOfDay,
+                },
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findByCreatedDate(date: Date): Promise<ClientEntity[]> {
+        // Note: Client model doesn't have created_at field in schema
+        // For now, this returns empty array. To enable payment reminders,
+        // add created_at field to client model in schema.prisma
+        console.warn('[ClientRepository] findByCreatedDate: client model lacks created_at field');
+        return [];
+    }
+
+    async findStartingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                start_date: {
+                    gt: today,
+                    lte: endDate,
+                },
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findEndingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                end_date: {
+                    gte: today,
+                    lte: endDate,
+                },
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findWithIncompleteContractsStartingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                start_date: {
+                    gt: today,
+                    lte: endDate,
+                },
+                e_doc_id: { not: null },
+                eformsign_doc_client_e_doc_idToeformsign_doc: {
+                    status_type: { not: '050' },
+                },
+            },
+            include: {
+                eformsign_doc_client_e_doc_idToeformsign_doc: true,
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
+
+    async findWithoutContractSentStartingWithinDays(days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                start_date: {
+                    gt: today,
+                    lte: endDate,
+                },
+                e_doc_id: null,
+            },
+        });
+        return clients.map(ClientMapper.toDomain);
+    }
 }

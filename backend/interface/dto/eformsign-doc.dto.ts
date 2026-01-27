@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString } from "class-validator";
+import { IsNumber, IsOptional, IsString, IsDateString, IsBoolean } from "class-validator";
 
 /**
  * DTO for getting access token
@@ -40,5 +40,47 @@ export class FetchDocumentByIdDto {
 
     @IsString()
     documentId!: string;
+}
+
+/**
+ * DTO for creating a new eformsign doc record in local DB
+ */
+export class CreateEformsignDocLocalDto {
+    @IsString()
+    documentId!: string;
+
+    @IsNumber()
+    clientId!: number;
+
+    @IsString()
+    statusType!: string;
+
+    @IsString()
+    statusDetail!: string;
+
+    @IsString()
+    stepType!: string;
+
+    @IsString()
+    stepIndex!: string;
+
+    @IsString()
+    stepName!: string;
+
+    @IsString()
+    stepRecipientType!: string;
+
+    @IsString()
+    stepRecipientName!: string;
+
+    @IsString()
+    stepRecipientSms!: string;
+
+    @IsDateString()
+    expiredDate!: string; // ISO date string
+
+    @IsOptional()
+    @IsBoolean()
+    linkToClient?: boolean; // If true, also update client.e_doc_id
 }
 

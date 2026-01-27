@@ -1,99 +1,94 @@
-import {
-    Body,
-    Controller,
-    Delete,
-    Get,
-    Param,
-    Patch,
-    Post,
-    Query,
-    Req,
-    StreamableFile,
-    UploadedFile,
-    UseInterceptors,
-} from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
+import { Body, Controller, Delete, Get, Param, Post, Put } from "@nestjs/common";
 import { DocumentService } from "application/services/document.service";
-import {
-    CreateDocumentDto,
-    UpdateDocumentDto,
-    DocumentFilterDto,
-} from "interface/dto/document.dto";
-import { Request } from "express";
-import { DownloadDocumentUsecase } from "application/usecases/document/download-document.usecase";
+import { CreateDocumentDto, UpdateDocumentDto } from "interface/dto/document.dto";
 
-@Controller("file-storage")
+@Controller("documents")
 export class DocumentController {
-    constructor(
-        private readonly documentService: DocumentService,
-        private readonly downloadUseCase: DownloadDocumentUsecase,
-    ) {}
+    constructor(private readonly documentService: DocumentService) {}
 
+    /**
+     * POST /documents
+     * Create a new document
+     */
     @Post()
-    @UseInterceptors(FileInterceptor("file"))
-    upload(
-        @UploadedFile() file: Express.Multer.File,
-        @Body() dto: CreateDocumentDto,
-        @Req() req: Request,
-    ) {
-        const uploadedBy = (req as any).user?.id ?? "anonymous";
-        
-        return this.documentService.upload({
-            file: file.buffer,
-            filename: file.originalname,
-            mimetype: file.mimetype,
-            filesize: file.size,
+    async create(@Body() dto: CreateDocumentDto) {
+        return this.documentService.create({
+            name: dto.name,
+            description: dto.description,
             category: dto.category,
             tags: dto.tags,
-            description: dto.description,
-            uploadedBy,
+            mimetype: dto.mimetype,
+            filesize: dto.filesize,
+            storagepath: dto.storagepath,
+            storageurl: dto.storageurl,
+            orgid: dto.orgid,
+            uploadedby: dto.uploadedby,
         });
     }
 
+    /**
+     * GET /documents
+     * List all documents
+     */
     @Get()
-    list(@Query() filter: DocumentFilterDto) {
-        return this.documentService.list({
-            category: filter.category,
-            tags: filter.tags,
-            uploadedBy: filter.uploadedBy,
-            orgId: filter.orgId,
-        });
+    async findAll() {
+        return this.documentService.findAll();
     }
 
+    /**
+     * GET /documents/:id
+     * Find a document by ID
+     */
     @Get(":id")
-    findById(@Param("id") id: string) {
+    async findById(@Param("id") id: string) {
         return this.documentService.findById(id);
     }
 
-    @Patch(":id")
-    update(@Param("id") id: string, @Body() dto: UpdateDocumentDto) {
+    /**
+     * GET /documents/org/:orgid
+     * Find documents by organization ID
+     */
+    @Get("org/:orgid")
+    async findByOrgId(@Param("orgid") orgid: string) {
+        return this.documentService.findByOrgId(orgid);
+    }
+
+    /**
+     * GET /documents/category/:category
+     * Find documents by category
+     */
+    @Get("category/:category")
+    async findByCategory(@Param("category") category: string) {
+        return this.documentService.findByCategory(category);
+    }
+
+    /**
+     * PUT /documents/:id
+     * Update a document
+     */
+    @Put(":id")
+    async update(@Param("id") id: string, @Body() dto: UpdateDocumentDto) {
         return this.documentService.update(id, {
             name: dto.name,
             description: dto.description,
             category: dto.category,
             tags: dto.tags,
+            mimetype: dto.mimetype,
+            filesize: dto.filesize,
+            storagepath: dto.storagepath,
+            storageurl: dto.storageurl,
+            orgid: dto.orgid,
+            uploadedby: dto.uploadedby,
         });
     }
 
+    /**
+     * DELETE /documents/:id
+     * Delete a document
+     */
     @Delete(":id")
-    delete(@Param("id") id: string) {
-        return this.documentService.delete(id);
-    }
-
-    @Get(":id/download")
-    async download(
-        @Param("id") id: string,
-        @Query("attachment") attachment?: string,
-    ): Promise<StreamableFile> {
-        const { buffer, mimeType, filename } = await this.downloadUseCase.execute(id);
-        
-        const dispositionType = attachment === "true" ? "attachment" : "inline";
-        const encodedFilename = encodeURIComponent(filename);
-        
-        return new StreamableFile(buffer, {
-            type: mimeType,
-            disposition: `${dispositionType}; filename="${encodedFilename}"`,
-            length: buffer.length,
-        });
+    async delete(@Param("id") id: string) {
+        await this.documentService.delete(id);
+        return { message: "Document deleted successfully" };
     }
 }

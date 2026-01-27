@@ -3,6 +3,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/app/lib/axios/client";
 
+// Employee status type
+export type EmployeeStatus = 'available' | 'working' | 'unavailable';
+
 // Employee type
 export interface Employee {
     id: number;
@@ -12,6 +15,7 @@ export interface Employee {
     grade: string;
     openToNextWork: boolean;
     registeredDate: string;
+    status: EmployeeStatus;
 }
 
 export interface CreateEmployeeDto {
@@ -54,14 +58,20 @@ export function useEmployees() {
 // Create employee
 export function useCreateEmployee() {
     const queryClient = useQueryClient();
-    
-    return useMutation({
+
+    return useMutation<Employee, Error, CreateEmployeeDto>({
         mutationFn: async (dto: CreateEmployeeDto) => {
-            const { data } = await api.post("/employees", dto);
+            console.log("[useCreateEmployee] Creating employee with dto:", dto);
+            const { data } = await api.post<Employee>("/employees", dto);
+            console.log("[useCreateEmployee] Created employee response:", data);
             return data;
         },
-        onSuccess: () => {
+        onSuccess: (data) => {
+            console.log("[useCreateEmployee] onSuccess called with:", data);
             queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
+        },
+        onError: (error) => {
+            console.error("[useCreateEmployee] onError called:", error);
         },
     });
 }
@@ -69,7 +79,7 @@ export function useCreateEmployee() {
 // Update employee
 export function useUpdateEmployee() {
     const queryClient = useQueryClient();
-    
+
     return useMutation({
         mutationFn: async ({ id, dto }: { id: number; dto: UpdateEmployeeDto }) => {
             const { data } = await api.patch("/employees", dto, { params: { id } });
@@ -84,7 +94,7 @@ export function useUpdateEmployee() {
 // Delete employee
 export function useDeleteEmployee() {
     const queryClient = useQueryClient();
-    
+
     return useMutation({
         mutationFn: async (id: number) => {
             await api.delete("/employees", { params: { id } });
@@ -98,7 +108,7 @@ export function useDeleteEmployee() {
 // Toggle open status
 export function useToggleEmployeeOpenStatus() {
     const queryClient = useQueryClient();
-    
+
     return useMutation({
         mutationFn: async ({ id, openToNextWork }: { id: number; openToNextWork: boolean }) => {
             const { data } = await api.patch("/employees/open-status", { openToNextWork }, { params: { id } });

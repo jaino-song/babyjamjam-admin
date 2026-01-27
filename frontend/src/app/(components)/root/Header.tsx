@@ -3,10 +3,11 @@ import { AppBar, Toolbar, IconButton, Box, Typography, Avatar, Drawer } from "@m
 import MenuIcon from "@mui/icons-material/Menu";
 import LoginIcon from '@mui/icons-material/Login';
 import { useState } from "react";
-import { NavBar } from "../nav-bar/NavBar";
+import { NavBar } from "../nav-bar/nav-bar";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { useGetAuthUser, AuthUser } from "@/app/hooks/useGetAuthUser";
+import { NotificationBell } from "../notifications";
 
 interface HeaderProps {
   // 서버에서 prefetch된 사용자 데이터 (duplicate fetch 방지)
@@ -26,6 +27,10 @@ export const Header = ({ initialUser }: HeaderProps) => {
 
   // initialUser가 있으면 즉시 사용, 없으면 client-side fetch
   const { data: user, isLoading } = useGetAuthUser({ initialData: initialUser });
+  const isE2EAuth = typeof window !== 'undefined'
+    && (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__;
+
+  const shouldShowNotifications = Boolean(user) || isE2EAuth;
 
   return (
     <>
@@ -59,10 +64,8 @@ export const Header = ({ initialUser }: HeaderProps) => {
               {t(locale, "header.companySubtitle")}
             </Typography>
           </Box>
-          {/* Notifications Icon */}
-          {/* <IconButton color="inherit" aria-label="notifications">
-            <NotificationsNoneIcon />
-          </IconButton> */}
+          {/* Notifications */}
+          {shouldShowNotifications && <NotificationBell />}
           {/* User Profile */}
           {/* initialUser가 있으면 로딩 상태 없이 즉시 렌더링 */}
           <IconButton color="inherit" aria-label={user ? "user" : "login"} disabled={!initialUser && isLoading}>

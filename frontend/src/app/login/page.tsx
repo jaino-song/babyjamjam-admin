@@ -12,7 +12,7 @@ const LoginPage = () => {
 
   return (
     <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
-      <Paper component="main" elevation={3} sx={{ bgcolor: "#fff", px: 3, py: 6, borderRadius: "8px", mx: 2 }}>
+      <Paper data-component="login-card" component="main" elevation={3} sx={{ bgcolor: "#fff", px: 3, py: 6, borderRadius: "8px", mx: 2 }}>
         <Stack spacing={3}>
           <Typography variant="h1" align="center" sx={{ fontSize: "1.5rem", fontWeight: "bold" }}>{t(locale, "login.title")}</Typography>
           <Typography variant="h2" align="center" sx={{ fontSize: "1rem", fontWeight: "semi", lineHeight: "1.5rem" }}>{t(locale, "login.subtitle")}</Typography>

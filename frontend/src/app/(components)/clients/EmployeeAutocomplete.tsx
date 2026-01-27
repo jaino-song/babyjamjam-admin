@@ -1,28 +1,34 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
     Autocomplete,
     TextField,
     Box,
     Typography,
     CircularProgress,
-    Button,
     Paper,
+    Divider,
+    ButtonBase,
 } from "@mui/material";
 import { UserPlus } from "lucide-react";
 import { useEmployees, Employee } from "@/app/hooks/useEmployees";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
+import { useEmployeeDialogStore } from "@/app/store/employee-dialog-store";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 
 interface EmployeeAutocompleteProps {
+    "data-testid"?: string;
     value: number | null;
-    onChange: (employeeId: number | null) => void;
+    onChange: (employeeId: number | null, employee: Employee | null) => void;
     label: string;
     required?: boolean;
     error?: boolean;
     helperText?: string;
     excludeIds?: number[]; // IDs to exclude from options (e.g., if already selected as secondary)
+    allowManualEntry?: boolean;
+    onManualEntry?: (inputValue?: string) => void;
 }
 
 export function EmployeeAutocomplete({
@@ -33,10 +39,22 @@ export function EmployeeAutocomplete({
     error = false,
     helperText,
     excludeIds = [],
+    allowManualEntry = false,
+    onManualEntry,
+    "data-testid": dataTestId,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
     const { data: employees, isLoading } = useEmployees();
-    const [showAddNewAlert, setShowAddNewAlert] = useState(false);
+
+    // Zustand store for prefilling employee name in EmployeeFormDialog
+    const setPrefillName = useEmployeeDialogStore((state) => state.setPrefillName);
+
+    // Track input value for display synchronization
+    const [inputValue, setInputValue] = useState("");
+    // Track open state - needed for Korean IME compatibility
+    const [isOpen, setIsOpen] = useState(false);
+    // Ref for the input element - used to blur when closing dropdown
+    const inputRef = useRef<HTMLInputElement>(null);
 
     // Filter out excluded employees
     const availableEmployees = useMemo(() => {
@@ -51,43 +69,121 @@ export function EmployeeAutocomplete({
         return employees.find(emp => emp.id === value) || null;
     }, [value, employees]);
 
+    // Sync inputValue when selectedEmployee changes (e.g., after creating a new employee)
+    // This ensures the text field shows the employee name when selection changes externally
+    useEffect(() => {
+        if (selectedEmployee) {
+            setInputValue(selectedEmployee.name);
+        } else if (value === null || value === undefined) {
+            // Clear input when value is explicitly cleared (null/undefined)
+            setInputValue("");
+        }
+        // Note: When value is a non-null number but employee not found (e.g., deleted employee),
+        // we don't clear input to allow the useEmployees query to finish loading first.
+        // The selectedEmployee will update once employees are loaded.
+    }, [selectedEmployee, value]);
+
     const handleChange = (
         _event: React.SyntheticEvent,
         newValue: Employee | null
     ) => {
-        onChange(newValue?.id ?? null);
+        // Update input value immediately to show selected name
+        setInputValue(newValue?.name ?? "");
+        onChange(newValue?.id ?? null, newValue);
     };
 
-    const handleAddNewEmployee = () => {
-        alert(t(locale, "clients.form.add-employee-coming-soon"));
+    const handleManualEntry = (e: React.MouseEvent) => {
+        // Prevent the Autocomplete from closing before click completes
+        e.preventDefault();
+        e.stopPropagation();
+        // Close the dropdown state
+        setIsOpen(false);
+        // Blur the input using ref to ensure dropdown closes completely
+        // Note: We use ref because the Paper slot is rendered in a Portal,
+        // so DOM traversal with closest() won't find the Autocomplete
+        inputRef.current?.blur();
+        // Save typed name to Zustand store for EmployeeFormDialog to prefill
+        setPrefillName(inputValue);
+        // Use setTimeout to ensure dropdown is fully closed before opening dialog
+        // This prevents the dropdown from appearing over the new dialog
+        setTimeout(() => {
+            if (onManualEntry) {
+                onManualEntry(inputValue);
+            }
+        }, 100);
+    };
+
+    // Handle input change to track what user types
+    const handleInputChange = (
+        _event: React.SyntheticEvent,
+        newInputValue: string,
+        reason: string
+    ) => {
+        // Accept input changes for:
+        // - "input": user typing
+        // - "clear": user clicked X button
+        // - "reset": MUI resets input (e.g., on blur, selection change)
+        //   But for "reset", only update if it's clearing or syncing with selection
+        if (reason === "input" || reason === "clear") {
+            setInputValue(newInputValue);
+        } else if (reason === "reset") {
+            // Allow reset to clear the input (when value becomes empty)
+            // or sync with selected employee name
+            if (newInputValue === "" || newInputValue === selectedEmployee?.name) {
+                setInputValue(newInputValue);
+            }
+        }
     };
 
     return (
         <Autocomplete<Employee, false, false, false>
+            data-testid={dataTestId ?? "employee-autocomplete"}
             value={selectedEmployee}
             onChange={handleChange}
+            inputValue={inputValue}
+            onInputChange={handleInputChange}
             options={availableEmployees}
             loading={isLoading}
             clearOnBlur={false}
             blurOnSelect={true}
-            getOptionLabel={(option) => `${option.name} (${option.workArea.join(", ")})`}
+            // Open on focus for better UX with Korean IME
+            open={isOpen}
+            onOpen={() => setIsOpen(true)}
+            onClose={() => setIsOpen(false)}
+            openOnFocus
+            getOptionLabel={(option) => option.name}
             isOptionEqualToValue={(option, val) => option.id === val.id}
-            filterOptions={(options, { inputValue }) => {
-                if (!inputValue.trim()) return options;
-                const searchLower = inputValue.toLowerCase();
+            filterOptions={(options, { inputValue: filterInput }) => {
+                // Only show options when user has typed something
+                if (!filterInput.trim()) return [];
                 return options.filter(
                     emp =>
-                        emp.name.toLowerCase().includes(searchLower) ||
-                        emp.workArea.some(area => area.toLowerCase().includes(searchLower)) ||
-                        emp.phone.includes(inputValue)
+                        // 초성 search only for name (e.g., ㄱ → 김현아)
+                        matchesKoreanSearch(emp.name, filterInput) ||
+                        // Work area: simple substring match (no 초성 to avoid false positives)
+                        emp.workArea.some(area => area.toLowerCase().includes(filterInput.toLowerCase())) ||
+                        // Phone: simple substring match
+                        emp.phone.includes(filterInput)
                 );
             }}
             renderOption={(props, option) => (
                 <Box component="li" {...props} key={option.id}>
-                    <Box sx={{ display: "flex", flexDirection: "column" }}>
-                        <Typography variant="body1">
-                            {option.name}
-                        </Typography>
+                    <Box
+                        sx={{
+                            display: "flex",
+                            flexDirection: "column",
+                            width: "100%",
+                        }}
+                    >
+                        <Box
+                            sx={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 1,
+                            }}
+                        >
+                            <Typography variant="body1">{option.name}</Typography>
+                        </Box>
                         <Typography variant="caption" color="text.secondary">
                             {option.workArea.join(", ")} · {option.phone}
                         </Typography>
@@ -97,6 +193,7 @@ export function EmployeeAutocomplete({
             renderInput={(params) => (
                 <TextField
                     {...params}
+                    inputRef={inputRef}
                     label={label}
                     required={required}
                     error={error}
@@ -114,23 +211,59 @@ export function EmployeeAutocomplete({
                 />
             )}
             noOptionsText={
-                <Box sx={{ textAlign: "center", py: 2 }}>
-                    <Typography variant="body2" color="text.secondary" gutterBottom>
-                        {t(locale, "clients.form.no-employee-found")}
-                    </Typography>
-                    <Button
-                        startIcon={<UserPlus size={18} />}
-                        variant="outlined"
-                        size="small"
-                        onClick={handleAddNewEmployee}
-                    >
-                        {t(locale, "clients.form.add-new-employee")}
-                    </Button>
-                </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ py: 1, textAlign: "center" }}>
+                    {t(locale, "clients.form.no-employee-found")}
+                </Typography>
             }
-            PaperComponent={(props) => (
-                <Paper {...props} elevation={8} />
-            )}
+            slots={{
+                paper: (props) => (
+                    <Paper {...props} elevation={8} data-testid="employee-autocomplete-dropdown">
+                        {props.children}
+                        {allowManualEntry && (
+                            <>
+                                <Divider />
+                                <ButtonBase
+                                    data-testid="employee-autocomplete-add-button"
+                                    onMouseDown={handleManualEntry}
+                                    sx={{
+                                        width: "100%",
+                                        py: 1.5,
+                                        px: 2,
+                                        justifyContent: "flex-start",
+                                        "&:hover": {
+                                            bgcolor: "action.hover",
+                                        },
+                                    }}
+                                >
+                                    <Box
+                                        sx={{
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            width: "100%",
+                                        }}
+                                    >
+                                        <Box
+                                            sx={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 1,
+                                            }}
+                                        >
+                                            <UserPlus size={16} />
+                                            <Typography variant="body1" color="primary">
+                                                {t(locale, "contract-msg.employee-manual-entry")}
+                                            </Typography>
+                                        </Box>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {t(locale, "contract-msg.employee-manual-entry-description")}
+                                        </Typography>
+                                    </Box>
+                                </ButtonBase>
+                            </>
+                        )}
+                    </Paper>
+                ),
+            }}
         />
     );
 }

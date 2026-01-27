@@ -1,17 +1,51 @@
-import { Body, Controller, Get, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query, Logger } from "@nestjs/common";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import {
     GetAccessTokenDto,
     RefreshAccessTokenDto,
     FetchDocumentsDto,
     FetchDocumentByIdDto,
+    CreateEformsignDocLocalDto,
 } from "interface/dto/eformsign-doc.dto";
 
 @Controller("eformsign-docs")
 export class EformsignDocController {
+    private readonly logger = new Logger(EformsignDocController.name);
+
     constructor(private readonly eformsignDocService: EformsignDocService) {}
 
     // ============ Local DB Endpoints ============
+
+    /**
+     * POST /eformsign-docs
+     * Create a new eformsign document record in local DB
+     * Called by frontend after document is created in eformsign
+     */
+    @Post()
+    async create(@Body() dto: CreateEformsignDocLocalDto) {
+        this.logger.log(`[POST /eformsign-docs] Received request to create doc record: documentId=${dto.documentId}, clientId=${dto.clientId}`);
+        try {
+            const result = await this.eformsignDocService.create({
+                documentId: dto.documentId,
+                clientId: dto.clientId,
+                statusType: dto.statusType,
+                statusDetail: dto.statusDetail,
+                stepType: dto.stepType,
+                stepIndex: dto.stepIndex,
+                stepName: dto.stepName,
+                stepRecipientType: dto.stepRecipientType,
+                stepRecipientName: dto.stepRecipientName,
+                stepRecipientSms: dto.stepRecipientSms,
+                expiredDate: new Date(dto.expiredDate),
+                linkToClient: dto.linkToClient,
+            });
+            this.logger.log(`[POST /eformsign-docs] Successfully created record id=${result.id}`);
+            return result;
+        } catch (error) {
+            this.logger.error(`[POST /eformsign-docs] Failed to create record: ${error}`);
+            throw error;
+        }
+    }
 
     /**
      * GET /eformsign-docs

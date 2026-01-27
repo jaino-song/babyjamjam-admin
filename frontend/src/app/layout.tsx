@@ -1,16 +1,17 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { QueryProvider } from "./query-provider";
-import { ConditionalHeader } from "./(components)/root/ConditionalHeader";
+import { ConditionalHeader } from "./(components)/root/conditional-header";
 import { MuiThemeProvider as ThemeProvider } from "./(components)/mui-theme-provider";
 import EmotionRegistry from "./(components)/EmotionRegistry";
 import localFont from "next/font/local";
-import AnimatedContainer from "./(components)/root/AnimatedContainer";
+import AnimatedContainer from "./(components)/root/animated-container";
 import { Box } from "@mui/material";
 import { LocaleProvider } from "./(components)/LocaleProvider";
 import { getLocale } from "./actions/locale";
 import { getCurrentUser } from "./lib/auth/cookies";
 import { UserProvider } from "./(components)/providers/UserProvider";
+import { NotificationPermissionPrompt } from "./(components)/notification-permission-prompt";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",
@@ -19,12 +20,24 @@ const Pretendard = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Incheon Imirae Back Office",
-  description: "Incheon Imirae Back Office",
+  title: "인천 아이미래로 백오피스",
+  description: "인천 아이미래로 업무 관리 시스템",
+  manifest: "/manifest.json",
+  icons: {
+    apple: "/apple-touch-icon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "인천 아이미래로",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#ffffff",
+  themeColor: "#0047ab",
   width: "device-width",
 };
 
@@ -46,9 +59,10 @@ export default async function RootLayout({
             <QueryProvider>
               <LocaleProvider locale={locale}>
                 <UserProvider user={user}>
+                  <NotificationPermissionPrompt />
                   <ConditionalHeader />
                   <AnimatedContainer>
-                    <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1 }}>
+                    <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1, width: "100%" }}>
                       {children}
                     </Box>
                   </AnimatedContainer>

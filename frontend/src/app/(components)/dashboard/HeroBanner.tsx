@@ -1,5 +1,6 @@
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
-import { Button, Paper, Stack, Typography } from "@mui/material";
+import { Button, Stack, Typography } from "@mui/material";
+import { ContentPaper } from "../root/content-paper";
 
 interface HeroBannerProps {
   title: string;
@@ -25,8 +26,9 @@ export const HeroBanner = ({
   secondaryActionHref,
 }: HeroBannerProps) => {
   return (
-    <Paper
+    <ContentPaper
       elevation={0}
+      disableAnimation
       sx={{
         p: { xs: 2.5, sm: 3 },
         bgcolor: "primary.main",
@@ -52,7 +54,7 @@ export const HeroBanner = ({
           {secondaryActionLabel}
         </Button>
       </Stack>
-    </Paper>
+    </ContentPaper>
   );
 };
 

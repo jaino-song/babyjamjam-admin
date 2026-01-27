@@ -8,6 +8,7 @@ interface MsgFieldProps {
 export const MsgField = ({ value, onChange }: MsgFieldProps) => {
   return (
     <TextField
+      data-component="MsgField"
       multiline
       fullWidth
       value={value}
@@ -19,7 +20,7 @@ export const MsgField = ({ value, onChange }: MsgFieldProps) => {
             fontFamily: "inherit",
             fontSize: "1rem",
             lineHeight: 1.6,
-            
+
           },
         },
       }}

@@ -15,6 +15,7 @@ export const clientQueryKeys = {
     lists: () => [...clientQueryKeys.all, "list"] as const,
     list: (page?: number, limit?: number, search?: string) => 
         [...clientQueryKeys.lists(), { page, limit, search }] as const,
+    filtered: (filter: string) => [...clientQueryKeys.all, "filtered", filter] as const,
     details: () => [...clientQueryKeys.all, "detail"] as const,
     detail: (id: number) => [...clientQueryKeys.details(), id] as const,
 };
@@ -57,6 +58,19 @@ export function useClient(id: number) {
             return data;
         },
         enabled: !!id,
+    });
+}
+
+// Fetch filtered clients
+export function useFilteredClients(filter: string) {
+    return useQuery<Client[]>({
+        queryKey: clientQueryKeys.filtered(filter),
+        queryFn: async () => {
+            const { data } = await api.get(`/clients?filter=${filter}`);
+            return data;
+        },
+        enabled: !!filter,
+        staleTime: 1000 * 60,
     });
 }
 
