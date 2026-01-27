@@ -73,6 +73,7 @@ export function ReplacementModal({
 
     return (
         <Dialog
+            data-component="ReplacementModal"
             open={open}
             onClose={handleClose}
             maxWidth="sm"

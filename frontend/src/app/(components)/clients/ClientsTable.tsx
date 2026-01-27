@@ -146,6 +146,7 @@ export function ClientsTable() {
 
     return (
         <ContentPaper
+            data-component="ClientsTable"
             title={t(locale, "clients.title")}
             subtitle={t(locale, "clients.subtitle")}
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
@@ -194,7 +195,7 @@ export function ClientsTable() {
 
                 {/* Table */}
                 <Box sx={{ minHeight: 200, width: "100%" }}>
-                    <TableContainer>
+                    <TableContainer data-component="clients-table-container-old">
                         <Table sx={{ tableLayout: "fixed", width: "100%" }}>
                             <TableHead>
                                 <TableRow>

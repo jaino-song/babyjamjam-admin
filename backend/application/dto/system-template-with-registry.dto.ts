@@ -1,4 +1,4 @@
-import { SystemTemplateKey, TemplateVariable } from 'domain/constants/system-template-registry';
+import { SystemTemplateKey, TemplateVariable, CustomVariable } from 'domain/constants/system-template-registry';
 
 export interface SystemTemplateWithRegistryDto {
   id: string;
@@ -7,6 +7,7 @@ export interface SystemTemplateWithRegistryDto {
   description: string;
   content: string;
   requiredVariables: TemplateVariable[];
+  customVariables: CustomVariable[];
   createdAt: Date;
   updatedAt: Date;
 }

@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { 
-    Box, 
-    TextField, 
-    Button, 
-    Stack, 
-    Typography, 
-    Paper, 
+import {
+    Box,
+    TextField,
+    Button,
+    Stack,
+    Typography,
+    Paper,
     Divider,
     Alert,
     AlertTitle
@@ -51,7 +51,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                     type: "text" as const,
                     required: true
                 }));
-            
+
             const filtered = prev.filter(v => keys.includes(v.key));
             return [...filtered, ...newVars];
         });
@@ -82,7 +82,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
 
     return (
         <Stack spacing={4}>
-            <Paper sx={{ p: 3 }}>
+            <Box data-component="template-editor-main-paper" sx={{ p: 3 }}>
                 <Stack spacing={3}>
                     <TextField
                         fullWidth
@@ -111,7 +111,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                         required
                     />
                 </Stack>
-            </Paper>
+            </Box>
 
             {variables.length > 0 && (
                 <Box>
@@ -137,20 +137,20 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 </Alert>
             )}
 
-            <Paper sx={{ p: 3, bgcolor: "grey.50" }}>
+            <Box sx={{ p: 3, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                 <Typography variant="h6" gutterBottom>
                     {t(locale, "template-editor.preview")}
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
                 <TemplatePreview content={content} variables={variables} />
-            </Paper>
+            </Box>
 
             <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 2, pb: 5 }}>
                 <Button variant="outlined" onClick={() => router.back()}>
                     {t(locale, "common.cancel")}
                 </Button>
-                <Button 
-                    variant="contained" 
+                <Button
+                    variant="contained"
                     onClick={handleSave}
                     disabled={!name || !content || isPending}
                 >

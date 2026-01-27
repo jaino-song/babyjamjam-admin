@@ -1,14 +1,14 @@
 "use client";
 
-import { 
-    Paper, 
-    Stack, 
-    TextField, 
-    FormControl, 
-    InputLabel, 
-    Select, 
-    MenuItem, 
-    FormControlLabel, 
+import {
+    Paper,
+    Stack,
+    TextField,
+    FormControl,
+    InputLabel,
+    Select,
+    MenuItem,
+    FormControlLabel,
     Checkbox,
     Typography,
     Box,
@@ -34,7 +34,7 @@ export const VariableConfigurator = ({ variable, onChange }: VariableConfigurato
     };
 
     return (
-        <Paper variant="outlined" sx={{ p: 2 }}>
+        <Paper data-component="variable-configurator-paper" variant="outlined" sx={{ p: 2 }}>
             <Stack spacing={2}>
                 <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <Typography variant="subtitle1" fontWeight={600} color="primary">
@@ -42,9 +42,9 @@ export const VariableConfigurator = ({ variable, onChange }: VariableConfigurato
                     </Typography>
                     <FormControlLabel
                         control={
-                            <Checkbox 
-                                checked={variable.required} 
-                                onChange={(e) => handleChange("required", e.target.checked)} 
+                            <Checkbox
+                                checked={variable.required}
+                                onChange={(e) => handleChange("required", e.target.checked)}
                             />
                         }
                         label={t(locale, "template-editor.required-label")}

@@ -88,7 +88,7 @@ export function PriceEditModal({
   if (!item) return null;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog data-component="PriceEditModal" open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>
         가격 수정
         <Typography variant="body2" color="text.secondary">

@@ -16,6 +16,12 @@ export interface TemplateVariable {
   description?: string;
 }
 
+export interface CustomVariable {
+  key: string;
+  label: string;
+  required: boolean;
+}
+
 export interface TemplateContract {
   key: SystemTemplateKey;
   name: string;

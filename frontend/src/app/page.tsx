@@ -7,7 +7,7 @@ import { getCurrentUser } from "./lib/auth/cookies";
 
 export default async function Home() {
   const token = await getCurrentUser();
-  
+
   // Auto redirect to dashboard if authenticated
   if (token) {
     redirect("/dashboard");
@@ -16,7 +16,7 @@ export default async function Home() {
   const locale = await getLocale();
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh" }}>
+    <Box data-component="home-page" sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh" }}>
       <Typography variant="h1" fontWeight={700} sx={{ mb: 2, fontSize: "2rem" }}>{t(locale, "common.title")}</Typography>
       <Typography variant="h6" sx={{ mb: 2 }}>{t(locale, "common.subtitle")}</Typography>
       <Link href="/login" style={{ textDecoration: "none" }}>

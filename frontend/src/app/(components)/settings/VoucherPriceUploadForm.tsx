@@ -130,7 +130,7 @@ export function VoucherPriceUploadForm() {
   }, [parseImageMutation]);
 
   return (
-    <ContentPaper>
+    <ContentPaper data-component="VoucherPriceUploadForm">
       {/* 헤더 */}
       <Box sx={{ mb: 3 }}>
         <Typography variant="h6" gutterBottom>
@@ -162,7 +162,7 @@ export function VoucherPriceUploadForm() {
             error={
               parseImageMutation.isError
                 ? parseImageMutation.error?.message ||
-                  "이미지 파싱에 실패했습니다"
+                "이미지 파싱에 실패했습니다"
                 : null
             }
           />

@@ -27,6 +27,7 @@ import { AlimtalkModule } from "module/alimtalk.module";
 import { AIChatModule } from "module/ai-chat.module";
 import { MessageTemplateModule } from "module/message-template.module";
 import { SystemTemplateModule } from "module/system-template.module";
+import { DocumentModule } from "module/document.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 @Module({
@@ -58,6 +59,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         AIChatModule,
         MessageTemplateModule,
         SystemTemplateModule,
+        DocumentModule,
     ],
     controllers: [AuthController, EformsignController],
     providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],

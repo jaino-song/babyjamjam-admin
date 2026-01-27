@@ -213,7 +213,7 @@ export function ClientAutocomplete({
             }
             slots={{
                 paper: (props) => (
-                    <Paper {...props} elevation={8}>
+                    <Paper {...props} data-component="client-autocomplete-paper" elevation={8}>
                         {props.children}
                         {allowManualEntry && (
                             <>

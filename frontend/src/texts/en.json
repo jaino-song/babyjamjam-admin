@@ -178,14 +178,15 @@
       "Contract Info"
     ]
   },
-  "nav-bar": {
-    "dashboard": "Dashboard",
-    "messages": "Messages",
-    "contracts": "Contracts",
-    "clients": "Clients",
-    "employees": "Employees",
-    "settings": "Settings"
-  },
+   "nav-bar": {
+     "dashboard": "Dashboard",
+     "messages": "Messages",
+     "contracts": "Contracts",
+     "clients": "Clients",
+     "employees": "Employees",
+     "file-storage": "Documents",
+     "settings": "Settings"
+   },
   "login": {
     "title": "Login to Get Started",
     "subtitle": "Please select one of the social login options below to log in",

@@ -6,6 +6,12 @@ export interface TemplateVariable {
     description?: string;
 }
 
+export interface CustomVariable {
+    key: string;
+    label: string;
+    required: boolean;
+}
+
 export interface SystemTemplate {
     id: string;
     templateKey: string;
@@ -13,6 +19,7 @@ export interface SystemTemplate {
     description: string;
     content: string;
     requiredVariables: TemplateVariable[];
+    customVariables: CustomVariable[];
     updatedAt: string;
 }
 

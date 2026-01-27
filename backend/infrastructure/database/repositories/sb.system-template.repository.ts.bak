@@ -21,14 +21,14 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
     const rows = await this.prisma.system_template.findMany({
       orderBy: { templateKey: 'asc' },
     });
-    return rows.map((row) => SystemTemplateMapper.toDomain(row));
+    return rows.map(SystemTemplateMapper.toDomain);
   }
 
   async save(template: SystemTemplateEntity): Promise<SystemTemplateEntity> {
     const row = await this.prisma.system_template.upsert({
       where: { templateKey: template.templateKey },
-      create: { templateKey: template.templateKey, content: template.content, customVariables: (template.customVariables ?? []) as any },
-      update: { content: template.content, customVariables: (template.customVariables ?? []) as any, updatedAt: new Date() },
+      create: { templateKey: template.templateKey, content: template.content, customVariables: template.customVariables ?? [] },
+      update: { content: template.content, updatedAt: new Date() },
     });
     return SystemTemplateMapper.toDomain(row);
   }
@@ -40,7 +40,7 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
       where: { templateId: template.id },
       orderBy: { versionNumber: 'desc' },
     });
-    return rows.map((row) => SystemTemplateMapper.versionToDomain(row));
+    return rows.map(SystemTemplateMapper.versionToDomain);
   }
 
   async getVersionByNumber(templateKey: SystemTemplateKey, versionNumber: number): Promise<SystemTemplateVersionEntity | null> {

@@ -93,7 +93,7 @@ export function NotificationSettings() {
     const loading = isLoading || actionLoading;
 
     return (
-        <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+        <Paper data-component="notification-settings-paper" variant="outlined" sx={{ p: 2, mt: 2 }}>
             <Box display="flex" alignItems="center" justifyContent="space-between">
                 <Box display="flex" alignItems="center" gap={1}>
                     {isSubscribed ? (

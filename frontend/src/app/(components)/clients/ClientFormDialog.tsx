@@ -334,7 +334,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     const isSubmitting = createClient.isPending || updateClient.isPending;
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ 'data-testid': 'client-form-dialog' }}>
+        <Dialog data-component="ClientFormDialog" open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ 'data-testid': 'client-form-dialog' }}>
             <DialogTitle>
                 {isEditMode
                     ? t(locale, "clients.form.edit-title")

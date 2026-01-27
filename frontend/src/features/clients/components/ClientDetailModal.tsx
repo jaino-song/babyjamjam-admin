@@ -132,7 +132,7 @@ export function ClientDetailModal({
     const canReplace = client.serviceStatus === "active" || client.serviceStatus === "waiting";
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+        <Dialog data-component="ClientDetailModal" open={open} onClose={onClose} maxWidth="sm" fullWidth>
             <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <Box component="span" sx={{ fontWeight: 600, fontSize: "1.25rem" }}>
                     {client.name}
@@ -168,9 +168,9 @@ export function ClientDetailModal({
                         {t(locale, "clients.form.section-service")}
                     </Typography>
                     <InfoRow label={t(locale, "clients.form.voucher-type")} value={client.type} />
-                    <InfoRow 
-                        label={t(locale, "clients.form.duration")} 
-                        value={client.duration ? `${client.duration}일` : "-"} 
+                    <InfoRow
+                        label={t(locale, "clients.form.duration")}
+                        value={client.duration ? `${client.duration}일` : "-"}
                     />
 
                     <Divider sx={{ my: 2 }} />

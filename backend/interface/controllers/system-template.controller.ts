@@ -21,7 +21,7 @@ export class SystemTemplateController {
 
     @Put(":key")
     update(@Param("key") key: string, @Body() dto: UpdateSystemTemplateDto, @Req() req: any) {
-        return this.service.update(key, dto.content, req.user.userId);
+        return this.service.update(key, dto.content, req.user.userId, dto.customVariables);
     }
 
     @Post(":key/validate")

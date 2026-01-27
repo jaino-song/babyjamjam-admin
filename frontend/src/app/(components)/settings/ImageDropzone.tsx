@@ -105,7 +105,7 @@ export function ImageDropzone({
   };
 
   return (
-    <Box>
+    <Box data-component="ImageDropzone">
       {/* 에러 표시 */}
       {(validationError || error) && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -115,6 +115,7 @@ export function ImageDropzone({
 
       {/* 드롭존 */}
       <Paper
+        data-component="image-dropzone-paper"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
