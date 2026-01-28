@@ -12,8 +12,6 @@ import {
   Box,
   Chip,
   Divider,
-  Menu,
-  MenuItem,
 } from "@mui/material";
 import {
   Close as CloseIcon,
@@ -21,36 +19,28 @@ import {
   Print as PrintIcon,
   ZoomIn as ZoomInIcon,
   ZoomOut as ZoomOutIcon,
-  MoreVert as MoreVertIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
 } from "@mui/icons-material";
 import { Document, getDownloadUrl } from "@/app/hooks/use-documents";
-import { DocumentCategory } from "@/app/hooks/use-document-categories";
-import { formatFileSize, formatDate } from "./document-list";
+import { CATEGORY_LABELS, formatFileSize, formatDate } from "./document-list";
 
 interface DocumentPreviewModalProps {
   open: boolean;
   onClose: () => void;
   doc: Document | null;
-  categories: DocumentCategory[];
   onEdit?: (doc: Document) => void;
   onDelete?: (doc: Document) => void;
-}
-
-function getCategoryLabel(categoryId: string, categories: DocumentCategory[]): string {
-  const category = categories.find((c) => c.id === categoryId);
-  return category?.label || categoryId;
 }
 
 export default function DocumentPreviewModal({
   open,
   onClose,
   doc,
-  categories,
   onEdit,
   onDelete,
 }: DocumentPreviewModalProps) {
   const [zoom, setZoom] = useState(1);
-  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const printFrameRef = useRef<HTMLIFrameElement>(null);
 
    if (!doc) return null;
@@ -130,23 +120,14 @@ export default function DocumentPreviewModal({
            p: 2,
            display: "flex",
            justifyContent: "space-between",
-           alignItems: "flex-start",
+           alignItems: "center",
            borderBottom: 1,
            borderColor: "divider",
          }}
        >
-         <Box>
-           <Typography variant="h6" component="div">
-             {doc.name}
-           </Typography>
-            <Chip
-              label={getCategoryLabel(doc.categoryId, categories)}
-              size="small"
-              color="primary"
-              variant="outlined"
-              sx={{ mt: 0.5 }}
-            />
-         </Box>
+         <Typography variant="h6" component="div">
+           {doc.name}
+         </Typography>
         <IconButton
           aria-label="close"
           onClick={onClose}
@@ -172,6 +153,19 @@ export default function DocumentPreviewModal({
           <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 1 }}>
             <Box>
               <Typography variant="caption" color="text.secondary">
+                카테고리
+              </Typography>
+              <Box sx={{ mt: 0.5 }}>
+                <Chip
+                  label={CATEGORY_LABELS[doc.category] || doc.category}
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                />
+              </Box>
+            </Box>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
                 파일 크기
               </Typography>
               <Typography variant="body2" sx={{ mt: 0.5 }}>
@@ -186,51 +180,6 @@ export default function DocumentPreviewModal({
                 {formatDate(doc.createdAt)}
               </Typography>
             </Box>
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                파일 포맷
-              </Typography>
-              <Typography variant="body2" sx={{ mt: 0.5, textTransform: "uppercase" }}>
-                {doc.mimeType.split("/")[1]?.replace("jpeg", "jpg").replace("plain", "txt") || "Unknown"}
-              </Typography>
-            </Box>
-            {(onEdit || onDelete) && (
-              <Box sx={{ ml: "auto", alignSelf: "center" }}>
-                <IconButton
-                  size="small"
-                  onClick={(e) => setMenuAnchor(e.currentTarget)}
-                >
-                  <MoreVertIcon />
-                </IconButton>
-                <Menu
-                  anchorEl={menuAnchor}
-                  open={Boolean(menuAnchor)}
-                  onClose={() => setMenuAnchor(null)}
-                >
-                  {onEdit && (
-                    <MenuItem
-                      onClick={() => {
-                        setMenuAnchor(null);
-                        onEdit(doc);
-                      }}
-                    >
-                      수정
-                    </MenuItem>
-                  )}
-                  {onDelete && (
-                    <MenuItem
-                      onClick={() => {
-                        setMenuAnchor(null);
-                        onDelete(doc);
-                        onClose();
-                      }}
-                    >
-                      삭제
-                    </MenuItem>
-                  )}
-                </Menu>
-              </Box>
-            )}
           </Box>
           {doc.tags && doc.tags.length > 0 && (
             <Box sx={{ mt: 1 }}>
@@ -271,7 +220,7 @@ export default function DocumentPreviewModal({
           {isPdf && (
             <Box
               component="iframe"
-              src={`${getDownloadUrl(doc.id)}#toolbar=0`}
+              src={getDownloadUrl(doc.id)}
               sx={{
                 width: "100%",
                 height: "100%",
@@ -295,7 +244,7 @@ export default function DocumentPreviewModal({
             >
               <Box
                 component="img"
-                src={`${getDownloadUrl(doc.id)}#toolbar=0`}
+                src={getDownloadUrl(doc.id)}
                 alt={doc.name}
                 sx={{
                   maxWidth: "100%",
@@ -351,21 +300,51 @@ export default function DocumentPreviewModal({
         </Box>
       </DialogContent>
 
-       <DialogActions sx={{ p: 2, borderTop: 1, borderColor: "divider", justifyContent: "flex-end" }}>
-          <Button
-            onClick={handlePrint}
-            startIcon={<PrintIcon />}
-            color="inherit"
-          >
-            인쇄
-          </Button>
-          <Button
-            onClick={handleDownload}
-            variant="contained"
-            startIcon={<DownloadIcon />}
-          >
-            다운로드
-          </Button>
+       <DialogActions sx={{ p: 2, borderTop: 1, borderColor: "divider", justifyContent: "space-between" }}>
+          <Box sx={{ display: "flex", gap: 1 }}>
+            {onEdit && (
+              <Button
+                onClick={() => {
+                  onEdit(doc);
+                  onClose();
+                }}
+                startIcon={<EditIcon />}
+                color="primary"
+                variant="outlined"
+              >
+                수정
+              </Button>
+            )}
+            {onDelete && (
+              <Button
+                onClick={() => {
+                  onDelete(doc);
+                  onClose();
+                }}
+                startIcon={<DeleteIcon />}
+                color="error"
+                variant="outlined"
+              >
+                삭제
+              </Button>
+            )}
+          </Box>
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button
+              onClick={handlePrint}
+              startIcon={<PrintIcon />}
+              color="inherit"
+            >
+              인쇄
+            </Button>
+            <Button
+              onClick={handleDownload}
+              variant="contained"
+              startIcon={<DownloadIcon />}
+            >
+              다운로드
+            </Button>
+          </Box>
        </DialogActions>
     </Dialog>
   );

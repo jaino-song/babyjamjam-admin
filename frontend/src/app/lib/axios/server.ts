@@ -8,16 +8,6 @@ const API_URL = isProduction
 
 export const serverAPIClient = axios.create({
     baseURL: API_URL,
-    timeout: 60000,
-    validateStatus: (status) => status < 600,
-    headers: {
-        "Content-Type": "application/json",
-    },
+    timeout: 60000, // 60 seconds - Railway apps can take time to wake up
+    validateStatus: (status) => status < 600, // Accept any status code for better error visibility
 });
-
-/**
- * Helper to extract auth token from request cookies
- */
-export function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}

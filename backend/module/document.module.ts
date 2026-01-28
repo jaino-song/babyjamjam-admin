@@ -1,13 +1,10 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import {
-    UploadDocumentUsecase,
-    GetDocumentsUsecase,
-    GetDocumentUsecase,
-    UpdateDocumentUsecase,
-    DeleteDocumentUsecase,
-    DownloadDocumentUsecase,
-} from "application/usecases/document";
+import { DOCUMENT_REPOSITORY } from "domain/repositories/document.repository.interface";
+import { FILE_STORAGE_PORT } from "domain/ports/file-storage.port";
+import { SbDocumentRepository } from "infrastructure/database/repositories/sb.document.repository";
+import { SupabaseStorageAdapter } from "infrastructure/adapters/supabase-storage.adapter";
+import { PrismaService } from "infrastructure/database/prisma.service";
 import { DocumentService } from "application/services/document.service";
 import { DOCUMENT_REPOSITORY } from "domain/repositories/document.repository.interface";
 import { FILE_STORAGE_PORT } from "domain/ports/file-storage.port";
@@ -28,10 +25,17 @@ import { DocumentController } from "interface/controllers/document.controller";
         DownloadDocumentUsecase,
         DocumentService,
         PrismaService,
+        SupabaseStorageAdapter,
+        // Repository binding
         {
             provide: DOCUMENT_REPOSITORY,
             useClass: DocumentRepository,
         },
+        {
+            provide: FILE_STORAGE_PORT,
+            useClass: SupabaseStorageAdapter,
+        },
+        // File storage binding
         {
             provide: FILE_STORAGE_PORT,
             useClass: SupabaseStorageAdapter,

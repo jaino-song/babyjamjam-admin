@@ -14,15 +14,25 @@ import {
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { Document } from "@/app/hooks/use-documents";
-import { useDocumentCategories } from "@/app/hooks/use-document-categories";
 
 interface DocumentEditModalProps {
   open: boolean;
   onClose: () => void;
   doc: Document | null;
-  onSave: (id: string, params: { name?: string; description?: string; categoryId?: string; tags?: string[] }) => Promise<void>;
+  onSave: (id: string, params: { name?: string; description?: string; category?: string; tags?: string[] }) => Promise<void>;
   isLoading?: boolean;
 }
+
+const CATEGORIES = [
+  { value: 'contract', label: '계약서' },
+  { value: 'invoice', label: '청구서' },
+  { value: 'receipt', label: '영수증' },
+  { value: 'report', label: '보고서' },
+  { value: 'certificate', label: '증명서' },
+  { value: 'form', label: '양식' },
+  { value: 'notice', label: '안내문' },
+  { value: 'employee-contract', label: '제공인력 계약서' },
+];
 
 export function DocumentEditModal({
   open,
@@ -37,13 +47,11 @@ export function DocumentEditModal({
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
 
-  const { data: categories = [] } = useDocumentCategories();
-
   useEffect(() => {
     if (doc) {
       setName(doc.name || '');
       setDescription(doc.description || '');
-      setCategory(doc.categoryId || '');
+      setCategory(doc.category || '');
       setTags(doc.tags || []);
     } else {
       setName('');
@@ -60,7 +68,7 @@ export function DocumentEditModal({
     await onSave(doc.id, {
       name,
       description,
-      categoryId: category,
+      category,
       tags
     });
   };
@@ -117,8 +125,8 @@ export function DocumentEditModal({
             onChange={(e) => setCategory(e.target.value)}
             disabled={isLoading}
           >
-            {categories.map((option) => (
-              <MenuItem key={option.id} value={option.id}>
+            {CATEGORIES.map((option) => (
+              <MenuItem key={option.value} value={option.value}>
                 {option.label}
               </MenuItem>
             ))}

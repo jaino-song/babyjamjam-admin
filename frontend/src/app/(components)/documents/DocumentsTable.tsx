@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
     Box,
     Button,
@@ -8,31 +8,25 @@ import {
     DialogContent,
     DialogTitle,
     DialogActions,
+    MenuItem,
+    Select,
     Typography,
     Snackbar,
     Alert,
     CircularProgress,
+    Divider,
     IconButton,
-    Chip,
-    useMediaQuery,
-    useTheme,
 } from "@mui/material";
-import {
-    PictureAsPdf as PdfIcon,
-    Image as ImageIcon,
-    Description as FileIcon,
-} from "@mui/icons-material";
-import { Plus } from "lucide-react";
+import { Search, Plus } from "lucide-react";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { ContentPaper } from "../root/content-paper";
 import { DocumentDropzone } from "./document-dropzone";
-import { formatDate } from "./document-list";
+import DocumentList from "./document-list";
 import DocumentPreviewModal from "./document-preview-modal";
 import { DocumentEditModal } from "./document-edit-modal";
-import { AddCategoryModal } from "./add-category-modal";
 import {
     useDocuments,
     useUploadDocument,
@@ -40,30 +34,23 @@ import {
     useDeleteDocument,
     Document,
 } from "@/app/hooks/use-documents";
-import { useDocumentCategories, useCreateDocumentCategory, DocumentCategory } from "@/app/hooks/use-document-categories";
-import { DataTable, type DataTableColumn } from "@/app/(components)/ui/datatable";
 
+const CATEGORIES = [
+    { value: "", label: "전체" },
+    { value: "contract", label: "계약서" },
+    { value: "invoice", label: "청구서" },
+    { value: "receipt", label: "영수증" },
+    { value: "report", label: "보고서" },
+    { value: "certificate", label: "증명서" },
+    { value: "form", label: "양식" },
+    { value: "notice", label: "안내문" },
+    { value: "employee-contract", label: "제공인력 계약서" },
+];
 
 export function DocumentsTable() {
     const locale = useLocale();
-    const theme = useTheme();
-    const isMobile = useMediaQuery(theme.breakpoints.down("md"));
 
-    const muiChipColorValues = [
-        "default",
-        "primary",
-        "secondary",
-        "error",
-        "info",
-        "success",
-        "warning",
-    ] as const;
-    type MuiChipColor = (typeof muiChipColorValues)[number];
-    const isMuiChipColor = (value: string): value is MuiChipColor =>
-        (muiChipColorValues as readonly string[]).includes(value);
-
-    const [filterCategory, setFilterCategory] = useState<string | null>(null);
-    const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
+    const [filterCategory, setFilterCategory] = useState("");
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
     const [editDoc, setEditDoc] = useState<Document | null>(null);
@@ -80,17 +67,13 @@ export function DocumentsTable() {
         severity: "success",
     });
 
-
     const { data: documents = [], isLoading, error } = useDocuments(
-        filterCategory ?? undefined
+        filterCategory || undefined
     );
 
     const uploadMutation = useUploadDocument();
     const updateMutation = useUpdateDocument();
     const deleteMutation = useDeleteDocument();
-
-    const { data: categories = [] } = useDocumentCategories();
-    const createCategoryMutation = useCreateDocumentCategory();
 
     const handleCloseSnackbar = () => {
         setSnackbar((prev) => ({ ...prev, open: false }));
@@ -104,7 +87,7 @@ export function DocumentsTable() {
         file: File;
         name: string;
         description?: string;
-        categoryId: string;
+        category: string;
         tags: string[];
     }) => {
         try {
@@ -126,7 +109,7 @@ export function DocumentsTable() {
         params: {
             name?: string;
             description?: string;
-            categoryId?: string;
+            category?: string;
             tags?: string[];
         }
     ) => {
@@ -152,125 +135,6 @@ export function DocumentsTable() {
         }
     };
 
-    const handleAddCategory = async (category: { value: string; label: string; color: string }) => {
-        try {
-            await createCategoryMutation.mutateAsync(category);
-            setIsAddCategoryOpen(false);
-            showSnackbar("태그가 추가되었습니다.", "success");
-        } catch (err) {
-            console.error(err);
-            showSnackbar("태그 추가에 실패했습니다.", "error");
-        }
-    };
-
-    const existingColors = categories.filter((c) => c.isCustom).map((c) => c.color);
-    const tableData = useMemo(() => {
-        return [...documents]
-            .map((doc) => ({
-                ...doc,
-                tags: doc.tags?.join(" ") ?? "",
-                raw: doc,
-            }))
-            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    }, [documents]);
-
-    const filterOptions = useMemo(() => {
-        return [
-            { label: "전체", value: null },
-            ...categories.map((category) => ({
-                label: category.label,
-                value: category.id,
-                color: isMuiChipColor(category.color) ? category.color : "default",
-                chipSx: isMuiChipColor(category.color)
-                    ? undefined
-                    : {
-                        bgcolor: category.color,
-                        color: theme.palette.getContrastText(category.color),
-                    },
-            })),
-        ];
-    }, [categories, theme]);
-
-    const getCategoryLabel = (categoryId: string, items: DocumentCategory[]): string => {
-        const category = items.find((c) => c.id === categoryId);
-        return category?.label || categoryId;
-    };
-
-    const getFileIcon = (mimeType: string) => {
-        if (mimeType.includes("pdf")) {
-            return <PdfIcon className="text-red-500" />;
-        }
-        if (mimeType.includes("image")) {
-            return <ImageIcon className="text-blue-500" />;
-        }
-        return <FileIcon className="text-gray-500" />;
-    };
-
-    type DocumentRow = Omit<Document, "tags"> & { tags: string; raw: Document };
-    const columns = useMemo<DataTableColumn<DocumentRow>[]>(() => {
-        const baseColumns: DataTableColumn<DocumentRow>[] = [
-            {
-                key: "name",
-                header: "문서명",
-                align: "center",
-                render: (row: DocumentRow) => (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "left" }}>
-                        {getFileIcon(row.raw.mimeType)}
-                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                            {row.raw.name}
-                        </Typography>
-                    </Box>
-                ),
-            },
-            {
-                key: "createdAt",
-                header: "등록일",
-                align: "center",
-                width: "110px",
-                render: (row: DocumentRow) => formatDate(row.raw.createdAt),
-            },
-        ];
-
-        if (!isMobile) {
-            baseColumns.push({
-                key: "categoryId",
-                header: "카테고리",
-                align: "center",
-                width: "120px",
-                render: (row: DocumentRow) => {
-                    const category = categories.find((c) => c.id === row.raw.categoryId);
-                    const label = getCategoryLabel(row.raw.categoryId, categories);
-
-                    if (!category) {
-                        return (
-                            <Chip
-                                label={label}
-                                size="small"
-                                sx={{ bgcolor: "rgba(0, 0, 0, 0.08)", color: "rgba(0, 0, 0, 0.87)" }}
-                            />
-                        );
-                    }
-
-                    if (isMuiChipColor(category.color)) {
-                        return <Chip label={label} size="small" color={category.color} />;
-                    }
-
-                    return (
-                        <Chip
-                            label={label}
-                            size="small"
-                            sx={{
-                                bgcolor: category.color,
-                                color: theme.palette.getContrastText(category.color),
-                            }}
-                        />
-                    );
-                },
-            });
-        }
-
-        return baseColumns;
-    }, [categories, isMobile, theme]);
     if (isLoading) {
         return (
             <ContentPaper
@@ -304,25 +168,44 @@ export function DocumentsTable() {
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
             <Box data-component="documents-table-container">
-                <DataTable
-                    data={tableData}
-                    columns={columns}
-                    isLoading={false}
-                    getRowKey={(row: DocumentRow) => row.id}
-                    onRowClick={(row: DocumentRow) => setPreviewDoc(row.raw)}
-                    searchEnabled
-                    searchFields={["name", "description", "tags"]}
-                    searchPlaceholder="문서 검색"
-                    filterOptions={filterOptions}
-                    filterValue={filterCategory}
-                    onFilterChange={(value: string | null) => setFilterCategory(value)}
-                    filterAddAction={{
-                        label: "카테고리 추가",
-                        onClick: () => setIsAddCategoryOpen(true),
+                <Box
+                    data-component="documents-toolbar"
+                    sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-around",
                     }}
-                    pagination="none"
-                    emptyMessage="등록된 문서가 없습니다"
-                    toolbarActions={(
+                >
+                    <Box
+                        data-component="documents-toolbar-buttons"
+                        sx={{
+                            display: "flex",
+                            justifyContent: "space-around",
+                            alignItems: "center",
+                            gap: 1,
+                            width: "100%",
+                        }}
+                    >
+                        <IconButton size="medium" sx={{ color: "grey.600" }}>
+                            <Search size={24} strokeWidth={2} />
+                        </IconButton>
+
+                        <Select
+                            value={filterCategory}
+                            onChange={(e) => setFilterCategory(e.target.value)}
+                            displayEmpty
+                            size="small"
+                            sx={{ minWidth: 120, bgcolor: "background.paper" }}
+                        >
+                            {CATEGORIES.map((cat) => (
+                                <MenuItem key={cat.value} value={cat.value}>
+                                    {cat.label}
+                                </MenuItem>
+                            ))}
+                        </Select>
+
+                        <Box sx={{ flex: 1 }} />
+
                         <IconButton
                             size="medium"
                             sx={{ color: "#1e88e5" }}
@@ -330,8 +213,20 @@ export function DocumentsTable() {
                         >
                             <Plus size={30} strokeWidth={2} />
                         </IconButton>
-                    )}
-                />
+                    </Box>
+                </Box>
+
+                <Divider />
+
+                <Box sx={{ minHeight: 200, width: "100%" }}>
+                    <DocumentList
+                        documents={documents}
+                        isLoading={false}
+                        onPreview={(doc) => setPreviewDoc(doc)}
+                        onEdit={(doc) => setEditDoc(doc)}
+                        onDelete={(doc) => setDeleteDoc(doc)}
+                    />
+                </Box>
             </Box>
 
             <Dialog
@@ -367,8 +262,8 @@ export function DocumentsTable() {
                 open={!!previewDoc}
                 onClose={() => setPreviewDoc(null)}
                 doc={previewDoc}
-                categories={categories}
                 onEdit={(doc) => {
+                    setPreviewDoc(null);
                     setEditDoc(doc);
                 }}
                 onDelete={(doc) => {
@@ -383,14 +278,6 @@ export function DocumentsTable() {
                 doc={editDoc}
                 onSave={handleUpdate}
                 isLoading={updateMutation.isPending}
-            />
-
-            <AddCategoryModal
-                open={isAddCategoryOpen}
-                onClose={() => setIsAddCategoryOpen(false)}
-                onAdd={handleAddCategory}
-                existingColors={existingColors}
-                isLoading={createCategoryMutation.isPending}
             />
 
             <Dialog

@@ -3,11 +3,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/app/lib/axios/client";
 
+// Document type matching backend entity
 export interface Document {
     id: string;
     name: string;
     description?: string;
-    categoryId: string;
+    category: string;
     tags: string[];
     mimeType: string;
     fileSize: number;
@@ -19,21 +20,23 @@ export interface Document {
     updatedAt: string;
 }
 
+// Upload document params
 export interface UploadDocumentParams {
     file: File;
     name?: string;
     description?: string;
-    categoryId: string;
+    category: string;
     tags?: string[];
     orgId?: string;
     uploadedBy?: string;
     onProgress?: (progress: number) => void;
 }
 
+// Update document params
 export interface UpdateDocumentParams {
     name?: string;
     description?: string;
-    categoryId?: string;
+    category?: string;
     tags?: string[];
 }
 
@@ -46,17 +49,20 @@ export const documentQueryKeys = {
     detail: (id: string) => [...documentQueryKeys.details(), id] as const,
 };
 
-export function useDocuments(categoryId?: string) {
+/**
+ * Hook to fetch all documents with optional category filter
+ */
+export function useDocuments(category?: string) {
     return useQuery<Document[]>({
-        queryKey: documentQueryKeys.list({ categoryId }),
+        queryKey: documentQueryKeys.list({ category }),
         queryFn: async () => {
             const params = new URLSearchParams();
-            if (categoryId) params.append("categoryId", categoryId);
-            const url = `/file-storage/files${params.toString() ? `?${params.toString()}` : ""}`;
+            if (category) params.append("category", category);
+            const url = `/documents${params.toString() ? `?${params.toString()}` : ""}`;
             const { data } = await api.get<Document[]>(url);
             return data;
         },
-        staleTime: 1000 * 60 * 5,
+        staleTime: 1000 * 60 * 5, // 5 minutes
     });
 }
 
@@ -67,7 +73,7 @@ export function useDocument(id: string) {
     return useQuery<Document>({
         queryKey: documentQueryKeys.detail(id),
         queryFn: async () => {
-            const { data } = await api.get<Document>(`/file-storage/files/${id}`);
+            const { data } = await api.get<Document>(`/documents/${id}`);
             return data;
         },
         enabled: !!id,
@@ -75,6 +81,9 @@ export function useDocument(id: string) {
     });
 }
 
+/**
+ * Hook to upload a document with progress tracking
+ */
 export function useUploadDocument() {
     const queryClient = useQueryClient();
 
@@ -83,7 +92,7 @@ export function useUploadDocument() {
             file,
             name,
             description,
-            categoryId,
+            category,
             tags,
             orgId,
             uploadedBy,
@@ -93,12 +102,12 @@ export function useUploadDocument() {
             formData.append("file", file);
             if (name) formData.append("name", name);
             if (description) formData.append("description", description);
-            formData.append("categoryId", categoryId);
+            formData.append("category", category);
             if (tags) formData.append("tags", JSON.stringify(tags));
             if (orgId) formData.append("orgId", orgId);
             if (uploadedBy) formData.append("uploadedBy", uploadedBy);
 
-            const { data } = await api.post<Document>("/file-storage/files", formData, {
+            const { data } = await api.post<Document>("/documents", formData, {
                 onUploadProgress: (progressEvent) => {
                     if (onProgress && progressEvent.total) {
                         const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -125,7 +134,7 @@ export function useUpdateDocument() {
 
     return useMutation<Document, Error, { id: string } & UpdateDocumentParams>({
         mutationFn: async ({ id, ...params }: { id: string } & UpdateDocumentParams) => {
-            const { data } = await api.put<Document>(`/file-storage/files/${id}`, params);
+            const { data } = await api.put<Document>(`/documents/${id}`, params);
             return data;
         },
         onSuccess: (data) => {
@@ -146,7 +155,7 @@ export function useDeleteDocument() {
 
      return useMutation<string, Error, string>({
          mutationFn: async (id: string) => {
-             await api.delete(`/file-storage/files/${id}`);
+             await api.delete(`/documents/${id}`);
              return id;
          },
          onSuccess: () => {
@@ -164,6 +173,6 @@ export function useDeleteDocument() {
  * @param attachment - if true, browser will download instead of preview
  */
 export function getDownloadUrl(id: string, attachment?: boolean): string {
-     const base = `/api/file-storage/files/${id}/download`;
+     const base = `/api/documents/${id}/download`;
      return attachment ? `${base}?attachment=true` : base;
 }

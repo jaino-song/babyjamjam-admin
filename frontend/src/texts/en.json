@@ -185,7 +185,7 @@
       "clients": "Clients",
       "employees": "Employees",
       "file-storage": "Documents",
-      "files": "Files",
+      "documents": "documents",
       "settings": "Settings"
     },
   "login": {
