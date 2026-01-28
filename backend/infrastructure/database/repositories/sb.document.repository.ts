@@ -22,9 +22,9 @@ export class SbDocumentRepository implements IDocumentRepository {
         return docs.map(DocumentMapper.toDomain);
     }
 
-    async findByCategory(category: string): Promise<DocumentEntity[]> {
+    async findByCategoryId(categoryId: string): Promise<DocumentEntity[]> {
         const docs = await this.prismaService.document.findMany({
-            where: { category },
+            where: { categoryId },
         });
         return docs.map(DocumentMapper.toDomain);
     }

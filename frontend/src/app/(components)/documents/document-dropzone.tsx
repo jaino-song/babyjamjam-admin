@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState, useEffect } from "react";
+import { useDocumentCategories } from "@/app/hooks/use-document-categories";
 import {
   Box,
   Typography,
@@ -32,23 +33,13 @@ const ALLOWED_TYPES = [
 const ALLOWED_EXTENSIONS = ".png, .jpg, .jpeg, .pdf";
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
-const CATEGORIES = [
-  { value: 'contract', label: '계약서' },
-  { value: 'invoice', label: '청구서' },
-  { value: 'receipt', label: '영수증' },
-  { value: 'report', label: '보고서' },
-  { value: 'certificate', label: '증명서' },
-  { value: 'form', label: '양식' },
-  { value: 'notice', label: '안내문' },
-  { value: 'employee-contract', label: '제공인력 계약서' },
-];
 
 interface DocumentDropzoneProps {
   onUpload: (params: { 
     file: File; 
     name: string; 
     description?: string; 
-    category: string; 
+    categoryId: string; 
     tags: string[] 
   }) => Promise<void>;
   isLoading?: boolean;
@@ -70,6 +61,8 @@ export function DocumentDropzone({
   const [category, setCategory] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
+
+  const { data: categories = [] } = useDocumentCategories();
 
   useEffect(() => {
     return () => {
@@ -191,7 +184,7 @@ export function DocumentDropzone({
       file: selectedFile,
       name,
       description: description || undefined,
-      category,
+      categoryId: category,
       tags
     });
   };
@@ -349,8 +342,8 @@ export function DocumentDropzone({
               disabled={isLoading}
               size="small"
             >
-              {CATEGORIES.map((option) => (
-                <MenuItem key={option.value} value={option.value}>
+              {categories.map((option) => (
+                <MenuItem key={option.id} value={option.id}>
                   {option.label}
                 </MenuItem>
               ))}

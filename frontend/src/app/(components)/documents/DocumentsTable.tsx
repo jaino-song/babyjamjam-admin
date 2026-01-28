@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
     Box,
     Button,
@@ -16,17 +16,20 @@ import {
     CircularProgress,
     Divider,
     IconButton,
+    TextField,
 } from "@mui/material";
 import { Search, Plus } from "lucide-react";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 
 import { useLocale } from "../LocaleProvider";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 import { t } from "@/app/lib/i18n/translations";
 import { ContentPaper } from "../root/content-paper";
 import { DocumentDropzone } from "./document-dropzone";
 import DocumentList from "./document-list";
 import DocumentPreviewModal from "./document-preview-modal";
 import { DocumentEditModal } from "./document-edit-modal";
+import { AddCategoryModal } from "./add-category-modal";
 import {
     useDocuments,
     useUploadDocument,
@@ -34,23 +37,16 @@ import {
     useDeleteDocument,
     Document,
 } from "@/app/hooks/use-documents";
+import { useDocumentCategories, useCreateDocumentCategory, DocumentCategory } from "@/app/hooks/use-document-categories";
 
-const CATEGORIES = [
-    { value: "", label: "전체" },
-    { value: "contract", label: "계약서" },
-    { value: "invoice", label: "청구서" },
-    { value: "receipt", label: "영수증" },
-    { value: "report", label: "보고서" },
-    { value: "certificate", label: "증명서" },
-    { value: "form", label: "양식" },
-    { value: "notice", label: "안내문" },
-    { value: "employee-contract", label: "제공인력 계약서" },
-];
 
 export function DocumentsTable() {
     const locale = useLocale();
 
     const [filterCategory, setFilterCategory] = useState("");
+    const [searchInput, setSearchInput] = useState("");
+    const [isSearchOpen, setIsSearchOpen] = useState(false);
+    const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
     const [editDoc, setEditDoc] = useState<Document | null>(null);
@@ -67,6 +63,7 @@ export function DocumentsTable() {
         severity: "success",
     });
 
+
     const { data: documents = [], isLoading, error } = useDocuments(
         filterCategory || undefined
     );
@@ -74,6 +71,9 @@ export function DocumentsTable() {
     const uploadMutation = useUploadDocument();
     const updateMutation = useUpdateDocument();
     const deleteMutation = useDeleteDocument();
+
+    const { data: categories = [] } = useDocumentCategories();
+    const createCategoryMutation = useCreateDocumentCategory();
 
     const handleCloseSnackbar = () => {
         setSnackbar((prev) => ({ ...prev, open: false }));
@@ -87,7 +87,7 @@ export function DocumentsTable() {
         file: File;
         name: string;
         description?: string;
-        category: string;
+        categoryId: string;
         tags: string[];
     }) => {
         try {
@@ -109,7 +109,7 @@ export function DocumentsTable() {
         params: {
             name?: string;
             description?: string;
-            category?: string;
+            categoryId?: string;
             tags?: string[];
         }
     ) => {
@@ -134,6 +134,40 @@ export function DocumentsTable() {
             showSnackbar("문서 삭제에 실패했습니다.", "error");
         }
     };
+
+    const handleSearchIconClick = () => {
+        setIsSearchOpen(true);
+    };
+
+    const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchInput(e.target.value);
+    };
+
+    const handleSearchBlur = () => {
+        if (!searchInput.trim()) {
+            setIsSearchOpen(false);
+        }
+    };
+
+
+    const handleAddCategory = async (category: { value: string; label: string; color: string }) => {
+        try {
+            await createCategoryMutation.mutateAsync(category);
+            setIsAddCategoryOpen(false);
+            showSnackbar("태그가 추가되었습니다.", "success");
+        } catch (err) {
+            console.error(err);
+            showSnackbar("태그 추가에 실패했습니다.", "error");
+        }
+    };
+
+    const existingColors = categories.filter((c) => c.isCustom).map((c) => c.color);
+    const filteredDocuments = useMemo(() => {
+        if (!searchInput.trim()) return documents;
+        return documents.filter((doc) =>
+            matchesKoreanSearch(doc.name || '', searchInput.trim())
+        );
+    }, [documents, searchInput]);
 
     if (isLoading) {
         return (
@@ -182,29 +216,71 @@ export function DocumentsTable() {
                             display: "flex",
                             justifyContent: "space-around",
                             alignItems: "center",
-                            gap: 1,
+                            gap: 0,
                             width: "100%",
                         }}
                     >
-                        <IconButton size="medium" sx={{ color: "grey.600" }}>
-                            <Search size={24} strokeWidth={2} />
-                        </IconButton>
+                        {isSearchOpen ? (
+                            <TextField
+                                size="small"
+                                placeholder="문서 검색"
+                                value={searchInput}
+                                onChange={handleSearchChange}
+                                onBlur={handleSearchBlur}
+                                autoFocus
+                                sx={{
+                                    width: 60,
+                                    "& .MuiOutlinedInput-root": {
+                                        backgroundColor: "transparent",
+                                    },
+                                    "& .MuiOutlinedInput-notchedOutline": {
+                                        border: "none",
+                                    },
+                                    "& .MuiInputBase-input": {
+                                        padding: "8px 0",
+                                    },
+                                }}
+                            />
+                        ) : (
+                            <IconButton
+                                size="medium"
+                                sx={{ color: "grey.600", width: 60 }}
+                                onClick={handleSearchIconClick}
+                                aria-label="문서 검색"
+                            >
+                                <Search size={24} strokeWidth={2} />
+                            </IconButton>
+                        )}
 
                         <Select
                             value={filterCategory}
-                            onChange={(e) => setFilterCategory(e.target.value)}
+                            onChange={(e) => { if (e.target.value !== "__add_new__") setFilterCategory(e.target.value); }}
                             displayEmpty
                             size="small"
                             sx={{ minWidth: 120, bgcolor: "background.paper" }}
                         >
-                            {CATEGORIES.map((cat) => (
-                                <MenuItem key={cat.value} value={cat.value}>
+                            <MenuItem key="__all__" value="">
+                                전체
+                            </MenuItem>
+                            {categories.map((cat) => (
+                                <MenuItem key={cat.id} value={cat.id}>
                                     {cat.label}
                                 </MenuItem>
                             ))}
+                            <Divider sx={{ my: 0.5 }} />
+                            <MenuItem value="__add_new__"
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setIsAddCategoryOpen(true);
+                                }}
+                                sx={{ color: "primary.main", fontWeight: 500 }}
+                            >
+                                <Plus size={16} style={{ marginRight: 8 }} />
+                                태그 추가
+                            </MenuItem>
                         </Select>
 
-                        <Box sx={{ flex: 1 }} />
 
                         <IconButton
                             size="medium"
@@ -220,7 +296,8 @@ export function DocumentsTable() {
 
                 <Box sx={{ minHeight: 200, width: "100%" }}>
                     <DocumentList
-                        documents={documents}
+                        documents={filteredDocuments}
+                        categories={categories}
                         isLoading={false}
                         onPreview={(doc) => setPreviewDoc(doc)}
                         onEdit={(doc) => setEditDoc(doc)}
@@ -262,9 +339,9 @@ export function DocumentsTable() {
                 open={!!previewDoc}
                 onClose={() => setPreviewDoc(null)}
                 doc={previewDoc}
+                categories={categories}
                 onEdit={(doc) => {
-                    setPreviewDoc(null);
-                    setEditDoc(doc);
+                                        setEditDoc(doc);
                 }}
                 onDelete={(doc) => {
                     setPreviewDoc(null);
@@ -278,6 +355,14 @@ export function DocumentsTable() {
                 doc={editDoc}
                 onSave={handleUpdate}
                 isLoading={updateMutation.isPending}
+            />
+
+            <AddCategoryModal
+                open={isAddCategoryOpen}
+                onClose={() => setIsAddCategoryOpen(false)}
+                onAdd={handleAddCategory}
+                existingColors={existingColors}
+                isLoading={createCategoryMutation.isPending}
             />
 
             <Dialog

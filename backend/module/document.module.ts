@@ -7,13 +7,16 @@ import { SupabaseStorageAdapter } from "infrastructure/adapters/supabase-storage
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { DocumentService } from "application/services/document.service";
 import { DocumentController } from "interface/controllers/document.controller";
+import { DocumentCategoryController } from "interface/controllers/document-category.controller";
+import { DocumentCategoryService } from "application/services/document-category.service";
 
 @Module({
     imports: [ConfigModule],
-    controllers: [DocumentController],
+    controllers: [DocumentController, DocumentCategoryController],
     providers: [
         // Service
         DocumentService,
+        DocumentCategoryService,
         // Infrastructure
         PrismaService,
         SupabaseStorageAdapter,

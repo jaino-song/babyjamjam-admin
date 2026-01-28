@@ -1,8 +1,5 @@
 import { IsString, IsOptional, IsArray, IsNumber, Min } from "class-validator";
 
-/**
- * DTO for creating a new document
- */
 export class CreateDocumentDto {
     @IsString()
     name!: string;
@@ -12,7 +9,7 @@ export class CreateDocumentDto {
     description?: string;
 
     @IsString()
-    category!: string;
+    categoryId!: string;
 
     @IsArray()
     @IsString({ each: true })
@@ -40,9 +37,6 @@ export class CreateDocumentDto {
     uploadedby!: string;
 }
 
-/**
- * DTO for updating a document
- */
 export class UpdateDocumentDto {
     @IsOptional()
     @IsString()
@@ -54,7 +48,7 @@ export class UpdateDocumentDto {
 
     @IsOptional()
     @IsString()
-    category?: string;
+    categoryId?: string;
 
     @IsOptional()
     @IsArray()
@@ -87,9 +81,6 @@ export class UpdateDocumentDto {
     uploadedby?: string;
 }
 
-/**
- * DTO for uploading a document with file
- */
 export class UploadDocumentDto {
     @IsOptional()
     @IsString()
@@ -100,10 +91,10 @@ export class UploadDocumentDto {
     description?: string;
 
     @IsString()
-    category!: string;
+    categoryId!: string;
 
     @IsOptional()
-    tags?: string[] | string; // can be array or json string from form-data
+    tags?: string[] | string;
 
     @IsOptional()
     @IsString()

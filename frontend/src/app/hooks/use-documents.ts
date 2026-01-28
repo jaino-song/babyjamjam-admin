@@ -3,12 +3,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/app/lib/axios/client";
 
-// Document type matching backend entity
 export interface Document {
     id: string;
     name: string;
     description?: string;
-    category: string;
+    categoryId: string;
     tags: string[];
     mimeType: string;
     fileSize: number;
@@ -20,23 +19,21 @@ export interface Document {
     updatedAt: string;
 }
 
-// Upload document params
 export interface UploadDocumentParams {
     file: File;
     name?: string;
     description?: string;
-    category: string;
+    categoryId: string;
     tags?: string[];
     orgId?: string;
     uploadedBy?: string;
     onProgress?: (progress: number) => void;
 }
 
-// Update document params
 export interface UpdateDocumentParams {
     name?: string;
     description?: string;
-    category?: string;
+    categoryId?: string;
     tags?: string[];
 }
 
@@ -49,20 +46,17 @@ export const documentQueryKeys = {
     detail: (id: string) => [...documentQueryKeys.details(), id] as const,
 };
 
-/**
- * Hook to fetch all documents with optional category filter
- */
-export function useDocuments(category?: string) {
+export function useDocuments(categoryId?: string) {
     return useQuery<Document[]>({
-        queryKey: documentQueryKeys.list({ category }),
+        queryKey: documentQueryKeys.list({ categoryId }),
         queryFn: async () => {
             const params = new URLSearchParams();
-            if (category) params.append("category", category);
+            if (categoryId) params.append("categoryId", categoryId);
             const url = `/documents${params.toString() ? `?${params.toString()}` : ""}`;
             const { data } = await api.get<Document[]>(url);
             return data;
         },
-        staleTime: 1000 * 60 * 5, // 5 minutes
+        staleTime: 1000 * 60 * 5,
     });
 }
 
@@ -81,9 +75,6 @@ export function useDocument(id: string) {
     });
 }
 
-/**
- * Hook to upload a document with progress tracking
- */
 export function useUploadDocument() {
     const queryClient = useQueryClient();
 
@@ -92,7 +83,7 @@ export function useUploadDocument() {
             file,
             name,
             description,
-            category,
+            categoryId,
             tags,
             orgId,
             uploadedBy,
@@ -102,7 +93,7 @@ export function useUploadDocument() {
             formData.append("file", file);
             if (name) formData.append("name", name);
             if (description) formData.append("description", description);
-            formData.append("category", category);
+            formData.append("categoryId", categoryId);
             if (tags) formData.append("tags", JSON.stringify(tags));
             if (orgId) formData.append("orgId", orgId);
             if (uploadedBy) formData.append("uploadedBy", uploadedBy);

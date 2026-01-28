@@ -4,7 +4,7 @@ type DocumentRow = {
     id: string;
     name: string;
     description: string | null;
-    category: string;
+    categoryId: string;
     tags: string[];
     mimeType: string;
     fileSize: number;
@@ -22,7 +22,7 @@ export class DocumentMapper {
             id: row.id,
             name: row.name,
             description: row.description ?? undefined,
-            category: row.category,
+            categoryId: row.categoryId,
             tags: row.tags,
             mimetype: row.mimeType,
             filesize: row.fileSize,
@@ -39,7 +39,7 @@ export class DocumentMapper {
         return {
             name: entity.name,
             description: entity.description ?? null,
-            category: entity.category,
+            categoryId: entity.categoryId,
             tags: entity.tags,
             mimeType: entity.mimetype,
             fileSize: entity.filesize,
@@ -56,7 +56,7 @@ export class DocumentMapper {
         return {
             name: entity.name,
             description: entity.description ?? null,
-            category: entity.category,
+            categoryId: entity.categoryId,
             tags: entity.tags,
             mimeType: entity.mimetype,
             fileSize: entity.filesize,

@@ -149,9 +149,9 @@ model user {
   role              String?             @db.VarChar
   created_at        DateTime            @default(now()) @db.Timestamp(6)
   kakao_id          String              @unique(map: "user_kakaoId_key") @db.VarChar
+  chat_session      chat_session[]
   notification      notification[]
   push_subscription push_subscription[]
-  chat_session      chat_session[]
 }
 
 model chat_session {
@@ -201,26 +201,24 @@ model message_template {
 }
 
 model system_template {
-  id              String   @id @default(cuid())
-  templateKey     String   @unique @map("template_key")
-  content         String   @db.Text
-  customVariables Json?    @map("custom_variables")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  versions    system_template_version[]
+  id              String                    @id @default(cuid())
+  templateKey     String                    @unique @map("template_key")
+  content         String
+  createdAt       DateTime                  @default(now()) @map("created_at")
+  updatedAt       DateTime                  @updatedAt @map("updated_at")
+  customVariables Json?                     @map("custom_variables")
+  versions        system_template_version[]
 
   @@map("system_template")
 }
 
 model system_template_version {
-  id            String   @id @default(cuid())
-  templateId    String   @map("template_id")
-  content       String   @db.Text
-  versionNumber Int      @map("version_number")
-  createdBy     String?  @map("created_by")
-  createdAt     DateTime @default(now()) @map("created_at")
-
+  id            String          @id @default(cuid())
+  templateId    String          @map("template_id")
+  content       String
+  versionNumber Int             @map("version_number")
+  createdBy     String?         @map("created_by")
+  createdAt     DateTime        @default(now()) @map("created_at")
   template      system_template @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@unique([templateId, versionNumber])
@@ -229,21 +227,34 @@ model system_template_version {
 }
 
 model document {
-  id          String   @id @default(cuid())
+  id          String            @id @default(cuid())
   name        String
   description String?
-  category    String   // predefined category (Contract, Invoice, Receipt, Report, Certificate, Form, Notice, EmployeeContract)
-  tags        String[] // custom tags
-  mimeType    String   @map("mime_type") // image/png, image/jpeg, application/pdf
-  fileSize    Int      @map("file_size") // bytes
-  storagePath String   @map("storage_path") // Supabase storage path
-  storageUrl  String?  @map("storage_url") // Public URL (nullable - use download endpoint instead)
-  orgId       String?  @map("org_id") // For future org-specific access (nullable for now)
-  uploadedBy  String   @map("uploaded_by") // User ID
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  tags        String[]
+  mimeType    String            @map("mime_type")
+  fileSize    Int               @map("file_size")
+  storagePath String            @map("storage_path")
+  storageUrl  String?           @map("storage_url")
+  orgId       String?           @map("org_id")
+  uploadedBy  String            @map("uploaded_by")
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  categoryId  String            @map("category_id")
+  category    document_category @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  @@index([category])
+  @@index([categoryId])
   @@index([uploadedBy])
   @@index([orgId])
+}
+
+model document_category {
+  id        String     @id @default(cuid())
+  value     String     @unique
+  label     String
+  color     String
+  isCustom  Boolean    @default(true) @map("is_custom")
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  documents document[]
+
+  @@map("document_category")
 }
