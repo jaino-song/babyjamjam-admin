@@ -31,7 +31,6 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        console.log("[document-categories] POST body:", JSON.stringify(body));
         const response = await serverAPIClient.post("/document-categories", body);
         return NextResponse.json(response.data, { status: 201 });
     } catch (error) {
