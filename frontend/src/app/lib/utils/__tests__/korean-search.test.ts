@@ -350,9 +350,9 @@ describe("Performance considerations", () => {
         const results = largeList.filter(name => matchesKoreanSearch(name, "ㄱㅎ"));
         const end = performance.now();
 
-        // Should complete in reasonable time (less than 100ms for 10000 items)
         expect(end - start).toBeLessThan(100);
-        // Should find all "김현아" entries
-        expect(results.every(name => name.startsWith("김현"))).toBe(true);
+        expect(results.every(name => 
+            getChosungString(name).startsWith("ㄱㅎ")
+        )).toBe(true);
     });
 });

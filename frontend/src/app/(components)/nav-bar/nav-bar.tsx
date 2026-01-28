@@ -10,6 +10,7 @@ import { NavButton } from "./nav-button";
 import { LanguageSwitcher } from "./language-switcher";
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import AssignmentIndOutlinedIcon from '@mui/icons-material/AssignmentIndOutlined';
+import DescriptionIcon from '@mui/icons-material/Description';
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { eformsignQueryKeys } from "@/app/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
@@ -35,20 +36,20 @@ export const NavBar = ({ onClose }: NavBarProps) => {
 
     useEffect(() => {
         if (!isEformsignAuthenticated()) return;
-        
+
         queryClient.prefetchQuery({
             queryKey: eformsignQueryKeys.allDocuments(),
             queryFn: () => eformsignApi.getAllDocuments(),
             staleTime: 1000 * 60 * 5,
         });
     }, [queryClient]);
-     const isDashboard = pathname === "/dashboard";
-     const isMessages = pathname === "/messages";
-     const isContracts = pathname === "/contracts";
+    const isDashboard = pathname === "/dashboard";
+    const isMessages = pathname === "/messages";
+    const isFiles = pathname === "/files";
+    const isContracts = pathname === "/contracts";
     const isClients = pathname === "/clients";
     const isSettings = pathname === "/settings";
     const isEmployees = pathname === "/employees";
-    const isFileStorage = pathname === "/file-storage";
 
     return (
         <Box sx={{ width: '100%', height: '100%', p: 2, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -64,7 +65,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                     <NavButton href="/contracts" label={t(locale, "nav-bar.contracts")} icon={<File size={15} />} active={isContracts} onClick={onClose} />
                     <NavButton href="/clients" label={t(locale, "nav-bar.clients")} icon={<PeopleOutlineIcon fontSize="small" />} active={isClients} onClick={onClose} />
                     <NavButton href="/employees" label={t(locale, "nav-bar.employees")} icon={<AssignmentIndOutlinedIcon fontSize="small" />} active={isEmployees} onClick={onClose} />
-                    <NavButton href="/file-storage" label={t(locale, "nav-bar.file-storage")} icon={<FileText size={15} />} active={isFileStorage} onClick={onClose} />
+                    <NavButton href="/files" label={t(locale, "nav-bar.files")} icon={<DescriptionIcon fontSize="small" />} active={isFiles} onClick={onClose} />
                     <NavButton href="/settings" label={t(locale, "nav-bar.settings")} icon={<Settings size={15} />} active={isSettings} onClick={onClose} />
                 </Stack>
             </Box>

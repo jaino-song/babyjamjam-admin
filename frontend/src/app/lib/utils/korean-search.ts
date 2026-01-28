@@ -21,12 +21,10 @@ const CHOSUNG_LIST = [
  */
 export function getChosung(char: string): string {
     const code = char.charCodeAt(0);
-    // Check if it's a Korean syllable (가-힣)
     if (code >= 0xac00 && code <= 0xd7a3) {
         const chosungIndex = Math.floor((code - 0xac00) / 588);
         return CHOSUNG_LIST[chosungIndex];
     }
-    // If it's already a consonant or other character, return as-is
     return char;
 }
 
@@ -63,20 +61,23 @@ export function getChosungString(str: string): string {
  * - matchesKoreanSearch("테스트", "ㅅ") → false (테스트 starts with ㅌ, not ㅅ)
  */
 export function matchesKoreanSearch(target: string, query: string): boolean {
-    const lowerTarget = target.toLowerCase();
+    const normalizedTarget = target.normalize("NFC");
+    const lowerTarget = normalizedTarget.toLowerCase();
     const lowerQuery = query.toLowerCase();
 
-    // Regular substring match (for full Korean characters or other text)
     if (lowerTarget.includes(lowerQuery)) {
         return true;
     }
 
-    // Check if query contains Korean consonants for 초성 search
     const hasChosung = query.split("").some(isChosung);
     if (hasChosung) {
-        const targetChosung = getChosungString(target);
-        // 초성 search should match from the start of the name
-        return targetChosung.startsWith(query);
+        const targetChosung = getChosungString(normalizedTarget).replace(/\s/g, "");
+        if (targetChosung.startsWith(query)) {
+            return true;
+        }
+        
+        const words = normalizedTarget.split(/\s+/);
+        return words.some(word => getChosungString(word).startsWith(query));
     }
 
     return false;

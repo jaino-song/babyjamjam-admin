@@ -30,6 +30,43 @@ const theme = createTheme({
         },
       },
     },
+    MuiOutlinedInput: {
+      styleOverrides: {
+        root: {
+          "& fieldset": {
+            borderColor: "#1e88e5",
+          },
+          "&:hover fieldset": {
+            borderColor: "#1e88e5 !important",
+          },
+          "&.Mui-focused fieldset": {
+            borderColor: "#1e88e5 !important",
+          },
+        },
+      },
+    },
+    MuiInputAdornment: {
+      styleOverrides: {
+        root: {
+          "& .MuiSvgIcon-root": {
+            color: "#1e88e5",
+          },
+          "& .MuiIconButton-root": {
+            color: "#1e88e5",
+          },
+        },
+      },
+    },
+    MuiAutocomplete: {
+      styleOverrides: {
+        popupIndicator: {
+          color: "#1e88e5",
+        },
+        clearIndicator: {
+          color: "#1e88e5",
+        },
+      },
+    },
   },
 });
 

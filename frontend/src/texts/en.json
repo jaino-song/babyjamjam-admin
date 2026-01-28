@@ -178,29 +178,41 @@
       "Contract Info"
     ]
   },
-   "nav-bar": {
-     "dashboard": "Dashboard",
-     "messages": "Messages",
-     "contracts": "Contracts",
-     "clients": "Clients",
-     "employees": "Employees",
-     "file-storage": "Documents",
-     "settings": "Settings"
-   },
+    "nav-bar": {
+      "dashboard": "Dashboard",
+      "messages": "Messages",
+      "contracts": "Contracts",
+      "clients": "Clients",
+      "employees": "Employees",
+      "file-storage": "Documents",
+      "files": "Files",
+      "settings": "Settings"
+    },
   "login": {
     "title": "Login to Get Started",
     "subtitle": "Please select one of the social login options below to log in",
     "kakao-login": "Login with Kakao",
     "google-login": "Login with Google"
   },
-  "documents-list": {
-    "title": "Contracts",
-    "subtitle": "View the list of contracts based on conditions.",
-    "document-title": "Contractor",
-    "created-date": "Created Date",
-    "status": "Status",
-    "new-document": "New Contract"
-  },
+   "documents": {
+     "title": "document management",
+     "upload": "upload",
+     "upload-title": "upload document",
+     "filter-all": "all",
+     "delete-confirm-title": "delete document",
+     "delete-confirm-message": "are you sure you want to delete this document? this action cannot be undone.",
+     "delete-success": "document deleted successfully",
+     "upload-success": "document uploaded successfully",
+     "update-success": "document updated successfully"
+   },
+   "documents-list": {
+     "title": "Contracts",
+     "subtitle": "View the list of contracts based on conditions.",
+     "document-title": "Contractor",
+     "created-date": "Created Date",
+     "status": "Status",
+     "new-document": "New Contract"
+   },
   "clients": {
     "title": "Client Management",
     "subtitle": "Manage registered client information and register new clients.",

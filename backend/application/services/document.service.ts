@@ -9,13 +9,10 @@ export class DocumentService {
         private readonly documentRepository: IDocumentRepository,
     ) {}
 
-    /**
-     * Create a new document
-     */
     async create(params: {
         name: string;
         description?: string;
-        category: string;
+        categoryId: string;
         tags: string[];
         mimetype: string;
         filesize: number;
@@ -27,7 +24,7 @@ export class DocumentService {
         const doc = DocumentEntity.create({
             name: params.name,
             description: params.description,
-            category: params.category,
+            categoryId: params.categoryId,
             tags: params.tags,
             mimetype: params.mimetype,
             filesize: params.filesize,
@@ -58,11 +55,8 @@ export class DocumentService {
         return this.documentRepository.findByOrgId(orgid);
     }
 
-    /**
-     * Find documents by category
-     */
-    async findByCategory(category: string): Promise<DocumentEntity[]> {
-        return this.documentRepository.findByCategory(category);
+    async findByCategoryId(categoryId: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findByCategoryId(categoryId);
     }
 
     /**
@@ -72,15 +66,12 @@ export class DocumentService {
         return this.documentRepository.findAll();
     }
 
-    /**
-     * Update a document
-     */
     async update(
         id: string,
         params: {
             name?: string;
             description?: string;
-            category?: string;
+            categoryId?: string;
             tags?: string[];
             mimetype?: string;
             filesize?: number;
@@ -96,7 +87,7 @@ export class DocumentService {
             id: existing.id,
             name: params.name ?? existing.name,
             description: params.description ?? existing.description,
-            category: params.category ?? existing.category,
+            categoryId: params.categoryId ?? existing.categoryId,
             tags: params.tags ?? existing.tags,
             mimetype: params.mimetype ?? existing.mimetype,
             filesize: params.filesize ?? existing.filesize,

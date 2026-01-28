@@ -3,7 +3,7 @@ import { DocumentEntity } from "domain/entities/document.entity";
 export interface IDocumentRepository {
     findById(id: string): Promise<DocumentEntity | null>;
     findByOrgId(orgid: string): Promise<DocumentEntity[]>;
-    findByCategory(category: string): Promise<DocumentEntity[]>;
+    findByCategoryId(categoryId: string): Promise<DocumentEntity[]>;
     findAll(): Promise<DocumentEntity[]>;
     create(doc: DocumentEntity): Promise<DocumentEntity>;
     update(doc: DocumentEntity): Promise<DocumentEntity>;
