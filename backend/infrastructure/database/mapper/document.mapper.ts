@@ -5,7 +5,7 @@ type DocumentRow = {
     id: string;
     name: string;
     description: string | null;
-    category: string;
+    categoryId: string;
     tags: string[];
     mime_type: string;
     file_size: number;
@@ -19,28 +19,28 @@ type DocumentRow = {
 
 export class DocumentMapper {
     static toDomain(row: DocumentRow): DocumentEntity {
-        return DocumentEntity.reconstitute(
-            row.id,
-            row.name,
-            row.description,
-            row.category as DocumentCategory,
-            row.tags,
-            row.mime_type as AllowedMimeType,
-            row.file_size,
-            row.storage_path,
-            row.storage_url,
-            row.org_id as string | null,
-            row.uploaded_by,
-            row.created_at,
-            row.updated_at,
-        );
+        return DocumentEntity.reconstitute({
+            id: row.id,
+            name: row.name,
+            description: row.description ?? undefined,
+            categoryId: row.categoryId,
+            tags: row.tags,
+            mimetype: row.mimeType,
+            filesize: row.fileSize,
+            storagepath: row.storagePath,
+            storageurl: row.storageUrl ?? undefined,
+            orgid: row.orgId ?? undefined,
+            uploadedby: row.uploadedBy,
+            createdat: row.createdAt,
+            updatedat: row.updatedAt,
+        });
     }
 
     static toPrismaCreate(entity: DocumentEntity): Prisma.documentCreateInput {
         const input: Prisma.documentCreateInput = {
             name: entity.name,
-            description: entity.description ?? undefined,
-            category: entity.category,
+            description: entity.description ?? null,
+            categoryId: entity.categoryId,
             tags: entity.tags,
             mimeType: entity.mimeType,
             fileSize: entity.fileSize,
@@ -59,8 +59,8 @@ export class DocumentMapper {
     static toPrismaUpdate(entity: DocumentEntity): Prisma.documentUpdateInput {
         return {
             name: entity.name,
-            description: entity.description ?? undefined,
-            category: entity.category,
+            description: entity.description ?? null,
+            categoryId: entity.categoryId,
             tags: entity.tags,
         };
     }

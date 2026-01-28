@@ -20,8 +20,32 @@ export class DocumentService {
         private readonly deleteDocumentUsecase: DeleteDocumentUsecase,
     ) {}
 
-    upload(params: UploadDocumentParams): Promise<DocumentEntity> {
-        return this.uploadDocumentUsecase.execute(params);
+    async create(params: {
+        name: string;
+        description?: string;
+        categoryId: string;
+        tags: string[];
+        mimetype: string;
+        filesize: number;
+        storagepath: string;
+        storageurl?: string;
+        orgid?: string;
+        uploadedby: string;
+    }): Promise<DocumentEntity> {
+        const doc = DocumentEntity.create({
+            name: params.name,
+            description: params.description,
+            categoryId: params.categoryId,
+            tags: params.tags,
+            mimetype: params.mimetype,
+            filesize: params.filesize,
+            storagepath: params.storagepath,
+            storageurl: params.storageurl,
+            orgid: params.orgid,
+            uploadedby: params.uploadedby,
+            createdat: new Date(),
+        });
+        return this.documentRepository.create(doc);
     }
 
     list(filter?: DocumentFilter): Promise<DocumentEntity[]> {
@@ -32,16 +56,45 @@ export class DocumentService {
         return this.getDocumentUsecase.execute({ id });
     }
 
-    update(
+    async findByCategoryId(categoryId: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findByCategoryId(categoryId);
+    }
+
+    /**
+     * List all documents
+     */
+    async findAll(): Promise<DocumentEntity[]> {
+        return this.documentRepository.findAll();
+    }
+
+    async update(
         id: string,
         updates: {
             name?: string;
             description?: string;
-            category?: string;
+            categoryId?: string;
             tags?: string[];
         },
     ): Promise<DocumentEntity> {
-        return this.updateDocumentUsecase.execute({ id, updates });
+        const existing = await this.findById(id);
+
+        const updated = DocumentEntity.reconstitute({
+            id: existing.id,
+            name: params.name ?? existing.name,
+            description: params.description ?? existing.description,
+            categoryId: params.categoryId ?? existing.categoryId,
+            tags: params.tags ?? existing.tags,
+            mimetype: params.mimetype ?? existing.mimetype,
+            filesize: params.filesize ?? existing.filesize,
+            storagepath: params.storagepath ?? existing.storagepath,
+            storageurl: params.storageurl ?? existing.storageurl,
+            orgid: params.orgid ?? existing.orgid,
+            uploadedby: params.uploadedby ?? existing.uploadedby,
+            createdat: existing.createdat,
+            updatedat: new Date(),
+        });
+
+        return this.documentRepository.update(updated);
     }
 
     delete(id: string): Promise<void> {

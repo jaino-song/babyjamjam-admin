@@ -21,10 +21,10 @@ export async function GET(request: NextRequest) {
         }
 
         const { searchParams } = new URL(request.url);
-        const category = searchParams.get("category");
+        const categoryId = searchParams.get("categoryId");
         
         const params: Record<string, string> = {};
-        if (category) params.category = category;
+        if (categoryId) params.categoryId = categoryId;
         
         const response = await serverAPIClient.get("/documents", { params });
         return NextResponse.json(response.data);
@@ -65,17 +65,16 @@ export async function POST(request: NextRequest) {
         const blob = new Blob([buffer], { type: file.type });
         backendFormData.append("file", blob, file.name);
 
-        // Append metadata fields
         const name = formData.get("name");
         const description = formData.get("description");
-        const category = formData.get("category");
+        const categoryId = formData.get("categoryId");
         const tags = formData.get("tags");
         const orgId = formData.get("orgId");
         const uploadedBy = formData.get("uploadedBy");
 
         if (name) backendFormData.append("name", name as string);
         if (description) backendFormData.append("description", description as string);
-        if (category) backendFormData.append("category", category as string);
+        if (categoryId) backendFormData.append("categoryId", categoryId as string);
         if (tags) backendFormData.append("tags", tags as string);
         if (orgId) backendFormData.append("orgId", orgId as string);
         if (uploadedBy) backendFormData.append("uploadedBy", uploadedBy as string);

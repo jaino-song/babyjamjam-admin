@@ -30,7 +30,7 @@ function toResponse(entity: DocumentEntity) {
         id: entity.id,
         name: entity.name,
         description: entity.description,
-        category: entity.category,
+        categoryId: entity.categoryId,
         tags: entity.tags,
         mimeType: entity.mimetype,
         fileSize: entity.filesize,
@@ -93,11 +93,10 @@ export class DocumentController {
         // parse tags from string if needed (form-data sends arrays as strings)
         const tags = typeof dto.tags === "string" ? JSON.parse(dto.tags) : dto.tags || [];
 
-        // create document record
         const entity = await this.documentService.create({
             name: dto.name || file.originalname,
             description: dto.description,
-            category: dto.category,
+            categoryId: dto.categoryId,
             tags,
             mimetype: file.mimetype,
             filesize: file.size,
@@ -109,16 +108,12 @@ export class DocumentController {
         return toResponse(entity);
     }
 
-    /**
-     * POST /documents
-     * Create a new document (metadata only, for existing storage paths)
-     */
     @Post()
     async create(@Body() dto: CreateDocumentDto) {
         const entity = await this.documentService.create({
             name: dto.name,
             description: dto.description,
-            category: dto.category,
+            categoryId: dto.categoryId,
             tags: dto.tags,
             description: dto.description,
             uploadedBy,
@@ -127,8 +122,10 @@ export class DocumentController {
     }
 
     @Get()
-    async findAll() {
-        const entities = await this.documentService.findAll();
+    async findAll(@Query("categoryId") categoryId?: string) {
+        const entities = categoryId 
+            ? await this.documentService.findByCategoryId(categoryId) 
+            : await this.documentService.findAll();
         return entities.map(toResponse);
     }
 
@@ -148,26 +145,18 @@ export class DocumentController {
         return entities.map(toResponse);
     }
 
-    /**
-     * GET /documents/category/:category
-     * Find documents by category
-     */
-    @Get("category/:category")
-    async findByCategory(@Param("category") category: string) {
-        const entities = await this.documentService.findByCategory(category);
+    @Get("category/:categoryId")
+    async findByCategoryId(@Param("categoryId") categoryId: string) {
+        const entities = await this.documentService.findByCategoryId(categoryId);
         return entities.map(toResponse);
     }
 
-    /**
-     * PUT /documents/:id
-     * Update a document
-     */
     @Put(":id")
     async update(@Param("id") id: string, @Body() dto: UpdateDocumentDto) {
         const entity = await this.documentService.update(id, {
             name: dto.name,
             description: dto.description,
-            category: dto.category,
+            categoryId: dto.categoryId,
             tags: dto.tags,
         });
         return toResponse(entity);

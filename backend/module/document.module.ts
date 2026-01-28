@@ -12,10 +12,12 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { DocumentRepository } from "infrastructure/database/repositories/sb.document.repository";
 import { SupabaseStorageAdapter } from "infrastructure/api/supabase-storage.adapter";
 import { DocumentController } from "interface/controllers/document.controller";
+import { DocumentCategoryController } from "interface/controllers/document-category.controller";
+import { DocumentCategoryService } from "application/services/document-category.service";
 
 @Module({
     imports: [ConfigModule],
-    controllers: [DocumentController],
+    controllers: [DocumentController, DocumentCategoryController],
     providers: [
         UploadDocumentUsecase,
         GetDocumentsUsecase,
@@ -24,6 +26,8 @@ import { DocumentController } from "interface/controllers/document.controller";
         DeleteDocumentUsecase,
         DownloadDocumentUsecase,
         DocumentService,
+        DocumentCategoryService,
+        // Infrastructure
         PrismaService,
         SupabaseStorageAdapter,
         // Repository binding

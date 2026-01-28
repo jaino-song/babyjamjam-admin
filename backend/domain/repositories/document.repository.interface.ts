@@ -9,9 +9,11 @@ export interface DocumentFilter {
 
 export interface IDocumentRepository {
     findById(id: string): Promise<DocumentEntity | null>;
-    findAll(filter?: DocumentFilter): Promise<DocumentEntity[]>;
-    create(document: DocumentEntity): Promise<DocumentEntity>;
-    update(document: DocumentEntity): Promise<DocumentEntity>;
+    findByOrgId(orgid: string): Promise<DocumentEntity[]>;
+    findByCategoryId(categoryId: string): Promise<DocumentEntity[]>;
+    findAll(): Promise<DocumentEntity[]>;
+    create(doc: DocumentEntity): Promise<DocumentEntity>;
+    update(doc: DocumentEntity): Promise<DocumentEntity>;
     delete(id: string): Promise<void>;
 }
 

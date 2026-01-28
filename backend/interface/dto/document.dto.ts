@@ -6,9 +6,6 @@ import {
   IsDateString,
 } from "class-validator";
 
-/**
- * 문서 생성 요청 DTO
- */
 export class CreateDocumentDto {
   @IsString()
   category!: string;
@@ -17,14 +14,35 @@ export class CreateDocumentDto {
   @IsString({ each: true })
   tags!: string[];
 
-  @IsOptional()
-  @IsString()
-  description?: string;
+    @IsString()
+    categoryId!: string;
+
+    @IsArray()
+    @IsString({ each: true })
+    tags!: string[];
+
+    @IsString()
+    mimetype!: string;
+
+    @IsNumber()
+    @Min(0)
+    filesize!: number;
+
+    @IsString()
+    storagepath!: string;
+
+    @IsOptional()
+    @IsString()
+    storageurl?: string;
+
+    @IsOptional()
+    @IsString()
+    orgid?: string;
+
+    @IsString()
+    uploadedby!: string;
 }
 
-/**
- * 문서 메타데이터 업데이트 요청 DTO
- */
 export class UpdateDocumentDto {
   @IsOptional()
   @IsString()
@@ -34,9 +52,9 @@ export class UpdateDocumentDto {
   @IsString()
   description?: string;
 
-  @IsOptional()
-  @IsString()
-  category?: string;
+    @IsOptional()
+    @IsString()
+    categoryId?: string;
 
   @IsOptional()
   @IsArray()
@@ -114,9 +132,6 @@ export class DocumentResponseDto {
   updatedAt!: Date;
 }
 
-/**
- * DTO for uploading a document with file
- */
 export class UploadDocumentDto {
     @IsOptional()
     @IsString()
@@ -127,10 +142,10 @@ export class UploadDocumentDto {
     description?: string;
 
     @IsString()
-    category!: string;
+    categoryId!: string;
 
     @IsOptional()
-    tags?: string[] | string; // can be array or json string from form-data
+    tags?: string[] | string;
 
     @IsOptional()
     @IsString()

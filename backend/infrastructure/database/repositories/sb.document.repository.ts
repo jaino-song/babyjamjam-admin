@@ -96,7 +96,19 @@ export class DocumentRepository implements IDocumentRepository {
         return rows.map((row: any) => DocumentMapper.toDomain(this.toMapperFormat(row)));
     }
 
-    async create(document: DocumentEntity): Promise<DocumentEntity> {
+    async findByCategoryId(categoryId: string): Promise<DocumentEntity[]> {
+        const docs = await this.prismaService.document.findMany({
+            where: { categoryId },
+        });
+        return docs.map(DocumentMapper.toDomain);
+    }
+
+    async findAll(): Promise<DocumentEntity[]> {
+        const docs = await this.prismaService.document.findMany();
+        return docs.map(DocumentMapper.toDomain);
+    }
+
+    async create(doc: DocumentEntity): Promise<DocumentEntity> {
         const created = await this.prismaService.document.create({
             data: DocumentMapper.toPrismaCreate(document),
             select: {

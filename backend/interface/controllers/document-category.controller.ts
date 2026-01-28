@@ -24,6 +24,7 @@ export class DocumentCategoryController {
 
     @Post()
     async create(@Body() dto: CreateDocumentCategoryDto): Promise<DocumentCategory> {
+        console.log("[DocumentCategoryController] Received body:", JSON.stringify(dto));
         return this.documentCategoryService.create({
             value: dto.value,
             label: dto.label,
