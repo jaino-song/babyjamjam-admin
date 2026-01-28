@@ -164,7 +164,7 @@ export function DocumentsTable() {
     const existingColors = categories.filter((c) => c.isCustom).map((c) => c.color);
     const filteredDocuments = useMemo(() => {
         let result = [...documents];
-        
+
         if (searchInput.trim()) {
             const query = searchInput.trim();
             result = result.filter((doc) =>
@@ -173,13 +173,14 @@ export function DocumentsTable() {
                 doc.tags?.some(tag => matchesKoreanSearch(tag, query))
             );
         }
-        
-        result.sort((a, b) => 
+
+        result.sort((a, b) =>
             new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
-        
+
         return result;
     }, [documents, searchInput]);
+
     if (isLoading) {
         return (
             <ContentPaper
