@@ -86,3 +86,30 @@ export class UpdateDocumentDto {
     @IsString()
     uploadedby?: string;
 }
+
+/**
+ * DTO for uploading a document with file
+ */
+export class UploadDocumentDto {
+    @IsOptional()
+    @IsString()
+    name?: string;
+
+    @IsOptional()
+    @IsString()
+    description?: string;
+
+    @IsString()
+    category!: string;
+
+    @IsOptional()
+    tags?: string[] | string; // can be array or json string from form-data
+
+    @IsOptional()
+    @IsString()
+    orgid?: string;
+
+    @IsOptional()
+    @IsString()
+    uploadedby?: string;
+}

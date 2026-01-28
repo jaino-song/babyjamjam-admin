@@ -10,9 +10,6 @@ console.log("[Server API Client] API URL:", API_URL);
 
 export const serverAPIClient = axios.create({
     baseURL: API_URL,
-    headers: {
-        "Content-Type": "application/json",
-    },
     timeout: 60000, // 60 seconds - Railway apps can take time to wake up
     validateStatus: (status) => status < 600, // Accept any status code for better error visibility
 });

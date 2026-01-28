@@ -1,0 +1,351 @@
+"use client";
+
+import React, { useRef, useState } from "react";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton,
+  Button,
+  Typography,
+  Box,
+  Chip,
+  Divider,
+} from "@mui/material";
+import {
+  Close as CloseIcon,
+  Download as DownloadIcon,
+  Print as PrintIcon,
+  ZoomIn as ZoomInIcon,
+  ZoomOut as ZoomOutIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+} from "@mui/icons-material";
+import { Document, getDownloadUrl } from "@/app/hooks/use-documents";
+import { CATEGORY_LABELS, formatFileSize, formatDate } from "./document-list";
+
+interface DocumentPreviewModalProps {
+  open: boolean;
+  onClose: () => void;
+  doc: Document | null;
+  onEdit?: (doc: Document) => void;
+  onDelete?: (doc: Document) => void;
+}
+
+export default function DocumentPreviewModal({
+  open,
+  onClose,
+  doc,
+  onEdit,
+  onDelete,
+}: DocumentPreviewModalProps) {
+  const [zoom, setZoom] = useState(1);
+  const printFrameRef = useRef<HTMLIFrameElement>(null);
+
+   if (!doc) return null;
+
+   // Helper to get file extension from mimetype
+   const getExtensionFromMimetype = (mimetype: string): string => {
+     const mimeToExt: Record<string, string> = {
+       "application/pdf": ".pdf",
+       "image/jpeg": ".jpg",
+       "image/png": ".png",
+       "image/gif": ".gif",
+       "image/webp": ".webp",
+       "application/msword": ".doc",
+       "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+       "application/vnd.ms-excel": ".xls",
+       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+     };
+     return mimeToExt[mimetype] || "";
+   };
+
+    const handlePrint = () => {
+     // Create a hidden iframe for printing
+     const iframe = window.document.createElement("iframe");
+     iframe.style.display = "none";
+     iframe.src = getDownloadUrl(doc.id);
+    
+    // When loaded, print
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow?.print();
+      } catch (e) {
+        console.error("Print failed", e);
+      }
+      // Cleanup after a delay to ensure print dialog has opened
+      setTimeout(() => {
+        window.document.body.removeChild(iframe);
+      }, 2000);
+    };
+
+    window.document.body.appendChild(iframe);
+  };
+
+    const handleDownload = () => {
+      let filename = doc.name;
+      // Add extension if missing
+      if (!filename.includes(".")) {
+        filename += getExtensionFromMimetype(doc.mimeType);
+      }
+      const link = window.document.createElement("a");
+      link.href = getDownloadUrl(doc.id, true);
+      link.download = filename;
+      link.target = "_blank";
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+    };
+
+  const handleZoomIn = () => setZoom((prev) => Math.min(prev + 0.25, 3));
+  const handleZoomOut = () => setZoom((prev) => Math.max(prev - 0.25, 0.5));
+
+  const isPdf = doc.mimeType === "application/pdf";
+  const isImage = doc.mimeType.startsWith("image/");
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="lg"
+      fullWidth
+      PaperProps={{
+        sx: { height: "90vh", display: "flex", flexDirection: "column" },
+      }}
+    >
+       <DialogTitle
+         sx={{
+           m: 0,
+           p: 2,
+           display: "flex",
+           justifyContent: "space-between",
+           alignItems: "center",
+           borderBottom: 1,
+           borderColor: "divider",
+         }}
+       >
+         <Typography variant="h6" component="div">
+           {doc.name}
+         </Typography>
+        <IconButton
+          aria-label="close"
+          onClick={onClose}
+          sx={{
+            color: (theme) => theme.palette.grey[500],
+          }}
+        >
+          <CloseIcon />
+        </IconButton>
+      </DialogTitle>
+
+      <DialogContent
+        sx={{
+          p: 0,
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "auto",
+        }}
+      >
+        {/* Metadata Section */}
+        <Box sx={{ p: 2, bgcolor: "grey.50", borderBottom: 1, borderColor: "divider" }}>
+          <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 1 }}>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                카테고리
+              </Typography>
+              <Box sx={{ mt: 0.5 }}>
+                <Chip
+                  label={CATEGORY_LABELS[doc.category] || doc.category}
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                />
+              </Box>
+            </Box>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                파일 크기
+              </Typography>
+              <Typography variant="body2" sx={{ mt: 0.5 }}>
+                {formatFileSize(doc.fileSize)}
+              </Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                등록일
+              </Typography>
+              <Typography variant="body2" sx={{ mt: 0.5 }}>
+                {formatDate(doc.createdAt)}
+              </Typography>
+            </Box>
+          </Box>
+          {doc.tags && doc.tags.length > 0 && (
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="caption" color="text.secondary">
+                태그
+              </Typography>
+              <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mt: 0.5 }}>
+                {doc.tags.map((tag, index) => (
+                  <Chip key={index} label={`#${tag}`} size="small" variant="outlined" />
+                ))}
+              </Box>
+            </Box>
+          )}
+          {doc.description && (
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="caption" color="text.secondary">
+                설명
+              </Typography>
+              <Typography variant="body2" sx={{ mt: 0.5 }}>
+                {doc.description}
+              </Typography>
+            </Box>
+          )}
+        </Box>
+
+        {/* Preview Section */}
+        <Box
+          sx={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            bgcolor: "grey.100",
+            overflow: "hidden",
+            position: "relative",
+            minHeight: 400,
+          }}
+        >
+          {isPdf && (
+            <Box
+              component="iframe"
+              src={getDownloadUrl(doc.id)}
+              sx={{
+                width: "100%",
+                height: "100%",
+                border: "none",
+              }}
+              title={doc.name}
+            />
+          )}
+
+          {isImage && (
+            <Box
+              sx={{
+                width: "100%",
+                height: "100%",
+                overflow: "auto",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                p: 2,
+              }}
+            >
+              <Box
+                component="img"
+                src={getDownloadUrl(doc.id)}
+                alt={doc.name}
+                sx={{
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  objectFit: "contain",
+                  transform: `scale(${zoom})`,
+                  transition: "transform 0.2s",
+                  transformOrigin: "center center",
+                }}
+              />
+
+              {/* Zoom controls for image */}
+              <Box
+                sx={{
+                  position: "absolute",
+                  bottom: 16,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  bgcolor: "rgba(0, 0, 0, 0.6)",
+                  borderRadius: 4,
+                  display: "flex",
+                  gap: 1,
+                  p: 0.5,
+                }}
+              >
+                <IconButton onClick={handleZoomOut} size="small" sx={{ color: "white" }}>
+                  <ZoomOutIcon />
+                </IconButton>
+                <Typography variant="body2" sx={{ color: "white", alignSelf: "center", px: 1 }}>
+                  {Math.round(zoom * 100)}%
+                </Typography>
+                <IconButton onClick={handleZoomIn} size="small" sx={{ color: "white" }}>
+                  <ZoomInIcon />
+                </IconButton>
+              </Box>
+            </Box>
+          )}
+
+          {!isPdf && !isImage && (
+            <Box
+              sx={{
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                height: "100%",
+              }}
+            >
+              <Typography variant="body1" color="text.secondary">
+                Preview not available for this file type
+              </Typography>
+            </Box>
+          )}
+        </Box>
+      </DialogContent>
+
+       <DialogActions sx={{ p: 2, borderTop: 1, borderColor: "divider", justifyContent: "space-between" }}>
+          <Box sx={{ display: "flex", gap: 1 }}>
+            {onEdit && (
+              <Button
+                onClick={() => {
+                  onEdit(doc);
+                  onClose();
+                }}
+                startIcon={<EditIcon />}
+                color="primary"
+                variant="outlined"
+              >
+                수정
+              </Button>
+            )}
+            {onDelete && (
+              <Button
+                onClick={() => {
+                  onDelete(doc);
+                  onClose();
+                }}
+                startIcon={<DeleteIcon />}
+                color="error"
+                variant="outlined"
+              >
+                삭제
+              </Button>
+            )}
+          </Box>
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button
+              onClick={handlePrint}
+              startIcon={<PrintIcon />}
+              color="inherit"
+            >
+              인쇄
+            </Button>
+            <Button
+              onClick={handleDownload}
+              variant="contained"
+              startIcon={<DownloadIcon />}
+            >
+              다운로드
+            </Button>
+          </Box>
+       </DialogActions>
+    </Dialog>
+  );
+}
