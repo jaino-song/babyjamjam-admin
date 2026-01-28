@@ -224,7 +224,10 @@ model user {
   chat_session      chat_session[]
   notification      notification[]
   push_subscription push_subscription[]
+<<<<<<< HEAD
   chat_feedback     chat_feedback[]
+=======
+>>>>>>> fb6fb7b0 (Feat/file storage proxy streaming (#48))
 }
 
 model chat_session {
