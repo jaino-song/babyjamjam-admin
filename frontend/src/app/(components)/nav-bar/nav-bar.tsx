@@ -47,7 +47,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     }, [queryClient]);
     const isDashboard = pathname === "/dashboard";
     const isMessages = pathname === "/messages";
-    const isDocuments = pathname === "/documents";
+    const isFiles = pathname === "/files";
     const isContracts = pathname === "/contracts";
     const isClients = pathname === "/clients";
     const isSettings = pathname === "/settings";
@@ -67,7 +67,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                     <NavButton href="/contracts" label={t(locale, "nav-bar.contracts")} icon={<File size={15} />} active={isContracts} onClick={onClose} />
                     <NavButton href="/clients" label={t(locale, "nav-bar.clients")} icon={<PeopleOutlineIcon fontSize="small" />} active={isClients} onClick={onClose} />
                     <NavButton href="/employees" label={t(locale, "nav-bar.employees")} icon={<AssignmentIndOutlinedIcon fontSize="small" />} active={isEmployees} onClick={onClose} />
-                    <NavButton href="/documents" label={t(locale, "nav-bar.documents")} icon={<DescriptionIcon fontSize="small" />} active={isDocuments} onClick={onClose} />
+                    <NavButton href="/files" label={t(locale, "nav-bar.files")} icon={<DescriptionIcon fontSize="small" />} active={isFiles} onClick={onClose} />
                     <NavButton href="/settings" label={t(locale, "nav-bar.settings")} icon={<Settings size={15} />} active={isSettings} onClick={onClose} />
                     {isAdminOrOwner && (
                         <NavButton href="/admin" label="관리자" icon={<AdminPanelSettingsIcon fontSize="small" />} active={isAdmin} onClick={onClose} />
