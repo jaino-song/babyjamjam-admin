@@ -7,20 +7,20 @@ function getAuthToken(request: NextRequest): string | null {
 
 export async function GET(
     request: NextRequest,
-    { params }: { params: Promise<{ documentId: string }> }
+    { params }: { params: Promise<{ fileId: string }> }
 ) {
     const token = getAuthToken(request);
     if (!token) {
         return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    const { documentId } = await params;
+    const { fileId } = await params;
 
     try {
-        const response = await serverAPIClient.get(`/documents/${documentId}`);
+        const response = await serverAPIClient.get(`/documents/${fileId}`);
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error(`[file-storage/documents] get ${documentId} error:`, error);
+        console.error(`[file-storage/files] get ${fileId} error:`, error);
         return NextResponse.json(
             { error: "failed to fetch document" },
             { status: 500 }
@@ -30,21 +30,21 @@ export async function GET(
 
 export async function PUT(
     request: NextRequest,
-    { params }: { params: Promise<{ documentId: string }> }
+    { params }: { params: Promise<{ fileId: string }> }
 ) {
     const token = getAuthToken(request);
     if (!token) {
         return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    const { documentId } = await params;
+    const { fileId } = await params;
 
     try {
         const body = await request.json().catch(() => ({}));
-        const response = await serverAPIClient.put(`/documents/${documentId}`, body);
+        const response = await serverAPIClient.put(`/documents/${fileId}`, body);
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error(`[file-storage/documents] put ${documentId} error:`, error);
+        console.error(`[file-storage/files] put ${fileId} error:`, error);
         return NextResponse.json(
             { error: "failed to update document" },
             { status: 500 }
@@ -54,20 +54,20 @@ export async function PUT(
 
 export async function DELETE(
     request: NextRequest,
-    { params }: { params: Promise<{ documentId: string }> }
+    { params }: { params: Promise<{ fileId: string }> }
 ) {
     const token = getAuthToken(request);
     if (!token) {
         return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    const { documentId } = await params;
+    const { fileId } = await params;
 
     try {
-        const response = await serverAPIClient.delete(`/documents/${documentId}`);
+        const response = await serverAPIClient.delete(`/documents/${fileId}`);
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error(`[file-storage/documents] delete ${documentId} error:`, error);
+        console.error(`[file-storage/files] delete ${fileId} error:`, error);
         return NextResponse.json(
             { error: "failed to delete document" },
             { status: 500 }

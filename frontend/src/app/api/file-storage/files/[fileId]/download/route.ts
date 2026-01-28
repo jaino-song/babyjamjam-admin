@@ -7,7 +7,7 @@ function getAuthToken(request: NextRequest): string | null {
 
 export async function GET(
     request: NextRequest,
-    { params }: { params: Promise<{ documentId: string }> }
+    { params }: { params: Promise<{ fileId: string }> }
 ) {
     try {
         const token = getAuthToken(request);
@@ -15,13 +15,13 @@ export async function GET(
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const { documentId } = await params;
+        const { fileId } = await params;
         const { searchParams } = new URL(request.url);
         const attachment = searchParams.get("attachment");
 
         const url = attachment === "true"
-            ? `/documents/${documentId}/download?attachment=true`
-            : `/documents/${documentId}/download`;
+            ? `/documents/${fileId}/download?attachment=true`
+            : `/documents/${fileId}/download`;
 
         const response = await serverAPIClient.get(url, {
             headers: {

@@ -52,7 +52,7 @@ export function useDocuments(categoryId?: string) {
         queryFn: async () => {
             const params = new URLSearchParams();
             if (categoryId) params.append("categoryId", categoryId);
-            const url = `/file-storage/documents${params.toString() ? `?${params.toString()}` : ""}`;
+            const url = `/file-storage/files${params.toString() ? `?${params.toString()}` : ""}`;
             const { data } = await api.get<Document[]>(url);
             return data;
         },
@@ -67,7 +67,7 @@ export function useDocument(id: string) {
     return useQuery<Document>({
         queryKey: documentQueryKeys.detail(id),
         queryFn: async () => {
-            const { data } = await api.get<Document>(`/file-storage/documents/${id}`);
+            const { data } = await api.get<Document>(`/file-storage/files/${id}`);
             return data;
         },
         enabled: !!id,
@@ -98,7 +98,7 @@ export function useUploadDocument() {
             if (orgId) formData.append("orgId", orgId);
             if (uploadedBy) formData.append("uploadedBy", uploadedBy);
 
-            const { data } = await api.post<Document>("/file-storage/documents", formData, {
+            const { data } = await api.post<Document>("/file-storage/files", formData, {
                 onUploadProgress: (progressEvent) => {
                     if (onProgress && progressEvent.total) {
                         const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -125,7 +125,7 @@ export function useUpdateDocument() {
 
     return useMutation<Document, Error, { id: string } & UpdateDocumentParams>({
         mutationFn: async ({ id, ...params }: { id: string } & UpdateDocumentParams) => {
-            const { data } = await api.put<Document>(`/file-storage/documents/${id}`, params);
+            const { data } = await api.put<Document>(`/file-storage/files/${id}`, params);
             return data;
         },
         onSuccess: (data) => {
@@ -146,7 +146,7 @@ export function useDeleteDocument() {
 
      return useMutation<string, Error, string>({
          mutationFn: async (id: string) => {
-             await api.delete(`/file-storage/documents/${id}`);
+             await api.delete(`/file-storage/files/${id}`);
              return id;
          },
          onSuccess: () => {
@@ -164,6 +164,6 @@ export function useDeleteDocument() {
  * @param attachment - if true, browser will download instead of preview
  */
 export function getDownloadUrl(id: string, attachment?: boolean): string {
-     const base = `/api/file-storage/documents/${id}/download`;
+     const base = `/api/file-storage/files/${id}/download`;
      return attachment ? `${base}?attachment=true` : base;
 }
