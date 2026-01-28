@@ -163,12 +163,23 @@ export function DocumentsTable() {
 
     const existingColors = categories.filter((c) => c.isCustom).map((c) => c.color);
     const filteredDocuments = useMemo(() => {
-        if (!searchInput.trim()) return documents;
-        return documents.filter((doc) =>
-            matchesKoreanSearch(doc.name || '', searchInput.trim())
+        let result = [...documents];
+        
+        if (searchInput.trim()) {
+            const query = searchInput.trim();
+            result = result.filter((doc) =>
+                matchesKoreanSearch(doc.name || '', query) ||
+                matchesKoreanSearch(doc.description || '', query) ||
+                doc.tags?.some(tag => matchesKoreanSearch(tag, query))
+            );
+        }
+        
+        result.sort((a, b) => 
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
+        
+        return result;
     }, [documents, searchInput]);
-
     if (isLoading) {
         return (
             <ContentPaper
@@ -277,7 +288,7 @@ export function DocumentsTable() {
                                 sx={{ color: "primary.main", fontWeight: 500 }}
                             >
                                 <Plus size={16} style={{ marginRight: 8 }} />
-                                태그 추가
+                                카테고리 추가
                             </MenuItem>
                         </Select>
 
@@ -341,7 +352,7 @@ export function DocumentsTable() {
                 doc={previewDoc}
                 categories={categories}
                 onEdit={(doc) => {
-                                        setEditDoc(doc);
+                    setEditDoc(doc);
                 }}
                 onDelete={(doc) => {
                     setPreviewDoc(null);

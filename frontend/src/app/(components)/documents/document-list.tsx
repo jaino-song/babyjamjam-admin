@@ -182,9 +182,9 @@ export default function DocumentList({
             >
               <TableCell
                 align="center"
-                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
+                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", pl: 3, pr: 1 }}
               >
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "center" }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "left" }}>
                   {getFileIcon(doc.mimeType)}
                   <Typography variant="body2" sx={{ fontWeight: 500 }}>
                     {doc.name}

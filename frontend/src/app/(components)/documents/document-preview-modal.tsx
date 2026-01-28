@@ -271,7 +271,7 @@ export default function DocumentPreviewModal({
           {isPdf && (
             <Box
               component="iframe"
-              src={getDownloadUrl(doc.id)}
+              src={`${getDownloadUrl(doc.id)}#toolbar=0`}
               sx={{
                 width: "100%",
                 height: "100%",
@@ -295,7 +295,7 @@ export default function DocumentPreviewModal({
             >
               <Box
                 component="img"
-                src={getDownloadUrl(doc.id)}
+                src={`${getDownloadUrl(doc.id)}#toolbar=0`}
                 alt={doc.name}
                 sx={{
                   maxWidth: "100%",
