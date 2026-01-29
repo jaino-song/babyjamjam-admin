@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useCallback, useLayoutEffect } from "react";
+import { useRef, useEffect, useCallback, useLayoutEffect, useState } from "react";
 import {
     Box,
     IconButton,
@@ -19,6 +19,44 @@ import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { ChatInput } from "./ChatInput";
 import { AssistantMessage } from "./AssistantMessage";
 import { useChatStream, ChatMessage, ChatState } from "@/app/hooks/useChatStream";
+
+// Hook to track visual viewport height for mobile keyboard handling
+function useVisualViewportHeight() {
+    const [height, setHeight] = useState<number | null>(null);
+
+    useEffect(() => {
+        // Only run on client side
+        if (typeof window === "undefined") return;
+
+        const updateHeight = () => {
+            if (window.visualViewport) {
+                setHeight(window.visualViewport.height);
+            } else {
+                setHeight(window.innerHeight);
+            }
+        };
+
+        // Initial set
+        updateHeight();
+
+        // Listen to visual viewport changes (keyboard show/hide)
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener("resize", updateHeight);
+            window.visualViewport.addEventListener("scroll", updateHeight);
+        }
+        window.addEventListener("resize", updateHeight);
+
+        return () => {
+            if (window.visualViewport) {
+                window.visualViewport.removeEventListener("resize", updateHeight);
+                window.visualViewport.removeEventListener("scroll", updateHeight);
+            }
+            window.removeEventListener("resize", updateHeight);
+        };
+    }, []);
+
+    return height;
+}
 
 interface ChatFullscreenProps {
     open: boolean;
@@ -88,6 +126,7 @@ function StateIndicator({ state }: { state: ChatState }) {
 }
 
 export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
+    const viewportHeight = useVisualViewportHeight();
     const {
         messages,
         state,
@@ -173,13 +212,19 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                         top: 0,
                         left: 0,
                         right: 0,
-                        bottom: 0,
+                        // Use dynamic height from visualViewport when available (mobile keyboard handling)
+                        // Falls back to bottom: 0 when viewportHeight is null (SSR or initial render)
+                        ...(viewportHeight !== null
+                            ? { height: `${viewportHeight}px` }
+                            : { bottom: 0 }),
                         bgcolor: "background.default",
                         zIndex: 1300,
                         display: "flex",
                         flexDirection: "column",
                         userSelect: "text",
                         WebkitUserSelect: "text",
+                        // Smooth transition for keyboard animation
+                        transition: "height 0.1s ease-out",
                     }}
                 >
                     <Box
