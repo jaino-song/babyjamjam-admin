@@ -5,6 +5,7 @@ import { AuthService } from "../../application/services/auth.service";
 import { JwtGuard } from "../../infrastructure/auth/jwt.guard";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { TokenExchangeDto } from "interface/dto/token-exchange.dto";
+import { RefreshTokenDto } from "interface/dto/refresh-token.dto";
 
 @Controller("auth")
 export class AuthController {
@@ -27,7 +28,7 @@ export class AuthController {
 
         const nodeEnv = process.env['NODE_ENV'];
         let frontendURL: string;
-        
+
         if (nodeEnv === "production") {
             frontendURL = process.env['PRODUCTION_FRONTEND_URL'] ?? "http://localhost:3000";
         } else if (nodeEnv === "preview") {
@@ -60,6 +61,12 @@ export class AuthController {
     @Post("token")
     async exchangeToken(@Body() body: TokenExchangeDto) {
         const tokens = await this.authService.exchangeCodeForTokens(body.code);
+        return tokens;
+    }
+
+    @Post("refresh-token")
+    async refreshToken(@Body() body: RefreshTokenDto) {
+        const tokens = await this.authService.refreshTokens(body.refreshToken);
         return tokens;
     }
 }
