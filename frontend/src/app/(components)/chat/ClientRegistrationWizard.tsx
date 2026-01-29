@@ -20,8 +20,6 @@ import {
     Typography,
 } from "@mui/material";
 import { useVoucherPriceInfos, useVoucherYears } from "@/app/hooks/useVoucherData";
-import { useCreateClient } from "@/app/hooks/useClients";
-import type { CreateClientDto } from "@/app/lib/client/types";
 import voucherOptions from "@/app/(components)/messages/templates/json/voucher.json";
 
 export type CreatedClient = {
@@ -51,8 +49,7 @@ function formatPrice(price: string): string {
 }
 
 export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizardProps) {
-     const createClientMutation = useCreateClient();
-     const [activeStep, setActiveStep] = useState(0);
+    const [activeStep, setActiveStep] = useState(0);
 
     const [name, setName] = useState("");
     const [phone, setPhone] = useState("");
@@ -183,11 +180,29 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                 payload.actualPrice = actualPrice;
             }
 
-             const created = await createClientMutation.mutateAsync({
-                 ...payload,
-                 primaryEmployeeId: null,
-             } as CreateClientDto);
-             onCreated?.(created);
+            const res = await fetch("/api/clients", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            });
+
+            if (!res.ok) {
+                let message = "등록에 실패했습니다.";
+                try {
+                    const errJson = await res.json();
+                    if (typeof errJson?.error === "string") {
+                        message = `등록에 실패했습니다: ${errJson.error}`;
+                    }
+                } catch {
+                    // ignore parse errors
+                }
+                throw new Error(message);
+            }
+
+            const created = (await res.json()) as CreatedClient;
+            onCreated?.(created);
         } catch (e) {
             const msg = e instanceof Error ? e.message : "등록에 실패했습니다.";
             setSubmitError(msg);
