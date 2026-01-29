@@ -12,16 +12,16 @@ export async function POST(request: NextRequest) {
             return unauthorizedResponse("Refresh token not found. Please authenticate again.");
         }
 
-        const response = await serverAPIClient.post("/api/refresh-token", {
+        const response = await serverAPIClient.post("/auth/refresh-token", {
             executionTime,
             refreshToken,
         });
 
-        const { oauth_token } = response.data;
+        const { accessToken, refreshToken: newRefreshToken } = response.data;
 
         // Update tokens in httpOnly cookies
         const res = NextResponse.json({ success: true });
-        return setAuthCookies(res, oauth_token.access_token, oauth_token.refresh_token);
+        return setAuthCookies(res, accessToken, newRefreshToken);
     } catch (error) {
         return errorResponse(error, "refresh access token");
     }

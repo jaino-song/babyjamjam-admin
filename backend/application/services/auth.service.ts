@@ -124,4 +124,61 @@ export class AuthService {
         this.authCodes.delete(code);
         return stored.tokens;
     }
+
+    async refreshTokens(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
+        try {
+            // Verify and decode the refresh token
+            const decoded = await this.jwt.verifyAsync<TokenPayload>(refreshToken);
+
+            // Check that this is a refresh token
+            if (decoded.type !== 'refresh') {
+                throw new UnauthorizedException("Invalid token type");
+            }
+
+            // Look up the user
+            const user = await this.prisma.user.findUnique({
+                where: { id: decoded.sub },
+            });
+
+            if (!user) {
+                throw new UnauthorizedException("User not found");
+            }
+
+            // Generate new tokens with the same logic as validateKakaoUser
+            const payload = {
+                sub: user.id,
+                role: user.role,
+            };
+
+            const privilegedRoles = ["owner", "admin", "manager"];
+            const isPrivileged = user.role !== null && privilegedRoles.includes(user.role);
+
+            const signOptions = isPrivileged
+                ? { expiresIn: "30d" }
+                : { expiresIn: "3d" };
+
+            const refreshSignOptions = isPrivileged
+                ? { expiresIn: "7d" }
+                : { expiresIn: "1d" };
+
+            const newRefreshToken = await this.jwt.signAsync(
+                { ...payload, type: 'refresh' },
+                refreshSignOptions
+            );
+            const newAccessToken = await this.jwt.signAsync(
+                { ...payload, type: 'access' },
+                signOptions
+            );
+
+            return {
+                accessToken: newAccessToken,
+                refreshToken: newRefreshToken,
+            };
+        } catch (error) {
+            if (error instanceof UnauthorizedException) {
+                throw error;
+            }
+            throw new UnauthorizedException("Invalid or expired refresh token");
+        }
+    }
 }
