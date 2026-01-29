@@ -388,38 +388,33 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
     return (
         <Portal>
             <Slide direction="up" in={open} mountOnEnter unmountOnExit>
+                {/* Full-screen backdrop to cover background content */}
                 <Box
                     sx={{
                         position: "fixed",
                         top: 0,
                         left: 0,
                         right: 0,
-                        // Use dynamic height from visualViewport when available (mobile keyboard handling)
-                        // Falls back to bottom: 0 when viewportHeight is null (SSR or initial render)
-                        ...(viewportHeight !== null
-                            ? { height: `${viewportHeight}px` }
-                            : { bottom: 0 }),
+                        bottom: 0,
                         bgcolor: "background.default",
                         zIndex: 1300,
-                        display: "flex",
-                        flexDirection: "column",
-                        userSelect: "text",
-                        WebkitUserSelect: "text",
-                        // Smooth transition for keyboard animation
-                        transition: "height 0.1s ease-out",
                     }}
                 >
+                    {/* Chat content container with dynamic height for mobile keyboard */}
                     <Box
                         sx={{
                             position: "absolute",
                             top: 0,
                             left: 0,
                             right: 0,
+                            // Use dynamic height from visualViewport when available (mobile keyboard handling)
+                            // Falls back to 100% when viewportHeight is null (SSR or initial render)
                             height: viewportHeight !== null ? `${viewportHeight}px` : "100%",
                             display: "flex",
                             flexDirection: "column",
                             userSelect: "text",
                             WebkitUserSelect: "text",
+                            // Smooth transition for keyboard animation
                             transition: "height 0.1s ease-out",
                         }}
                     >
@@ -495,129 +490,11 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                                     {messages.map((msg, idx) =>
                                         msg.role === "user" ? (
                                             <UserMessage key={idx} message={msg} />
-                                        ) : msg.ui?.type === "clientRegistrationWizard" ? (
-                                            <Box key={idx} sx={{ display: "flex", justifyContent: "flex-start", mb: 3 }}>
-                                                <Paper
-                                                    elevation={0}
-                                                    sx={{
-                                                        width: "100%",
-                                                        maxWidth: 720,
-                                                        p: 2,
-                                                        borderRadius: 2,
-                                                        border: "1px solid",
-                                                        borderColor: "divider",
-                                                        bgcolor: "background.paper",
-                                                        minHeight: 520,
-                                                    }}
-                                                >
-                                                    <Suspense
-                                                        fallback={
-                                                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                                                <CircularProgress size={18} />
-                                                                <Typography variant="body2" color="text.secondary">
-                                                                    불러오는 중...
-                                                                </Typography>
-                                                            </Box>
-                                                        }
-                                                    >
-                                                        <ClientRegistrationWizard
-                                                            onCreated={(client: { id: number; name: string }) => {
-                                                                appendMessage({
-                                                                    role: "assistant",
-                                                                    content: `${client.name} 산모님이 등록되었어요.`,
-                                                                    timestamp: new Date().toISOString(),
-                                                                    ui: {
-                                                                        type: "clientRegistrationSuccess",
-                                                                        clientId: client.id,
-                                                                        clientName: client.name,
-                                                                    },
-                                                                });
-                                                            }}
-                                                        />
-                                                    </Suspense>
-                                                </Paper>
-                                            </Box>
-                                        ) : msg.ui?.type === "clientRegistrationSuccess" ? (
-                                            <ClientRegistrationSuccessMessage
-                                                key={idx}
-                                                message={msg}
-                                                onEdit={handleEditClient}
-                                            />
-                                        ) : msg.ui?.type === "contractSendWizard" ? (
-                                            <Box key={idx} sx={{ display: "flex", justifyContent: "flex-start", mb: 3 }}>
-                                                <Paper
-                                                    elevation={0}
-                                                    sx={{
-                                                        width: "100%",
-                                                        maxWidth: 720,
-                                                        p: 2,
-                                                        borderRadius: 2,
-                                                        border: "1px solid",
-                                                        borderColor: "divider",
-                                                        bgcolor: "background.paper",
-                                                        minHeight: 300,
-                                                    }}
-                                                >
-                                                    <Suspense
-                                                        fallback={
-                                                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                                                <CircularProgress size={18} />
-                                                                <Typography variant="body2" color="text.secondary">
-                                                                    불러오는 중...
-                                                                </Typography>
-                                                            </Box>
-                                                        }
-                                                    >
-                                                        <ContractSendWizard />
-                                                    </Suspense>
-                                                </Paper>
-                                            </Box>
-                                        ) : msg.ui?.type === "contractStatusWizard" ? (
-                                            <Box key={idx} sx={{ display: "flex", justifyContent: "flex-start", mb: 3 }}>
-                                                <Paper
-                                                    elevation={0}
-                                                    sx={{
-                                                        width: "100%",
-                                                        maxWidth: 720,
-                                                        p: 2,
-                                                        borderRadius: 2,
-                                                        border: "1px solid",
-                                                        borderColor: "divider",
-                                                        bgcolor: "background.paper",
-                                                    }}
-                                                >
-                                                    <Suspense
-                                                        fallback={
-                                                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                                                <CircularProgress size={18} />
-                                                                <Typography variant="body2" color="text.secondary">
-                                                                    불러오는 중...
-                                                                </Typography>
-                                                            </Box>
-                                                        }
-                                                    >
-                                                        <ContractStatusWizard onCheck={handleContractStatusCheck} />
-                                                    </Suspense>
-                                                </Paper>
-                                            </Box>
-                                        ) : msg.ui?.type === "contractStatusResponse" ? (
-                                            <ContractStatusResponseMessage
-                                                key={idx}
-                                                message={msg}
-                                                onSendContract={handleSendContractFromStatus}
-                                            />
                                         ) : (
-                                            <AssistantMessage
-                                                key={idx}
-                                                message={msg}
-                                                messageIndex={idx}
-                                                sessionId={sessionId}
-                                                isToolExecuting={isToolExecuting && idx === messages.length - 1}
-                                                currentTool={currentTool}
-                                                onSubmitFeedback={handleSubmitFeedback}
-                                            />
+                                            <AssistantMessage key={idx} message={msg} />
                                         )
                                     )}
+                                    {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
                                     <StateIndicator state={state} />
                                     {showConfirmButtons && (
                                         <Stack direction="row" spacing={1} sx={{ mb: 2, px: 2 }}>
@@ -653,31 +530,6 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                                 bgcolor: "background.paper",
                             }}
                         >
-                            <Box
-                                sx={{
-                                    display: "flex",
-                                    gap: 1,
-                                    mb: 1.25,
-                                    overflowX: { xs: "auto", sm: "visible" },
-                                    WebkitOverflowScrolling: "touch",
-                                    pb: { xs: 0.5, sm: 0 },
-                                    flexWrap: { xs: "nowrap", sm: "wrap" },
-                                }}
-                            >
-                                {shortcuts.map((label) => (
-                                    <Chip
-                                        key={label}
-                                        label={label}
-                                        clickable
-                                        size="small"
-                                        onClick={() => sendMessage(label)}
-                                        sx={{
-                                            flex: "0 0 auto",
-                                            borderRadius: 2,
-                                        }}
-                                    />
-                                ))}
-                            </Box>
                             <ChatInput
                                 onSubmit={sendMessage}
                                 disabled={state === "streaming" || state === "connecting"}
