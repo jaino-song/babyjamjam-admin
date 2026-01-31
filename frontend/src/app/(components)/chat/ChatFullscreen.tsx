@@ -19,11 +19,14 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { ChatInput } from "./ChatInput";
 import { AssistantMessage } from "./AssistantMessage";
-import { useChatStream, ChatMessage, ChatState } from "@/app/hooks/useChatStream";
+import { useChatStream, ChatMessage, ChatState } from "@/app/hooks/use-chat-stream";
+import { submitFeedback } from "@/lib/api/feedback";
 import { ClientFormDialog } from "../clients/ClientFormDialog";
 import { useClient } from "@/app/hooks/useClients";
 
 const ClientRegistrationWizard = lazy(() => import("./ClientRegistrationWizard"));
+const ContractSendWizard = lazy(() => import("./ContractSendWizard"));
+const ContractStatusWizard = lazy(() => import("./ContractStatusWizard"));
 
 function useVisualViewportHeight() {
     const [height, setHeight] = useState<number | null>(null);
@@ -93,25 +96,6 @@ function UserMessage({ message }: { message: ChatMessage }) {
     );
 }
 
-function ToolExecutingIndicator({ toolName }: { toolName: string | null }) {
-    return (
-        <Box
-            sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                mb: 2,
-                px: 2,
-            }}
-        >
-            <CircularProgress size={16} />
-            <Typography variant="body2" color="text.secondary">
-                {toolName ? `${toolName} 실행 중...` : "처리 중..."}
-            </Typography>
-        </Box>
-    );
-}
-
 function StateIndicator({ state }: { state: ChatState }) {
     if (state === "connecting") {
         return (
@@ -171,6 +155,52 @@ function ClientRegistrationSuccessMessage({
     );
 }
 
+function ContractStatusResponseMessage({ 
+    message,
+    onSendContract,
+}: { 
+    message: ChatMessage;
+    onSendContract: (clientId: number) => void;
+}) {
+    const { clientId, documentStatus, serviceStatus } = message.ui || {};
+    const showSendButton = !documentStatus && serviceStatus === "active";
+    
+    return (
+        <Box sx={{ display: "flex", justifyContent: "flex-start", mb: 2 }}>
+            <Paper
+                elevation={0}
+                sx={{
+                    maxWidth: "80%",
+                    px: 2,
+                    py: 1.5,
+                    borderRadius: 2,
+                    bgcolor: "grey.100",
+                }}
+            >
+                <Typography
+                    variant="body1"
+                    sx={{
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        mb: showSendButton ? 1.5 : 0,
+                    }}
+                >
+                    {message.content}
+                </Typography>
+                {showSendButton && clientId && (
+                    <Button
+                        variant="contained"
+                        size="small"
+                        onClick={() => onSendContract(clientId)}
+                    >
+                        계약서 전송하기
+                    </Button>
+                )}
+            </Paper>
+        </Box>
+    );
+}
+
 export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
     const viewportHeight = useVisualViewportHeight();
     const {
@@ -184,6 +214,7 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
         isLoadingHistory,
         hasMoreHistory,
         appendMessage,
+        sessionId,
     } = useChatStream();
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -201,6 +232,59 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
     const handleCloseEditDialog = useCallback(() => {
         setEditingClientId(null);
     }, []);
+
+    const handleContractStatusCheck = useCallback((result: {
+        clientId: number;
+        clientName: string;
+        documentStatus: string | null;
+        serviceStatus: string | null;
+    }) => {
+        const { clientName, documentStatus, serviceStatus } = result;
+        
+        let content: string;
+        if (documentStatus === "completed") {
+            content = `${clientName} 님의 계약서는 완료되었어요. ✅`;
+        } else if (documentStatus === "created" || documentStatus === "requested" || documentStatus === "opened") {
+            content = `${clientName} 님의 계약서는 전송되었지만 아직 완료되지 않았어요. 정해진 스케줄대로 완료 요청 알림톡을 보낼게요. 📩`;
+        } else if (!documentStatus && serviceStatus === "active") {
+            content = `${clientName} 님의 계약서는 전송되지 않았어요. 심지어 이미 서비스가 시작되었네요. 바로 계약서를 전송할까요? ⚠️`;
+        } else if (!documentStatus) {
+            content = `${clientName} 님의 계약서는 아직 전송되지 않았어요.`;
+        } else {
+            content = `${clientName} 님의 계약서 상태: ${documentStatus}`;
+        }
+
+        appendMessage({
+            role: "assistant",
+            content,
+            timestamp: new Date().toISOString(),
+            ui: {
+                type: "contractStatusResponse",
+                clientId: result.clientId,
+                clientName: result.clientName,
+                documentStatus: result.documentStatus,
+                serviceStatus: result.serviceStatus,
+            },
+        });
+    }, [appendMessage]);
+
+    const handleSendContractFromStatus = useCallback((clientId: number) => {
+        sendMessage("계약서 전송");
+    }, [sendMessage]);
+
+    const handleSubmitFeedback = useCallback(async (
+        messageIndex: number,
+        type: "positive" | "negative",
+        comment?: string
+    ) => {
+        if (!sessionId) return;
+        await submitFeedback({
+            sessionId,
+            messageId: String(messageIndex),
+            type,
+            comment,
+        });
+    }, [sessionId]);
 
     useEffect(() => {
         if (open) {
@@ -411,11 +495,81 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                                                 message={msg}
                                                 onEdit={handleEditClient}
                                             />
+                                        ) : msg.ui?.type === "contractSendWizard" ? (
+                                            <Box key={idx} sx={{ display: "flex", justifyContent: "flex-start", mb: 3 }}>
+                                                <Paper
+                                                    elevation={0}
+                                                    sx={{
+                                                        width: "100%",
+                                                        maxWidth: 720,
+                                                        p: 2,
+                                                        borderRadius: 2,
+                                                        border: "1px solid",
+                                                        borderColor: "divider",
+                                                        bgcolor: "background.paper",
+                                                        minHeight: 300,
+                                                    }}
+                                                >
+                                                    <Suspense
+                                                        fallback={
+                                                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                                                <CircularProgress size={18} />
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    불러오는 중...
+                                                                </Typography>
+                                                            </Box>
+                                                        }
+                                                    >
+                                                        <ContractSendWizard />
+                                                    </Suspense>
+                                                </Paper>
+                                            </Box>
+                                        ) : msg.ui?.type === "contractStatusWizard" ? (
+                                            <Box key={idx} sx={{ display: "flex", justifyContent: "flex-start", mb: 3 }}>
+                                                <Paper
+                                                    elevation={0}
+                                                    sx={{
+                                                        width: "100%",
+                                                        maxWidth: 720,
+                                                        p: 2,
+                                                        borderRadius: 2,
+                                                        border: "1px solid",
+                                                        borderColor: "divider",
+                                                        bgcolor: "background.paper",
+                                                    }}
+                                                >
+                                                    <Suspense
+                                                        fallback={
+                                                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                                                <CircularProgress size={18} />
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    불러오는 중...
+                                                                </Typography>
+                                                            </Box>
+                                                        }
+                                                    >
+                                                        <ContractStatusWizard onCheck={handleContractStatusCheck} />
+                                                    </Suspense>
+                                                </Paper>
+                                            </Box>
+                                        ) : msg.ui?.type === "contractStatusResponse" ? (
+                                            <ContractStatusResponseMessage
+                                                key={idx}
+                                                message={msg}
+                                                onSendContract={handleSendContractFromStatus}
+                                            />
                                         ) : (
-                                            <AssistantMessage key={idx} message={msg} />
+                                            <AssistantMessage
+                                                key={idx}
+                                                message={msg}
+                                                messageIndex={idx}
+                                                sessionId={sessionId}
+                                                isToolExecuting={isToolExecuting && idx === messages.length - 1}
+                                                currentTool={currentTool}
+                                                onSubmitFeedback={handleSubmitFeedback}
+                                            />
                                         )
                                     )}
-                                    {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
                                     <StateIndicator state={state} />
                                     {showConfirmButtons && (
                                         <Stack direction="row" spacing={1} sx={{ mb: 2, px: 2 }}>

@@ -81,6 +81,9 @@ export const MarkdownContent = styled(Box)(({ theme }) => ({
     "& tr:last-child td": {
         borderBottom: "none",
     },
+    "& tbody tr:nth-of-type(even)": {
+        backgroundColor: theme.palette.mode === "dark" ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.015)",
+    },
     "& tbody tr:hover": {
         backgroundColor: theme.palette.mode === "dark" ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)",
     },

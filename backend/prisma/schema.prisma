@@ -153,18 +153,53 @@ model user {
   chat_session      chat_session[]
   notification      notification[]
   push_subscription push_subscription[]
+  chat_feedback     chat_feedback[]
 }
 
 model chat_session {
-  id         String   @id @default(cuid())
-  user_id    String   @db.Uuid
-  messages   Json
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  expires_at DateTime @db.Timestamptz(6)
-  user       user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id         String         @id @default(cuid())
+  user_id    String         @db.Uuid
+  created_at DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+  expires_at DateTime       @db.Timestamptz(6)
+  user       user           @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  messages   chat_message[]
+  feedback   chat_feedback[]
 
   @@index([user_id])
   @@index([expires_at])
+  @@index([created_at])
+}
+
+model chat_message {
+  id         String         @id @default(cuid())
+  session_id String
+  role       String
+  content    String         @db.Text
+  timestamp  DateTime       @default(now()) @db.Timestamptz(6)
+  session    chat_session   @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  feedback   chat_feedback[]
+
+  @@index([session_id])
+  @@index([timestamp])
+}
+
+model chat_feedback {
+  id         String       @id @default(cuid())
+  session_id String
+  message_id String
+  user_id    String       @db.Uuid
+  type       String
+  comment    String?      @db.Text
+  created_at DateTime     @default(now()) @db.Timestamptz(6)
+  session    chat_session @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  message    chat_message @relation(fields: [message_id], references: [id], onDelete: Cascade)
+  user       user         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([session_id])
+  @@index([user_id])
+  @@index([type])
+  @@index([created_at])
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.

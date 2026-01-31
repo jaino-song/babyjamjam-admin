@@ -20,9 +20,11 @@ import { Request, Response } from "express";
 import { AIChatService } from "application/services/ai-chat.service";
 import { GetChatHistoryUsecase } from "application/usecases/ai-chat/get-chat-history.usecase";
 import { CleanupChatSessionsUsecase } from "application/usecases/ai-chat/cleanup-chat-sessions.usecase";
-import { ChatStreamDto, SessionIdParamDto, SessionResponse } from "interface/dto/ai-chat.dto";
+import { ChatStreamDto, SessionIdParamDto, SessionResponse, ChatFeedbackDto, ChatPersistDto } from "interface/dto/ai-chat.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { AdminGuard } from "infrastructure/auth/admin.guard";
+import { ChatFeedbackRepository } from "infrastructure/database/repositories/chat-feedback.repository";
+import { PrismaService } from "infrastructure/database/prisma.service";
 
 interface JwtUser {
     userId: string;
@@ -38,6 +40,8 @@ export class AIChatController {
         private readonly aiChatService: AIChatService,
         private readonly getChatHistoryUsecase: GetChatHistoryUsecase,
         private readonly cleanupChatSessionsUsecase: CleanupChatSessionsUsecase,
+        private readonly chatFeedbackRepository: ChatFeedbackRepository,
+        private readonly prisma: PrismaService,
     ) {}
 
     @Post("stream")
@@ -147,5 +151,57 @@ export class AIChatController {
 
         await this.aiChatService.deleteSession(params.id);
         res.status(HttpStatus.NO_CONTENT).send();
+    }
+
+    @Post("feedback")
+    async submitFeedback(
+        @Body() dto: ChatFeedbackDto,
+        @Req() req: Request,
+    ): Promise<{ success: boolean; id: string }> {
+        const user = req.user as JwtUser;
+
+        // Find the session and verify it exists
+        const session = await this.prisma.chat_session.findUnique({
+            where: { id: dto.sessionId },
+            include: { messages: { orderBy: { timestamp: 'asc' } } },
+        });
+
+        if (!session) {
+            throw new NotFoundException("Session not found");
+        }
+
+        // Verify the message exists in the session
+        const message = session.messages.find((m) => m.id === dto.messageId);
+
+        if (!message) {
+            throw new NotFoundException("Message not found");
+        }
+
+        // Save feedback to database
+        const feedback = await this.chatFeedbackRepository.create({
+            sessionId: dto.sessionId,
+            messageId: message.id,
+            userId: user.userId,
+            type: dto.type,
+            comment: dto.comment,
+        });
+
+        this.logger.log(`Feedback saved: ${feedback.id} - ${dto.type} for session ${dto.sessionId}`);
+
+        return { success: true, id: feedback.id };
+    }
+
+    @Post("persist")
+    async persistMessages(
+        @Body() dto: ChatPersistDto,
+        @Req() req: Request,
+    ): Promise<{ sessionId: string }> {
+        const user = req.user as JwtUser;
+        return this.aiChatService.persistMessages(
+            dto.sessionId,
+            user.userId,
+            dto.userMessage,
+            dto.assistantContent,
+        );
     }
 }

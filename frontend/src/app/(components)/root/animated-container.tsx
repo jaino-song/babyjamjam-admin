@@ -6,6 +6,8 @@ import { Box } from "@mui/material";
 
 import { usePathname } from "next/navigation";
 
+const SKIP_ANIMATION_ROUTES = ["/chat"];
+
 interface AnimatedContainerProps {
     children: ReactNode;
     minHeight?: string;
@@ -18,15 +20,16 @@ export default function AnimatedContainer({
     minWidth
 }: AnimatedContainerProps) {
     const pathname = usePathname();
+    const skipAnimation = SKIP_ANIMATION_ROUTES.includes(pathname);
 
     return (
         <Box
-            component={motion.article}
+            component={skipAnimation ? "article" : motion.article}
             data-component="AnimatedContainer"
-            key={pathname}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 1 }}
+            key={skipAnimation ? undefined : pathname}
+            initial={skipAnimation ? undefined : { opacity: 0, y: 20 }}
+            animate={skipAnimation ? undefined : { opacity: 1, y: 0 }}
+            transition={skipAnimation ? undefined : { duration: 1 }}
             sx={{
                 display: 'flex',
                 flexDirection: 'column',

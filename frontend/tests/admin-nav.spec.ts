@@ -1,0 +1,62 @@
+import { test, expect } from '@playwright/test';
+
+const MOCK_ADMIN_USER = {
+  id: 'admin-user',
+  name: '관리자',
+  email: 'admin@example.com',
+  profile_image: '',
+  role: 'admin',
+};
+
+const MOCK_REGULAR_USER = {
+  id: 'regular-user',
+  name: '일반 사용자',
+  email: 'user@example.com',
+  profile_image: '',
+  role: 'user',
+};
+
+const MOCK_OWNER_USER = {
+  id: 'owner-user',
+  name: '소유자',
+  email: 'owner@example.com',
+  profile_image: '',
+  role: 'owner',
+};
+
+const setupAuthMocks = async (page: any, user: any) => {
+  await page.addInitScript(() => {
+    (window as typeof window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
+  });
+  
+  await page.route('**/api/auth/me', async (route: any) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(user) });
+  });
+  
+  await page.route('**/auth/me', async (route: any) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(user) });
+  });
+};
+
+test.describe('Admin Nav Visibility', () => {
+  test('admin nav item is highlighted when on /admin page', async ({ page }) => {
+    await setupAuthMocks(page, MOCK_ADMIN_USER);
+    
+    await page.route('**/api/admin/feedback/stats', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ positive: 0, negative: 0, total: 0 }) });
+    });
+    
+    await page.route('**/api/admin/feedback?**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: [], total: 0, page: 1, limit: 20, totalPages: 0 }) });
+    });
+    
+    await page.goto('/admin');
+    await page.waitForLoadState('networkidle');
+    
+    const menuButton = page.locator('button[aria-label="open navigation"]');
+    await menuButton.click();
+    
+    const adminNavItem = page.getByRole('link', { name: '관리자' });
+    await expect(adminNavItem).toBeVisible();
+  });
+});

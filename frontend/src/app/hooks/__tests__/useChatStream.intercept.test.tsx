@@ -1,10 +1,16 @@
 import { renderHook, act } from "@testing-library/react";
-import { useChatStream } from "../useChatStream";
+import { useChatStream, ChatMessage } from "../use-chat-stream";
 
 describe("useChatStream command intercept", () => {
+    const originalFetch = globalThis.fetch;
+
     beforeEach(() => {
-        (global as any).fetch = jest.fn();
+        globalThis.fetch = jest.fn();
         localStorage.clear();
+    });
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
     });
 
     test("intercepts '산모 등록' and does not call SSE endpoint", async () => {
@@ -14,7 +20,7 @@ describe("useChatStream command intercept", () => {
             await result.current.sendMessage("산모 등록");
         });
 
-        expect((global as any).fetch).not.toHaveBeenCalled();
-        expect(result.current.messages.some((m: any) => m.ui?.type === "clientRegistrationWizard")).toBe(true);
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(result.current.messages.some((m: ChatMessage) => m.ui?.type === "clientRegistrationWizard")).toBe(true);
     });
 });

@@ -118,8 +118,8 @@ export function NotificationBell() {
     } = usePushNotification();
 
     // Notification data (only fetch when subscribed)
-    const { data: unreadCount = 0 } = useUnreadCount();
-    const { data: notifications = [], isLoading: notificationsLoading } = useNotifications(10, 0);
+    const { data: unreadCount = 0 } = useUnreadCount(isSubscribed);
+    const { data: notifications = [], isLoading: notificationsLoading } = useNotifications(10, 0, isSubscribed);
     const markAsRead = useMarkAsRead();
     const markAllAsRead = useMarkAllAsRead();
 
@@ -346,7 +346,7 @@ export function NotificationBell() {
         );
     };
 
-    const isLoading = subscriptionLoading || subscribeLoading;
+    const isLoading = subscribeLoading; // Only disable during active subscribe, not initial check
 
     return (
         <>

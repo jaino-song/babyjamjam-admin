@@ -1,19 +1,17 @@
 import { ChatSessionEntity, ChatMessage } from "domain/entities/chat-session.entity";
-import { Prisma } from "@prisma/client";
+import { chat_session, chat_message } from "@prisma/client";
 
-type ChatSessionRow = {
-    id: string;
-    user_id: string;
-    messages: Prisma.JsonValue;
-    created_at: Date;
-    expires_at: Date;
+type ChatSessionWithMessages = chat_session & {
+    messages: chat_message[];
 };
 
 export class ChatSessionMapper {
-    static toDomain(row: ChatSessionRow): ChatSessionEntity {
-        const messages = Array.isArray(row.messages) 
-            ? (row.messages as unknown as ChatMessage[])
-            : [];
+    static toDomain(row: ChatSessionWithMessages): ChatSessionEntity {
+        const messages: ChatMessage[] = row.messages.map(m => ({
+            role: m.role as 'user' | 'assistant' | 'system',
+            content: m.content,
+            timestamp: m.timestamp.toISOString(),
+        }));
         
         return ChatSessionEntity.reconstitute(
             row.id,
@@ -27,15 +25,16 @@ export class ChatSessionMapper {
     static toPrismaCreate(entity: ChatSessionEntity) {
         return {
             user_id: entity.userId,
-            messages: entity.messages as unknown as Prisma.InputJsonValue,
             expires_at: entity.expiresAt,
         };
     }
 
-    static toPrismaUpdate(entity: ChatSessionEntity) {
+    static toPrismaCreateMessage(sessionId: string, message: ChatMessage) {
         return {
-            messages: entity.messages as unknown as Prisma.InputJsonValue,
-            expires_at: entity.expiresAt,
+            session_id: sessionId,
+            role: message.role,
+            content: message.content,
+            timestamp: new Date(message.timestamp),
         };
     }
 }

@@ -23,14 +23,14 @@ describe("GetChatHistoryUsecase", () => {
     };
 
     describe("execute", () => {
-        it("should return empty result when no session exists", async () => {
+        it("should return empty result when no active session exists", async () => {
             const repo = createRepository();
-            repo.findByUserId.mockResolvedValue(null);
+            repo.findActiveByUserId.mockResolvedValue(null);
             const usecase = new GetChatHistoryUsecase(repo);
 
             const result = await usecase.execute("user-1", 0, 20);
 
-            expect(repo.findByUserId).toHaveBeenCalledWith("user-1");
+            expect(repo.findActiveByUserId).toHaveBeenCalledWith("user-1");
             expect(result).toEqual({
                 messages: [],
                 total: 0,
@@ -40,27 +40,26 @@ describe("GetChatHistoryUsecase", () => {
             });
         });
 
-        it("should paginate messages and include expired sessions", async () => {
+        it("should paginate messages from active session only", async () => {
             const repo = createRepository();
             const session = ChatSessionEntity.reconstitute(
                 "session-1",
                 "user-1",
                 createMessages(5),
                 new Date("2026-01-01T00:00:00.000Z"),
-                new Date("2025-01-01T00:00:00.000Z"), // expired
+                new Date("2099-01-01T00:00:00.000Z"),
             );
-            repo.findByUserId.mockResolvedValue(session);
+            repo.findActiveByUserId.mockResolvedValue(session);
 
             const usecase = new GetChatHistoryUsecase(repo);
             const result = await usecase.execute("user-1", 1, 2);
 
-            expect(repo.findByUserId).toHaveBeenCalledWith("user-1");
-            expect(repo.findActiveByUserId).not.toHaveBeenCalled();
+            expect(repo.findActiveByUserId).toHaveBeenCalledWith("user-1");
             expect(result.total).toBe(5);
             expect(result.messages.map((m: ChatMessage) => m.content)).toEqual(["m2", "m3"]);
             expect(result.hasMore).toBe(true);
             expect(result.sessionId).toBe("session-1");
-            expect(result.isSessionActive).toBe(false);
+            expect(result.isSessionActive).toBe(true);
         });
     });
 });
