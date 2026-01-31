@@ -11,6 +11,7 @@ import { LanguageSwitcher } from "./language-switcher";
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import AssignmentIndOutlinedIcon from '@mui/icons-material/AssignmentIndOutlined';
 import DescriptionIcon from '@mui/icons-material/Description';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { eformsignQueryKeys } from "@/app/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
@@ -52,6 +53,8 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     const isClients = pathname === "/clients";
     const isSettings = pathname === "/settings";
     const isEmployees = pathname === "/employees";
+    const isAdminOrOwner = user?.role === 'admin' || user?.role === 'owner';
+    const isAdmin = pathname === '/admin' || pathname?.startsWith('/admin/');
 
     return (
         <Box sx={{ width: '100%', height: '100%', p: 2, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>

@@ -23,16 +23,11 @@ respond in the same language as the user (korean or english).
 <capabilities>
 i can help you with:
 
-INTENT-BASED TOOL SELECTION (CRITICAL):
-- Focus on the USER'S INTENT, not exact phrase matching
-- Even if user's wording is different, select the tool that matches their GOAL
-- Ask clarifying questions ONLY if the intent is truly ambiguous
-- Examples of intent mapping:
-  * "누가 일 안해?" / "쉬는 사람?" / "놀고 있는 관리사" → getAvailableEmployees (looking for available staff)
-  * "돈 어디로 보내?" / "입금 계좌" / "통장 번호" → listBankAccounts or getBankAccountByArea
-  * "이번 주 끝나는 산모" / "퇴소 예정" / "종료 임박" → getClientsByFilter(filter: "ending-soon")
-  * "계약서 발송 후 대기" / "발송 후 대기" / "서명 대기" / "계약서 보냈는데 아직" → getClientsByFilter(filter: "incomplete-contracts")
-  * "가격 얼마야?" / "비용" / "요금" → listVoucherPrices or getVoucherPriceByType
+**산모 (client) management:**
+- search and view client information
+- register new clients, update details, or remove records
+- check clients with ending services, pending contracts, or starting soon
+- terminate services or request caregiver replacement
 
 **관리사 (caregiver) management:**
 - search caregivers by name, area, or grade
@@ -73,19 +68,8 @@ other synonyms:
 - 지역 = 구역 = 인천 = area
 </terminology>
 
-RULES:
-1. Respond in the SAME LANGUAGE as the user (Korean or English)
-2. For CREATE, UPDATE, DELETE operations: ALWAYS call the tool with confirmed=false first
-3. When user confirms (says "yes", "확인", "네", etc.), call the tool again with confirmed=true
-4. Be concise and professional
-5. TABLE FORMATTING IS MANDATORY: Use Markdown tables whenever possible for lists, records, comparisons, search results, or any structured data. Ensure columns have clear headers (e.g., | Name | Phone | Status |).
-6. When searching, show relevant details (name, phone, status)
-7. For contract creation, always confirm client name and template before proceeding
-8. When user asks "몇 명", "몇 개", "얼마나", use getDashboardStats for counts
-9. NEVER provide information that doesn't come from the tools
-10. DO NOT output any text before calling a tool - just call the tool directly
-11. After getting tool results, format the response nicely without repeating what you're doing
-12. If you must refuse, say it ONCE (no repeated sentences)
+<guidelines>
+1. **language**: match the user's language (korean ↔ english)
 
 2. **ACTION FIRST - ALWAYS use tools, never just ask questions**:
    - when you can help, CALL THE TOOL IMMEDIATELY
@@ -391,31 +375,11 @@ export class AIChatService {
                             throw error;
                         }
 
-                        messages.push({
-                            role: 'model',
-                            content: JSON.stringify({ functionCall: { name, args } }),
-                        });
-                        messages.push({
-                            role: 'user',
-                            content: JSON.stringify({ functionResponse: { name, response: result } }),
-                        });
-
-                        continueLoop = true;
-                        break;
-                    }
-
-                    if (chunk.type === 'done') {
-                        const text = accumulatedText.trim();
-                        if (!text) {
+                        if (retryCount < MAX_RETRIES) {
+                            retryCount++;
+                            this.logger.warn(`Gemini API error, retrying (attempt ${retryCount + 1})...`);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                             continue;
-                        }
-
-                        const lastMessage = session.messages[session.messages.length - 1];
-                        const isDuplicateAssistantMessage =
-                            lastMessage?.role === 'assistant' && lastMessage.content === accumulatedText;
-
-                        if (!isDuplicateAssistantMessage) {
-                            session.addMessage('assistant', accumulatedText);
                         }
                         throw error; // Re-throw after max retries
                     }
