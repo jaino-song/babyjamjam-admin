@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNotEmpty } from "class-validator";
+import { IsString, IsOptional, IsNotEmpty, IsIn } from "class-validator";
 
 export class ChatStreamDto {
     @IsOptional()
@@ -28,4 +28,36 @@ export interface SessionResponse {
     messages: ChatMessageResponse[];
     createdAt: string;
     expiresAt: string;
+}
+
+export class ChatFeedbackDto {
+    @IsNotEmpty()
+    @IsString()
+    sessionId!: string;
+
+    @IsNotEmpty()
+    @IsString()
+    messageId!: string;
+
+    @IsNotEmpty()
+    @IsIn(['positive', 'negative'])
+    type!: 'positive' | 'negative';
+
+    @IsOptional()
+    @IsString()
+    comment?: string;
+}
+
+export class ChatPersistDto {
+    @IsOptional()
+    @IsString()
+    sessionId?: string;
+
+    @IsNotEmpty()
+    @IsString()
+    userMessage!: string;
+
+    @IsNotEmpty()
+    @IsString()
+    assistantContent!: string;
 }

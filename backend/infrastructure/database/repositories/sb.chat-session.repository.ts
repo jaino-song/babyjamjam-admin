@@ -11,6 +11,7 @@ export class SbChatSessionRepository implements IChatSessionRepository {
     async findById(id: string): Promise<ChatSessionEntity | null> {
         const session = await this.prismaService.chat_session.findUnique({
             where: { id },
+            include: { messages: { orderBy: { timestamp: 'asc' } } },
         });
         if (!session) return null;
         
@@ -22,6 +23,7 @@ export class SbChatSessionRepository implements IChatSessionRepository {
         const session = await this.prismaService.chat_session.findFirst({
             where: { user_id: userId },
             orderBy: { created_at: 'desc' },
+            include: { messages: { orderBy: { timestamp: 'asc' } } },
         });
         return session ? ChatSessionMapper.toDomain(session) : null;
     }
@@ -34,6 +36,7 @@ export class SbChatSessionRepository implements IChatSessionRepository {
                 expires_at: { gt: now },
             },
             orderBy: { created_at: 'desc' },
+            include: { messages: { orderBy: { timestamp: 'asc' } } },
         });
         return session ? ChatSessionMapper.toDomain(session) : null;
     }
@@ -41,15 +44,33 @@ export class SbChatSessionRepository implements IChatSessionRepository {
     async create(session: ChatSessionEntity): Promise<ChatSessionEntity> {
         const created = await this.prismaService.chat_session.create({
             data: ChatSessionMapper.toPrismaCreate(session),
+            include: { messages: true },
         });
         return ChatSessionMapper.toDomain(created);
     }
 
     async update(session: ChatSessionEntity): Promise<ChatSessionEntity> {
+        // Get existing messages count
+        const existing = await this.prismaService.chat_message.count({
+            where: { session_id: session.id },
+        });
+        
+        // Create new messages (those beyond existing count)
+        const newMessages = session.messages.slice(existing);
+        
+        if (newMessages.length > 0) {
+            await this.prismaService.chat_message.createMany({
+                data: newMessages.map(m => ChatSessionMapper.toPrismaCreateMessage(session.id, m)),
+            });
+        }
+        
+        // Update session expiry
         const updated = await this.prismaService.chat_session.update({
             where: { id: session.id },
-            data: ChatSessionMapper.toPrismaUpdate(session),
+            data: { expires_at: session.expiresAt },
+            include: { messages: { orderBy: { timestamp: 'asc' } } },
         });
+        
         return ChatSessionMapper.toDomain(updated);
     }
 

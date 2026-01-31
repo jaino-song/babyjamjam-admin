@@ -11,7 +11,7 @@ jest.mock("react-markdown", () => ({
 
 jest.mock("remark-gfm", () => ({
     __esModule: true,
-    default: () => {},
+    default: () => { },
 }));
 
 // Avoid importing CodeBlock/react-syntax-highlighter (ESM deps) in this test.
@@ -19,7 +19,7 @@ jest.mock("../AssistantMessage", () => ({
     AssistantMessage: () => <div data-testid="assistant-message" />,
 }));
 
-jest.mock("@/app/hooks/useChatStream", () => ({
+jest.mock("@/app/hooks/use-chat-stream", () => ({
     useChatStream: () => ({
         messages: [],
         state: "idle",

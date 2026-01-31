@@ -5,13 +5,27 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
 import { MarkdownContent } from "./MarkdownContent";
-import type { ChatMessage } from "@/app/hooks/useChatStream";
+import { ToolIndicator } from "./tool-indicator";
+import { MessageFeedback } from "./message-feedback";
+import type { ChatMessage } from "@/app/hooks/use-chat-stream";
 
 interface AssistantMessageProps {
     message: ChatMessage;
+    messageIndex: number;
+    sessionId: string | null;
+    isToolExecuting?: boolean;
+    currentTool?: string | null;
+    onSubmitFeedback: (messageIndex: number, type: "positive" | "negative", comment?: string) => Promise<void>;
 }
 
-export function AssistantMessage({ message }: AssistantMessageProps) {
+export function AssistantMessage({ 
+    message, 
+    messageIndex, 
+    sessionId, 
+    isToolExecuting, 
+    currentTool, 
+    onSubmitFeedback 
+}: AssistantMessageProps) {
     return (
         <Box
             sx={{
@@ -33,6 +47,9 @@ export function AssistantMessage({ message }: AssistantMessageProps) {
             />
 
             <Box sx={{ flex: 1, minWidth: 0 }}>
+                {isToolExecuting && message.isStreaming && (
+                    <ToolIndicator toolName={currentTool || null} isExecuting={true} />
+                )}
                 <MarkdownContent>
                     <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
@@ -81,6 +98,13 @@ export function AssistantMessage({ message }: AssistantMessageProps) {
                         />
                     )}
                 </MarkdownContent>
+                {!message.isStreaming && (
+                    <MessageFeedback
+                        messageId={String(messageIndex)}
+                        sessionId={sessionId}
+                        onSubmitFeedback={(type, comment) => onSubmitFeedback(messageIndex, type, comment)}
+                    />
+                )}
             </Box>
         </Box>
     );

@@ -1,11 +1,13 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { AIChatController } from "interface/controllers/ai-chat.controller";
+import { AdminFeedbackController } from "interface/controllers/admin-feedback.controller";
 import { AIChatService } from "application/services/ai-chat.service";
 import { GetChatHistoryUsecase } from "application/usecases/ai-chat/get-chat-history.usecase";
 import { CleanupChatSessionsUsecase } from "application/usecases/ai-chat/cleanup-chat-sessions.usecase";
 import { ToolExecutorService } from "application/ai-chat/tool-executor.service";
 import { GeminiChatGateway } from "infrastructure/api/gemini-chat.gateway";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { ChatSessionModule } from "./chat-session.module";
 import { ClientModule } from "./client.module";
 import { EmployeeModule } from "./employee.module";
@@ -29,13 +31,14 @@ import { EmployeeScheduleModule } from "./employee-schedule.module";
         BankAccountInfoModule,
         EmployeeScheduleModule,
     ],
-    controllers: [AIChatController],
+    controllers: [AIChatController, AdminFeedbackController],
     providers: [
         GeminiChatGateway,
         ToolExecutorService,
         AIChatService,
         GetChatHistoryUsecase,
         CleanupChatSessionsUsecase,
+        OwnerOrAdminGuard,
     ],
     exports: [AIChatService],
 })

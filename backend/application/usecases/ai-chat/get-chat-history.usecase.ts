@@ -18,8 +18,7 @@ export class GetChatHistoryUsecase {
     ) {}
 
     async execute(userId: string, offset: number, limit: number): Promise<GetChatHistoryResult> {
-        // get most recent session for user (includes expired sessions)
-        const session = await this.sessionRepository.findByUserId(userId);
+        const session = await this.sessionRepository.findActiveByUserId(userId);
 
         if (!session) {
             return {

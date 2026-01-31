@@ -96,35 +96,38 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
 /**
  * Hook to get VAPID public key
  */
-export function useVapidKey() {
+export function useVapidKey(enabled = true) {
     return useQuery({
         queryKey: NOTIFICATION_KEYS.vapidKey,
         queryFn: fetchVapidKey,
         staleTime: Infinity, // VAPID key doesn't change
         gcTime: Infinity,
+        enabled,
     });
 }
 
 /**
  * Hook to get notifications list
  */
-export function useNotifications(limit = 50, offset = 0) {
+export function useNotifications(limit = 50, offset = 0, enabled = true) {
     return useQuery({
         queryKey: [...NOTIFICATION_KEYS.all, 'list', { limit, offset }],
         queryFn: () => fetchNotifications(limit, offset),
         staleTime: 1000 * 60, // 1 minute
+        enabled,
     });
 }
 
 /**
  * Hook to get unread notification count
  */
-export function useUnreadCount() {
+export function useUnreadCount(enabled = true) {
     return useQuery({
         queryKey: [...NOTIFICATION_KEYS.all, 'unread'],
         queryFn: fetchUnreadCount,
         staleTime: 1000 * 30, // 30 seconds
-        refetchInterval: 1000 * 60, // Poll every minute
+        refetchInterval: enabled ? 1000 * 60 : false, // Only poll when enabled
+        enabled,
     });
 }
 

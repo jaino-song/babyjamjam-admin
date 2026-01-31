@@ -13,6 +13,7 @@ export const api = axios.create({
 
 // Token refresh state management
 let isRefreshing = false;
+let isRedirectingToLogin = false;
 let failedQueue: Array<{
     resolve: (value?: unknown) => void;
     reject: (reason?: unknown) => void;
@@ -105,8 +106,8 @@ api.interceptors.response.use(
                 }
             }
             
-            // For non-eformsign 401 errors (main auth failure), just reject without redirect
-            // The server-side layout will handle the redirect
+            // For non-eformsign 401 errors (main auth failure), redirect to login
+            if (typeof window !== 'undefined' && !isRedirectingToLogin) { isRedirectingToLogin = true; window.location.href = '/login'; }
             return Promise.reject(err);
         }
 
