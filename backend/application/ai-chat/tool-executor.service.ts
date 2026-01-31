@@ -35,7 +35,11 @@ export class ToolExecutorService {
     ) {}
 
     async execute(toolName: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        this.logger.log(`Executing tool: ${toolName} with args: ${JSON.stringify(args)}`);
+        const argKeys = Object.keys(args || {}).sort();
+        const confirmed = args && typeof args['confirmed'] === 'boolean' ? args['confirmed'] : undefined;
+        this.logger.log(
+            `Executing tool: ${toolName} confirmed=${confirmed ?? 'n/a'} argKeys=[${argKeys.join(',')}]`
+        );
 
         if (isCUDTool(toolName) && args['confirmed'] !== true) {
             return this.requestConfirmation(toolName, args);

@@ -95,6 +95,7 @@ export class MockClientRepository implements IClientRepository {
             client.careCenter,
             client.voucherClient,
             client.birthday,
+            client.dueDate,
             client.serviceStatus,
             client.breastPump,
             client.eDocId,

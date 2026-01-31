@@ -34,6 +34,7 @@ describe("SbClientRepository", () => {
         service_status: "completed",
         breast_pump: true,
         e_doc_id: null,
+        due_date: null,
         ...overrides,
     });
 
@@ -54,6 +55,7 @@ describe("SbClientRepository", () => {
         serviceStatus: "waiting",
         breastPump: false,
         eDocId: null,
+        dueDate: null,
         ...overrides,
     });
 
@@ -345,6 +347,7 @@ describe("SbClientRepository", () => {
                         service_status: "waiting",
                         breast_pump: false,
                         e_doc_id: null,
+        due_date: null,
                     },
                 });
                 expect(result).toBeInstanceOf(ClientEntity);
@@ -445,6 +448,7 @@ describe("SbClientRepository", () => {
                         service_status: "in_progress",
                         breast_pump: true,
                         e_doc_id: null,
+        due_date: null,
                     },
                 });
                 expect(result).toBeInstanceOf(ClientEntity);

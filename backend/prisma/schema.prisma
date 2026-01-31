@@ -39,6 +39,7 @@ model client {
   care_center                                   Boolean
   voucher_client                                Boolean
   birthday                                      String?             @db.VarChar(6)
+  due_date                                      DateTime?           @db.Date
   breast_pump                                   Boolean             @default(false)
   service_status                                String?
   e_doc_id                                      String?             @unique

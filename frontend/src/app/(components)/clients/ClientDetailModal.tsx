@@ -136,6 +136,7 @@ export function ClientDetailModal({
                     </Typography>
                     <InfoRow label={t(locale, "clients.form.name")} value={client.name} />
                     <InfoRow label={t(locale, "clients.form.birthday")} value={client.birthday} />
+                    <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(client.dueDate)} />
                     <InfoRow label={t(locale, "clients.form.phone")} value={client.phone} />
                     <InfoRow label={t(locale, "clients.form.address")} value={client.address} />
 
@@ -236,4 +237,3 @@ export function ClientDetailModal({
         </Dialog>
     );
 }
-

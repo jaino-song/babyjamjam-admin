@@ -116,6 +116,7 @@ export const ContractCreationForm = () => {
     phone,
     birthday,
     address,
+    dueDate,
     // Employee 1 selection
     employeeId,
     isEmployeeManualEntry,
@@ -145,6 +146,7 @@ export const ContractCreationForm = () => {
     setPhone,
     setBirthday,
     setAddress,
+    setDueDate,
     resetClientFields,
     // Employee 1 selection setters
     setIsEmployeeManualEntry,
@@ -286,6 +288,7 @@ export const ContractCreationForm = () => {
       setPhone(client.phone || "");
       setBirthday(client.birthday || "");
       setAddress(client.address || "");
+      setDueDate(client.dueDate || "");
 
       // Auto-populate voucher info from client if available
       if (client.type) {
@@ -338,6 +341,7 @@ export const ContractCreationForm = () => {
       setPhone("");
       setBirthday("");
       setAddress("");
+      setDueDate("");
       // Also clear voucher info
       setVoucherType("");
       setVoucherDuration("");
@@ -429,6 +433,7 @@ export const ContractCreationForm = () => {
           phone,
           birthday: birthday || undefined,
           address: address || undefined,
+          dueDate: dueDate || undefined,
           primaryEmployeeId: null,
           careCenter: false,
           voucherClient: true,
@@ -640,6 +645,9 @@ export const ContractCreationForm = () => {
                                 <Typography variant="body2" color="text.secondary">
                                   <strong>{t(locale, "contract-msg.address-label")}:</strong> {address || "-"}
                                 </Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                  <strong>{t(locale, "clients.form.due-date")}:</strong> {dueDate || "-"}
+                                </Typography>
                               </Stack>
                             </Fade>
                           )}
@@ -684,6 +692,14 @@ export const ContractCreationForm = () => {
                             value={address}
                             onChange={(e) => setAddress(e.target.value)}
                             placeholder={t(locale, "contract-msg.address-placeholder")}
+                          />
+                          <TextField
+                            fullWidth
+                            type="date"
+                            label={t(locale, "clients.form.due-date")}
+                            value={dueDate}
+                            onChange={(e) => setDueDate(e.target.value)}
+                            InputLabelProps={{ shrink: true }}
                           />
                         </>
                       )}

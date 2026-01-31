@@ -184,6 +184,36 @@ describe("ClientService", () => {
             });
         });
 
+        describe("given valid client data without primary employee", () => {
+            it("should create client and skip employee_schedule creation", async () => {
+                // Arrange
+                const mockClient = createClientEntity();
+                createClientUsecase.execute.mockResolvedValue(mockClient);
+
+                const params = {
+                    name: "New Client",
+                    address: "123 Main St",
+                    phone: "010-1234-5678",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                };
+
+                // Act
+                const result = await service.create(params);
+
+                // Assert
+                expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        name: "New Client",
+                        address: "123 Main St",
+                    })
+                );
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(result).toBe(mockClient);
+            });
+        });
+
         describe("given client data with both primary and secondary employees", () => {
             it("should create single schedule with both employees", async () => {
                 // Arrange

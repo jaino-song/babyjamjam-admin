@@ -52,6 +52,20 @@ describe("UpdateClientUsecase", () => {
             expect(result.name).toBe("고객"); // 변경 안 됨
         });
 
+        it("should update dueDate", async () => {
+            // Arrange
+            const existingClient = ClientFactory.create({ id: 1, name: "고객", dueDate: null });
+            mockRepository.setData([existingClient]);
+
+            // Act
+            const result = await usecase.execute(1, {
+                dueDate: new Date("2024-03-01"),
+            });
+
+            // Assert
+            expect(result.dueDate).toEqual(new Date("2024-03-01"));
+        });
+
         it("should throw NotFoundException when client not found", async () => {
             // Arrange - empty repository
 

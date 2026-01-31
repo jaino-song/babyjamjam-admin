@@ -14,6 +14,7 @@ interface UpdateClientProps {
     careCenter?: boolean;
     voucherClient?: boolean;
     birthday?: string | null;
+    dueDate?: Date | null;
     serviceStatus?: string | null;
     breastPump?: boolean;
     eDocId?: string | null;
@@ -33,6 +34,7 @@ interface CreateClientProps {
     careCenter: boolean;
     voucherClient: boolean;
     birthday: string | null;
+    dueDate: Date | null;
     serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
@@ -57,6 +59,7 @@ export class ClientEntity {
         public serviceStatus: string | null,
         public breastPump: boolean,
         public eDocId: string | null,
+        public dueDate: Date | null = null,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -105,6 +108,7 @@ export class ClientEntity {
             props.serviceStatus,
             props.breastPump,
             props.eDocId,
+            props.dueDate,
         );
     }
 
@@ -122,6 +126,7 @@ export class ClientEntity {
         this.careCenter = props.careCenter ?? this.careCenter;
         this.voucherClient = props.voucherClient ?? this.voucherClient;
         this.birthday = props.birthday ?? this.birthday;
+        this.dueDate = props.dueDate ?? this.dueDate;
         this.serviceStatus = props.serviceStatus ?? this.serviceStatus;
         this.breastPump = props.breastPump ?? this.breastPump;
         this.eDocId = props.eDocId ?? this.eDocId;
@@ -146,6 +151,7 @@ export class ClientEntity {
         careCenter: boolean,
         voucherClient: boolean,
         birthday: string | null,
+        dueDate: Date | null,
         serviceStatus: string | null,
         breastPump: boolean,
         eDocId: string | null,
@@ -168,6 +174,7 @@ export class ClientEntity {
             serviceStatus,
             breastPump,
             eDocId,
+            dueDate,
         );
     }
 }

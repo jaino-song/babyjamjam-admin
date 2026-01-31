@@ -7,6 +7,11 @@ export interface ChatMessage {
     content: string;
     timestamp: string;
     isStreaming?: boolean;
+    ui?: {
+        clientId?: number;
+        clientName?: string;
+        type: "clientRegistrationWizard" | "clientRegistrationSuccess";
+    };
 }
 
 export interface ChatStreamEvent {
@@ -29,6 +34,7 @@ interface UseChatStreamReturn {
     sendMessage: (message: string) => Promise<void>;
     loadHistory: (offset?: number) => Promise<void>;
     clearSession: () => void;
+    appendMessage: (message: ChatMessage) => void;
     isToolExecuting: boolean;
     currentTool: string | null;
     isLoadingHistory: boolean;
@@ -80,6 +86,10 @@ export function useChatStream(): UseChatStreamReturn {
     
     const abortControllerRef = useRef<AbortController | null>(null);
 
+    const appendMessage = useCallback((message: ChatMessage) => {
+        setMessages((prev) => [...prev, message]);
+    }, []);
+
     const loadHistory = useCallback(async (offset: number = 0) => {
         if (isLoadingRef.current) return;
         isLoadingRef.current = true;
@@ -117,12 +127,41 @@ export function useChatStream(): UseChatStreamReturn {
             return;
         }
 
+        const trimmed = message.trim();
+        if (!trimmed) {
+            return;
+        }
+
+        // Local command intercepts (no SSE call)
+        if (trimmed === "산모 등록") {
+            const ts = new Date().toISOString();
+            setError(null);
+            setIsToolExecuting(false);
+            setCurrentTool(null);
+            setMessages((prev) => [
+                ...prev,
+                {
+                    role: "user",
+                    content: trimmed,
+                    timestamp: ts,
+                },
+                {
+                    role: "assistant",
+                    content: "",
+                    timestamp: ts,
+                    ui: { type: "clientRegistrationWizard" },
+                },
+            ]);
+            setState("idle");
+            return;
+        }
+
         setError(null);
         setState("connecting");
 
         const userMessage: ChatMessage = {
             role: "user",
-            content: message,
+            content: trimmed,
             timestamp: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, userMessage]);
@@ -145,7 +184,7 @@ export function useChatStream(): UseChatStreamReturn {
                 },
                 body: JSON.stringify({
                     sessionId,
-                    message,
+                    message: trimmed,
                 }),
                 credentials: "include",
                 signal: abortControllerRef.current.signal,
@@ -306,6 +345,7 @@ export function useChatStream(): UseChatStreamReturn {
         sendMessage,
         loadHistory,
         clearSession,
+        appendMessage,
         isToolExecuting,
         currentTool,
         isLoadingHistory,

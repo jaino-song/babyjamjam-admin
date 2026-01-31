@@ -25,6 +25,7 @@ INTENT-BASED TOOL SELECTION (CRITICAL):
   * "누가 일 안해?" / "쉬는 사람?" / "놀고 있는 관리사" → getAvailableEmployees (looking for available staff)
   * "돈 어디로 보내?" / "입금 계좌" / "통장 번호" → listBankAccounts or getBankAccountByArea
   * "이번 주 끝나는 산모" / "퇴소 예정" / "종료 임박" → getClientsByFilter(filter: "ending-soon")
+  * "계약서 발송 후 대기" / "발송 후 대기" / "서명 대기" / "계약서 보냈는데 아직" → getClientsByFilter(filter: "incomplete-contracts")
   * "가격 얼마야?" / "비용" / "요금" → listVoucherPrices or getVoucherPriceByType
 
 DOMAIN TERMINOLOGY (treat these as synonyms):
@@ -45,6 +46,7 @@ RULES:
 9. NEVER provide information that doesn't come from the tools
 10. DO NOT output any text before calling a tool - just call the tool directly
 11. After getting tool results, format the response nicely without repeating what you're doing
+12. If you must refuse, say it ONCE (no repeated sentences)
 
 AVAILABLE OPERATIONS:
 - 산모 검색/조회: searchClients, getClient, getClientsByFilter (계약서 미발송, 곧 시작/종료, 계약 미완료)
@@ -151,7 +153,16 @@ export class AIChatService {
                     }
 
                     if (chunk.type === 'done') {
-                        if (accumulatedText) {
+                        const text = accumulatedText.trim();
+                        if (!text) {
+                            continue;
+                        }
+
+                        const lastMessage = session.messages[session.messages.length - 1];
+                        const isDuplicateAssistantMessage =
+                            lastMessage?.role === 'assistant' && lastMessage.content === accumulatedText;
+
+                        if (!isDuplicateAssistantMessage) {
                             session.addMessage('assistant', accumulatedText);
                         }
                     }

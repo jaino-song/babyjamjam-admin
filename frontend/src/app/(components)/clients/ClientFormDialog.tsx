@@ -101,6 +101,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     const [formData, setFormData] = useState<Omit<CreateClientDto, 'primaryEmployeeId'> & { primaryEmployeeId: number | null }>({
         name: "",
         birthday: "",
+        dueDate: "",
         address: "",
         phone: "",
         primaryEmployeeId: null, // null means "not selected yet"
@@ -182,6 +183,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 setFormData({
                     name: client.name,
                     birthday: client.birthday || "",
+                    dueDate: formatDateForInput(client.dueDate),
                     address: client.address || "",
                     phone: client.phone || "",
                     primaryEmployeeId: client.primaryEmployee?.id ?? null,
@@ -207,6 +209,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 setFormData({
                     name: prefillName || "",
                     birthday: "",
+                    dueDate: "",
                     address: "",
                     phone: "",
                     primaryEmployeeId: null, // null means "not selected yet"
@@ -252,6 +255,10 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             setError(t(locale, "clients.form.error-birthday-required"));
             return;
         }
+        if (!formData.dueDate?.trim()) {
+            setError(t(locale, "clients.form.error-due-date-required"));
+            return;
+        }
         if (!formData.address?.trim()) {
             setError(t(locale, "clients.form.error-address-required"));
             return;
@@ -263,10 +270,6 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         // Check for null/undefined specifically, as 0 can be a valid ID
         // In edit mode, skip this validation if employee hasn't been selected
         // (the backend will preserve the existing schedule)
-        if (!isEditMode && (formData.primaryEmployeeId === null || formData.primaryEmployeeId === undefined)) {
-            setError(t(locale, "clients.form.error-employee-required"));
-            return;
-        }
         if (!formData.type?.trim()) {
             setError(t(locale, "clients.form.error-type-required"));
             return;
@@ -295,6 +298,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 const updateDto: UpdateClientDto = {
                     name: formData.name,
                     birthday: formData.birthday,
+                    dueDate: formData.dueDate || null,
                     address: formData.address,
                     phone: formData.phone,
                     // Only include employee IDs if explicitly selected (not null)
@@ -379,6 +383,16 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     <Grid size={{ xs: 12, sm: 6 }}>
                         <TextField
                             fullWidth
+                            type="date"
+                            label={t(locale, "clients.form.due-date")}
+                            value={formData.dueDate || ""}
+                            onChange={(e) => handleChange("dueDate", e.target.value)}
+                            InputLabelProps={{ shrink: true }}
+                        />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                            fullWidth
                             label={t(locale, "clients.form.phone")}
                             value={formData.phone}
                             onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
@@ -409,7 +423,6 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                             value={formData.primaryEmployeeId}
                             onChange={(id) => handleChange("primaryEmployeeId", id)}
                             label={t(locale, "clients.form.primary-employee")}
-                            required
                             excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
                             allowManualEntry
                             onManualEntry={() => {
