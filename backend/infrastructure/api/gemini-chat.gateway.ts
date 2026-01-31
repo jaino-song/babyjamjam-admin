@@ -178,9 +178,11 @@ export class GeminiChatGateway {
 
         const decoder = new TextDecoder();
         let buffer = '';
+        let doneEmitted = false;
+        let shouldStop = false;
 
         try {
-            while (true) {
+            while (!shouldStop) {
                 const { done, value } = await reader.read();
                 if (done) break;
 
@@ -216,11 +218,20 @@ export class GeminiChatGateway {
                             }
 
                             if (candidate?.finishReason === 'STOP') {
-                                yield { type: 'done' };
+                                if (!doneEmitted) {
+                                    doneEmitted = true;
+                                    yield { type: 'done' };
+                                }
+                                shouldStop = true;
+                                break;
                             }
                         } catch (parseError) {
                             this.logger.warn(`Failed to parse SSE chunk: ${jsonStr}`);
                         }
+                    }
+
+                    if (shouldStop) {
+                        break;
                     }
                 }
             }
@@ -228,7 +239,9 @@ export class GeminiChatGateway {
             reader.releaseLock();
         }
 
-        yield { type: 'done' };
+        if (!doneEmitted) {
+            yield { type: 'done' };
+        }
     }
 
     async sendFunctionResult(

@@ -31,6 +31,7 @@ describe("CreateClientUsecase", () => {
                 careCenter: false,
                 voucherClient: true,
                 birthday: "1990-01-01",
+                dueDate: new Date("2024-03-01"),
                 serviceStatus: "active",
                 breastPump: false,
                 eDocId: null,
@@ -64,6 +65,7 @@ describe("CreateClientUsecase", () => {
                 careCenter: false,
                 voucherClient: false,
                 birthday: null,
+                dueDate: null,
                 serviceStatus: null,
                 breastPump: false,
             };
@@ -93,6 +95,7 @@ describe("CreateClientUsecase", () => {
                 careCenter: false,
                 voucherClient: false,
                 birthday: null,
+                dueDate: null,
                 serviceStatus: null,
                 breastPump: false,
             };

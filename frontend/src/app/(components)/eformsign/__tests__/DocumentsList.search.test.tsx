@@ -66,7 +66,7 @@ const createMockDocument = (
 const openSearchField = () => {
   const searchIconButton = screen.getByRole('button', { name: /search/i });
   fireEvent.click(searchIconButton);
-  return screen.getByPlaceholderText('고객명 검색');
+  return screen.getByPlaceholderText('이름 검색');
 };
 
 beforeEach(() => {
@@ -281,7 +281,7 @@ describe('DocumentsList Search UI Rendering', () => {
 
     const searchIconButton = screen.getByRole('button', { name: /search/i });
     expect(searchIconButton).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('고객명 검색')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('이름 검색')).not.toBeInTheDocument();
   });
 
   it('should show TextField when search icon is clicked (expanded state)', () => {
@@ -290,7 +290,7 @@ describe('DocumentsList Search UI Rendering', () => {
     const searchIconButton = screen.getByRole('button', { name: /search/i });
     fireEvent.click(searchIconButton);
 
-    expect(screen.getByPlaceholderText('고객명 검색')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('이름 검색')).toBeInTheDocument();
   });
 
   it('should hide TextField on blur when search input is empty', () => {
@@ -301,7 +301,7 @@ describe('DocumentsList Search UI Rendering', () => {
 
     fireEvent.blur(searchField);
 
-    expect(screen.queryByPlaceholderText('고객명 검색')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('이름 검색')).not.toBeInTheDocument();
   });
 
   it('should keep TextField visible on blur when search input has value', () => {
@@ -311,7 +311,7 @@ describe('DocumentsList Search UI Rendering', () => {
     fireEvent.change(searchField, { target: { value: '홍길동' } });
     fireEvent.blur(searchField);
 
-    expect(screen.getByPlaceholderText('고객명 검색')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('이름 검색')).toBeInTheDocument();
   });
 });
 

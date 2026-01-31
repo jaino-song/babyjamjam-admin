@@ -26,6 +26,7 @@ const mockClient: Client = {
     primaryEmployee: null,
     secondaryEmployee: null,
     hasSigned: false,
+    dueDate: null,
 };
 
 let mockFilteredClients: Client[] = [];

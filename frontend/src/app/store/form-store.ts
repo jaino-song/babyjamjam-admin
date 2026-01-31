@@ -7,6 +7,7 @@ interface FormStore {
     name: string;
     phone: string;
     birthday: string;
+    dueDate: string;
     address: string;
     // Employee 1 selection
     employeeId: number | null;
@@ -36,6 +37,7 @@ interface FormStore {
     setName: (name: string) => void;
     setPhone: (phone: string) => void;
     setBirthday: (birthday: string) => void;
+    setDueDate: (dueDate: string) => void;
     setAddress: (address: string) => void;
     resetClientFields: () => void;
     // Employee 1 selection setters
@@ -77,6 +79,7 @@ export const useFormStore = create<FormStore>((set) => {
         name: "",
         phone: "",
         birthday: "",
+        dueDate: "",
         address: "",
         // Employee 1 selection
         employeeId: null,
@@ -106,6 +109,7 @@ export const useFormStore = create<FormStore>((set) => {
         setName: (name: string) => set({ name }),
         setPhone: (phone: string) => set({ phone }),
         setBirthday: (birthday: string) => set({ birthday }),
+        setDueDate: (dueDate: string) => set({ dueDate }),
         setAddress: (address: string) => set({ address }),
         resetClientFields: () => set({
             clientId: null,
@@ -113,6 +117,7 @@ export const useFormStore = create<FormStore>((set) => {
             name: "",
             phone: "",
             birthday: "",
+            dueDate: "",
             address: "",
         }),
         // Employee 1 selection setters

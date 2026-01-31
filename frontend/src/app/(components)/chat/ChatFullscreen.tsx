@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useCallback, useLayoutEffect, useState } from "react";
+import { useRef, useEffect, useCallback, useLayoutEffect, lazy, Suspense, useState } from "react";
 import {
     Box,
     IconButton,
@@ -12,6 +12,7 @@ import {
     Stack,
     Button,
     Portal,
+    Chip,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
@@ -19,13 +20,15 @@ import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { ChatInput } from "./ChatInput";
 import { AssistantMessage } from "./AssistantMessage";
 import { useChatStream, ChatMessage, ChatState } from "@/app/hooks/useChatStream";
+import { ClientFormDialog } from "../clients/ClientFormDialog";
+import { useClient } from "@/app/hooks/useClients";
 
-// Hook to track visual viewport height for mobile keyboard handling
+const ClientRegistrationWizard = lazy(() => import("./ClientRegistrationWizard"));
+
 function useVisualViewportHeight() {
     const [height, setHeight] = useState<number | null>(null);
 
     useEffect(() => {
-        // Only run on client side
         if (typeof window === "undefined") return;
 
         const updateHeight = () => {
@@ -36,10 +39,8 @@ function useVisualViewportHeight() {
             }
         };
 
-        // Initial set
         updateHeight();
 
-        // Listen to visual viewport changes (keyboard show/hide)
         if (window.visualViewport) {
             window.visualViewport.addEventListener("resize", updateHeight);
             window.visualViewport.addEventListener("scroll", updateHeight);
@@ -125,6 +126,51 @@ function StateIndicator({ state }: { state: ChatState }) {
     return null;
 }
 
+function ClientRegistrationSuccessMessage({ 
+    message, 
+    onEdit 
+}: { 
+    message: ChatMessage; 
+    onEdit: (clientId: number) => void;
+}) {
+    const clientId = message.ui?.clientId;
+    
+    return (
+        <Box sx={{ display: "flex", justifyContent: "flex-start", mb: 2 }}>
+            <Paper
+                elevation={0}
+                sx={{
+                    maxWidth: "80%",
+                    px: 2,
+                    py: 1.5,
+                    borderRadius: 2,
+                    bgcolor: "grey.100",
+                }}
+            >
+                <Typography
+                    variant="body1"
+                    sx={{
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        mb: 1.5,
+                    }}
+                >
+                    {message.content}
+                </Typography>
+                {clientId && (
+                    <Button
+                        variant="contained"
+                        size="small"
+                        onClick={() => onEdit(clientId)}
+                    >
+                        수정
+                    </Button>
+                )}
+            </Paper>
+        </Box>
+    );
+}
+
 export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
     const viewportHeight = useVisualViewportHeight();
     const {
@@ -137,12 +183,24 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
         loadHistory,
         isLoadingHistory,
         hasMoreHistory,
+        appendMessage,
     } = useChatStream();
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const prevScrollHeightRef = useRef(0);
     const lastMessageRef = useRef<ChatMessage | null>(null);
+
+    const [editingClientId, setEditingClientId] = useState<number | null>(null);
+    const { data: editingClient } = useClient(editingClientId ?? 0);
+
+    const handleEditClient = useCallback((clientId: number) => {
+        setEditingClientId(clientId);
+    }, []);
+
+    const handleCloseEditDialog = useCallback(() => {
+        setEditingClientId(null);
+    }, []);
 
     useEffect(() => {
         if (open) {
@@ -196,6 +254,8 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
         sendMessage("취소");
     };
 
+    const shortcuts = ["산모 등록", "계약서 전송", "계약서 상태 조회"] as const;
+
     const lastMessage = messages[messages.length - 1];
     const showConfirmButtons =
         lastMessage?.role === "assistant" &&
@@ -206,7 +266,6 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
     return (
         <Portal>
             <Slide direction="up" in={open} mountOnEnter unmountOnExit>
-                {/* Full-screen backdrop to cover background content */}
                 <Box
                     sx={{
                         position: "fixed",
@@ -218,21 +277,17 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                         zIndex: 1300,
                     }}
                 >
-                    {/* Chat content container with dynamic height for mobile keyboard */}
                     <Box
                         sx={{
                             position: "absolute",
                             top: 0,
                             left: 0,
                             right: 0,
-                            // Use dynamic height from visualViewport when available (mobile keyboard handling)
-                            // Falls back to 100% when viewportHeight is null (SSR or initial render)
                             height: viewportHeight !== null ? `${viewportHeight}px` : "100%",
                             display: "flex",
                             flexDirection: "column",
                             userSelect: "text",
                             WebkitUserSelect: "text",
-                            // Smooth transition for keyboard animation
                             transition: "height 0.1s ease-out",
                         }}
                     >
@@ -308,6 +363,54 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                                     {messages.map((msg, idx) =>
                                         msg.role === "user" ? (
                                             <UserMessage key={idx} message={msg} />
+                                        ) : msg.ui?.type === "clientRegistrationWizard" ? (
+                                            <Box key={idx} sx={{ display: "flex", justifyContent: "flex-start", mb: 3 }}>
+                                                <Paper
+                                                    elevation={0}
+                                                    sx={{
+                                                        width: "100%",
+                                                        maxWidth: 720,
+                                                        p: 2,
+                                                        borderRadius: 2,
+                                                        border: "1px solid",
+                                                        borderColor: "divider",
+                                                        bgcolor: "background.paper",
+                                                        minHeight: 520,
+                                                    }}
+                                                >
+                                                    <Suspense
+                                                        fallback={
+                                                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                                                <CircularProgress size={18} />
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    불러오는 중...
+                                                                </Typography>
+                                                            </Box>
+                                                        }
+                                                    >
+                                                        <ClientRegistrationWizard
+                                                            onCreated={(client: { id: number; name: string }) => {
+                                                                appendMessage({
+                                                                    role: "assistant",
+                                                                    content: `${client.name} 산모님이 등록되었어요.`,
+                                                                    timestamp: new Date().toISOString(),
+                                                                    ui: {
+                                                                        type: "clientRegistrationSuccess",
+                                                                        clientId: client.id,
+                                                                        clientName: client.name,
+                                                                    },
+                                                                });
+                                                            }}
+                                                        />
+                                                    </Suspense>
+                                                </Paper>
+                                            </Box>
+                                        ) : msg.ui?.type === "clientRegistrationSuccess" ? (
+                                            <ClientRegistrationSuccessMessage
+                                                key={idx}
+                                                message={msg}
+                                                onEdit={handleEditClient}
+                                            />
                                         ) : (
                                             <AssistantMessage key={idx} message={msg} />
                                         )
@@ -348,6 +451,31 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                                 bgcolor: "background.paper",
                             }}
                         >
+                            <Box
+                                sx={{
+                                    display: "flex",
+                                    gap: 1,
+                                    mb: 1.25,
+                                    overflowX: { xs: "auto", sm: "visible" },
+                                    WebkitOverflowScrolling: "touch",
+                                    pb: { xs: 0.5, sm: 0 },
+                                    flexWrap: { xs: "nowrap", sm: "wrap" },
+                                }}
+                            >
+                                {shortcuts.map((label) => (
+                                    <Chip
+                                        key={label}
+                                        label={label}
+                                        clickable
+                                        size="small"
+                                        onClick={() => sendMessage(label)}
+                                        sx={{
+                                            flex: "0 0 auto",
+                                            borderRadius: 2,
+                                        }}
+                                    />
+                                ))}
+                            </Box>
                             <ChatInput
                                 onSubmit={sendMessage}
                                 disabled={state === "streaming" || state === "connecting"}
@@ -357,6 +485,12 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                     </Box>
                 </Box>
             </Slide>
+
+            <ClientFormDialog
+                open={editingClientId !== null}
+                onClose={handleCloseEditDialog}
+                client={editingClient ?? null}
+            />
         </Portal>
     );
 }

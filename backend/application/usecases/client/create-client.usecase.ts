@@ -16,6 +16,7 @@ type CreateClientParams = {
     careCenter: boolean;
     voucherClient: boolean;
     birthday: string | null;
+    dueDate: Date | null;
     serviceStatus: string | null;
     breastPump: boolean;
     eDocId?: string | null;

@@ -4,8 +4,9 @@ export class CreateClientDto {
     @IsString()
     name!: string;
 
+    @IsOptional()
     @IsInt()
-    primaryEmployeeId!: number;
+    primaryEmployeeId?: number | null;
 
     @IsOptional()
     @IsInt()
@@ -56,6 +57,10 @@ export class CreateClientDto {
     @IsOptional()
     @IsString()
     birthday?: string | null;
+
+    @IsOptional()
+    @IsDateString()
+    dueDate?: string | null;
 
     @IsOptional()
     @IsString()
@@ -129,6 +134,10 @@ export class UpdateClientDto {
     @IsOptional()
     @IsString()
     birthday?: string | null;
+
+    @IsOptional()
+    @IsDateString()
+    dueDate?: string | null;
 
     @IsOptional()
     @IsString()

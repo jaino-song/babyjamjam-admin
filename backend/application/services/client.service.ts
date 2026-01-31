@@ -42,6 +42,7 @@ export interface ClientWithEmployees {
     careCenter: boolean;
     voucherClient: boolean;
     birthday: string | null;
+    dueDate: Date | null;
     serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
@@ -78,7 +79,7 @@ export class ClientService {
 
     async create(params: {
         name: string;
-        primaryEmployeeId: number;
+        primaryEmployeeId?: number | null;
         secondaryEmployeeId?: number | null;
         address?: string | null;
         phone?: string | null;
@@ -92,12 +93,14 @@ export class ClientService {
         careCenter: boolean;
         voucherClient: boolean;
         birthday?: string | null;
+        dueDate?: string | null;
         serviceStatus?: string | null;
         breastPump: boolean;
         eDocId?: string | null;
     }): Promise<ClientEntity> {
         const startDate = params.startDate ? new Date(params.startDate) : new Date();
         const endDate = params.endDate ? new Date(params.endDate) : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
+        const dueDate = params.dueDate ? new Date(params.dueDate) : null;
 
         // First create the client
         const client = await this.createClientUsecase.execute({
@@ -114,23 +117,26 @@ export class ClientService {
             careCenter: params.careCenter,
             voucherClient: params.voucherClient,
             birthday: params.birthday ?? null,
+            dueDate,
             serviceStatus: params.serviceStatus ?? null,
             breastPump: params.breastPump,
             eDocId: params.eDocId ?? null,
         });
 
-        // Then create the employee_schedule with the client_id
-        await this.prismaService.employee_schedule.create({
-            data: {
-                client_id: client.id,
-                primary_employee_id: params.primaryEmployeeId,
-                secondary_employee_id: params.secondaryEmployeeId ?? null,
-                work_address: params.address ?? "",
-                start_date: startDate,
-                end_date: endDate,
-                replaced: false,
-            },
-        });
+        // Then create employee_schedule (optional - only when primary employee is assigned)
+        if (params.primaryEmployeeId !== undefined && params.primaryEmployeeId !== null) {
+            await this.prismaService.employee_schedule.create({
+                data: {
+                    client_id: client.id,
+                    primary_employee_id: params.primaryEmployeeId,
+                    secondary_employee_id: params.secondaryEmployeeId ?? null,
+                    work_address: params.address ?? "",
+                    start_date: startDate,
+                    end_date: endDate,
+                    replaced: false,
+                },
+            });
+        }
 
         this.alimtalkService.sendClientCreatedAlimtalk(client).catch((error) => {
             this.logger.error(`Failed to send client created alimtalk: ${error}`);
@@ -240,34 +246,35 @@ export class ClientService {
                 clientsNeedingUpdate.push({ id: client.id, newStatus: computedStatus });
             }
 
-            return {
-                id: client.id,
-                name: client.name,
-                address: client.address,
-                phone: client.phone,
-                type: client.type,
-                duration: client.duration,
-                fullPrice: client.fullPrice,
-                grant: client.grant,
-                actualPrice: client.actualPrice,
-                startDate: client.startDate,
-                endDate: client.endDate,
-                careCenter: client.careCenter,
-                voucherClient: client.voucherClient,
-                birthday: client.birthday,
-                serviceStatus: computedStatus, // Return computed status, not stored one
-                breastPump: client.breastPump,
-                eDocId: client.eDocId,
-                hasSigned: client.eDocId !== null,
-                documentStatus: this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? '')),
-                primaryEmployee: schedule?.employee_employee_schedule_primary_employee_idToemployee
-                    ? { id: schedule.employee_employee_schedule_primary_employee_idToemployee.id, name: schedule.employee_employee_schedule_primary_employee_idToemployee.name }
-                    : null,
-                secondaryEmployee: schedule?.employee_employee_schedule_secondary_employee_idToemployee
-                    ? { id: schedule.employee_employee_schedule_secondary_employee_idToemployee.id, name: schedule.employee_employee_schedule_secondary_employee_idToemployee.name }
-                    : null,
-            };
-        });
+                return {
+                    id: client.id,
+                    name: client.name,
+                    address: client.address,
+                    phone: client.phone,
+                    type: client.type,
+                    duration: client.duration,
+                    fullPrice: client.fullPrice,
+                    grant: client.grant,
+                    actualPrice: client.actualPrice,
+                    startDate: client.startDate,
+                    endDate: client.endDate,
+                    careCenter: client.careCenter,
+                    voucherClient: client.voucherClient,
+                    birthday: client.birthday,
+                    dueDate: client.dueDate,
+                    serviceStatus: computedStatus, // Return computed status, not stored one
+                    breastPump: client.breastPump,
+                    eDocId: client.eDocId,
+                    hasSigned: client.eDocId !== null,
+                    documentStatus: this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? '')),
+                    primaryEmployee: schedule?.employee_employee_schedule_primary_employee_idToemployee
+                        ? { id: schedule.employee_employee_schedule_primary_employee_idToemployee.id, name: schedule.employee_employee_schedule_primary_employee_idToemployee.name }
+                        : null,
+                    secondaryEmployee: schedule?.employee_employee_schedule_secondary_employee_idToemployee
+                        ? { id: schedule.employee_employee_schedule_secondary_employee_idToemployee.id, name: schedule.employee_employee_schedule_secondary_employee_idToemployee.name }
+                        : null,
+                };
+            });
 
         // Batch update clients whose status changed (non-blocking)
         if (clientsNeedingUpdate.length > 0) {
@@ -331,6 +338,7 @@ export class ClientService {
         careCenter?: boolean;
         voucherClient?: boolean;
         birthday?: string | null;
+        dueDate?: string | null;
         serviceStatus?: string | null;
         breastPump?: boolean;
         eDocId?: string | null;
@@ -407,6 +415,7 @@ export class ClientService {
             careCenter: params.careCenter,
             voucherClient: params.voucherClient,
             birthday: params.birthday,
+            dueDate: params.dueDate === undefined ? undefined : params.dueDate ? new Date(params.dueDate) : null,
             serviceStatus: params.serviceStatus,
             breastPump: params.breastPump,
             eDocId: params.eDocId,
