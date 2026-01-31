@@ -20,7 +20,8 @@
     "noPropertyAccessFromIndexSignature": true,
     "types": [
       "node",
-      "jest"
+      "jest",
+      "multer"
     ]
   },
   "exclude": [
