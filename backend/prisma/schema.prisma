@@ -12,8 +12,12 @@ model area {
   id                String             @id
   name              String
   korean_name       String
+  organization_id   String?
+  organization      organization?      @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   bank_account_info bank_account_info?
   doc_template      doc_template[]
+
+  @@index([organization_id], map: "idx_area_organization")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -39,13 +43,17 @@ model client {
   care_center                                   Boolean
   voucher_client                                Boolean
   birthday                                      String?             @db.VarChar(6)
-  due_date                                      DateTime?           @db.Date
   breast_pump                                   Boolean             @default(false)
   service_status                                String?
   e_doc_id                                      String?             @unique
+  due_date                                      DateTime?           @db.Date
+  organization_id                               String?
   eformsign_doc_client_e_doc_idToeformsign_doc  eformsign_doc?      @relation("client_e_doc_idToeformsign_doc", fields: [e_doc_id], references: [document_id], onUpdate: NoAction)
+  organization                                  organization?       @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   eformsign_doc_eformsign_doc_client_idToclient eformsign_doc[]     @relation("eformsign_doc_client_idToclient")
   employee_schedule                             employee_schedule[]
+
+  @@index([organization_id], map: "idx_client_organization")
 }
 
 model doc_template {
@@ -57,10 +65,10 @@ model doc_template {
 }
 
 model eformsign_doc {
-  id                                     Int      @id @default(autoincrement())
-  document_id                            String   @unique
-  created_date                           DateTime @db.Timestamptz(6)
-  updated_date                           DateTime @db.Timestamptz(6)
+  id                                     Int           @id @default(autoincrement())
+  document_id                            String        @unique
+  created_date                           DateTime      @db.Timestamptz(6)
+  updated_date                           DateTime      @db.Timestamptz(6)
   status_type                            String
   status_detail                          String
   step_type                              String
@@ -69,11 +77,15 @@ model eformsign_doc {
   step_recipient_type                    String
   step_recipient_name                    String
   step_recipient_sms                     String
-  expired_date                           DateTime @db.Timestamptz(6)
-  expired                                Boolean  @default(false)
+  expired_date                           DateTime      @db.Timestamptz(6)
+  expired                                Boolean       @default(false)
   client_id                              Int
-  client_client_e_doc_idToeformsign_doc  client?  @relation("client_e_doc_idToeformsign_doc")
-  client_eformsign_doc_client_idToclient client   @relation("eformsign_doc_client_idToclient", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  organization_id                        String?
+  client_client_e_doc_idToeformsign_doc  client?       @relation("client_e_doc_idToeformsign_doc")
+  client_eformsign_doc_client_idToclient client        @relation("eformsign_doc_client_idToclient", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  organization                           organization? @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([organization_id], map: "idx_eformsign_doc_organization")
 }
 
 model employee {
@@ -84,43 +96,58 @@ model employee {
   grade                                                               String
   open_to_next_work                                                   Boolean             @default(true)
   company_registered_date                                             DateTime?           @db.Date
+  organization_id                                                     String?
+  organization                                                        organization?       @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   employee_schedule_employee_schedule_primary_employee_idToemployee   employee_schedule[] @relation("employee_schedule_primary_employee_idToemployee")
   employee_schedule_employee_schedule_secondary_employee_idToemployee employee_schedule[] @relation("employee_schedule_secondary_employee_idToemployee")
+
+  @@index([organization_id], map: "idx_employee_organization")
 }
 
 model employee_schedule {
-  id                                                         Int       @id @default(autoincrement())
-  primary_employee_id                                        Int       @db.SmallInt
+  id                                                         Int           @id @default(autoincrement())
+  primary_employee_id                                        Int           @db.SmallInt
   work_address                                               String
-  start_date                                                 DateTime  @db.Date
-  end_date                                                   DateTime  @db.Date
-  replaced                                                   Boolean   @default(false)
+  start_date                                                 DateTime      @db.Date
+  end_date                                                   DateTime      @db.Date
+  replaced                                                   Boolean       @default(false)
   client_id                                                  Int
-  secondary_employee_id                                      Int?      @db.SmallInt
-  client                                                     client    @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  employee_employee_schedule_primary_employee_idToemployee   employee  @relation("employee_schedule_primary_employee_idToemployee", fields: [primary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  employee_employee_schedule_secondary_employee_idToemployee employee? @relation("employee_schedule_secondary_employee_idToemployee", fields: [secondary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  secondary_employee_id                                      Int?          @db.SmallInt
+  organization_id                                            String?
+  client                                                     client        @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  organization                                               organization? @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  employee_employee_schedule_primary_employee_idToemployee   employee      @relation("employee_schedule_primary_employee_idToemployee", fields: [primary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  employee_employee_schedule_secondary_employee_idToemployee employee?     @relation("employee_schedule_secondary_employee_idToemployee", fields: [secondary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([organization_id], map: "idx_employee_schedule_organization")
 }
 
 model message {
-  id         Int       @id @default(autoincrement()) @db.SmallInt
-  title      String?   @default("") @db.VarChar
-  text       String?   @db.VarChar
-  created_at DateTime  @default(now()) @db.Timestamptz(6)
-  edited_at  DateTime? @db.Timestamptz(6)
+  id              Int           @id @default(autoincrement()) @db.SmallInt
+  title           String?       @default("") @db.VarChar
+  text            String?       @db.VarChar
+  created_at      DateTime      @default(now()) @db.Timestamptz(6)
+  edited_at       DateTime?     @db.Timestamptz(6)
+  organization_id String?
+  organization    organization? @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([organization_id], map: "idx_message_organization")
 }
 
 model notification {
-  id      Int       @id @default(autoincrement())
-  user_id String    @db.Uuid
-  title   String
-  body    String
-  data    Json?
-  sent_at DateTime  @default(now()) @db.Timestamptz(6)
-  read_at DateTime? @db.Timestamptz(6)
-  user    user      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id              Int           @id @default(autoincrement())
+  user_id         String        @db.Uuid
+  title           String
+  body            String
+  data            Json?
+  sent_at         DateTime      @default(now()) @db.Timestamptz(6)
+  read_at         DateTime?     @db.Timestamptz(6)
+  organization_id String?
+  organization    organization? @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user            user          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([user_id, sent_at])
+  @@index([organization_id], map: "idx_notification_organization")
 }
 
 model push_subscription {
@@ -150,21 +177,23 @@ model user {
   role              String?             @db.VarChar
   created_at        DateTime            @default(now()) @db.Timestamp(6)
   kakao_id          String              @unique(map: "user_kakaoId_key") @db.VarChar
+  chat_feedback     chat_feedback[]
   chat_session      chat_session[]
   notification      notification[]
+  organization      organization[]
   push_subscription push_subscription[]
-  chat_feedback     chat_feedback[]
+  user_organization user_organization[]
 }
 
 model chat_session {
-  id         String         @id @default(cuid())
-  user_id    String         @db.Uuid
-  created_at DateTime       @default(now()) @db.Timestamptz(6)
-  updated_at DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
-  expires_at DateTime       @db.Timestamptz(6)
-  user       user           @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  messages   chat_message[]
+  id         String          @id @default(cuid())
+  user_id    String          @db.Uuid
+  created_at DateTime        @default(now()) @db.Timestamptz(6)
+  expires_at DateTime        @db.Timestamptz(6)
+  updated_at DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
   feedback   chat_feedback[]
+  messages   chat_message[]
+  user       user            @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([user_id])
   @@index([expires_at])
@@ -172,13 +201,13 @@ model chat_session {
 }
 
 model chat_message {
-  id         String         @id @default(cuid())
+  id         String          @id @default(cuid())
   session_id String
   role       String
-  content    String         @db.Text
-  timestamp  DateTime       @default(now()) @db.Timestamptz(6)
-  session    chat_session   @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  content    String
+  timestamp  DateTime        @default(now()) @db.Timestamptz(6)
   feedback   chat_feedback[]
+  session    chat_session    @relation(fields: [session_id], references: [id], onDelete: Cascade)
 
   @@index([session_id])
   @@index([timestamp])
@@ -190,10 +219,10 @@ model chat_feedback {
   message_id String
   user_id    String       @db.Uuid
   type       String
-  comment    String?      @db.Text
+  comment    String?
   created_at DateTime     @default(now()) @db.Timestamptz(6)
-  session    chat_session @relation(fields: [session_id], references: [id], onDelete: Cascade)
   message    chat_message @relation(fields: [message_id], references: [id], onDelete: Cascade)
+  session    chat_session @relation(fields: [session_id], references: [id], onDelete: Cascade)
   user       user         @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([session_id])
@@ -228,12 +257,17 @@ model voucher_price_info_2025 {
 }
 
 model message_template {
-  id         String   @id @default(cuid())
-  name       String
-  content    String
-  variables  Json     @default("[]")
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @updatedAt @db.Timestamptz(6)
+  id              String        @id @default(cuid())
+  name            String
+  content         String
+  variables       Json          @default("[]")
+  created_at      DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime      @updatedAt @db.Timestamptz(6)
+  organization_id String?
+  is_custom       Boolean?      @default(true)
+  organization    organization? @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([organization_id], map: "idx_message_template_organization")
 }
 
 model system_template {
@@ -263,34 +297,84 @@ model system_template_version {
 }
 
 model document {
-  id          String            @id @default(cuid())
-  name        String
-  description String?
-  tags        String[]
-  mimeType    String            @map("mime_type")
-  fileSize    Int               @map("file_size")
-  storagePath String            @map("storage_path")
-  storageUrl  String?           @map("storage_url")
-  orgId       String?           @map("org_id")
-  uploadedBy  String            @map("uploaded_by")
-  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  categoryId  String            @map("category_id")
-  category    document_category @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id              String            @id @default(cuid())
+  name            String
+  description     String?
+  tags            String[]
+  mimeType        String            @map("mime_type")
+  fileSize        Int               @map("file_size")
+  storagePath     String            @map("storage_path")
+  storageUrl      String?           @map("storage_url")
+  orgId           String?           @map("org_id")
+  uploadedBy      String            @map("uploaded_by")
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  categoryId      String            @map("category_id")
+  organization_id String?
+  category        document_category @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  organization    organization?     @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([categoryId])
   @@index([uploadedBy])
   @@index([orgId])
+  @@index([organization_id], map: "idx_document_organization")
 }
 
 model document_category {
-  id        String     @id @default(cuid())
-  value     String     @unique
-  label     String
-  color     String
-  isCustom  Boolean    @default(true) @map("is_custom")
-  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  documents document[]
+  id              String        @id @default(cuid())
+  value           String        @unique
+  label           String
+  color           String
+  isCustom        Boolean       @default(true) @map("is_custom")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization_id String?
+  documents       document[]
+  organization    organization? @relation(fields: [organization_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@index([organization_id], map: "idx_document_category_organization")
   @@map("document_category")
+}
+
+model organization {
+  id                String              @id
+  name              String
+  slug              String              @unique
+  phone             String?
+  address           String?
+  email             String?
+  description       String?
+  is_active         Boolean?            @default(true)
+  created_at        DateTime?           @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?           @default(now()) @db.Timestamptz(6)
+  owner_id          String              @db.Uuid
+  area              area[]
+  client            client[]
+  document          document[]
+  document_category document_category[]
+  eformsign_doc     eformsign_doc[]
+  employee          employee[]
+  employee_schedule employee_schedule[]
+  message           message[]
+  message_template  message_template[]
+  notification      notification[]
+  user              user                @relation(fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user_organization user_organization[]
+
+  @@index([is_active], map: "idx_organization_is_active")
+  @@index([owner_id], map: "idx_organization_owner")
+  @@index([slug], map: "idx_organization_slug")
+}
+
+model user_organization {
+  id              String       @id
+  user_id         String       @db.Uuid
+  organization_id String
+  role            String?      @default("user")
+  joined_at       DateTime?    @default(now()) @db.Timestamptz(6)
+  organization    organization @relation(fields: [organization_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user            user         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([organization_id], map: "idx_user_organization_org")
+  @@index([user_id], map: "idx_user_organization_user")
+  @@index([user_id, organization_id], map: "idx_user_organization_user_org")
 }
