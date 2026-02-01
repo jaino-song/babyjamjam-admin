@@ -25,6 +25,7 @@ import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "@/core/providers";
 import { t } from "@/app/lib/i18n/translations";
+import { DataTableToolbar } from "@/components/ui/datatable/DataTableToolbar";
 
 const getStatusChip = (status: string | null) => {
     const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
@@ -149,48 +150,14 @@ export function ClientsTable() {
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
             <Box data-component="clients-table-container">
-                {/* Toolbar */}
-                <Box
-                    sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        mb: 2,
-                        gap: 2,
-                    }}
-                >
-                    {/* Search */}
-                    <TextField
-                        size="small"
-                        placeholder={t(locale, "clients.search-placeholder")}
-                        value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
-                        onKeyPress={handleKeyPress}
-                        InputProps={{
-                            endAdornment: (
-                                <InputAdornment position="end">
-                                    <IconButton size="small" onClick={handleSearch}>
-                                        <Search size={20} />
-                                    </IconButton>
-                                </InputAdornment>
-                            ),
-                        }}
-                        sx={{ minWidth: 250 }}
-                    />
-
-                    {/* Add Button */}
-                    <IconButton
-                        color="primary"
-                        onClick={handleAddNew}
-                        sx={{
-                            bgcolor: "primary.main",
-                            color: "white",
-                            "&:hover": { bgcolor: "primary.dark" }
-                        }}
-                    >
-                        <Plus size={24} />
-                    </IconButton>
-                </Box>
+                <DataTableToolbar
+                    searchPlaceholder={t(locale, "clients.search-placeholder")}
+                    searchValue={searchInput}
+                    onSearchChange={setSearchInput}
+                    onSearchSubmit={handleSearch}
+                    onAddClick={handleAddNew}
+                    dataComponent="clients-toolbar"
+                />
 
                 {/* Table */}
                 <TableContainer data-component="clients-table-container">

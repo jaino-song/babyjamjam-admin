@@ -22,8 +22,10 @@ import {
   Skeleton,
   TextField,
   InputAdornment,
+  CircularProgress,
 } from "@mui/material";
 import { Search, Filter, Plus } from "lucide-react";
+import { DataTableToolbar } from "@/components/ui/datatable/DataTableToolbar";
 import { useEformsignDocumentsByType } from "@/app/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/app/hooks/useEformsignAuth";
 import { EformsignDocument, EformsignDocumentView } from "@/app/lib/eformsign/types";
@@ -101,7 +103,6 @@ export function DocumentsList() {
   const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedFilter, setSelectedFilter] = useState<DocumentFilterType>(null);
   const [searchInput, setSearchInput] = useState("");
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // Auth hook - checks existing token before making API call
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth();
@@ -133,19 +134,9 @@ export function DocumentsList() {
     handleFilterClose();
   };
 
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchInput(e.target.value);
+  const handleSearchChange = (value: string) => {
+    setSearchInput(value);
     setPage(0);
-  };
-
-  const handleSearchIconClick = () => {
-    setIsSearchOpen(true);
-  };
-
-  const handleSearchBlur = () => {
-    if (!searchInput.trim()) {
-      setIsSearchOpen(false);
-    }
   };
 
   const filterOpen = Boolean(filterAnchorEl);
@@ -188,59 +179,14 @@ export function DocumentsList() {
       sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
     >
       <Box data-component="documents-list-container">
-        {/* Toolbar */}
-        <Box
-          data-component="documents-list-toolbar"
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-around",
-          }}
-        >
-          <Box
-            data-component="documents-list-toolbar-buttons"
-            sx={{
-              display: "flex",
-              justifyContent: "space-around",
-              alignItems: "center",
-              gap: 0,
-              width: "100%"
-            }}
-          >
-            {isSearchOpen ? (
-              <TextField
-                size="small"
-                placeholder="이름 검색"
-                value={searchInput}
-                onChange={handleSearchChange}
-                onBlur={handleSearchBlur}
-                autoFocus
-                sx={{
-                  width: 60,
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: "transparent",
-                  },
-                  "& .MuiOutlinedInput-notchedOutline": {
-                    border: "none",
-                  },
-                  "& .MuiInputBase-input": {
-                    padding: "8px 0",
-                  },
-                }}
-              />
-            ) : (
-              <IconButton
-                size="medium"
-                sx={{ color: "grey.600", width: 60 }}
-                onClick={handleSearchIconClick}
-                aria-label="search"
-              >
-                <Search size={24} strokeWidth={2} />
-              </IconButton>
-            )}
-
-            {/* Filter Button */}
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+        <DataTableToolbar
+          searchPlaceholder="이름 검색"
+          searchValue={searchInput}
+          onSearchChange={handleSearchChange}
+          showSearchIconOnly={true}
+          dataComponent="documents-list-toolbar"
+          additionalActions={
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <IconButton
                 size="medium"
                 sx={{ color: "primary.main" }}
@@ -255,167 +201,167 @@ export function DocumentsList() {
                 onClick={handleFilterClick}
                 sx={{ cursor: "pointer" }}
               />
+
+              {/* New Document Button */}
+              <IconButton
+                size="medium"
+                sx={{ color: "#1e88e5" }}
+                LinkComponent={Link}
+                href="/contracts/creation"
+              >
+                <Plus size={30} strokeWidth={2} />
+              </IconButton>
             </Box>
+          }
+        />
 
-            {/* Filter Menu */}
-            <Menu
-              anchorEl={filterAnchorEl}
-              open={filterOpen}
-              onClose={handleFilterClose}
-              anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        {/* Filter Menu */}
+        <Menu
+          anchorEl={filterAnchorEl}
+          open={filterOpen}
+          onClose={handleFilterClose}
+          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        >
+          {STATUS_OPTIONS.map((option) => (
+            <MenuItem
+              key={option.value ?? "all"}
+              onClick={() => handleFilterSelect(option.value)}
             >
-              {STATUS_OPTIONS.map((option) => (
-                <MenuItem
-                  key={option.value ?? "all"}
-                  onClick={() => handleFilterSelect(option.value)}
-                >
-                  <ListItemIcon>
-                    <Radio checked={selectedFilter === option.value} size="small" />
-                  </ListItemIcon>
-                  <ListItemText>
-                    <Chip
-                      label={option.label}
-                      color={getStatusColor(option.label)}
-                      size="small"
-                    />
-                  </ListItemText>
-                </MenuItem>
-              ))}
-            </Menu>
+              <ListItemIcon>
+                <Radio checked={selectedFilter === option.value} size="small" />
+              </ListItemIcon>
+              <ListItemText>
+                <Chip
+                  label={option.label}
+                  color={getStatusColor(option.label)}
+                  size="small"
+                />
+              </ListItemText>
+            </MenuItem>
+          ))}
+        </Menu>
 
-            {/* New Document Button */}
-            <IconButton
-              size="medium"
-              sx={{ color: "#1e88e5" }}
-              LinkComponent={Link}
-              href="/contracts/creation"
-            >
-              <Plus size={30} strokeWidth={2} />
-            </IconButton>
+        <Box sx={{ mt: 1 }}>
+          {/* Table */}
+          <Box sx={{ minHeight: 200, width: "100%" }}>
+            {filteredDocuments.length > 0 || isInitialLoading ? (
+              <>
+                <TableContainer data-component="documents-list-table-container">
+                  <Table sx={{ tableLayout: "fixed", width: "100%" }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell
+                          align="center"
+                          sx={{
+                            fontWeight: 500,
+                            color: "rgba(0, 0, 0, 0.6)",
+                            fontSize: "0.875rem",
+                            width: "35%",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {t(locale, "documents-list.document-title")}
+                        </TableCell>
+                        <TableCell
+                          align="center"
+                          sx={{
+                            fontWeight: 500,
+                            color: "rgba(0, 0, 0, 0.6)",
+                            fontSize: "0.875rem",
+                            width: "40%",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {t(locale, "documents-list.created-date")}
+                        </TableCell>
+                        <TableCell
+                          align="center"
+                          sx={{
+                            fontWeight: 500,
+                            color: "rgba(0, 0, 0, 0.6)",
+                            fontSize: "0.875rem",
+                            width: "25%",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {t(locale, "documents-list.status")}
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {/* Skeleton rows during initial loading */}
+                      {isInitialLoading && Array.from({ length: rowsPerPage }).map((_, index) => (
+                        <TableRow key={`skeleton-${index}`}>
+                          <TableCell align="center" sx={{ px: 1 }}>
+                            <Skeleton variant="text" width="60%" sx={{ mx: "auto" }} />
+                          </TableCell>
+                          <TableCell align="center" sx={{ px: 1 }}>
+                            <Skeleton variant="text" width="70%" sx={{ mx: "auto" }} />
+                          </TableCell>
+                          <TableCell align="center" sx={{ px: 1 }}>
+                            <Skeleton variant="rounded" width={50} height={24} sx={{ mx: "auto" }} />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {!isInitialLoading && paginatedDocuments.map((doc, index) => (
+                        <TableRow
+                          key={`${doc.doc_id}-${index}`}
+                          hover
+                          sx={{ "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
+                        >
+                          <TableCell
+                            align="center"
+                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", whiteSpace: "nowrap", px: 1 }}
+                          >
+                            {doc.customer_name}
+                          </TableCell>
+                          <TableCell
+                            align="center"
+                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", whiteSpace: "nowrap", px: 1 }}
+                          >
+                            {formatDate(doc.created_date)}
+                          </TableCell>
+                          <TableCell align="center" sx={{ px: 1 }}>
+                            <Chip
+                              label={doc.status}
+                              color={getStatusColor(doc.status)}
+                              size="small"
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+
+                <TablePagination
+                  component="div"
+                  count={isInitialLoading ? 0 : filteredDocuments.length}
+                  rowsPerPage={rowsPerPage}
+                  page={page}
+                  onPageChange={handleChangePage}
+                  rowsPerPageOptions={[]}
+                  labelRowsPerPage=""
+                  slotProps={{
+                    actions: {
+                      previousButton: { disabled: isInitialLoading },
+                      nextButton: { disabled: isInitialLoading },
+                    },
+                  }}
+                  sx={{
+                    "& .MuiTablePagination-selectLabel": { display: "none" },
+                    "& .MuiTablePagination-select": { display: "none" },
+                    "& .MuiTablePagination-spacer": { display: "none" },
+                    "& .MuiTablePagination-displayedRows": { margin: 0 },
+                  }}
+                />
+              </>
+            ) : (
+              <Box sx={{ py: 3 }}>
+                <Alert severity="info">문서가 없습니다</Alert>
+              </Box>
+            )}
           </Box>
-        </Box>
-
-        <Divider />
-
-        {/* Table */}
-        <Box sx={{ minHeight: 200, width: "100%" }}>
-          {filteredDocuments.length > 0 || isInitialLoading ? (
-            <>
-              <TableContainer data-component="documents-list-table-container">
-                <Table sx={{ tableLayout: "fixed", width: "100%" }}>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell
-                        align="center"
-                        sx={{
-                          fontWeight: 500,
-                          color: "rgba(0, 0, 0, 0.6)",
-                          fontSize: "0.875rem",
-                          width: "35%",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {t(locale, "documents-list.document-title")}
-                      </TableCell>
-                      <TableCell
-                        align="center"
-                        sx={{
-                          fontWeight: 500,
-                          color: "rgba(0, 0, 0, 0.6)",
-                          fontSize: "0.875rem",
-                          width: "40%",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {t(locale, "documents-list.created-date")}
-                      </TableCell>
-                      <TableCell
-                        align="center"
-                        sx={{
-                          fontWeight: 500,
-                          color: "rgba(0, 0, 0, 0.6)",
-                          fontSize: "0.875rem",
-                          width: "25%",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {t(locale, "documents-list.status")}
-                      </TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {/* Skeleton rows during initial loading */}
-                    {isInitialLoading && Array.from({ length: rowsPerPage }).map((_, index) => (
-                      <TableRow key={`skeleton-${index}`}>
-                        <TableCell align="center" sx={{ px: 1 }}>
-                          <Skeleton variant="text" width="60%" sx={{ mx: "auto" }} />
-                        </TableCell>
-                        <TableCell align="center" sx={{ px: 1 }}>
-                          <Skeleton variant="text" width="70%" sx={{ mx: "auto" }} />
-                        </TableCell>
-                        <TableCell align="center" sx={{ px: 1 }}>
-                          <Skeleton variant="rounded" width={50} height={24} sx={{ mx: "auto" }} />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!isInitialLoading && paginatedDocuments.map((doc, index) => (
-                      <TableRow
-                        key={`${doc.doc_id}-${index}`}
-                        hover
-                        sx={{ "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
-                      >
-                        <TableCell
-                          align="center"
-                          sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", whiteSpace: "nowrap", px: 1 }}
-                        >
-                          {doc.customer_name}
-                        </TableCell>
-                        <TableCell
-                          align="center"
-                          sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", whiteSpace: "nowrap", px: 1 }}
-                        >
-                          {formatDate(doc.created_date)}
-                        </TableCell>
-                        <TableCell align="center" sx={{ px: 1 }}>
-                          <Chip
-                            label={doc.status}
-                            color={getStatusColor(doc.status)}
-                            size="small"
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-
-              <TablePagination
-                component="div"
-                count={isInitialLoading ? 0 : filteredDocuments.length}
-                rowsPerPage={rowsPerPage}
-                page={page}
-                onPageChange={handleChangePage}
-                rowsPerPageOptions={[]}
-                labelRowsPerPage=""
-                slotProps={{
-                  actions: {
-                    previousButton: { disabled: isInitialLoading },
-                    nextButton: { disabled: isInitialLoading },
-                  },
-                }}
-                sx={{
-                  "& .MuiTablePagination-selectLabel": { display: "none" },
-                  "& .MuiTablePagination-select": { display: "none" },
-                  "& .MuiTablePagination-spacer": { display: "none" },
-                  "& .MuiTablePagination-displayedRows": { margin: 0 },
-                }}
-              />
-            </>
-          ) : (
-            <Box sx={{ py: 3 }}>
-              <Alert severity="info">문서가 없습니다</Alert>
-            </Box>
-          )}
         </Box>
       </Box>
     </ContentPaper>

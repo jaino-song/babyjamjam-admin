@@ -9,6 +9,7 @@ import {
     TableContainer,
     TableHead,
     TableRow,
+    TablePagination,
     IconButton,
     Chip,
     CircularProgress,
@@ -19,6 +20,7 @@ import { Search, Plus } from "lucide-react";
 import { useLocale } from "../LocaleProvider";
 import { t, Locale } from "@/app/lib/i18n/translations";
 import { ContentPaper } from "../root/content-paper";
+import { DataTableToolbar } from "@/components/ui/datatable/DataTableToolbar";
 import {
     Employee,
     EmployeeStatus,
@@ -27,6 +29,8 @@ import {
 } from "@/app/hooks/useEmployees";
 import { EmployeeFormDialog } from "./EmployeeFormDialog";
 import { EmployeeDetailModal } from "./EmployeeDetailModal";
+import { useMemo } from "react";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 
 const formatPhoneNumber = (phone: string | null | undefined): string => {
     if (!phone) return "-";
@@ -57,12 +61,31 @@ export function EmployeesTable() {
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+    const [page, setPage] = useState(0);
+    const [search, setSearch] = useState("");
+    const [searchInput, setSearchInput] = useState("");
+    const rowsPerPage = 8;
 
     const { data: employees, isLoading, error } = useEmployees();
     const deleteEmployee = useDeleteEmployee();
 
-    // Use all employees (search not implemented in icon-button toolbar yet)
-    const filteredEmployees = employees || [];
+    // Use filtered employees based on search
+    const filteredEmployees = useMemo(() => {
+        if (!employees) return [];
+        if (!search.trim()) return employees;
+
+        const query = search.trim();
+        return employees.filter((emp) =>
+            matchesKoreanSearch(emp.name, query) ||
+            emp.workArea?.some(area => matchesKoreanSearch(area, query)) ||
+            emp.phone?.includes(query)
+        );
+    }, [employees, search]);
+
+    const paginatedEmployees = filteredEmployees.slice(
+        page * rowsPerPage,
+        (page + 1) * rowsPerPage
+    );
 
     const handleAddNew = () => {
         setEditingEmployee(null);
@@ -92,6 +115,15 @@ export function EmployeesTable() {
             }
         }
         return false; // User cancelled
+    };
+
+    const handleChangePage = (_event: unknown, newPage: number) => {
+        setPage(newPage);
+    };
+
+    const handleSearch = () => {
+        setSearch(searchInput);
+        setPage(0);
     };
 
     const handleFormDialogClose = () => {
@@ -137,45 +169,15 @@ export function EmployeesTable() {
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
             <Box data-component="employees-table-container">
-                {/* Toolbar */}
-                <Box
-                    data-component="employees-toolbar"
-                    sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-around",
-                    }}
-                >
-                    <Box
-                        data-component="employees-toolbar-buttons"
-                        sx={{
-                            display: "flex",
-                            justifyContent: "space-around",
-                            alignItems: "center",
-                            gap: 1,
-                            width: "100%"
-                        }}
-                    >
-                        {/* Search Button */}
-                        <IconButton size="medium" sx={{ color: "grey.600" }}>
-                            <Search size={24} strokeWidth={2} />
-                        </IconButton>
-
-                        {/* Spacer */}
-                        <Box sx={{ flex: 1 }} />
-
-                        {/* Add Button */}
-                        <IconButton
-                            size="medium"
-                            sx={{ color: "#1e88e5" }}
-                            onClick={handleAddNew}
-                        >
-                            <Plus size={30} strokeWidth={2} />
-                        </IconButton>
-                    </Box>
-                </Box>
-
-                <Divider />
+                <DataTableToolbar
+                    searchPlaceholder={t(locale, "employees.search-placeholder")}
+                    searchValue={searchInput}
+                    onSearchChange={setSearchInput}
+                    onSearchSubmit={handleSearch}
+                    onAddClick={handleAddNew}
+                    dataComponent="employees-toolbar"
+                    showSearchIconOnly={true}
+                />
 
                 {/* Table */}
                 <Box sx={{ minHeight: 200, width: "100%" }}>
@@ -219,14 +221,14 @@ export function EmployeesTable() {
                                 </TableRow>
                             </TableHead>
                             <TableBody>
-                                {filteredEmployees.length === 0 ? (
+                                {paginatedEmployees.length === 0 ? (
                                     <TableRow>
                                         <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
                                             {t(locale, "employees.no-employees")}
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    filteredEmployees.map((employee) => (
+                                    paginatedEmployees.map((employee) => (
                                         <TableRow
                                             key={employee.id}
                                             hover
@@ -254,6 +256,23 @@ export function EmployeesTable() {
                             </TableBody>
                         </Table>
                     </TableContainer>
+
+                    {/* Pagination */}
+                    <TablePagination
+                        component="div"
+                        count={filteredEmployees.length}
+                        page={page}
+                        onPageChange={handleChangePage}
+                        rowsPerPage={rowsPerPage}
+                        rowsPerPageOptions={[]}
+                        labelRowsPerPage=""
+                        sx={{
+                            "& .MuiTablePagination-selectLabel": { display: "none" },
+                            "& .MuiTablePagination-select": { display: "none" },
+                            "& .MuiTablePagination-spacer": { display: "none" },
+                            "& .MuiTablePagination-displayedRows": { margin: 0 },
+                        }}
+                    />
 
                     {/* Detail Modal */}
                     <EmployeeDetailModal

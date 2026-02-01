@@ -25,6 +25,9 @@ import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
+import { DataTableToolbar } from "@/components/ui/datatable/DataTableToolbar";
+import { useMemo } from "react";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 
 const getStatusChip = (status: string | null) => {
     const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
@@ -56,12 +59,19 @@ export function ClientsTable() {
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
+    const [search, setSearch] = useState("");
+    const [searchInput, setSearchInput] = useState("");
 
     const { data, isLoading, error, isFetching } = useClients(
         page + 1,
         rowsPerPage,
-        undefined
+        search || undefined
     );
+
+    const handleSearch = () => {
+        setSearch(searchInput);
+        setPage(0);
+    };
     const deleteClient = useDeleteClient();
 
     const { data: clientFromParam } = useClient(clientIdParam ? Number(clientIdParam) : 0);
@@ -152,44 +162,15 @@ export function ClientsTable() {
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
             <Box data-component="clients-table-container">
-                {/* Toolbar */}
-                <Box
-                    data-component="clients-toolbar"
-                    sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-around",
-                    }}
-                >
-                    <Box
-                        data-component="clients-toolbar-buttons"
-                        sx={{
-                            display: "flex",
-                            justifyContent: "space-around",
-                            alignItems: "center",
-                            gap: 1,
-                            width: "100%"
-                        }}
-                    >
-                        {/* Search Button */}
-                        <IconButton size="medium" sx={{ color: "grey.600" }}>
-                            <Search size={24} strokeWidth={2} />
-                        </IconButton>
-
-                        {/* Spacer */}
-                        <Box sx={{ flex: 1 }} />
-
-                        {/* Add Button */}
-                        <IconButton
-                            size="medium"
-                            sx={{ color: "#1e88e5" }}
-                            onClick={handleAddNew}
-                            data-testid="add-client-button"
-                        >
-                            <Plus size={30} strokeWidth={2} />
-                        </IconButton>
-                    </Box>
-                </Box>
+                <DataTableToolbar
+                    searchPlaceholder={t(locale, "clients.search-placeholder")}
+                    searchValue={searchInput}
+                    onSearchChange={setSearchInput}
+                    onSearchSubmit={handleSearch}
+                    onAddClick={handleAddNew}
+                    dataComponent="clients-toolbar"
+                    showSearchIconOnly={true}
+                />
 
                 <Divider />
 
