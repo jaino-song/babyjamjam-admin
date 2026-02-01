@@ -1,5 +1,5 @@
 import { renderHook, act } from "@testing-library/react";
-import { useChatStream, ChatMessage } from "../use-chat-stream";
+import { useChatStream, ChatMessage } from "../useChatStream";
 
 describe("useChatStream command intercept", () => {
     const originalFetch = globalThis.fetch;
