@@ -18,7 +18,7 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { ChatInput } from "../(components)/chat/ChatInput";
 import { AssistantMessage } from "../(components)/chat/AssistantMessage";
-import { useChatStream, ChatMessage, ChatState } from "@/app/hooks/useChatStream";
+import { useChatStream, ChatMessage, ChatState } from "@/app/hooks/use-chat-stream";
 
 function UserMessage({ message }: { message: ChatMessage }) {
     return (
@@ -95,7 +95,29 @@ export default function ChatPage() {
         loadHistory,
         isLoadingHistory,
         hasMoreHistory,
+        sessionId,
     } = useChatStream();
+
+    const handleSubmitFeedback = useCallback(async (
+        messageIndex: number,
+        type: "positive" | "negative",
+        comment?: string
+    ) => {
+        if (!sessionId) return;
+        const message = messages[messageIndex];
+        if (!message?.id) return;
+
+        await fetch("/api/ai/chat/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                sessionId,
+                messageId: message.id,
+                type,
+                comment,
+            }),
+        });
+    }, [sessionId, messages]);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -262,7 +284,15 @@ export default function ChatPage() {
                                 msg.role === "user" ? (
                                     <UserMessage key={idx} message={msg} />
                                 ) : (
-                                    <AssistantMessage key={idx} message={msg} />
+                                    <AssistantMessage
+                                        key={idx}
+                                        message={msg}
+                                        messageIndex={idx}
+                                        sessionId={sessionId}
+                                        isToolExecuting={isToolExecuting && idx === messages.length - 1}
+                                        currentTool={currentTool}
+                                        onSubmitFeedback={handleSubmitFeedback}
+                                    />
                                 )
                             )}
                             {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
