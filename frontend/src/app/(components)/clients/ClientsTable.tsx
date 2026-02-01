@@ -17,9 +17,7 @@ import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
-import { DataTableToolbar } from "@/components/ui/datatable/DataTableToolbar";
-import { useMemo } from "react";
-import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
+import { DataTable, type DataTableColumn } from "@/app/(components)/ui/datatable";
 
 const getStatusChip = (status: string | null) => {
     const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
@@ -51,19 +49,13 @@ export function ClientsTable() {
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
-    const [search, setSearch] = useState("");
-    const [searchInput, setSearchInput] = useState("");
+    const [searchQuery, setSearchQuery] = useState("");
 
     const { data, isLoading, error, isFetching } = useClients(
         page + 1,
         rowsPerPage,
-        search || undefined
+        searchQuery.trim() ? searchQuery.trim() : undefined
     );
-
-    const handleSearch = () => {
-        setSearch(searchInput);
-        setPage(0);
-    };
     const deleteClient = useDeleteClient();
 
     const { data: clientFromParam } = useClient(clientIdParam ? Number(clientIdParam) : 0);
@@ -184,119 +176,34 @@ export function ClientsTable() {
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
             <Box data-component="clients-table-container">
-                <DataTableToolbar
-                    searchPlaceholder={t(locale, "clients.search-placeholder")}
-                    searchValue={searchInput}
-                    onSearchChange={setSearchInput}
-                    onSearchSubmit={handleSearch}
-                    onAddClick={handleAddNew}
-                    dataComponent="clients-toolbar"
-                    showSearchIconOnly={true}
+                <DataTable
+                    data={tableData}
+                    columns={columns}
+                    isLoading={isFetching && !clients.length}
+                    getRowKey={(client) => client.id}
+                    pagination="server"
+                    totalCount={total}
+                    pageSize={rowsPerPage}
+                    page={page}
+                    onPageChange={handlePageChange}
+                    onRowClick={(client) => handleRowClick(client)}
+                    searchEnabled
+                    searchFields={["name"]}
+                    searchPlaceholder={searchPlaceholder}
+                    searchQuery={searchQuery}
+                    onSearch={setSearchQuery}
+                    emptyMessage={t(locale, "clients.no-data")}
+                    toolbarActions={
+                        <IconButton
+                            size="medium"
+                            sx={{ color: "#1e88e5", ml: "auto" }}
+                            onClick={handleAddNew}
+                            data-testid="add-client-button"
+                        >
+                            <Plus size={30} strokeWidth={2} />
+                        </IconButton>
+                    }
                 />
-
-                <Divider />
-
-                {/* Table */}
-                <Box sx={{ minHeight: 200, width: "100%" }}>
-                    <TableContainer data-component="clients-table-container-old">
-                        <Table sx={{ tableLayout: "fixed", width: "100%" }}>
-                            <TableHead>
-                                <TableRow>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "30%",
-                                        }}
-                                    >
-                                        {t(locale, "clients.table.name")}
-                                    </TableCell>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "40%",
-                                        }}
-                                    >
-                                        {t(locale, "clients.table.status")}
-                                    </TableCell>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "30%",
-                                        }}
-                                    >
-                                        {t(locale, "clients.table.start-date")}
-                                    </TableCell>
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {isFetching && !clients.length ? (
-                                    <TableRow>
-                                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                                            <CircularProgress size={30} />
-                                        </TableCell>
-                                    </TableRow>
-                                ) : clients.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                                            {t(locale, "clients.no-data")}
-                                        </TableCell>
-                                    </TableRow>
-                                ) : (
-                                    clients.map((client) => (
-                                        <TableRow
-                                            key={client.id}
-                                            hover
-                                            onClick={() => handleRowClick(client)}
-                                            sx={{ cursor: "pointer", "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
-                                        >
-                                            <TableCell
-                                                align="center"
-                                                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
-                                            >
-                                                {client.name}
-                                            </TableCell>
-                                            <TableCell align="center" sx={{ px: 1 }}>
-                                                {getStatusChip(client.serviceStatus)}
-                                            </TableCell>
-                                            <TableCell
-                                                align="center"
-                                                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
-                                            >
-                                                {formatDate(client.startDate)}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-
-                    {/* Pagination */}
-                    <TablePagination
-                        component="div"
-                        count={total}
-                        page={page}
-                        onPageChange={handleChangePage}
-                        rowsPerPage={rowsPerPage}
-                        rowsPerPageOptions={[]}
-                        labelRowsPerPage=""
-                        sx={{
-                            "& .MuiTablePagination-selectLabel": { display: "none" },
-                            "& .MuiTablePagination-select": { display: "none" },
-                            "& .MuiTablePagination-spacer": { display: "none" },
-                            "& .MuiTablePagination-displayedRows": { margin: 0 },
-                        }}
-                    />
-                </Box>
 
                 {/* Detail Modal */}
                 <ClientDetailModal

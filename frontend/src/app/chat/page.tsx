@@ -88,6 +88,7 @@ export default function ChatPage() {
     const {
         messages,
         state,
+        sessionId,
         sendMessage,
         clearSession,
         isToolExecuting,
@@ -96,6 +97,24 @@ export default function ChatPage() {
         isLoadingHistory,
         hasMoreHistory,
     } = useChatStream();
+
+    const handleSubmitFeedback = useCallback(async (
+        messageIndex: number,
+        type: "positive" | "negative",
+        comment?: string
+    ) => {
+        if (!sessionId) return;
+        await fetch("/api/ai/chat/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                sessionId,
+                messageIndex,
+                type,
+                comment,
+            }),
+        });
+    }, [sessionId]);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -262,7 +281,15 @@ export default function ChatPage() {
                                 msg.role === "user" ? (
                                     <UserMessage key={idx} message={msg} />
                                 ) : (
-                                    <AssistantMessage key={idx} message={msg} />
+                                    <AssistantMessage
+                                        key={idx}
+                                        message={msg}
+                                        messageIndex={idx}
+                                        sessionId={sessionId}
+                                        isToolExecuting={isToolExecuting}
+                                        currentTool={currentTool}
+                                        onSubmitFeedback={handleSubmitFeedback}
+                                    />
                                 )
                             )}
                             {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}

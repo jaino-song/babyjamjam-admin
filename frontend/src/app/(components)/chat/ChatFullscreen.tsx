@@ -130,6 +130,7 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
     const {
         messages,
         state,
+        sessionId,
         sendMessage,
         clearSession,
         isToolExecuting,
@@ -138,6 +139,24 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
         isLoadingHistory,
         hasMoreHistory,
     } = useChatStream();
+
+    const handleSubmitFeedback = useCallback(async (
+        messageIndex: number,
+        type: "positive" | "negative",
+        comment?: string
+    ) => {
+        if (!sessionId) return;
+        await fetch("/api/ai/chat/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                sessionId,
+                messageIndex,
+                type,
+                comment,
+            }),
+        });
+    }, [sessionId]);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -309,7 +328,15 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                                         msg.role === "user" ? (
                                             <UserMessage key={idx} message={msg} />
                                         ) : (
-                                            <AssistantMessage key={idx} message={msg} />
+                                            <AssistantMessage
+                                                key={idx}
+                                                message={msg}
+                                                messageIndex={idx}
+                                                sessionId={sessionId}
+                                                isToolExecuting={isToolExecuting}
+                                                currentTool={currentTool}
+                                                onSubmitFeedback={handleSubmitFeedback}
+                                            />
                                         )
                                     )}
                                     {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
