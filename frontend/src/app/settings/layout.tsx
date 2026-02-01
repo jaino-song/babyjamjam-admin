@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { Box, Container, Typography } from "@mui/material";
 import { Settings as SettingsIcon, DollarSign, Cog } from "lucide-react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/app/(components)/ui/tabs";
 
 interface SettingsLayoutProps {
   children: React.ReactNode;

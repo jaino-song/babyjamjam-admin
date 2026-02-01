@@ -28,13 +28,9 @@ export {
 } from './hooks/use-clients';
 export { clientKeys } from './hooks/keys';
 
-// Components
-export { ClientsTable } from './components/ClientsTable';
-export { ClientFormDialog } from './components/ClientFormDialog';
-export { ClientDetailModal } from './components/ClientDetailModal';
-export { EmployeeAutocomplete } from './components/EmployeeAutocomplete';
-export { TerminateConfirmDialog } from './components/TerminateConfirmDialog';
-export { ReplacementModal } from './components/ReplacementModal';
-
 // API (for advanced usage)
 export { clientsApi } from './api/clients.api';
+
+// Note: Components are now in app/(components)/clients/
+// Import them directly from there instead
+
