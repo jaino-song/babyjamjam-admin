@@ -17,7 +17,17 @@ import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
-import { DataTable, type DataTableColumn } from "@/app/(components)/ui/datatable";
+import { DataTable, type DataTableColumn, type FilterOption } from "@/app/(components)/ui/datatable";
+
+// Filter options for service status (includes "전체" for all)
+const STATUS_FILTER_OPTIONS: FilterOption[] = [
+    { label: "전체", value: null, color: "default" },
+    ...SERVICE_STATUS_OPTIONS.map(opt => ({
+        label: opt.label,
+        value: opt.value,
+        color: opt.color,
+    })),
+];
 
 const getStatusChip = (status: string | null) => {
     const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
@@ -50,6 +60,7 @@ export function ClientsTable() {
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
+    const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
     const { data, isLoading, error, isFetching } = useClients(
         page + 1,
@@ -69,6 +80,11 @@ export function ClientsTable() {
 
     const handlePageChange = (newPage: number) => {
         setPage(newPage);
+    };
+
+    const handleFilterChange = (value: string | null) => {
+        setStatusFilter(value);
+        setPage(0);
     };
 
     const handleAddNew = () => {
@@ -188,6 +204,9 @@ export function ClientsTable() {
                     searchQuery={searchQuery}
                     onSearch={setSearchQuery}
                     emptyMessage={t(locale, "clients.no-data")}
+                    filterOptions={STATUS_FILTER_OPTIONS}
+                    filterValue={statusFilter}
+                    onFilterChange={handleFilterChange}
                     toolbarActions={
                         <IconButton
                             size="medium"
