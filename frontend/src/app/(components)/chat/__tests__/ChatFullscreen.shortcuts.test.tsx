@@ -19,7 +19,7 @@ jest.mock("../AssistantMessage", () => ({
     AssistantMessage: () => <div data-testid="assistant-message" />,
 }));
 
-jest.mock("@/app/hooks/useChatStream", () => ({
+jest.mock("@/app/hooks/use-chat-stream", () => ({
     useChatStream: () => ({
         messages: [],
         state: "idle",

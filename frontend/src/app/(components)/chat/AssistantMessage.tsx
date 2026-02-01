@@ -7,7 +7,7 @@ import { CodeBlock } from "./CodeBlock";
 import { MarkdownContent } from "./MarkdownContent";
 import { ToolIndicator } from "./tool-indicator";
 import { MessageFeedback } from "./message-feedback";
-import type { ChatMessage } from "@/app/hooks/useChatStream";
+import type { ChatMessage } from "@/app/hooks/use-chat-stream";
 
 interface AssistantMessageProps {
     message: ChatMessage;
@@ -18,13 +18,13 @@ interface AssistantMessageProps {
     onSubmitFeedback: (messageIndex: number, type: "positive" | "negative", comment?: string) => Promise<void>;
 }
 
-export function AssistantMessage({
-    message,
-    messageIndex,
-    sessionId,
-    isToolExecuting,
-    currentTool,
-    onSubmitFeedback
+export function AssistantMessage({ 
+    message, 
+    messageIndex, 
+    sessionId, 
+    isToolExecuting, 
+    currentTool, 
+    onSubmitFeedback 
 }: AssistantMessageProps) {
     return (
         <Box
