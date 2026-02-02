@@ -25,6 +25,7 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { AdminGuard } from "infrastructure/auth/admin.guard";
 import { ChatFeedbackRepository } from "infrastructure/database/repositories/chat-feedback.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { CurrentTenant } from "infrastructure/tenant";
 
 interface JwtUser {
     userId: string;
@@ -49,6 +50,7 @@ export class AIChatController {
         @Body() dto: ChatStreamDto,
         @Req() req: Request,
         @Res() res: Response,
+        @CurrentTenant() tenant: { organizationId?: string },
     ): Promise<void> {
         const user = req.user as JwtUser;
         const userId = user.userId;
@@ -64,6 +66,7 @@ export class AIChatController {
                 dto.sessionId,
                 userId,
                 dto.message,
+                tenant.organizationId ?? "",
             );
 
             for await (const chunk of stream) {

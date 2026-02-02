@@ -23,6 +23,8 @@ describe("SbMessageRepository", () => {
         ...overrides,
     });
 
+    const organizationId = "org-1";
+
     let messageModel: ReturnType<typeof createMockPrismaMessage>;
     let prisma: PrismaService;
     let repository: SbMessageRepository;
@@ -49,7 +51,7 @@ describe("SbMessageRepository", () => {
                 messageModel.findUnique.mockResolvedValue(row);
 
                 // Act
-                const result = await repository.findById(1);
+                const result = await repository.findById(organizationId, 1);
 
                 // Assert
                 expect(messageModel.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
@@ -73,7 +75,7 @@ describe("SbMessageRepository", () => {
                 messageModel.findUnique.mockResolvedValue(row);
 
                 // Act
-                const result = await repository.findById(1);
+                const result = await repository.findById(organizationId, 1);
 
                 // Assert
                 expect(result?.editedAt).toEqual(editedAt);
@@ -86,7 +88,7 @@ describe("SbMessageRepository", () => {
                 messageModel.findUnique.mockResolvedValue(null);
 
                 // Act
-                const result = await repository.findById(999);
+                const result = await repository.findById(organizationId, 999);
 
                 // Assert
                 expect(messageModel.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
@@ -111,7 +113,7 @@ describe("SbMessageRepository", () => {
                 messageModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(entity);
+                const result = await repository.create(organizationId, entity);
 
                 // Assert
                 expect(messageModel.create).toHaveBeenCalledWith({
@@ -137,7 +139,7 @@ describe("SbMessageRepository", () => {
                 messageModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(entity);
+                const result = await repository.create(organizationId, entity);
 
                 // Assert
                 expect(messageModel.create).toHaveBeenCalledWith({
@@ -171,7 +173,7 @@ describe("SbMessageRepository", () => {
                 messageModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(entity);
+                const result = await repository.update(organizationId, entity);
 
                 // Assert
                 expect(messageModel.update).toHaveBeenCalledWith({
@@ -201,7 +203,7 @@ describe("SbMessageRepository", () => {
                 messageModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(entity);
+                const result = await repository.update(organizationId, entity);
 
                 // Assert
                 expect(result.title).toBe("New Title");
@@ -224,7 +226,7 @@ describe("SbMessageRepository", () => {
                 messageModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(entity);
+                const result = await repository.update(organizationId, entity);
 
                 // Assert
                 expect(result.title).toBe("Original Title");
@@ -243,7 +245,7 @@ describe("SbMessageRepository", () => {
                 messageModel.delete.mockResolvedValue(undefined);
 
                 // Act
-                await repository.delete(4);
+                await repository.delete(organizationId, 4);
 
                 // Assert
                 expect(messageModel.delete).toHaveBeenCalledWith({ where: { id: 4 } });
@@ -256,7 +258,7 @@ describe("SbMessageRepository", () => {
                 messageModel.delete.mockResolvedValue(undefined);
 
                 // Act
-                await repository.delete(id);
+                await repository.delete(organizationId, id);
 
                 // Assert
                 expect(messageModel.delete).toHaveBeenCalledWith({ where: { id } });

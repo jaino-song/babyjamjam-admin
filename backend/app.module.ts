@@ -21,6 +21,7 @@ import { EformsignWebhookModule } from "module/eformsign-webhook.module";
 import { AreaTemplateModule } from "module/area-template.module";
 import { DocumentModule } from "module/document.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { TenantModule } from "./infrastructure/tenant/tenant.module";
 
 @Module({
     imports: [
@@ -44,9 +45,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         EformsignWebhookModule,
         AreaTemplateModule,
         DocumentModule,
+        TenantModule,
     ],
     controllers: [AuthController, EformsignController],
     providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],
 })
 export class AppModule {}
-

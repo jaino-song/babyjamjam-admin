@@ -8,31 +8,34 @@ import { MessageMapper } from "../mapper/message.mapper";
 export class SbMessageRepository implements IMessageRepository {
     constructor(private prismaService: PrismaService) {}
 
-    async findById(id: number): Promise<MessageEntity | null> {
-        const message = await this.prismaService.message.findUnique({
-            where: { id },
+    async findById(organizationid: string, id: number): Promise<MessageEntity | null> {
+        const message = await this.prismaService.message.findFirst({
+            where: { id, organization_id: organizationid },
         });
         return message ? MessageMapper.toDomain(message) : null;
     }
 
-    async create(message: MessageEntity): Promise<MessageEntity> {
+    async create(organizationid: string, message: MessageEntity): Promise<MessageEntity> {
         const created = await this.prismaService.message.create({
-            data: MessageMapper.toPrismaCreate(message),
+            data: {
+                ...MessageMapper.toPrismaCreate(message),
+                organization_id: organizationid,
+            },
         });
         return MessageMapper.toDomain(created);
     }
 
-    async update(message: MessageEntity): Promise<MessageEntity> {
+    async update(organizationid: string, message: MessageEntity): Promise<MessageEntity> {
         const updated = await this.prismaService.message.update({
-            where: { id: message.id },
+            where: { id: message.id, organization_id: organizationid },
             data: MessageMapper.toPrismaUpdate(message),
         });
         return MessageMapper.toDomain(updated);
     }
 
-    async delete(id: number): Promise<void> {
+    async delete(organizationid: string, id: number): Promise<void> {
         await this.prismaService.message.delete({
-            where: { id },
+            where: { id, organization_id: organizationid },
         });
     }
 }

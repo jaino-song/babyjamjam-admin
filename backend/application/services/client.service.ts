@@ -77,7 +77,7 @@ export class ClientService {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    async create(params: {
+    async create(organizationid: string, params: {
         name: string;
         primaryEmployeeId?: number | null;
         secondaryEmployeeId?: number | null;
@@ -103,7 +103,7 @@ export class ClientService {
         const dueDate = params.dueDate ? new Date(params.dueDate) : null;
 
         // First create the client
-        const client = await this.createClientUsecase.execute({
+        const client = await this.createClientUsecase.execute(organizationid, {
             name: params.name,
             address: params.address ?? null,
             phone: params.phone ?? null,
@@ -145,13 +145,23 @@ export class ClientService {
         return client;
     }
 
-    async findAll(): Promise<ClientWithEmployees[]> {
-        const clients = await this.listClientsUsecase.execute();
+    async findAll(organizationid: string): Promise<ClientWithEmployees[]> {
+        const clients = await this.listClientsUsecase.execute(organizationid);
         return this.attachEmployeesToClients(clients);
     }
 
-    async findAllPaginated(page: number, limit: number, search?: string): Promise<PaginatedClientWithEmployees> {
-        const result = await this.listClientsPaginatedUsecase.execute(page, limit, search);
+    async findAllPaginated(
+        organizationid: string,
+        page: number,
+        limit: number,
+        search?: string
+    ): Promise<PaginatedClientWithEmployees> {
+        const result = await this.listClientsPaginatedUsecase.execute(
+            organizationid,
+            page,
+            limit,
+            search
+        );
         const clientsWithEmployees = await this.attachEmployeesToClients(result.data);
         return {
             data: clientsWithEmployees,
@@ -162,29 +172,41 @@ export class ClientService {
         };
     }
 
-    async findById(id: number): Promise<ClientWithEmployees | null> {
-        const client = await this.findClientByIdUsecase.execute(id);
+    async findById(organizationid: string, id: number): Promise<ClientWithEmployees | null> {
+        const client = await this.findClientByIdUsecase.execute(organizationid, id);
         if (!client) return null;
 
         const [withEmployees] = await this.attachEmployeesToClients([client]);
         return withEmployees ?? null;
     }
 
-    async findByFilter(filter: string): Promise<ClientWithEmployees[]> {
+    async findByFilter(organizationid: string, filter: string): Promise<ClientWithEmployees[]> {
         let clients: ClientEntity[];
 
         switch (filter) {
             case 'starting-soon':
-                clients = await this.clientRepository.findStartingWithinDays(FILTER_DAYS_THRESHOLD);
+                clients = await this.clientRepository.findStartingWithinDays(
+                    organizationid,
+                    FILTER_DAYS_THRESHOLD
+                );
                 break;
             case 'ending-soon':
-                clients = await this.clientRepository.findEndingWithinDays(FILTER_DAYS_THRESHOLD);
+                clients = await this.clientRepository.findEndingWithinDays(
+                    organizationid,
+                    FILTER_DAYS_THRESHOLD
+                );
                 break;
             case 'incomplete-contracts':
-                clients = await this.clientRepository.findWithIncompleteContractsStartingWithinDays(FILTER_DAYS_THRESHOLD);
+                clients = await this.clientRepository.findWithIncompleteContractsStartingWithinDays(
+                    organizationid,
+                    FILTER_DAYS_THRESHOLD
+                );
                 break;
             case 'no-contract':
-                clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(FILTER_DAYS_THRESHOLD);
+                clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(
+                    organizationid,
+                    FILTER_DAYS_THRESHOLD
+                );
                 break;
             default:
                 this.logger.warn(`Unknown filter: ${filter}`);
@@ -322,7 +344,7 @@ export class ClientService {
         }
     }
 
-    async update(id: number, params: {
+    async update(organizationid: string, id: number, params: {
         name?: string;
         primaryEmployeeId?: number;
         secondaryEmployeeId?: number | null;
@@ -344,7 +366,7 @@ export class ClientService {
         eDocId?: string | null;
     }): Promise<ClientEntity> {
         // Get existing client
-        const existingClient = await this.findClientByIdUsecase.execute(id);
+        const existingClient = await this.findClientByIdUsecase.execute(organizationid, id);
         if (!existingClient) {
             throw new Error(`Client with id ${id} not found`);
         }
@@ -401,7 +423,7 @@ export class ClientService {
             }
         }
 
-        return this.updateClientUsecase.execute(id, {
+        return this.updateClientUsecase.execute(organizationid, id, {
             name: params.name,
             address: params.address,
             phone: params.phone,
@@ -428,8 +450,12 @@ export class ClientService {
      * @param clientId - The client ID
      * @param reason - Optional termination reason for logging
      */
-    async terminateService(clientId: number, reason?: string): Promise<ClientEntity> {
-        const client = await this.findClientByIdUsecase.execute(clientId);
+    async terminateService(
+        organizationid: string,
+        clientId: number,
+        reason?: string
+    ): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(organizationid, clientId);
         if (!client) {
             throw new NotFoundException(`Client with id ${clientId} not found`);
         }
@@ -440,7 +466,7 @@ export class ClientService {
         );
 
         // Update client with terminated status and set end_date to today
-        const updatedClient = await this.updateClientUsecase.execute(clientId, {
+        const updatedClient = await this.updateClientUsecase.execute(organizationid, clientId, {
             serviceStatus: SERVICE_STATUS.TERMINATED,
             endDate: new Date(),
         });
@@ -462,11 +488,12 @@ export class ClientService {
      * @param newSecondaryEmployeeId - Optional new secondary employee
      */
     async requestReplacement(
+        organizationid: string,
         clientId: number,
         newPrimaryEmployeeId: number,
         newSecondaryEmployeeId?: number | null,
     ): Promise<ClientEntity> {
-        const client = await this.findClientByIdUsecase.execute(clientId);
+        const client = await this.findClientByIdUsecase.execute(organizationid, clientId);
         if (!client) {
             throw new NotFoundException(`Client with id ${clientId} not found`);
         }
@@ -477,7 +504,7 @@ export class ClientService {
         );
 
         // Update client status to replacement_requested
-        const updatedClient = await this.updateClientUsecase.execute(clientId, {
+        const updatedClient = await this.updateClientUsecase.execute(organizationid, clientId, {
             serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED,
         });
 
@@ -515,8 +542,8 @@ export class ClientService {
      * Call this after the replacement has been processed
      * @param clientId - The client ID
      */
-    async completeReplacement(clientId: number): Promise<ClientEntity> {
-        const client = await this.findClientByIdUsecase.execute(clientId);
+    async completeReplacement(organizationid: string, clientId: number): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(organizationid, clientId);
         if (!client) {
             throw new NotFoundException(`Client with id ${clientId} not found`);
         }
@@ -537,16 +564,16 @@ export class ClientService {
             client.endDate,
         );
 
-        return this.updateClientUsecase.execute(clientId, {
+        return this.updateClientUsecase.execute(organizationid, clientId, {
             serviceStatus: computedStatus,
         });
     }
 
-    delete(id: number): Promise<void> {
-        return this.deleteClientUsecase.execute(id);
+    delete(organizationid: string, id: number): Promise<void> {
+        return this.deleteClientUsecase.execute(organizationid, id);
     }
 
-    async getStats(): Promise<{
+    async getStats(organizationid: string): Promise<{
         activeClients: number;
         contractsNotSent: number;
         contractsPendingSignature: number;
@@ -562,27 +589,34 @@ export class ClientService {
         const [activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth] = 
             await Promise.all([
                 this.prismaService.client.count({
-                    where: { service_status: SERVICE_STATUS.ACTIVE },
+                    where: { service_status: SERVICE_STATUS.ACTIVE, organization_id: organizationid },
                 }),
                 this.prismaService.client.count({
-                    where: { e_doc_id: null, service_status: SERVICE_STATUS.WAITING },
+                    where: {
+                        e_doc_id: null,
+                        service_status: SERVICE_STATUS.WAITING,
+                        organization_id: organizationid,
+                    },
                 }),
                 this.prismaService.client.count({
                     where: {
                         e_doc_id: { not: null },
                         eformsign_doc_client_e_doc_idToeformsign_doc: { status_type: { not: '050' } },
+                        organization_id: organizationid,
                     },
                 }),
                 this.prismaService.client.count({
                     where: {
                         service_status: SERVICE_STATUS.WAITING,
                         start_date: { gte: thisMonthStart, lte: thisMonthEnd },
+                        organization_id: organizationid,
                     },
                 }),
                 this.prismaService.client.count({
                     where: {
                         service_status: SERVICE_STATUS.WAITING,
                         start_date: { gte: nextMonthStart, lte: nextMonthEnd },
+                        organization_id: organizationid,
                     },
                 }),
             ]);

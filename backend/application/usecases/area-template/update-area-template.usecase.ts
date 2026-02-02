@@ -9,8 +9,12 @@ export class UpdateAreaTemplateUsecase {
         private readonly areaTemplateRepository: IAreaTemplateRepository,
     ) {}
 
-    async execute(area: string, params: { templateId?: string, templateName?: string | null }): Promise<AreaTemplateEntity> {
-        const existing = await this.areaTemplateRepository.findByArea(area);
+    async execute(
+        organizationid: string,
+        area: string,
+        params: { templateId?: string; templateName?: string | null }
+    ): Promise<AreaTemplateEntity> {
+        const existing = await this.areaTemplateRepository.findByArea(organizationid, area);
         if (!existing) {
             throw new Error(`AreaTemplate not found for area: ${area}`);
         }
@@ -22,6 +26,6 @@ export class UpdateAreaTemplateUsecase {
             params.templateName !== undefined ? params.templateName : existing.templateName,
         );
 
-        return this.areaTemplateRepository.update(updated);
+        return this.areaTemplateRepository.update(organizationid, updated);
     }
 }

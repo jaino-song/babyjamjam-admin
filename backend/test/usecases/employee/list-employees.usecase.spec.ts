@@ -4,6 +4,7 @@ import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 describe("ListEmployeesUsecase", () => {
     let usecase: ListEmployeesUsecase;
     let mockRepository: MockEmployeeRepository;
+    const organizationId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -23,7 +24,7 @@ describe("ListEmployeesUsecase", () => {
                 // Arrange - empty repository
 
                 // Act
-                const result = await usecase.execute();
+                const result = await usecase.execute(organizationId);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -35,7 +36,7 @@ describe("ListEmployeesUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute();
+                const result = await usecase.execute(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -48,7 +49,7 @@ describe("ListEmployeesUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute();
+                const result = await usecase.execute(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(5);
@@ -73,7 +74,7 @@ describe("ListEmployeesUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute();
+                const result = await usecase.execute(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -96,7 +97,7 @@ describe("ListEmployeesUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute();
+                const result = await usecase.execute(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(2);
@@ -116,7 +117,7 @@ describe("ListEmployeesUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute();
+                const result = await usecase.execute(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(3);
@@ -136,7 +137,7 @@ describe("ListEmployeesUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute();
+                const result = await usecase.execute(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(100);

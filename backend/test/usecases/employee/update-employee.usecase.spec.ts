@@ -5,6 +5,7 @@ import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 describe("UpdateEmployeeUsecase", () => {
     let usecase: UpdateEmployeeUsecase;
     let mockRepository: MockEmployeeRepository;
+    const organizationId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -30,7 +31,7 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(1, { name: "새 이름" });
+                const result = await usecase.execute(organizationId, 1, { name: "새 이름" });
 
                 // Assert
                 expect(result.name).toBe("새 이름");
@@ -46,7 +47,7 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(1, { workArea: ["부산", "대구"] });
+                const result = await usecase.execute(organizationId, 1, { workArea: ["부산", "대구"] });
 
                 // Assert
                 expect(result.workArea).toEqual(["부산", "대구"]);
@@ -61,7 +62,7 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(1, { phone: "010-9999-8888" });
+                const result = await usecase.execute(organizationId, 1, { phone: "010-9999-8888" });
 
                 // Assert
                 expect(result.phone).toBe("010-9999-8888");
@@ -76,7 +77,7 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(1, { grade: "특급" });
+                const result = await usecase.execute(organizationId, 1, { grade: "특급" });
 
                 // Assert
                 expect(result.grade).toBe("특급");
@@ -88,7 +89,7 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(1, { openToNextWork: false });
+                const result = await usecase.execute(organizationId, 1, { openToNextWork: false });
 
                 // Assert
                 expect(result.openToNextWork).toBe(false);
@@ -113,7 +114,7 @@ describe("UpdateEmployeeUsecase", () => {
                 };
 
                 // Act
-                const result = await usecase.execute(1, updates);
+                const result = await usecase.execute(organizationId, 1, updates);
 
                 // Assert
                 expect(result.name).toBe("완전 새 이름");
@@ -134,10 +135,10 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                await usecase.execute(1, { name: "업데이트됨" });
+                await usecase.execute(organizationId, 1, { name: "업데이트됨" });
 
                 // Assert - verify persistence
-                const persisted = await mockRepository.findById(1);
+                const persisted = await mockRepository.findById(organizationId, 1);
                 expect(persisted?.name).toBe("업데이트됨");
             });
 
@@ -151,12 +152,12 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                await usecase.execute(2, { name: "수정된 직원2" });
+                await usecase.execute(organizationId, 2, { name: "수정된 직원2" });
 
                 // Assert
-                const emp1 = await mockRepository.findById(1);
-                const emp2 = await mockRepository.findById(2);
-                const emp3 = await mockRepository.findById(3);
+                const emp1 = await mockRepository.findById(organizationId, 1);
+                const emp2 = await mockRepository.findById(organizationId, 2);
+                const emp3 = await mockRepository.findById(organizationId, 3);
 
                 expect(emp1?.name).toBe("직원1");
                 expect(emp2?.name).toBe("수정된 직원2");
@@ -172,7 +173,7 @@ describe("UpdateEmployeeUsecase", () => {
                 // Arrange - empty repository
 
                 // Act & Assert
-                await expect(usecase.execute(999, { name: "새 이름" })).rejects.toThrow(
+                await expect(usecase.execute(organizationId, 999, { name: "새 이름" })).rejects.toThrow(
                     NotFoundException,
                 );
             });
@@ -181,7 +182,7 @@ describe("UpdateEmployeeUsecase", () => {
                 // Arrange - empty repository
 
                 // Act & Assert
-                await expect(usecase.execute(42, { name: "새 이름" })).rejects.toThrow(
+                await expect(usecase.execute(organizationId, 42, { name: "새 이름" })).rejects.toThrow(
                     "Employee with id 42 not found",
                 );
             });
@@ -194,7 +195,7 @@ describe("UpdateEmployeeUsecase", () => {
 
                 // Act
                 try {
-                    await usecase.execute(999, { name: "새 이름" });
+                    await usecase.execute(organizationId, 999, { name: "새 이름" });
                 } catch {
                     // Expected
                 }
@@ -217,7 +218,7 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(1, {});
+                const result = await usecase.execute(organizationId, 1, {});
 
                 // Assert - nothing should change
                 expect(result.name).toBe("원래 이름");
@@ -232,7 +233,7 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(1, { workArea: [] });
+                const result = await usecase.execute(organizationId, 1, { workArea: [] });
 
                 // Assert
                 expect(result.workArea).toEqual([]);
@@ -244,7 +245,7 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(42, { name: "새 이름" });
+                const result = await usecase.execute(organizationId, 42, { name: "새 이름" });
 
                 // Assert
                 expect(result.id).toBe(42);
@@ -260,7 +261,7 @@ describe("UpdateEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(1, { name: "새 이름" });
+                const result = await usecase.execute(organizationId, 1, { name: "새 이름" });
 
                 // Assert
                 expect(result.registeredDate).toEqual(registeredDate);

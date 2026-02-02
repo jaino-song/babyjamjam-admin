@@ -17,7 +17,12 @@ export class NotificationCleanupSchedulerService {
         this.logger.log("[Notification Cleanup] Starting cleanup...");
 
         try {
-            const deletedCount = await this.cleanupNotificationsUsecase.execute(RETENTION_DAYS);
+            // todo: iterate over all organizations
+            const organizationid = "";
+            const deletedCount = await this.cleanupNotificationsUsecase.execute(
+                organizationid,
+                RETENTION_DAYS
+            );
             this.logger.log(`[Notification Cleanup] Deleted ${deletedCount} notifications older than ${RETENTION_DAYS} days`);
         } catch (error) {
             this.logger.error("[Notification Cleanup] Failed to cleanup notifications", error);

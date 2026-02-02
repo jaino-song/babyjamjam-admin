@@ -37,15 +37,16 @@ export class MockClientRepository implements IClientRepository {
         return Array.from(this.clients.values());
     }
 
-    async findById(id: number): Promise<ClientEntity | null> {
+    async findById(_organizationid: string, id: number): Promise<ClientEntity | null> {
         return this.clients.get(id) ?? null;
     }
 
-    async findAll(): Promise<ClientEntity[]> {
+    async findAll(_organizationid: string): Promise<ClientEntity[]> {
         return Array.from(this.clients.values());
     }
 
     async findAllPaginated(
+        _organizationid: string,
         page: number,
         limit: number,
         search?: string,
@@ -77,7 +78,7 @@ export class MockClientRepository implements IClientRepository {
         };
     }
 
-    async create(client: ClientEntity): Promise<ClientEntity> {
+    async create(_organizationid: string, client: ClientEntity): Promise<ClientEntity> {
         // ID가 없으면 자동 생성
         const id = client.id > 0 ? client.id : this.nextId++;
         const newClient = ClientEntity.reconstitute(
@@ -104,7 +105,7 @@ export class MockClientRepository implements IClientRepository {
         return newClient;
     }
 
-    async update(client: ClientEntity): Promise<ClientEntity> {
+    async update(_organizationid: string, client: ClientEntity): Promise<ClientEntity> {
         if (!this.clients.has(client.id)) {
             throw new Error(`Client with id ${client.id} not found`);
         }
@@ -112,7 +113,7 @@ export class MockClientRepository implements IClientRepository {
         return client;
     }
 
-    async delete(id: number): Promise<void> {
+    async delete(_organizationid: string, id: number): Promise<void> {
         if (!this.clients.has(id)) {
             throw new Error(`Client with id ${id} not found`);
         }
@@ -122,7 +123,7 @@ export class MockClientRepository implements IClientRepository {
     /**
      * Find clients by start date (P3 scheduler support)
      */
-    async findByStartDate(date: Date): Promise<ClientEntity[]> {
+    async findByStartDate(_organizationid: string, date: Date): Promise<ClientEntity[]> {
         const startOfDay = new Date(date);
         startOfDay.setHours(0, 0, 0, 0);
         const endOfDay = new Date(date);
@@ -137,7 +138,7 @@ export class MockClientRepository implements IClientRepository {
     /**
      * Find clients by end date (P3 scheduler support)
      */
-    async findByEndDate(date: Date): Promise<ClientEntity[]> {
+    async findByEndDate(_organizationid: string, date: Date): Promise<ClientEntity[]> {
         const startOfDay = new Date(date);
         startOfDay.setHours(0, 0, 0, 0);
         const endOfDay = new Date(date);
@@ -153,12 +154,12 @@ export class MockClientRepository implements IClientRepository {
      * Find clients by created date (P3 scheduler support)
      * Note: Mock doesn't have created_at field, returns empty array
      */
-    async findByCreatedDate(_date: Date): Promise<ClientEntity[]> {
+    async findByCreatedDate(_organizationid: string, _date: Date): Promise<ClientEntity[]> {
         // Mock doesn't track created_at, similar to real implementation
         return [];
     }
 
-    async findStartingWithinDays(days: number): Promise<ClientEntity[]> {
+    async findStartingWithinDays(_organizationid: string, days: number): Promise<ClientEntity[]> {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const endDate = new Date(today);
@@ -171,7 +172,7 @@ export class MockClientRepository implements IClientRepository {
         });
     }
 
-    async findEndingWithinDays(days: number): Promise<ClientEntity[]> {
+    async findEndingWithinDays(_organizationid: string, days: number): Promise<ClientEntity[]> {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const endDate = new Date(today);
@@ -184,7 +185,10 @@ export class MockClientRepository implements IClientRepository {
         });
     }
 
-    async findWithIncompleteContractsStartingWithinDays(days: number): Promise<ClientEntity[]> {
+    async findWithIncompleteContractsStartingWithinDays(
+        _organizationid: string,
+        days: number
+    ): Promise<ClientEntity[]> {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const endDate = new Date(today);
@@ -199,7 +203,10 @@ export class MockClientRepository implements IClientRepository {
         });
     }
 
-    async findWithoutContractSentStartingWithinDays(days: number): Promise<ClientEntity[]> {
+    async findWithoutContractSentStartingWithinDays(
+        _organizationid: string,
+        days: number
+    ): Promise<ClientEntity[]> {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const endDate = new Date(today);

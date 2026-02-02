@@ -9,8 +9,8 @@ export class GetMessageTemplateUsecase {
         private readonly repository: IMessageTemplateRepository,
     ) {}
 
-    async execute(id: string): Promise<MessageTemplateEntity> {
-        const entity = await this.repository.findById(id);
+    async execute(organizationid: string, id: string): Promise<MessageTemplateEntity> {
+        const entity = await this.repository.findById(organizationid, id);
         if (!entity) {
             throw new NotFoundException(`Template with id ${id} not found`);
         }

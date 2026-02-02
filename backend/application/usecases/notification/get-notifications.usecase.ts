@@ -18,17 +18,18 @@ export class GetNotificationsUsecase {
     ) {}
 
     async execute(
+        organizationid: string,
         userId: string,
         options?: { limit?: number; offset?: number },
     ): Promise<NotificationEntity[]> {
-        return this.notificationRepository.findByUserId(userId, options);
+        return this.notificationRepository.findByUserId(organizationid, userId, options);
     }
 
-    async getUnread(userId: string): Promise<NotificationEntity[]> {
-        return this.notificationRepository.findUnreadByUserId(userId);
+    async getUnread(organizationid: string, userId: string): Promise<NotificationEntity[]> {
+        return this.notificationRepository.findUnreadByUserId(organizationid, userId);
     }
 
-    async countUnread(userId: string): Promise<number> {
-        return this.notificationRepository.countUnreadByUserId(userId);
+    async countUnread(organizationid: string, userId: string): Promise<number> {
+        return this.notificationRepository.countUnreadByUserId(organizationid, userId);
     }
 }

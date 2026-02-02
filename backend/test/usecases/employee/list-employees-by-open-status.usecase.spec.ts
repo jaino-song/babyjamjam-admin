@@ -4,6 +4,7 @@ import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 describe("ListEmployeesByOpenStatusUsecase", () => {
     let usecase: ListEmployeesByOpenStatusUsecase;
     let mockRepository: MockEmployeeRepository;
+    const organizationId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -30,7 +31,7 @@ describe("ListEmployeesByOpenStatusUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(true);
+                const result = await usecase.execute(organizationId, true);
 
                 // Assert
                 expect(result).toHaveLength(2);
@@ -49,7 +50,7 @@ describe("ListEmployeesByOpenStatusUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(true);
+                const result = await usecase.execute(organizationId, true);
 
                 // Assert
                 expect(result).toHaveLength(3);
@@ -64,7 +65,7 @@ describe("ListEmployeesByOpenStatusUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(true);
+                const result = await usecase.execute(organizationId, true);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -86,7 +87,7 @@ describe("ListEmployeesByOpenStatusUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(false);
+                const result = await usecase.execute(organizationId, false);
 
                 // Assert
                 expect(result).toHaveLength(2);
@@ -105,7 +106,7 @@ describe("ListEmployeesByOpenStatusUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(false);
+                const result = await usecase.execute(organizationId, false);
 
                 // Assert
                 expect(result).toHaveLength(3);
@@ -120,7 +121,7 @@ describe("ListEmployeesByOpenStatusUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(false);
+                const result = await usecase.execute(organizationId, false);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -135,7 +136,7 @@ describe("ListEmployeesByOpenStatusUsecase", () => {
                 // Arrange - empty repository
 
                 // Act
-                const result = await usecase.execute(true);
+                const result = await usecase.execute(organizationId, true);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -145,7 +146,7 @@ describe("ListEmployeesByOpenStatusUsecase", () => {
                 // Arrange - empty repository
 
                 // Act
-                const result = await usecase.execute(false);
+                const result = await usecase.execute(organizationId, false);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -169,7 +170,7 @@ describe("ListEmployeesByOpenStatusUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(true);
+                const result = await usecase.execute(organizationId, true);
 
                 // Assert
                 expect(result[0]).toMatchObject({

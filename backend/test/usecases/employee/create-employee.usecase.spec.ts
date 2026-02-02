@@ -4,6 +4,7 @@ import { MockEmployeeRepository } from "../../utils/mocks";
 describe("CreateEmployeeUsecase", () => {
     let usecase: CreateEmployeeUsecase;
     let mockRepository: MockEmployeeRepository;
+    const organizationId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -26,6 +27,7 @@ describe("CreateEmployeeUsecase", () => {
 
             // Act
             const result = await usecase.execute(
+                organizationId,
                 name,
                 workArea,
                 phone,
@@ -54,6 +56,7 @@ describe("CreateEmployeeUsecase", () => {
 
             // Act
             const result = await usecase.execute(
+                organizationId,
                 name,
                 workArea,
                 phone,
@@ -69,9 +72,9 @@ describe("CreateEmployeeUsecase", () => {
 
         it("should auto-increment employee id for multiple creates", async () => {
             // Arrange & Act
-            const emp1 = await usecase.execute("직원1", ["지역A"], "010-0000-0001", "1급", true);
-            const emp2 = await usecase.execute("직원2", ["지역B"], "010-0000-0002", "2급", false);
-            const emp3 = await usecase.execute("직원3", ["지역C"], "010-0000-0003", "3급", true);
+            const emp1 = await usecase.execute(organizationId, "직원1", ["지역A"], "010-0000-0001", "1급", true);
+            const emp2 = await usecase.execute(organizationId, "직원2", ["지역B"], "010-0000-0002", "2급", false);
+            const emp3 = await usecase.execute(organizationId, "직원3", ["지역C"], "010-0000-0003", "3급", true);
 
             // Assert
             expect(emp1.id).toBe(1);
@@ -85,6 +88,7 @@ describe("CreateEmployeeUsecase", () => {
 
             // Act
             const result = await usecase.execute(
+                organizationId,
                 "다지역 담당",
                 workAreas,
                 "010-1111-2222",

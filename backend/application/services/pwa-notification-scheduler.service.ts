@@ -32,7 +32,12 @@ export class PwaNotificationSchedulerService {
 
     private async notifyUpcomingServices(): Promise<void> {
         try {
-            const clients = await this.clientRepository.findStartingWithinDays(DAYS_THRESHOLD);
+            // todo: iterate over all organizations
+            const organizationid = "";
+            const clients = await this.clientRepository.findStartingWithinDays(
+                organizationid,
+                DAYS_THRESHOLD
+            );
 
             if (clients.length === 0) {
                 this.logger.log("[PWA Scheduler] No upcoming services within 7 days");
@@ -54,7 +59,12 @@ export class PwaNotificationSchedulerService {
 
     private async notifyEndingServices(): Promise<void> {
         try {
-            const clients = await this.clientRepository.findEndingWithinDays(DAYS_THRESHOLD);
+            // todo: iterate over all organizations
+            const organizationid = "";
+            const clients = await this.clientRepository.findEndingWithinDays(
+                organizationid,
+                DAYS_THRESHOLD
+            );
 
             if (clients.length === 0) {
                 this.logger.log("[PWA Scheduler] No ending services within 7 days");
@@ -76,7 +86,12 @@ export class PwaNotificationSchedulerService {
 
     private async notifyIncompleteContracts(): Promise<void> {
         try {
-            const clients = await this.clientRepository.findWithIncompleteContractsStartingWithinDays(DAYS_THRESHOLD);
+            // todo: iterate over all organizations
+            const organizationid = "";
+            const clients = await this.clientRepository.findWithIncompleteContractsStartingWithinDays(
+                organizationid,
+                DAYS_THRESHOLD
+            );
 
             if (clients.length === 0) {
                 this.logger.log("[PWA Scheduler] No incomplete contracts for upcoming services");
@@ -98,7 +113,12 @@ export class PwaNotificationSchedulerService {
 
     private async notifyContractsNotSent(): Promise<void> {
         try {
-            const clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(DAYS_THRESHOLD);
+            // todo: iterate over all organizations
+            const organizationid = "";
+            const clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(
+                organizationid,
+                DAYS_THRESHOLD
+            );
 
             if (clients.length === 0) {
                 this.logger.log("[PWA Scheduler] No clients without contracts sent");

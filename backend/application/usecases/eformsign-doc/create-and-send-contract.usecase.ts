@@ -29,10 +29,13 @@ export class CreateAndSendContractUsecase {
         private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
     ) {}
 
-    async execute(params: CreateAndSendContractParams): Promise<CreateAndSendContractResult> {
+    async execute(
+        organizationid: string,
+        params: CreateAndSendContractParams
+    ): Promise<CreateAndSendContractResult> {
         const { clientId, templateId, templateName } = params;
 
-        const client = await this.clientRepository.findById(clientId);
+        const client = await this.clientRepository.findById(organizationid, clientId);
         if (!client) {
             return { success: false, error: "고객을 찾을 수 없습니다" };
         }
@@ -100,7 +103,7 @@ export class CreateAndSendContractUsecase {
                 },
             });
 
-            await this.createEformsignDocUsecase.execute({
+            await this.createEformsignDocUsecase.execute(organizationid, {
                 documentId: result.documentId,
                 clientId,
                 linkToClient: true,

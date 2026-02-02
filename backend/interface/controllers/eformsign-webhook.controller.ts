@@ -22,7 +22,7 @@ export class EformsignWebhookController {
         this.logger.log(`Received eformsign webhook: ${payload.event_type} for document ${documentId}`);
 
         try {
-            await this.webhookService.processWebhook(payload);
+            await this.webhookService.processWebhook(payload.company_id, payload);
             return { success: true };
         } catch (error) {
             this.logger.error(`Webhook processing failed: ${error}`);

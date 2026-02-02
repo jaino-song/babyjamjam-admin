@@ -2,6 +2,7 @@ import { Controller, Post, Get, Body, Query, Param, HttpException, HttpStatus } 
 import { EformsignService } from "../../application/services/eformsign.service";
 import { ContractDataDto } from "../../application/dto/contract.dto";
 import { AreaTemplateService } from "../../application/services/area-template.service";
+import { CurrentTenant } from "infrastructure/tenant";
 
 @Controller("api")
 export class EformsignController {
@@ -60,6 +61,7 @@ export class EformsignController {
 
     @Post("generate-document")
     async generateDocument(
+        @CurrentTenant() tenant: { organizationId?: string },
         @Body()
         body: {
             contractData: ContractDataDto;
@@ -72,7 +74,10 @@ export class EformsignController {
             // Look up template_id based on area
             let templateId: string | undefined;
             if (body.contractData.area) {
-                const areaTemplate = await this.areaTemplateService.findByArea(body.contractData.area);
+                const areaTemplate = await this.areaTemplateService.findByArea(
+                    tenant.organizationId ?? "",
+                    body.contractData.area
+                );
                 templateId = areaTemplate?.templateId;
             }
 
@@ -216,4 +221,3 @@ export class EformsignController {
         }
     }
 }
-

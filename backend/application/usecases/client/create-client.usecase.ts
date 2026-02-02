@@ -29,11 +29,11 @@ export class CreateClientUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    execute(params: CreateClientParams): Promise<ClientEntity> {
+    execute(organizationid: string, params: CreateClientParams): Promise<ClientEntity> {
         const client = ClientEntity.create({
             ...params,
             eDocId: params.eDocId ?? null,
         });
-        return this.clientRepository.create(client);
+        return this.clientRepository.create(organizationid, client);
     }
 }

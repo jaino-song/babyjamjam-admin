@@ -21,10 +21,10 @@ export class CleanupNotificationsUsecase {
      * @param days 보관 기간 (일)
      * @returns 삭제된 알림 개수
      */
-    async execute(days: number): Promise<number> {
+    async execute(organizationid: string, days: number): Promise<number> {
         const cutoffDate = new Date();
         cutoffDate.setDate(cutoffDate.getDate() - days);
 
-        return this.notificationRepository.deleteOlderThan(cutoffDate);
+        return this.notificationRepository.deleteOlderThan(organizationid, cutoffDate);
     }
 }

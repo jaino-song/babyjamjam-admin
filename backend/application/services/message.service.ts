@@ -16,20 +16,19 @@ export class MessageService {
         private readonly deleteMessageUsecase: DeleteMessageUsecase,
     ) {}
 
-    create(title: string, text: string): Promise<MessageEntity> {
-        return this.createMessageUsecase.execute(title, text);
+    create(organizationid: string, title: string, text: string): Promise<MessageEntity> {
+        return this.createMessageUsecase.execute(organizationid, title, text);
     }
 
-    findById(id: number): Promise<MessageEntity | null> {
-        return this.findMessageByIdUsecase.execute(id);
+    findById(organizationid: string, id: number): Promise<MessageEntity | null> {
+        return this.findMessageByIdUsecase.execute(organizationid, id);
     }
 
-    update(id: number, title: string, text: string): Promise<MessageEntity> {
-        return this.updateMessageUsecase.execute(id, title, text);
+    update(organizationid: string, id: number, title: string, text: string): Promise<MessageEntity> {
+        return this.updateMessageUsecase.execute(organizationid, id, title, text);
     }
 
-    delete(id: number): Promise<void> {
-        return this.deleteMessageUsecase.execute(id);
+    delete(organizationid: string, id: number): Promise<void> {
+        return this.deleteMessageUsecase.execute(organizationid, id);
     }
 }
-

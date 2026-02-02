@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { JwtService } from "@nestjs/jwt";
 import * as crypto from "crypto";
@@ -13,6 +13,8 @@ export interface KakaoData {
 export interface TokenPayload {
     sub: string;
     role: string | null;
+    organizationId?: string;
+    orgRole?: string;
     type: 'access' | 'refresh';
 }
 
@@ -20,6 +22,7 @@ export interface UserValidationResult {
     user: string;
     accessToken: string;
     refreshToken: string;
+    requiresOrgSelection?: boolean;
 }
 
 interface StoredAuthCode {
@@ -45,6 +48,38 @@ export class AuthService {
         }
     }
 
+    private async issueOrganizationTokens(
+        user: { id: string; role: string | null },
+        organizationId: string,
+        orgRole: string
+    ): Promise<{ accessToken: string; refreshToken: string }> {
+        const payload = {
+            sub: user.id,
+            role: user.role,
+            organizationId,
+            orgRole,
+        };
+
+        const privilegedRoles = ["owner", "admin", "manager"];
+        const isPrivileged = user.role !== null && privilegedRoles.includes(user.role);
+        const signOptions = isPrivileged ? { expiresIn: "30d" } : { expiresIn: "3d" };
+        const refreshSignOptions = isPrivileged ? { expiresIn: "7d" } : { expiresIn: "1d" };
+
+        const accessSignOptions = { ...signOptions, type: 'access' } as Parameters<JwtService["signAsync"]>[1];
+        const refreshSignWithTypeOptions = { ...refreshSignOptions, type: 'refresh' } as Parameters<JwtService["signAsync"]>[1];
+
+        const accessToken = await this.jwt.signAsync(
+            { ...payload, type: 'access' },
+            accessSignOptions
+        );
+        const refreshToken = await this.jwt.signAsync(
+            { ...payload, type: 'refresh' },
+            refreshSignWithTypeOptions
+        );
+
+        return { accessToken, refreshToken };
+    }
+
     async validateKakaoUser(kakaoData: KakaoData): Promise<UserValidationResult> {
         let user = await this.prisma.user.findFirst({
             where: {
@@ -64,9 +99,27 @@ export class AuthService {
             });
         }
 
+        const userOrgs = await this.prisma.user_organization.findMany({
+            where: { user_id: user.id }
+        });
+
+        let organizationId: string | undefined;
+        let orgRole: string | undefined;
+        let requiresOrgSelection = false;
+
+        const [firstOrg] = userOrgs;
+
+        if (userOrgs.length === 1 && firstOrg) {
+            organizationId = firstOrg.organization_id;
+            orgRole = firstOrg.role;
+        } else if (userOrgs.length > 1) {
+            requiresOrgSelection = true;
+        }
+
         const payload = {
             sub: user.id,
             role: user.role,
+            ...(organizationId && { organizationId, orgRole }),
         };
 
         const privilegedRoles = ["owner", "admin", "manager"];
@@ -80,20 +133,89 @@ export class AuthService {
             ? { expiresIn: "7d" }
             : { expiresIn: "1d" };
 
+        const accessSignOptions = { ...signOptions, type: 'access' } as Parameters<JwtService["signAsync"]>[1];
+        const refreshSignWithTypeOptions = { ...refreshSignOptions, type: 'refresh' } as Parameters<JwtService["signAsync"]>[1];
+
         const refreshToken = await this.jwt.signAsync(
             { ...payload, type: 'refresh' },
-            refreshSignOptions
+            refreshSignWithTypeOptions
         );
         const accessToken = await this.jwt.signAsync(
             { ...payload, type: 'access' },
-            signOptions
+            accessSignOptions
         );
 
         return {
             user: user.id,
             accessToken,
             refreshToken,
+            requiresOrgSelection: requiresOrgSelection || undefined,
         };
+    }
+
+    async selectOrganization(userid: string, organizationid: string): Promise<{ accessToken: string; refreshToken: string }> {
+        const user = await this.prisma.user.findUnique({ where: { id: userid } });
+        if (!user) {
+            throw new UnauthorizedException("User not found");
+        }
+
+        const userOrg = await this.prisma.user_organization.findFirst({
+            where: { user_id: userid, organization_id: organizationid }
+        });
+        if (!userOrg) {
+            throw new ForbiddenException("User does not belong to this organization");
+        }
+
+        const payload = {
+            sub: user.id,
+            role: user.role,
+            organizationId: organizationid,
+            orgRole: userOrg.role,
+        };
+        return this.issueOrganizationTokens(user, payload.organizationId, payload.orgRole);
+    }
+
+    async switchOrganization(
+        userid: string,
+        currentorgid: string,
+        neworgid: string
+    ): Promise<{ accessToken: string; refreshToken: string }> {
+        const userOrg = await this.prisma.user_organization.findFirst({
+            where: { user_id: userid, organization_id: neworgid }
+        });
+        if (!userOrg) {
+            throw new ForbiddenException("User does not belong to target organization");
+        }
+
+        const user = { id: userid, role: null };
+        return this.issueOrganizationTokens(user, neworgid, userOrg.role);
+    }
+
+    async getUserOrganizations(userid: string): Promise<Array<{ id: string; name: string; slug: string; role: string }>> {
+        const userOrgs = await this.prisma.user_organization.findMany({
+            where: { user_id: userid }
+        });
+
+        if (userOrgs.length === 0) {
+            return [];
+        }
+
+        const result = await Promise.all(
+            userOrgs.map(async (userOrg) => {
+                const org = await this.prisma.organization.findUnique({
+                    where: { id: userOrg.organization_id }
+                });
+
+                return {
+                    id: org!.id,
+                    name: org!.name,
+                    slug: org!.slug,
+                    role: userOrg.role,
+                };
+            })
+        );
+
+        return result;
     }
 
     async createAuthCode(tokens: { accessToken: string; refreshToken: string }): Promise<string> {
@@ -145,10 +267,22 @@ export class AuthService {
             }
 
             // Generate new tokens with the same logic as validateKakaoUser
-            const payload = {
+            const payload: Omit<TokenPayload, "type"> = {
                 sub: user.id,
                 role: user.role,
             };
+
+            if (decoded.organizationId) {
+                const stillMember = await this.prisma.user_organization.findFirst({
+                    where: { user_id: decoded.sub, organization_id: decoded.organizationId }
+                });
+                if (stillMember !== null) {
+                    payload.organizationId = decoded.organizationId;
+                    if (stillMember) {
+                        payload.orgRole = stillMember.role;
+                    }
+                }
+            }
 
             const privilegedRoles = ["owner", "admin", "manager"];
             const isPrivileged = user.role !== null && privilegedRoles.includes(user.role);
@@ -161,13 +295,16 @@ export class AuthService {
                 ? { expiresIn: "7d" }
                 : { expiresIn: "1d" };
 
+            const accessSignOptions = { ...signOptions, type: 'access' } as Parameters<JwtService["signAsync"]>[1];
+            const refreshSignWithTypeOptions = { ...refreshSignOptions, type: 'refresh' } as Parameters<JwtService["signAsync"]>[1];
+
             const newRefreshToken = await this.jwt.signAsync(
                 { ...payload, type: 'refresh' },
-                refreshSignOptions
+                refreshSignWithTypeOptions
             );
             const newAccessToken = await this.jwt.signAsync(
                 { ...payload, type: 'access' },
-                signOptions
+                accessSignOptions
             );
 
             return {

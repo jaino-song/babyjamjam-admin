@@ -51,6 +51,8 @@ describe("SbEmployeeRepository", () => {
         );
     };
 
+    const organizationId = "org-1";
+
     let employeeModel: ReturnType<typeof createMockPrismaEmployee>;
     let prisma: PrismaService;
     let repository: SbEmployeeRepository;
@@ -76,7 +78,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findUnique.mockResolvedValue(row);
 
                 // Act
-                const result = await repository.findById(1);
+                const result = await repository.findById(organizationId, 1);
 
                 // Assert
                 expect(employeeModel.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
@@ -98,7 +100,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findUnique.mockResolvedValue(null);
 
                 // Act
-                const result = await repository.findById(999);
+                const result = await repository.findById(organizationId, 999);
 
                 // Assert
                 expect(employeeModel.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
@@ -121,7 +123,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(organizationId);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith(
@@ -144,7 +146,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([]);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(organizationId);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -161,7 +163,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([row]);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -177,7 +179,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([row]);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -193,7 +195,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([row]);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -208,7 +210,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([row]);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(organizationId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -238,7 +240,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(entity);
+                const result = await repository.create(organizationId, entity);
 
                 // Assert
                 expect(employeeModel.findFirst).toHaveBeenCalledWith({
@@ -269,7 +271,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(entity);
+                const result = await repository.create(organizationId, entity);
 
                 // Assert
                 expect(employeeModel.create).toHaveBeenCalledWith({
@@ -306,7 +308,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(entity);
+                const result = await repository.update(organizationId, entity);
 
                 // Assert
                 expect(employeeModel.update).toHaveBeenCalledWith({
@@ -334,7 +336,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.delete.mockResolvedValue(undefined);
 
                 // Act
-                await repository.delete(3);
+                await repository.delete(organizationId, 3);
 
                 // Assert
                 expect(employeeModel.delete).toHaveBeenCalledWith({ where: { id: 3 } });
@@ -352,7 +354,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByWorkArea("Incheon");
+                await repository.findByWorkArea(organizationId, "Incheon");
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
@@ -369,7 +371,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByGrade("A");
+                await repository.findByGrade(organizationId, "A");
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
@@ -384,7 +386,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findByGrade(grade);
+                await repository.findByGrade(organizationId, grade);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
@@ -401,7 +403,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByOpenToNextWork(true);
+                await repository.findByOpenToNextWork(organizationId, true);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
@@ -416,7 +418,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findByOpenToNextWork(false);
+                await repository.findByOpenToNextWork(organizationId, false);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
@@ -434,7 +436,7 @@ describe("SbEmployeeRepository", () => {
                 const date = new Date("2024-05-05T12:00:00.000Z");
 
                 // Act
-                await repository.findByRegisteredDate(date);
+                await repository.findByRegisteredDate(organizationId, date);
 
                 // Assert
                 const call = employeeModel.findMany.mock.calls[0][0];
@@ -455,7 +457,7 @@ describe("SbEmployeeRepository", () => {
                 const end = new Date("2024-01-31T23:59:59.000Z");
 
                 // Act
-                await repository.findByRegisteredDateRange(start, end);
+                await repository.findByRegisteredDateRange(organizationId, start, end);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
@@ -480,7 +482,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.update.mockResolvedValue(createEmployeeRow());
 
                 // Act
-                await repository.changeOpenToNextWork(10, false);
+                await repository.changeOpenToNextWork(organizationId, 10, false);
 
                 // Assert
                 expect(employeeModel.update).toHaveBeenCalledWith({
@@ -496,7 +498,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.update.mockResolvedValue(createEmployeeRow({ open_to_next_work: true }));
 
                 // Act
-                await repository.changeOpenToNextWork(15, true);
+                await repository.changeOpenToNextWork(organizationId, 15, true);
 
                 // Assert
                 expect(employeeModel.update).toHaveBeenCalledWith({
@@ -518,7 +520,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                const result = await repository.findAllOpenToNextWork();
+                const result = await repository.findAllOpenToNextWork(organizationId);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({

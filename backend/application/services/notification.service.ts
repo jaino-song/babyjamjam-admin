@@ -46,12 +46,13 @@ export class NotificationService {
 
     // Send Notifications
     sendNotification(
+        organizationid: string,
         userId: string,
         title: string,
         body: string,
         data?: Record<string, unknown>,
     ): Promise<NotificationEntity> {
-        return this.sendNotificationUsecase.execute({ userId, title, body, data });
+        return this.sendNotificationUsecase.execute(organizationid, { userId, title, body, data });
     }
 
     broadcastNotification(
@@ -64,27 +65,32 @@ export class NotificationService {
 
     // Get Notifications
     getNotifications(
+        organizationid: string,
         userId: string,
         options?: { limit?: number; offset?: number },
     ): Promise<NotificationEntity[]> {
-        return this.getNotificationsUsecase.execute(userId, options);
+        return this.getNotificationsUsecase.execute(organizationid, userId, options);
     }
 
-    getUnreadNotifications(userId: string): Promise<NotificationEntity[]> {
-        return this.getNotificationsUsecase.getUnread(userId);
+    getUnreadNotifications(organizationid: string, userId: string): Promise<NotificationEntity[]> {
+        return this.getNotificationsUsecase.getUnread(organizationid, userId);
     }
 
-    countUnreadNotifications(userId: string): Promise<number> {
-        return this.getNotificationsUsecase.countUnread(userId);
+    countUnreadNotifications(organizationid: string, userId: string): Promise<number> {
+        return this.getNotificationsUsecase.countUnread(organizationid, userId);
     }
 
     // Mark as Read
-    markAsRead(notificationId: number, userId: string): Promise<NotificationEntity> {
-        return this.markNotificationReadUsecase.execute(notificationId, userId);
+    markAsRead(
+        organizationid: string,
+        notificationId: number,
+        userId: string
+    ): Promise<NotificationEntity> {
+        return this.markNotificationReadUsecase.execute(organizationid, notificationId, userId);
     }
 
-    markAllAsRead(userId: string): Promise<void> {
-        return this.markNotificationReadUsecase.markAllAsRead(userId);
+    markAllAsRead(organizationid: string, userId: string): Promise<void> {
+        return this.markNotificationReadUsecase.markAllAsRead(organizationid, userId);
     }
 
     async sendToRoles(

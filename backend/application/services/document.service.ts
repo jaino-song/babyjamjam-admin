@@ -20,7 +20,7 @@ export class DocumentService {
         private readonly deleteDocumentUsecase: DeleteDocumentUsecase,
     ) {}
 
-    async create(params: {
+    async create(organizationid: string, params: {
         name: string;
         description?: string;
         categoryId: string;
@@ -45,29 +45,40 @@ export class DocumentService {
             uploadedby: params.uploadedby,
             createdat: new Date(),
         });
-        return this.documentRepository.create(doc);
+        return this.documentRepository.create(organizationid, doc);
     }
 
-    list(filter?: DocumentFilter): Promise<DocumentEntity[]> {
-        return this.getDocumentsUsecase.execute({ filter });
+    /**
+     * Find a document by ID
+     */
+    async findById(organizationid: string, id: string): Promise<DocumentEntity> {
+        const doc = await this.documentRepository.findById(organizationid, id);
+        if (!doc) {
+            throw new NotFoundException(`Document with id ${id} not found`);
+        }
+        return doc;
     }
 
-    findById(id: string): Promise<DocumentEntity> {
-        return this.getDocumentUsecase.execute({ id });
+    /**
+     * Find documents by organization ID
+     */
+    async findByOrgId(organizationid: string, orgid: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findByOrgId(organizationid, orgid);
     }
 
-    async findByCategoryId(categoryId: string): Promise<DocumentEntity[]> {
-        return this.documentRepository.findByCategoryId(categoryId);
+    async findByCategoryId(organizationid: string, categoryId: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findByCategoryId(organizationid, categoryId);
     }
 
     /**
      * List all documents
      */
-    async findAll(): Promise<DocumentEntity[]> {
-        return this.documentRepository.findAll();
+    async findAll(organizationid: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findAll(organizationid);
     }
 
     async update(
+        organizationid: string,
         id: string,
         updates: {
             name?: string;
@@ -76,7 +87,7 @@ export class DocumentService {
             tags?: string[];
         },
     ): Promise<DocumentEntity> {
-        const existing = await this.findById(id);
+        const existing = await this.findById(organizationid, id);
 
         const updated = DocumentEntity.reconstitute({
             id: existing.id,
@@ -94,10 +105,14 @@ export class DocumentService {
             updatedat: new Date(),
         });
 
-        return this.documentRepository.update(updated);
+        return this.documentRepository.update(organizationid, updated);
     }
 
-    delete(id: string): Promise<void> {
-        return this.deleteDocumentUsecase.execute({ id });
+    /**
+     * Delete a document
+     */
+    async delete(organizationid: string, id: string): Promise<void> {
+        await this.findById(organizationid, id); // Ensure it exists
+        await this.documentRepository.delete(organizationid, id);
     }
 }

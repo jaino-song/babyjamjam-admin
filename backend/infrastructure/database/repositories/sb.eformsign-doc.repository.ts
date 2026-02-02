@@ -8,69 +8,103 @@ import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc
 export class SbEformsignDocRepository implements IEformsignDocRepository {
     constructor(private readonly prismaService: PrismaService) {}
 
-    async findById(id: number): Promise<EformsignDocEntity | null> {
-        const doc = await this.prismaService.eformsign_doc.findUnique({
-            where: { id },
+    async findById(organizationid: string, id: number): Promise<EformsignDocEntity | null> {
+        const doc = await this.prismaService.eformsign_doc.findFirst({
+            where: { id, organization_id: organizationid },
         });
         return doc ? EformsignDocMapper.toDomain(doc) : null;
     }
 
-    async findByDocumentId(documentId: string): Promise<EformsignDocEntity | null> {
-        const doc = await this.prismaService.eformsign_doc.findUnique({
-            where: { document_id: documentId },
+    async findByDocumentId(organizationid: string, documentId: string): Promise<EformsignDocEntity | null> {
+        const doc = await this.prismaService.eformsign_doc.findFirst({
+            where: { document_id: documentId, organization_id: organizationid },
         });
         return doc ? EformsignDocMapper.toDomain(doc) : null;
     }
 
-    async findByClientId(clientId: number): Promise<EformsignDocEntity[]> {
+    async findByClientId(organizationid: string, clientId: number): Promise<EformsignDocEntity[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
-            where: { client_id: clientId },
+            where: { client_id: clientId, organization_id: organizationid },
         });
         return docs.map(EformsignDocMapper.toDomain);
     }
 
-    async findAll(): Promise<EformsignDocEntity[]> {
-        const docs = await this.prismaService.eformsign_doc.findMany();
+    async findAll(organizationid: string): Promise<EformsignDocEntity[]> {
+        const docs = await this.prismaService.eformsign_doc.findMany({
+            where: { organization_id: organizationid },
+        });
         return docs.map(EformsignDocMapper.toDomain);
     }
 
-    async create(doc: EformsignDocEntity): Promise<EformsignDocEntity> {
+    async create(organizationid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
         const created = await this.prismaService.eformsign_doc.create({
-            data: EformsignDocMapper.toPrismaCreate(doc),
+            data: {
+                ...EformsignDocMapper.toPrismaCreate(doc),
+                organization_id: organizationid,
+            },
         });
         return EformsignDocMapper.toDomain(created);
     }
 
-    async update(doc: EformsignDocEntity): Promise<EformsignDocEntity> {
+    async update(organizationid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
         if (!doc.id) {
             throw new Error("Cannot update eformsign_doc without id");
         }
-        const updated = await this.prismaService.eformsign_doc.update({
-            where: { id: doc.id },
+        const result = await this.prismaService.eformsign_doc.updateMany({
+            where: { id: doc.id, organization_id: organizationid },
             data: EformsignDocMapper.toPrismaUpdate(doc),
         });
+        if (result.count === 0) {
+            throw new Error("Eformsign doc not found for organization");
+        }
+        const updated = await this.prismaService.eformsign_doc.findFirst({
+            where: { id: doc.id, organization_id: organizationid },
+        });
+        if (!updated) {
+            throw new Error("Eformsign doc not found after update");
+        }
         return EformsignDocMapper.toDomain(updated);
     }
 
-    async upsertByDocumentId(doc: EformsignDocEntity): Promise<EformsignDocEntity> {
-        const data = EformsignDocMapper.toPrismaCreate(doc);
-        const upserted = await this.prismaService.eformsign_doc.upsert({
-            where: { document_id: doc.documentId },
-            create: data,
-            update: data,
+    async upsertByDocumentId(organizationid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
+        const data = {
+            ...EformsignDocMapper.toPrismaCreate(doc),
+            organization_id: organizationid,
+        };
+        const existing = await this.prismaService.eformsign_doc.findFirst({
+            where: { document_id: doc.documentId, organization_id: organizationid },
         });
-        return EformsignDocMapper.toDomain(upserted);
+        if (existing) {
+            const result = await this.prismaService.eformsign_doc.updateMany({
+                where: { id: existing.id, organization_id: organizationid },
+                data,
+            });
+            if (result.count === 0) {
+                throw new Error("Eformsign doc not found for organization");
+            }
+            const updated = await this.prismaService.eformsign_doc.findFirst({
+                where: { id: existing.id, organization_id: organizationid },
+            });
+            if (!updated) {
+                throw new Error("Eformsign doc not found after update");
+            }
+            return EformsignDocMapper.toDomain(updated);
+        }
+        const created = await this.prismaService.eformsign_doc.create({
+            data,
+        });
+        return EformsignDocMapper.toDomain(created);
     }
 
-    async delete(id: number): Promise<void> {
-        await this.prismaService.eformsign_doc.delete({
-            where: { id },
+    async delete(organizationid: string, id: number): Promise<void> {
+        await this.prismaService.eformsign_doc.deleteMany({
+            where: { id, organization_id: organizationid },
         });
     }
 
-    async deleteByDocumentId(documentId: string): Promise<void> {
-        await this.prismaService.eformsign_doc.delete({
-            where: { document_id: documentId },
+    async deleteByDocumentId(organizationid: string, documentId: string): Promise<void> {
+        await this.prismaService.eformsign_doc.deleteMany({
+            where: { document_id: documentId, organization_id: organizationid },
         });
     }
 }

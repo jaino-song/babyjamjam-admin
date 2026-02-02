@@ -8,12 +8,12 @@ export class DeleteMessageTemplateUsecase {
         private readonly messageTemplateRepository: IMessageTemplateRepository,
     ) {}
 
-    async execute(id: string): Promise<void> {
-        const existing = await this.messageTemplateRepository.findById(id);
+    async execute(organizationid: string, id: string): Promise<void> {
+        const existing = await this.messageTemplateRepository.findById(organizationid, id);
         if (!existing) {
             throw new NotFoundException(`Template with id ${id} not found`);
         }
 
-        await this.messageTemplateRepository.delete(id);
+        await this.messageTemplateRepository.delete(organizationid, id);
     }
 }

@@ -19,8 +19,14 @@ export class UpdateEformsignDocStatusUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
     ) {}
 
-    async execute(params: UpdateEformsignDocStatusParams): Promise<EformsignDocEntity> {
-        const existing = await this.eformsignDocRepository.findByDocumentId(params.documentId);
+    async execute(
+        organizationid: string,
+        params: UpdateEformsignDocStatusParams
+    ): Promise<EformsignDocEntity> {
+        const existing = await this.eformsignDocRepository.findByDocumentId(
+            organizationid,
+            params.documentId
+        );
         if (!existing) {
             throw new NotFoundException(`EformsignDoc with documentId ${params.documentId} not found`);
         }
@@ -44,6 +50,6 @@ export class UpdateEformsignDocStatusUsecase {
             clientId: existing.clientId,
         });
 
-        return this.eformsignDocRepository.update(updated);
+        return this.eformsignDocRepository.update(organizationid, updated);
     }
 }

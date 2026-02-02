@@ -59,6 +59,8 @@ describe("SbClientRepository", () => {
         ...overrides,
     });
 
+    const organizationId = "org-1";
+
     let clientModel: ReturnType<typeof createMockPrismaClient>;
     let prisma: PrismaService;
     let repository: SbClientRepository;
@@ -84,7 +86,7 @@ describe("SbClientRepository", () => {
                 clientModel.findUnique.mockResolvedValue(row);
 
                 // Act
-                const result = await repository.findById(1);
+                const result = await repository.findById(organizationId, 1);
 
                 // Assert
                 expect(clientModel.findUnique).toHaveBeenCalledTimes(1);
@@ -108,7 +110,7 @@ describe("SbClientRepository", () => {
                 clientModel.findUnique.mockResolvedValue(null);
 
                 // Act
-                const result = await repository.findById(999);
+                const result = await repository.findById(organizationId, 999);
 
                 // Assert
                 expect(clientModel.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
@@ -131,7 +133,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(organizationId);
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith();
@@ -148,7 +150,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue([]);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(organizationId);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -171,7 +173,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(15);
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10);
+                const result = await repository.findAllPaginated(organizationId, 1, 10);
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith({
@@ -201,7 +203,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(25);
 
                 // Act
-                await repository.findAllPaginated(2, 10);
+                await repository.findAllPaginated(organizationId, 2, 10);
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith(
@@ -220,7 +222,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(100);
 
                 // Act
-                await repository.findAllPaginated(3, 5);
+                await repository.findAllPaginated(organizationId, 3, 5);
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith(
@@ -247,7 +249,7 @@ describe("SbClientRepository", () => {
                 };
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10, "John");
+                const result = await repository.findAllPaginated(organizationId, 1, 10, "John");
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith({
@@ -269,7 +271,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(0);
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10);
+                const result = await repository.findAllPaginated(organizationId, 1, 10);
 
                 // Assert
                 expect(result).toEqual({
@@ -289,7 +291,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(20);
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10);
+                const result = await repository.findAllPaginated(organizationId, 1, 10);
 
                 // Assert
                 expect(result.totalPages).toBe(2);
@@ -303,7 +305,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(21);
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10);
+                const result = await repository.findAllPaginated(organizationId, 1, 10);
 
                 // Assert
                 expect(result.totalPages).toBe(3);
@@ -326,7 +328,7 @@ describe("SbClientRepository", () => {
                 clientModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(entity);
+                const result = await repository.create(organizationId, entity);
 
                 // Assert
                 expect(clientModel.create).toHaveBeenCalledWith({
@@ -376,7 +378,7 @@ describe("SbClientRepository", () => {
                 clientModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(entity);
+                const result = await repository.create(organizationId, entity);
 
                 // Assert
                 expect(clientModel.create).toHaveBeenCalledWith({
@@ -426,7 +428,7 @@ describe("SbClientRepository", () => {
                 clientModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(entity);
+                const result = await repository.update(organizationId, entity);
 
                 // Assert
                 expect(clientModel.update).toHaveBeenCalledWith({
@@ -468,7 +470,7 @@ describe("SbClientRepository", () => {
                 clientModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                await repository.update(entity);
+                await repository.update(organizationId, entity);
 
                 // Assert
                 expect(clientModel.update).toHaveBeenCalledWith({
@@ -492,7 +494,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                await repository.findStartingWithinDays(7);
+                await repository.findStartingWithinDays(organizationId, 7);
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
@@ -510,7 +512,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                const result = await repository.findStartingWithinDays(7);
+                const result = await repository.findStartingWithinDays(organizationId, 7);
 
                 // Assert
                 expect(result).toHaveLength(2);
@@ -525,7 +527,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue([]);
 
                 // Act
-                const result = await repository.findStartingWithinDays(7);
+                const result = await repository.findStartingWithinDays(organizationId, 7);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -543,7 +545,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findWithIncompleteContractsStartingWithinDays(7);
+                await repository.findWithIncompleteContractsStartingWithinDays(organizationId, 7);
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
@@ -556,7 +558,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findWithIncompleteContractsStartingWithinDays(7);
+                await repository.findWithIncompleteContractsStartingWithinDays(organizationId, 7);
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
@@ -576,7 +578,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findWithoutContractSentStartingWithinDays(7);
+                await repository.findWithoutContractSentStartingWithinDays(organizationId, 7);
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
@@ -589,7 +591,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findWithoutContractSentStartingWithinDays(7);
+                await repository.findWithoutContractSentStartingWithinDays(organizationId, 7);
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
@@ -608,7 +610,7 @@ describe("SbClientRepository", () => {
                 clientModel.delete.mockResolvedValue(undefined);
 
                 // Act
-                await repository.delete(4);
+                await repository.delete(organizationId, 4);
 
                 // Assert
                 expect(clientModel.delete).toHaveBeenCalledTimes(1);
@@ -622,7 +624,7 @@ describe("SbClientRepository", () => {
                 clientModel.delete.mockResolvedValue(undefined);
 
                 // Act
-                await repository.delete(id);
+                await repository.delete(organizationId, id);
 
                 // Assert
                 expect(clientModel.delete).toHaveBeenCalledWith({ where: { id } });

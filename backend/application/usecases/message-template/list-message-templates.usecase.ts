@@ -9,7 +9,7 @@ export class ListMessageTemplatesUsecase {
         private readonly messageTemplateRepository: IMessageTemplateRepository,
     ) {}
 
-    async execute(): Promise<MessageTemplateEntity[]> {
-        return this.messageTemplateRepository.findAll();
+    async execute(organizationid: string): Promise<MessageTemplateEntity[]> {
+        return this.messageTemplateRepository.findAll(organizationid);
     }
 }

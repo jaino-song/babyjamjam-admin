@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { EmployeeEntity } from "domain/entities/employee.entity";
-import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EmployeeMapper } from "infrastructure/database/mapper/employee.mapper";
 
@@ -16,41 +16,42 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         return lastEmployee ? lastEmployee.id + 1 : 1;
     }
 
-    async findById(id: number): Promise<EmployeeEntity | null> {
-        const employee = await this.prismaService.employee.findUnique({
-            where: { id },
+    async findById(organizationid: string, id: number): Promise<EmployeeEntity | null> {
+        const employee = await this.prismaService.employee.findFirst({
+            where: { id, organization_id: organizationid },
         });
         return employee ? EmployeeMapper.toDomain(employee) : null;
     }
 
-    async create(employee: EmployeeEntity): Promise<EmployeeEntity> {
+    async create(organizationid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {
         const data = EmployeeMapper.toPrismaCreate(employee);
         const id = data.id > 0 ? data.id : await this.getNextEmployeeId();
         const created = await this.prismaService.employee.create({
-            data: { ...data, id },
+            data: { ...data, id, organization_id: organizationid },
         });
         return EmployeeMapper.toDomain(created);
     }
 
-    async update(employee: EmployeeEntity): Promise<EmployeeEntity> {
+    async update(organizationid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {
         const updated = await this.prismaService.employee.update({
-            where: { id: employee.id },
+            where: { id: employee.id, organization_id: organizationid },
             data: EmployeeMapper.toPrismaUpdate(employee),
         });
         return EmployeeMapper.toDomain(updated);
     }
 
-    async delete(id: number): Promise<void> {
+    async delete(organizationid: string, id: number): Promise<void> {
         await this.prismaService.employee.delete({
-            where: { id },
+            where: { id, organization_id: organizationid },
         });
     }
 
-    async findAll(): Promise<EmployeeEntity[]> {
+    async findAll(organizationid: string): Promise<EmployeeEntity[]> {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
         const employees = await this.prismaService.employee.findMany({
+            where: { organization_id: organizationid },
             include: {
                 employee_schedule_employee_schedule_primary_employee_idToemployee: {
                     where: {
@@ -88,28 +89,28 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         });
     }
 
-    async findByWorkArea(workArea: string): Promise<EmployeeEntity[]> {
+    async findByWorkArea(organizationid: string, workArea: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { work_area: { has: workArea } },
+            where: { work_area: { has: workArea }, organization_id: organizationid },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
 
-    async findByGrade(grade: string): Promise<EmployeeEntity[]> {
+    async findByGrade(organizationid: string, grade: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { grade },
+            where: { grade, organization_id: organizationid },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
 
-    async findByOpenToNextWork(openToNextWork: boolean): Promise<EmployeeEntity[]> {
+    async findByOpenToNextWork(organizationid: string, openToNextWork: boolean): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { open_to_next_work: openToNextWork },
+            where: { open_to_next_work: openToNextWork, organization_id: organizationid },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
 
-    async findByRegisteredDate(registeredDate: Date): Promise<EmployeeEntity[]> {
+    async findByRegisteredDate(organizationid: string, registeredDate: Date): Promise<EmployeeEntity[]> {
         const start = new Date(registeredDate);
         start.setHours(0, 0, 0, 0);
         const end = new Date(registeredDate);
@@ -117,6 +118,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
         const employees = await this.prismaService.employee.findMany({
             where: {
+                organization_id: organizationid,
                 company_registered_date: {
                     gte: start,
                     lte: end,
@@ -126,9 +128,14 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
 
-    async findByRegisteredDateRange(startDate: Date, endDate: Date): Promise<EmployeeEntity[]> {
+    async findByRegisteredDateRange(
+        organizationid: string,
+        startDate: Date,
+        endDate: Date
+    ): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
             where: {
+                organization_id: organizationid,
                 company_registered_date: {
                     gte: startDate,
                     lte: endDate,
@@ -138,16 +145,20 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
 
-    async changeOpenToNextWork(id: number, openToNextWork: boolean): Promise<void> {
+    async changeOpenToNextWork(
+        organizationid: string,
+        id: number,
+        openToNextWork: boolean
+    ): Promise<void> {
         await this.prismaService.employee.update({
-            where: { id },
+            where: { id, organization_id: organizationid },
             data: { open_to_next_work: openToNextWork },
         });
     }
 
-    async findAllOpenToNextWork(): Promise<EmployeeEntity[]> {
+    async findAllOpenToNextWork(organizationid: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { open_to_next_work: true },
+            where: { open_to_next_work: true, organization_id: organizationid },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }

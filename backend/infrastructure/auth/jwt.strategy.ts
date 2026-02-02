@@ -6,6 +6,8 @@ interface JwtPayload {
     sub: string;
     role: string;
     type: 'access' | 'refresh';
+    organizationid?: string;
+    orgrole?: string;
 }
 
 @Injectable()
@@ -34,6 +36,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         return {
             userId: payload.sub,
             role: payload.role,
+            organizationid: payload.organizationid,
+            orgrole: payload.orgrole,
         };
     }
 }

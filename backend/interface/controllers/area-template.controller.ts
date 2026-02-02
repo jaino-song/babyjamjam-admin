@@ -1,5 +1,6 @@
 import { Controller, Post, Body, Get, Query, Patch, Delete } from "@nestjs/common";
 import { AreaTemplateService } from "application/services/area-template.service";
+import { CurrentTenant } from "infrastructure/tenant";
 
 interface CreateAreaTemplateDto {
     area: string;
@@ -17,27 +18,31 @@ export class AreaTemplateController {
     constructor(private readonly areaTemplateService: AreaTemplateService) {}
 
     @Post()
-    create(@Body() dto: CreateAreaTemplateDto) {
-        return this.areaTemplateService.create(dto);
+    create(@CurrentTenant() tenant: { organizationId?: string }, @Body() dto: CreateAreaTemplateDto) {
+        return this.areaTemplateService.create(tenant.organizationId ?? "", dto);
     }
 
     @Get("area")
-    findByArea(@Query("area") area: string) {
-        return this.areaTemplateService.findByArea(area);
+    findByArea(@CurrentTenant() tenant: { organizationId?: string }, @Query("area") area: string) {
+        return this.areaTemplateService.findByArea(tenant.organizationId ?? "", area);
     }
 
     @Get()
-    findAll() {
-        return this.areaTemplateService.findAll();
+    findAll(@CurrentTenant() tenant: { organizationId?: string }) {
+        return this.areaTemplateService.findAll(tenant.organizationId ?? "");
     }
 
     @Patch()
-    update(@Query("area") area: string, @Body() dto: UpdateAreaTemplateDto) {
-        return this.areaTemplateService.update(area, dto);
+    update(
+        @CurrentTenant() tenant: { organizationId?: string },
+        @Query("area") area: string,
+        @Body() dto: UpdateAreaTemplateDto
+    ) {
+        return this.areaTemplateService.update(tenant.organizationId ?? "", area, dto);
     }
 
     @Delete()
-    delete(@Query("area") area: string) {
-        return this.areaTemplateService.delete(area);
+    delete(@CurrentTenant() tenant: { organizationId?: string }, @Query("area") area: string) {
+        return this.areaTemplateService.delete(tenant.organizationId ?? "", area);
     }
 }
