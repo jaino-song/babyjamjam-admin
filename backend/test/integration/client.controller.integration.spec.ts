@@ -125,6 +125,7 @@ describe("ClientController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(201);
                 expect(clientService.create).toHaveBeenCalledWith(
+                    expect.any(String),
                     expect.objectContaining({
                         name: "New Client",
                         primaryEmployeeId: 10,
@@ -173,7 +174,7 @@ describe("ClientController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toHaveLength(2);
-                expect(clientService.findAll).toHaveBeenCalled();
+                expect(clientService.findAll).toHaveBeenCalledWith(expect.any(String));
             });
         });
 
@@ -196,7 +197,12 @@ describe("ClientController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(clientService.findAllPaginated).toHaveBeenCalledWith(1, 5, undefined);
+                expect(clientService.findAllPaginated).toHaveBeenCalledWith(
+                    expect.any(String),
+                    1,
+                    5,
+                    undefined,
+                );
             });
 
             it("should pass search query to paginated method", async () => {
@@ -217,7 +223,12 @@ describe("ClientController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(clientService.findAllPaginated).toHaveBeenCalledWith(1, 10, "Kim");
+                expect(clientService.findAllPaginated).toHaveBeenCalledWith(
+                    expect.any(String),
+                    1,
+                    10,
+                    "Kim",
+                );
             });
         });
 
@@ -251,7 +262,7 @@ describe("ClientController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(clientService.findById).toHaveBeenCalledWith(7);
+                expect(clientService.findById).toHaveBeenCalledWith(expect.any(String), 7);
             });
         });
 
@@ -266,7 +277,7 @@ describe("ClientController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toEqual({});
-                expect(clientService.findById).toHaveBeenCalledWith(999);
+                expect(clientService.findById).toHaveBeenCalledWith(expect.any(String), 999);
             });
         });
     });
@@ -293,6 +304,7 @@ describe("ClientController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(clientService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     3,
                     expect.objectContaining({
                         name: "Updated Name",
@@ -317,6 +329,7 @@ describe("ClientController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(clientService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     4,
                     expect.objectContaining({
                         phone: "010-0000-0000",
@@ -340,7 +353,7 @@ describe("ClientController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(clientService.delete).toHaveBeenCalledWith(8);
+                expect(clientService.delete).toHaveBeenCalledWith(expect.any(String), 8);
             });
         });
 
@@ -354,7 +367,7 @@ describe("ClientController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(clientService.delete).toHaveBeenCalledWith(id);
+                expect(clientService.delete).toHaveBeenCalledWith(expect.any(String), id);
             });
         });
     });

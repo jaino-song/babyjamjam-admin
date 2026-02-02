@@ -61,7 +61,7 @@ export class EformsignDocService {
     }
 
     /**
-     * Find a stored eformsign doc by the eformsign document_id
+     * Find a stored eformsign doc by the eformsign documentId
      */
     findByDocumentId(organizationid: string, documentId: string): Promise<EformsignDocEntity | null> {
         return this.findEformsignDocByDocumentIdUsecase.execute(organizationid, documentId);

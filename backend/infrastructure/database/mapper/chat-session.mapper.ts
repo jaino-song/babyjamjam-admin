@@ -12,26 +12,26 @@ export class ChatSessionMapper {
             content: m.content,
             timestamp: m.timestamp.toISOString(),
         }));
-        
+
         return ChatSessionEntity.reconstitute(
             row.id,
-            row.user_id,
+            row.userId,
             messages,
-            row.created_at,
-            row.expires_at,
+            row.createdAt,
+            row.expiresAt,
         );
     }
 
     static toPrismaCreate(entity: ChatSessionEntity) {
         return {
-            user_id: entity.userId,
-            expires_at: entity.expiresAt,
+            userId: entity.userId,
+            expiresAt: entity.expiresAt,
         };
     }
 
     static toPrismaCreateMessage(sessionId: string, message: ChatMessage) {
         return {
-            session_id: sessionId,
+            sessionId: sessionId,
             role: message.role,
             content: message.content,
             timestamp: new Date(message.timestamp),

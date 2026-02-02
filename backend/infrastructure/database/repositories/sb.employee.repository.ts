@@ -18,7 +18,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async findById(organizationid: string, id: number): Promise<EmployeeEntity | null> {
         const employee = await this.prismaService.employee.findFirst({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
         return employee ? EmployeeMapper.toDomain(employee) : null;
     }
@@ -27,14 +27,14 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         const data = EmployeeMapper.toPrismaCreate(employee);
         const id = data.id > 0 ? data.id : await this.getNextEmployeeId();
         const created = await this.prismaService.employee.create({
-            data: { ...data, id, organization_id: organizationid },
+            data: { ...data, id, organizationId: organizationid },
         });
         return EmployeeMapper.toDomain(created);
     }
 
     async update(organizationid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {
         const updated = await this.prismaService.employee.update({
-            where: { id: employee.id, organization_id: organizationid },
+            where: { id: employee.id, organizationId: organizationid },
             data: EmployeeMapper.toPrismaUpdate(employee),
         });
         return EmployeeMapper.toDomain(updated);
@@ -42,7 +42,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async delete(organizationid: string, id: number): Promise<void> {
         await this.prismaService.employee.delete({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
     }
 
@@ -51,20 +51,20 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         today.setHours(0, 0, 0, 0);
 
         const employees = await this.prismaService.employee.findMany({
-            where: { organization_id: organizationid },
+            where: { organizationId: organizationid },
             include: {
-                employee_schedule_employee_schedule_primary_employee_idToemployee: {
+                primaryEmployeeSchedules: {
                     where: {
-                        start_date: { lte: today },
-                        end_date: { gte: today },
+                        startDate: { lte: today },
+                        endDate: { gte: today },
                         replaced: false,
                     },
                     take: 1,
                 },
-                employee_schedule_employee_schedule_secondary_employee_idToemployee: {
+                secondaryEmployeeSchedules: {
                     where: {
-                        start_date: { lte: today },
-                        end_date: { gte: today },
+                        startDate: { lte: today },
+                        endDate: { gte: today },
                         replaced: false,
                     },
                     take: 1,
@@ -79,9 +79,9 @@ export class SbEmployeeRepository implements IEmployeeRepository {
                 entity.status = "unavailable";
             } else {
                 const hasPrimarySchedule =
-                    emp.employee_schedule_employee_schedule_primary_employee_idToemployee.length > 0;
+                    emp.primaryEmployeeSchedules.length > 0;
                 const hasSecondarySchedule =
-                    emp.employee_schedule_employee_schedule_secondary_employee_idToemployee.length > 0;
+                    emp.secondaryEmployeeSchedules.length > 0;
                 entity.status = hasPrimarySchedule || hasSecondarySchedule ? "working" : "available";
             }
 
@@ -91,21 +91,21 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async findByWorkArea(organizationid: string, workArea: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { work_area: { has: workArea }, organization_id: organizationid },
+            where: { workArea: { has: workArea }, organizationId: organizationid },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
 
     async findByGrade(organizationid: string, grade: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { grade, organization_id: organizationid },
+            where: { grade, organizationId: organizationid },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
 
     async findByOpenToNextWork(organizationid: string, openToNextWork: boolean): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { open_to_next_work: openToNextWork, organization_id: organizationid },
+            where: { openToNextWork: openToNextWork, organizationId: organizationid },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
@@ -118,8 +118,8 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
         const employees = await this.prismaService.employee.findMany({
             where: {
-                organization_id: organizationid,
-                company_registered_date: {
+                organizationId: organizationid,
+                companyRegisteredDate: {
                     gte: start,
                     lte: end,
                 },
@@ -135,8 +135,8 @@ export class SbEmployeeRepository implements IEmployeeRepository {
     ): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
             where: {
-                organization_id: organizationid,
-                company_registered_date: {
+                organizationId: organizationid,
+                companyRegisteredDate: {
                     gte: startDate,
                     lte: endDate,
                 },
@@ -151,14 +151,14 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         openToNextWork: boolean
     ): Promise<void> {
         await this.prismaService.employee.update({
-            where: { id, organization_id: organizationid },
-            data: { open_to_next_work: openToNextWork },
+            where: { id, organizationId: organizationid },
+            data: { openToNextWork: openToNextWork },
         });
     }
 
     async findAllOpenToNextWork(organizationid: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { open_to_next_work: true, organization_id: organizationid },
+            where: { openToNextWork: true, organizationId: organizationid },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }

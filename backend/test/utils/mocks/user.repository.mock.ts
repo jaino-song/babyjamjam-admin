@@ -46,6 +46,14 @@ export class MockUserRepository implements IUserRepository {
         );
     }
 
+    async findByEmail(email: string): Promise<UserEntity | null> {
+        return (
+            Array.from(this.users.values()).find(
+                user => user.email === email,
+            ) ?? null
+        );
+    }
+
     async create(user: UserEntity): Promise<UserEntity> {
         // ID가 없으면 자동 생성
         const id = user.id || `user_test_${this.userIdCounter++}`;
@@ -57,6 +65,10 @@ export class MockUserRepository implements IUserRepository {
             user.profileImage,
             user.role,
             user.createdAt,
+            user.passwordHash,
+            user.emailVerified,
+            user.emailVerifiedAt,
+            user.authProvider,
         );
         this.users.set(id, newUser);
         return newUser;

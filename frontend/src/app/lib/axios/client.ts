@@ -107,7 +107,15 @@ api.interceptors.response.use(
             }
             
             // For non-eformsign 401 errors (main auth failure), redirect to login
-            if (typeof window !== 'undefined' && !isRedirectingToLogin) { isRedirectingToLogin = true; window.location.href = '/login'; }
+            // But don't redirect if already on an auth page (login, register, etc.)
+            if (typeof window !== 'undefined' && !isRedirectingToLogin) {
+                const currentPath = window.location.pathname;
+                const isAuthPage = currentPath === '/login' || currentPath.startsWith('/auth/');
+                if (!isAuthPage) {
+                    isRedirectingToLogin = true;
+                    window.location.href = '/login';
+                }
+            }
             return Promise.reject(err);
         }
 

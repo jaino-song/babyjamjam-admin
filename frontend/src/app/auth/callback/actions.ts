@@ -54,17 +54,9 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
         });
 
         console.log("[Server Action] Token exchange successful");
-        
-        // Check if user has multiple organizations
-        let requiresOrgSelection = false;
-        try {
-            const decoded = jwtDecode<TokenPayload & { organizations?: any[] }>(data.accessToken);
-            requiresOrgSelection = !!(decoded.organizations && decoded.organizations.length > 1);
-        } catch {
-            // If we can't decode, assume single org
-        }
-        
-        return { success: true, requiresOrgSelection };
+        console.log("[Server Action] requiresOrgSelection:", data.requiresOrgSelection);
+
+        return { success: true, requiresOrgSelection: data.requiresOrgSelection || false };
     } catch (error) {
         console.error("[Server Action] Token Exchange Error:", error);
 

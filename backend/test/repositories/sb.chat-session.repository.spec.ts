@@ -24,7 +24,7 @@ describe("SbChatSessionRepository", () => {
     });
 
     describe("deleteOlderThan", () => {
-        it("should delete sessions with created_at < cutoffDate and return deleted count", async () => {
+        it("should delete sessions with createdAt < cutoffDate and return deleted count", async () => {
             // Arrange
             const cutoffDate = new Date("2024-01-01T00:00:00.000Z");
             chatSessionModel.deleteMany.mockResolvedValue({ count: 3 });
@@ -34,7 +34,7 @@ describe("SbChatSessionRepository", () => {
 
             // Assert
             expect(chatSessionModel.deleteMany).toHaveBeenCalledWith({
-                where: { created_at: { lt: cutoffDate } },
+                where: { createdAt: { lt: cutoffDate } },
             });
             expect(deletedCount).toBe(3);
         });

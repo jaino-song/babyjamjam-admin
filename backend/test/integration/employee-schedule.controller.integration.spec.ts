@@ -104,6 +104,7 @@ describe("EmployeeScheduleController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(201);
                 expect(employeeScheduleService.create).toHaveBeenCalledWith(
+                    expect.any(String),
                     expect.objectContaining({
                         clientId: 100,
                         primaryEmployeeId: 10,
@@ -140,6 +141,7 @@ describe("EmployeeScheduleController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(201);
                 expect(employeeScheduleService.create).toHaveBeenCalledWith(
+                    expect.any(String),
                     expect.objectContaining({
                         clientId: 200,
                         primaryEmployeeId: 15,
@@ -210,7 +212,7 @@ describe("EmployeeScheduleController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toHaveLength(3);
-                expect(employeeScheduleService.findAll).toHaveBeenCalled();
+                expect(employeeScheduleService.findAll).toHaveBeenCalledWith(expect.any(String));
             });
         });
 
@@ -251,7 +253,10 @@ describe("EmployeeScheduleController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toHaveLength(2);
-                expect(employeeScheduleService.findByPrimaryEmployeeId).toHaveBeenCalledWith(10);
+                expect(employeeScheduleService.findByPrimaryEmployeeId).toHaveBeenCalledWith(
+                    expect.any(String),
+                    10,
+                );
             });
         });
 
@@ -292,7 +297,10 @@ describe("EmployeeScheduleController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toHaveLength(1);
-                expect(employeeScheduleService.findBySecondaryEmployeeId).toHaveBeenCalledWith(20);
+                expect(employeeScheduleService.findBySecondaryEmployeeId).toHaveBeenCalledWith(
+                    expect.any(String),
+                    20,
+                );
             });
         });
 
@@ -333,7 +341,7 @@ describe("EmployeeScheduleController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeScheduleService.findById).toHaveBeenCalledWith(7);
+                expect(employeeScheduleService.findById).toHaveBeenCalledWith(expect.any(String), 7);
             });
         });
 
@@ -349,7 +357,7 @@ describe("EmployeeScheduleController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeScheduleService.findById).toHaveBeenCalledWith(999);
+                expect(employeeScheduleService.findById).toHaveBeenCalledWith(expect.any(String), 999);
             });
         });
     });
@@ -381,6 +389,7 @@ describe("EmployeeScheduleController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(employeeScheduleService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     3,
                     expect.objectContaining({
                         workAddress: "Updated Address",
@@ -413,6 +422,7 @@ describe("EmployeeScheduleController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(employeeScheduleService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     4,
                     expect.objectContaining({
                         startDate: "2025-06-01",
@@ -441,6 +451,7 @@ describe("EmployeeScheduleController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(employeeScheduleService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     5,
                     expect.objectContaining({
                         replaced: true,
@@ -466,7 +477,7 @@ describe("EmployeeScheduleController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeScheduleService.delete).toHaveBeenCalledWith(8);
+                expect(employeeScheduleService.delete).toHaveBeenCalledWith(expect.any(String), 8);
             });
         });
 
@@ -482,7 +493,7 @@ describe("EmployeeScheduleController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeScheduleService.delete).toHaveBeenCalledWith(id);
+                expect(employeeScheduleService.delete).toHaveBeenCalledWith(expect.any(String), id);
             });
         });
     });

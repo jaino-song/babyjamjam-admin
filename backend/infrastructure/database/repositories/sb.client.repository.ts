@@ -10,14 +10,14 @@ export class SbClientRepository implements IClientRepository {
 
     async findById(organizationid: string, id: number): Promise<ClientEntity | null> {
         const client = await this.prismaService.client.findFirst({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
         return client ? ClientMapper.toDomain(client) : null;
     }
 
     async findAll(organizationid: string): Promise<ClientEntity[]> {
         const clients = await this.prismaService.client.findMany({
-            where: { organization_id: organizationid },
+            where: { organizationId: organizationid },
         });
         return clients.map(ClientMapper.toDomain);
     }
@@ -31,7 +31,7 @@ export class SbClientRepository implements IClientRepository {
         const skip = (page - 1) * limit;
 
         const where = {
-            organization_id: organizationid,
+            organizationId: organizationid,
             ...(search
                 ? {
                       OR: [
@@ -71,7 +71,7 @@ export class SbClientRepository implements IClientRepository {
         const created = await this.prismaService.client.create({
             data: {
                 ...ClientMapper.toPrismaCreate(client),
-                organization_id: organizationid,
+                organizationId: organizationid,
             },
         });
         return ClientMapper.toDomain(created);
@@ -79,7 +79,7 @@ export class SbClientRepository implements IClientRepository {
 
     async update(organizationid: string, client: ClientEntity): Promise<ClientEntity> {
         const updated = await this.prismaService.client.update({
-            where: { id: client.id, organization_id: organizationid },
+            where: { id: client.id, organizationId: organizationid },
             data: ClientMapper.toPrismaUpdate(client),
         });
         return ClientMapper.toDomain(updated);
@@ -87,7 +87,7 @@ export class SbClientRepository implements IClientRepository {
 
     async delete(organizationid: string, id: number): Promise<void> {
         await this.prismaService.client.delete({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
     }
 
@@ -101,8 +101,8 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                organization_id: organizationid,
-                start_date: {
+                organizationId: organizationid,
+                startDate: {
                     gte: startOfDay,
                     lte: endOfDay,
                 },
@@ -121,8 +121,8 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                organization_id: organizationid,
-                end_date: {
+                organizationId: organizationid,
+                endDate: {
                     gte: startOfDay,
                     lte: endOfDay,
                 },
@@ -132,12 +132,12 @@ export class SbClientRepository implements IClientRepository {
     }
 
     async findByCreatedDate(organizationid: string, date: Date): Promise<ClientEntity[]> {
-        // Note: Client model doesn't have created_at field in schema
+        // Note: Client model doesn't have createdAt field in schema
         // For now, this returns empty array. To enable payment reminders,
-        // add created_at field to client model in schema.prisma
+        // add createdAt field to client model in schema.prisma
         void organizationid;
         void date;
-        console.warn('[ClientRepository] findByCreatedDate: client model lacks created_at field');
+        console.warn('[ClientRepository] findByCreatedDate: client model lacks createdAt field');
         return [];
     }
 
@@ -151,8 +151,8 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                organization_id: organizationid,
-                start_date: {
+                organizationId: organizationid,
+                startDate: {
                     gt: today,
                     lte: endDate,
                 },
@@ -171,8 +171,8 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                organization_id: organizationid,
-                end_date: {
+                organizationId: organizationid,
+                endDate: {
                     gte: today,
                     lte: endDate,
                 },
@@ -194,18 +194,18 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                organization_id: organizationid,
-                start_date: {
+                organizationId: organizationid,
+                startDate: {
                     gt: today,
                     lte: endDate,
                 },
-                e_doc_id: { not: null },
-                eformsign_doc_client_e_doc_idToeformsign_doc: {
-                    status_type: { not: '050' },
+                eDocId: { not: null },
+                eformsignDocByEDocId: {
+                    statusType: { not: '050' },
                 },
             },
             include: {
-                eformsign_doc_client_e_doc_idToeformsign_doc: true,
+                eformsignDocByEDocId: true,
             },
         });
         return clients.map(ClientMapper.toDomain);
@@ -224,12 +224,12 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                organization_id: organizationid,
-                start_date: {
+                organizationId: organizationid,
+                startDate: {
                     gt: today,
                     lte: endDate,
                 },
-                e_doc_id: null,
+                eDocId: null,
             },
         });
         return clients.map(ClientMapper.toDomain);

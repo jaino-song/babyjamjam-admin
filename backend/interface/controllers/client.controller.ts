@@ -2,10 +2,10 @@ import { Body, Controller, Delete, Get, Param, Query, Patch, Post, UseGuards } f
 import { ClientService } from "application/services/client.service";
 import { CreateClientDto, UpdateClientDto, TerminateServiceDto, RequestReplacementDto } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { CurrentTenant } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 
 @Controller("clients")
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, TenantGuard)
 export class ClientController {
     constructor(private readonly clientService: ClientService) {}
 

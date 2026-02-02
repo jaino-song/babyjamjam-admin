@@ -140,7 +140,7 @@ export class ChannelTalkSchedulerService {
     /**
      * Check and send payment reminders
      * Runs daily at 9 AM KST
-     * Note: Requires created_at field in client model (currently not available)
+     * Note: Requires createdAt field in client model (currently not available)
      */
     @Cron("0 9 * * *", { timeZone: "Asia/Seoul" })
     async checkPaymentReminders(): Promise<void> {

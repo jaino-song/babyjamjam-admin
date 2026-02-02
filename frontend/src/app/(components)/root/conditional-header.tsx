@@ -7,8 +7,9 @@ import { useInitialUser } from "@/app/(components)/providers/UserProvider";
 // 서버에서 prefetch된 user 데이터를 자동으로 Header에 전달
 export const ConditionalHeader = () => {
   const pathname = usePathname();
-  const hiddenPaths = ["/", "/login", "/auth/callback", "/chat"];
-  const shouldHide = hiddenPaths.includes(pathname);
+  const hiddenPaths = ["/", "/login", "/chat"];
+  // Hide header on specific paths or any /auth/* path (login, register, verify, etc.)
+  const shouldHide = hiddenPaths.includes(pathname) || pathname.startsWith("/auth/");
 
   // UserProvider가 있으면 prefetch된 user 데이터 사용
   // 없으면 null (Header에서 client-side fetch)

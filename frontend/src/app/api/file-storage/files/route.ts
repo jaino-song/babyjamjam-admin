@@ -17,8 +17,11 @@ export async function GET(request: NextRequest) {
         
         const params: Record<string, string> = {};
         if (categoryId) params.categoryId = categoryId;
-        
-        const response = await serverAPIClient.get("/documents", { params });
+
+        const response = await serverAPIClient.get("/documents", {
+            params,
+            headers: { Authorization: `Bearer ${token}` },
+        });
         return NextResponse.json(response.data);
     } catch (error) {
         console.error("[file-storage/documents] GET error:", error);
@@ -70,6 +73,7 @@ export async function POST(request: NextRequest) {
             timeout: 120000,
             headers: {
                 "Content-Type": undefined,
+                Authorization: `Bearer ${token}`,
             },
         });
 

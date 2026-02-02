@@ -1,6 +1,6 @@
 import { SbUserRepository } from "infrastructure/database/repositories/sb.user.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { UserEntity } from "domain/entities/user.entity";
+import { UserEntity, AuthProvider } from "domain/entities/user.entity";
 
 describe("SbUserRepository", () => {
     // ============================================
@@ -16,12 +16,12 @@ describe("SbUserRepository", () => {
 
     const createUserRow = (overrides = {}) => ({
         id: "user-1",
-        kakao_id: "kakao-1",
+        kakaoId: "kakao-1",
         email: "user@example.com",
         name: "Jane Doe",
-        profile_image: "http://example.com/avatar.png",
+        profileImage: "http://example.com/avatar.png",
         role: "admin",
-        created_at: new Date("2024-01-01T00:00:00.000Z"),
+        createdAt: new Date("2024-01-01T00:00:00.000Z"),
         ...overrides,
     });
 
@@ -34,9 +34,13 @@ describe("SbUserRepository", () => {
             profileImage: "http://example.com/test.png",
             role: "user",
             createdAt: new Date("2024-01-01T00:00:00.000Z"),
+            passwordHash: null,
+            emailVerified: false,
+            emailVerifiedAt: null,
+            authProvider: "kakao" as AuthProvider,
         };
         const merged = { ...defaults, ...overrides };
-        return new UserEntity(
+        return UserEntity.reconstitute(
             merged.id,
             merged.kakaoId,
             merged.email,
@@ -44,6 +48,10 @@ describe("SbUserRepository", () => {
             merged.profileImage,
             merged.role,
             merged.createdAt,
+            merged.passwordHash,
+            merged.emailVerified,
+            merged.emailVerifiedAt,
+            merged.authProvider,
         );
     };
 
@@ -113,8 +121,8 @@ describe("SbUserRepository", () => {
                 const now = new Date();
                 const row = createUserRow({
                     id: "user-2",
-                    kakao_id: "kakao-2",
-                    created_at: now,
+                    kakaoId: "kakao-2",
+                    createdAt: now,
                 });
                 userModel.findUnique.mockResolvedValue(row);
 
@@ -122,7 +130,7 @@ describe("SbUserRepository", () => {
                 const result = await repository.findByKakaoId("kakao-2");
 
                 // Assert
-                expect(userModel.findUnique).toHaveBeenCalledWith({ where: { kakao_id: "kakao-2" } });
+                expect(userModel.findUnique).toHaveBeenCalledWith({ where: { kakaoId: "kakao-2" } });
                 expect(result).toBeInstanceOf(UserEntity);
                 expect(result).toMatchObject({
                     id: "user-2",
@@ -138,12 +146,12 @@ describe("SbUserRepository", () => {
                 const now = new Date();
                 const row = createUserRow({
                     id: "user-3",
-                    kakao_id: "kakao-3",
+                    kakaoId: "kakao-3",
                     email: null,
                     name: null,
-                    profile_image: null,
+                    profileImage: null,
                     role: null,
-                    created_at: now,
+                    createdAt: now,
                 });
                 userModel.findUnique.mockResolvedValue(row);
 
@@ -192,10 +200,10 @@ describe("SbUserRepository", () => {
                 });
                 const createdRow = createUserRow({
                     id: "user-new",
-                    kakao_id: "kakao-new",
+                    kakaoId: "kakao-new",
                     email: "new@example.com",
                     name: "New User",
-                    profile_image: "http://example.com/new.png",
+                    profileImage: "http://example.com/new.png",
                     role: "manager",
                 });
                 userModel.create.mockResolvedValue(createdRow);
@@ -206,10 +214,10 @@ describe("SbUserRepository", () => {
                 // Assert
                 expect(userModel.create).toHaveBeenCalledWith({
                     data: {
-                        kakao_id: "kakao-new",
+                        kakaoId: "kakao-new",
                         email: "new@example.com",
                         name: "New User",
-                        profile_image: "http://example.com/new.png",
+                        profileImage: "http://example.com/new.png",
                         role: "manager",
                     },
                 });
@@ -232,10 +240,10 @@ describe("SbUserRepository", () => {
                 });
                 const createdRow = createUserRow({
                     id: "user-minimal",
-                    kakao_id: "kakao-minimal",
+                    kakaoId: "kakao-minimal",
                     email: null,
                     name: null,
-                    profile_image: null,
+                    profileImage: null,
                     role: "user",
                 });
                 userModel.create.mockResolvedValue(createdRow);
@@ -266,10 +274,10 @@ describe("SbUserRepository", () => {
                 });
                 const updatedRow = createUserRow({
                     id: "user-4",
-                    kakao_id: "kakao-4",
+                    kakaoId: "kakao-4",
                     email: "updated@example.com",
                     name: "Updated User",
-                    profile_image: "http://example.com/updated.png",
+                    profileImage: "http://example.com/updated.png",
                     role: "manager",
                 });
                 userModel.update.mockResolvedValue(updatedRow);
@@ -283,7 +291,7 @@ describe("SbUserRepository", () => {
                     data: {
                         email: "updated@example.com",
                         name: "Updated User",
-                        profile_image: "http://example.com/updated.png",
+                        profileImage: "http://example.com/updated.png",
                         role: "manager",
                     },
                 });

@@ -152,10 +152,10 @@ export class MockClientRepository implements IClientRepository {
 
     /**
      * Find clients by created date (P3 scheduler support)
-     * Note: Mock doesn't have created_at field, returns empty array
+     * Note: Mock doesn't have createdAt field, returns empty array
      */
     async findByCreatedDate(_organizationid: string, _date: Date): Promise<ClientEntity[]> {
-        // Mock doesn't track created_at, similar to real implementation
+        // Mock doesn't track createdAt, similar to real implementation
         return [];
     }
 

@@ -10,14 +10,14 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
 
     async findById(organizationid: string, id: number): Promise<EmployeeScheduleEntity | null> {
         const schedule = await this.prismaService.employee_schedule.findFirst({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
         return schedule ? EmployeeScheduleMapper.toDomain(schedule) : null;
     }
 
     async findByClientId(organizationid: string, clientId: number): Promise<EmployeeScheduleEntity[]> {
         const schedules = await this.prismaService.employee_schedule.findMany({
-            where: { client_id: clientId, organization_id: organizationid },
+            where: { clientId: clientId, organizationId: organizationid },
             orderBy: { id: 'desc' },
         });
         return schedules.map(EmployeeScheduleMapper.toDomain);
@@ -28,7 +28,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
         primaryEmployeeId: number
     ): Promise<EmployeeScheduleEntity[]> {
         const schedules = await this.prismaService.employee_schedule.findMany({
-            where: { primary_employee_id: primaryEmployeeId, organization_id: organizationid },
+            where: { primaryEmployeeId: primaryEmployeeId, organizationId: organizationid },
         });
         return schedules.map(EmployeeScheduleMapper.toDomain);
     }
@@ -38,14 +38,14 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
         secondaryEmployeeId: number
     ): Promise<EmployeeScheduleEntity[]> {
         const schedules = await this.prismaService.employee_schedule.findMany({
-            where: { secondary_employee_id: secondaryEmployeeId, organization_id: organizationid },
+            where: { secondaryEmployeeId: secondaryEmployeeId, organizationId: organizationid },
         });
         return schedules.map(EmployeeScheduleMapper.toDomain);
     }
 
     async findAll(organizationid: string): Promise<EmployeeScheduleEntity[]> {
         const schedules = await this.prismaService.employee_schedule.findMany({
-            where: { organization_id: organizationid },
+            where: { organizationId: organizationid },
         });
         return schedules.map(EmployeeScheduleMapper.toDomain);
     }
@@ -54,7 +54,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
         const created = await this.prismaService.employee_schedule.create({
             data: {
                 ...EmployeeScheduleMapper.toPrismaCreate(schedule),
-                organization_id: organizationid,
+                organizationId: organizationid,
             },
         });
         return EmployeeScheduleMapper.toDomain(created);
@@ -62,7 +62,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
 
     async update(organizationid: string, schedule: EmployeeScheduleEntity): Promise<EmployeeScheduleEntity> {
         const updated = await this.prismaService.employee_schedule.update({
-            where: { id: schedule.id, organization_id: organizationid },
+            where: { id: schedule.id, organizationId: organizationid },
             data: EmployeeScheduleMapper.toPrismaUpdate(schedule),
         });
         return EmployeeScheduleMapper.toDomain(updated);
@@ -70,7 +70,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
 
     async delete(organizationid: string, id: number): Promise<void> {
         await this.prismaService.employee_schedule.delete({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
     }
 }

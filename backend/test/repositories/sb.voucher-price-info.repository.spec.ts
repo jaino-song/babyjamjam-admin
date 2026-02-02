@@ -20,9 +20,9 @@ describe("SbVoucherPriceInfoRepository", () => {
         id: 10,
         type: "standard",
         duration: BigInt(30),
-        full_price: "100000",
+        fullPrice: "100000",
         grant: "50000",
-        actual_price: "50000",
+        actualPrice: "50000",
         year: 2025,
         ...overrides,
     });
@@ -188,9 +188,9 @@ describe("SbVoucherPriceInfoRepository", () => {
                     id: 11,
                     type: "premium",
                     duration: BigInt(60),
-                    full_price: "200000",
+                    fullPrice: "200000",
                     grant: "100000",
-                    actual_price: "100000",
+                    actualPrice: "100000",
                     year: 2025,
                 });
                 voucherModel.create.mockResolvedValue(createdRow);
@@ -204,9 +204,9 @@ describe("SbVoucherPriceInfoRepository", () => {
                         id: 0,
                         type: "premium",
                         duration: BigInt(60),
-                        full_price: "200000",
+                        fullPrice: "200000",
                         grant: "100000",
-                        actual_price: "100000",
+                        actualPrice: "100000",
                         year: 2025,
                     },
                 });
@@ -250,9 +250,9 @@ describe("SbVoucherPriceInfoRepository", () => {
                     id: 15,
                     type: "vip",
                     duration: BigInt(90),
-                    full_price: "300000",
+                    fullPrice: "300000",
                     grant: "150000",
-                    actual_price: "150000",
+                    actualPrice: "150000",
                     year: 2025,
                 });
                 voucherModel.update.mockResolvedValue(updatedRow);
@@ -266,9 +266,9 @@ describe("SbVoucherPriceInfoRepository", () => {
                     data: {
                         type: "vip",
                         duration: BigInt(90),
-                        full_price: "300000",
+                        fullPrice: "300000",
                         grant: "150000",
-                        actual_price: "150000",
+                        actualPrice: "150000",
                         year: 2025,
                     },
                 });
@@ -282,9 +282,9 @@ describe("SbVoucherPriceInfoRepository", () => {
                 const entity = new VoucherPriceInfoEntity(16, "standard", BigInt(30), "150000", "75000", "75000", 2025);
                 const updatedRow = createVoucherRow({
                     id: 16,
-                    full_price: "150000",
+                    fullPrice: "150000",
                     grant: "75000",
-                    actual_price: "75000",
+                    actualPrice: "75000",
                     year: 2025,
                 });
                 voucherModel.update.mockResolvedValue(updatedRow);

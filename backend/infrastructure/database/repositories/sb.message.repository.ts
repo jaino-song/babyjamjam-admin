@@ -10,7 +10,7 @@ export class SbMessageRepository implements IMessageRepository {
 
     async findById(organizationid: string, id: number): Promise<MessageEntity | null> {
         const message = await this.prismaService.message.findFirst({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
         return message ? MessageMapper.toDomain(message) : null;
     }
@@ -19,7 +19,7 @@ export class SbMessageRepository implements IMessageRepository {
         const created = await this.prismaService.message.create({
             data: {
                 ...MessageMapper.toPrismaCreate(message),
-                organization_id: organizationid,
+                organizationId: organizationid,
             },
         });
         return MessageMapper.toDomain(created);
@@ -27,7 +27,7 @@ export class SbMessageRepository implements IMessageRepository {
 
     async update(organizationid: string, message: MessageEntity): Promise<MessageEntity> {
         const updated = await this.prismaService.message.update({
-            where: { id: message.id, organization_id: organizationid },
+            where: { id: message.id, organizationId: organizationid },
             data: MessageMapper.toPrismaUpdate(message),
         });
         return MessageMapper.toDomain(updated);
@@ -35,7 +35,7 @@ export class SbMessageRepository implements IMessageRepository {
 
     async delete(organizationid: string, id: number): Promise<void> {
         await this.prismaService.message.delete({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
     }
 }

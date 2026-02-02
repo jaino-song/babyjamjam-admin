@@ -87,6 +87,7 @@ describe("AreaTemplateController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(201);
                 expect(areaTemplateService.create).toHaveBeenCalledWith(
+                    expect.any(String),
                     expect.objectContaining({
                         area: "Incheon",
                         templateId: "eform-template-002",
@@ -119,6 +120,7 @@ describe("AreaTemplateController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(201);
                 expect(areaTemplateService.create).toHaveBeenCalledWith(
+                    expect.any(String),
                     expect.objectContaining({
                         area: "Busan",
                         templateId: "eform-template-003",
@@ -179,7 +181,7 @@ describe("AreaTemplateController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toHaveLength(3);
-                expect(areaTemplateService.findAll).toHaveBeenCalled();
+                expect(areaTemplateService.findAll).toHaveBeenCalledWith(expect.any(String));
             });
         });
 
@@ -220,7 +222,7 @@ describe("AreaTemplateController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(areaTemplateService.findByArea).toHaveBeenCalledWith("Seoul");
+                expect(areaTemplateService.findByArea).toHaveBeenCalledWith(expect.any(String), "Seoul");
             });
         });
 
@@ -236,7 +238,10 @@ describe("AreaTemplateController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(areaTemplateService.findByArea).toHaveBeenCalledWith("NonExistentArea");
+                expect(areaTemplateService.findByArea).toHaveBeenCalledWith(
+                    expect.any(String),
+                    "NonExistentArea"
+                );
             });
         });
 
@@ -259,7 +264,7 @@ describe("AreaTemplateController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(areaTemplateService.findByArea).toHaveBeenCalledWith(area);
+                expect(areaTemplateService.findByArea).toHaveBeenCalledWith(expect.any(String), area);
             });
         });
     });
@@ -291,6 +296,7 @@ describe("AreaTemplateController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(areaTemplateService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     "Seoul",
                     expect.objectContaining({
                         templateId: "eform-updated-001",
@@ -319,6 +325,7 @@ describe("AreaTemplateController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(areaTemplateService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     "Incheon",
                     expect.objectContaining({
                         templateId: "new-template-id",
@@ -346,6 +353,7 @@ describe("AreaTemplateController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(areaTemplateService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     "Busan",
                     expect.objectContaining({
                         templateName: null,
@@ -371,7 +379,7 @@ describe("AreaTemplateController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(areaTemplateService.delete).toHaveBeenCalledWith("Seoul");
+                expect(areaTemplateService.delete).toHaveBeenCalledWith(expect.any(String), "Seoul");
             });
         });
 
@@ -393,7 +401,7 @@ describe("AreaTemplateController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(areaTemplateService.delete).toHaveBeenCalledWith(area);
+                expect(areaTemplateService.delete).toHaveBeenCalledWith(expect.any(String), area);
             });
         });
     });

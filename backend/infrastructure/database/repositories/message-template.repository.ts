@@ -10,15 +10,15 @@ export class MessageTemplateRepository implements IMessageTemplateRepository {
 
     async findById(organizationid: string, id: string): Promise<MessageTemplateEntity | null> {
         const row = await this.prismaService.message_template.findFirst({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
         return row ? MessageTemplateMapper.toDomain(row) : null;
     }
 
     async findAll(organizationid: string): Promise<MessageTemplateEntity[]> {
         const rows = await this.prismaService.message_template.findMany({
-            where: { organization_id: organizationid },
-            orderBy: { created_at: "desc" },
+            where: { organizationId: organizationid },
+            orderBy: { createdAt: "desc" },
         });
         return rows.map(MessageTemplateMapper.toDomain);
     }
@@ -29,7 +29,7 @@ export class MessageTemplateRepository implements IMessageTemplateRepository {
         const created = await this.prismaService.message_template.create({
             data: {
                 ...data,
-                organization_id: organizationid,
+                organizationId: organizationid,
             },
         });
         return MessageTemplateMapper.toDomain(created);
@@ -37,7 +37,7 @@ export class MessageTemplateRepository implements IMessageTemplateRepository {
 
     async update(organizationid: string, template: MessageTemplateEntity): Promise<MessageTemplateEntity> {
         const updated = await this.prismaService.message_template.update({
-            where: { id: template.id, organization_id: organizationid },
+            where: { id: template.id, organizationId: organizationid },
             data: MessageTemplateMapper.toPrismaUpdate(template),
         });
         return MessageTemplateMapper.toDomain(updated);
@@ -45,7 +45,7 @@ export class MessageTemplateRepository implements IMessageTemplateRepository {
 
     async delete(organizationid: string, id: string): Promise<void> {
         await this.prismaService.message_template.delete({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
     }
 }

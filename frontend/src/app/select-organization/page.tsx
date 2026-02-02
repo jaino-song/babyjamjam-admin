@@ -35,14 +35,16 @@ export default function SelectOrganizationPage() {
     const fetchOrganizations = async () => {
       try {
         const result = await getUserOrganizations();
-        
+
         if (!result.success) {
           setError(result.error || "조직 목록을 불러오는데 실패했습니다.");
           return;
         }
 
-        // If user has only one organization, auto-select it
-        if (result.organizations?.length === 1) {
+        // If user has only one organization AND is not an owner, auto-select it
+        // Owners should always see the selection screen to explicitly choose
+        const isOwner = result.organizations?.some(org => org.role === 'owner');
+        if (result.organizations?.length === 1 && !isOwner) {
           const org = result.organizations[0];
           await handleSelectOrganization(org.id);
           return;
@@ -62,10 +64,10 @@ export default function SelectOrganizationPage() {
 
   const handleSelectOrganization = async (organizationId: string) => {
     setSelecting(organizationId);
-    
+
     try {
       const result = await setCurrentOrganization(organizationId);
-      
+
       if (!result.success) {
         setError(result.error || "조직 선택에 실패했습니다.");
         setSelecting(null);
@@ -129,14 +131,43 @@ export default function SelectOrganizationPage() {
           alignItems: "center",
           justifyContent: "center",
           height: "100vh",
-          gap: 2,
+          gap: 3,
           px: 2,
+          textAlign: "center",
         }}
       >
-        <Typography>접근 가능한 조직이 없습니다.</Typography>
-        <Button variant="outlined" onClick={() => router.push("/login")}>
-          로그인 페이지로 돌아가기
-        </Button>
+        <BusinessIcon sx={{ fontSize: 64, color: "text.disabled" }} />
+        <Box>
+          <Typography variant="h5" fontWeight="bold" gutterBottom>
+            접근 가능한 조직이 없습니다
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            관리자에게 조직 접근 권한을 요청해주세요.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            권한이 부여되면 이 페이지를 새로고침하세요.
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={2}>
+          <Button
+            variant="contained"
+            onClick={() => window.location.reload()}
+          >
+            새로고침
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={async () => {
+              // Clear auth cookies and redirect to login
+              document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+              document.cookie = "refresh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+              document.cookie = "selected_organization_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+              router.replace("/login");
+            }}
+          >
+            로그아웃
+          </Button>
+        </Stack>
       </Box>
     );
   }
@@ -201,8 +232,20 @@ export default function SelectOrganizationPage() {
                   </Box>
                 </Stack>
                 <Chip
-                  label={org.role === "admin" ? "관리자" : "사용자"}
-                  color={org.role === "admin" ? "primary" : "default"}
+                  label={
+                    org.role === "owner"
+                      ? "소유자"
+                      : org.role === "admin"
+                        ? "관리자"
+                        : "사용자"
+                  }
+                  color={
+                    org.role === "owner"
+                      ? "secondary"
+                      : org.role === "admin"
+                        ? "primary"
+                        : "default"
+                  }
                   size="small"
                 />
               </Stack>

@@ -10,8 +10,8 @@ export class SbPushSubscriptionRepository implements IPushSubscriptionRepository
 
     async findByUserId(userId: string): Promise<PushSubscriptionEntity[]> {
         const rows = await this.prismaService.push_subscription.findMany({
-            where: { user_id: userId },
-            orderBy: { created_at: 'desc' },
+            where: { userId: userId },
+            orderBy: { createdAt: 'desc' },
         });
         return rows.map(PushSubscriptionMapper.toDomain);
     }
@@ -40,21 +40,21 @@ export class SbPushSubscriptionRepository implements IPushSubscriptionRepository
 
     async deleteByUserId(userId: string): Promise<void> {
         await this.prismaService.push_subscription.deleteMany({
-            where: { user_id: userId },
+            where: { userId: userId },
         });
     }
 
     async findAll(): Promise<PushSubscriptionEntity[]> {
         const rows = await this.prismaService.push_subscription.findMany({
-            orderBy: { created_at: 'desc' },
+            orderBy: { createdAt: 'desc' },
         });
         return rows.map(PushSubscriptionMapper.toDomain);
     }
 
     async findByUserIds(userIds: string[]): Promise<PushSubscriptionEntity[]> {
         const rows = await this.prismaService.push_subscription.findMany({
-            where: { user_id: { in: userIds } },
-            orderBy: { created_at: 'desc' },
+            where: { userId: { in: userIds } },
+            orderBy: { createdAt: 'desc' },
         });
         return rows.map(PushSubscriptionMapper.toDomain);
     }

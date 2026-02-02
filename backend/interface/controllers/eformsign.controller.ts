@@ -1,10 +1,12 @@
-import { Controller, Post, Get, Body, Query, Param, HttpException, HttpStatus } from "@nestjs/common";
+import { Controller, Post, Get, Body, Query, Param, HttpException, HttpStatus, UseGuards } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { ContractDataDto } from "../../application/dto/contract.dto";
 import { AreaTemplateService } from "../../application/services/area-template.service";
-import { CurrentTenant } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
 @Controller("api")
+@UseGuards(JwtGuard, TenantGuard)
 export class EformsignController {
     constructor(
         private readonly eformsignService: EformsignService,
@@ -71,7 +73,7 @@ export class EformsignController {
         }
     ) {
         try {
-            // Look up template_id based on area
+            // Look up templateId based on area
             let templateId: string | undefined;
             if (body.contractData.area) {
                 const areaTemplate = await this.areaTemplateService.findByArea(

@@ -97,6 +97,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(201);
                 expect(employeeService.create).toHaveBeenCalledWith(
+                    expect.any(String),
                     expect.objectContaining({
                         name: "New Employee",
                         workArea: ["Seoul"],
@@ -128,6 +129,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(201);
                 expect(employeeService.create).toHaveBeenCalledWith(
+                    expect.any(String),
                     expect.objectContaining({
                         registeredDate: "2025-06-15",
                     }),
@@ -155,7 +157,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toHaveLength(2);
-                expect(employeeService.findAll).toHaveBeenCalled();
+                expect(employeeService.findAll).toHaveBeenCalledWith(expect.any(String));
             });
         });
 
@@ -191,7 +193,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findById).toHaveBeenCalledWith(7);
+                expect(employeeService.findById).toHaveBeenCalledWith(expect.any(String), 7);
             });
         });
 
@@ -207,7 +209,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findById).toHaveBeenCalledWith(999);
+                expect(employeeService.findById).toHaveBeenCalledWith(expect.any(String), 999);
             });
         });
     });
@@ -232,7 +234,7 @@ describe("EmployeeController (Integration)", () => {
             // Assert
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(2);
-            expect(employeeService.findByWorkArea).toHaveBeenCalledWith("Seoul");
+            expect(employeeService.findByWorkArea).toHaveBeenCalledWith(expect.any(String), "Seoul");
         });
     });
 
@@ -256,7 +258,7 @@ describe("EmployeeController (Integration)", () => {
             // Assert
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(2);
-            expect(employeeService.findByGrade).toHaveBeenCalledWith("A");
+            expect(employeeService.findByGrade).toHaveBeenCalledWith(expect.any(String), "A");
         });
     });
 
@@ -277,7 +279,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(true);
+                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(expect.any(String), true);
             });
         });
 
@@ -294,7 +296,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(false);
+                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(expect.any(String), false);
             });
         });
 
@@ -310,7 +312,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(true);
+                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(expect.any(String), true);
             });
         });
     });
@@ -332,7 +334,10 @@ describe("EmployeeController (Integration)", () => {
 
             // Assert
             expect(response.status).toBe(200);
-            expect(employeeService.findByRegisteredDate).toHaveBeenCalledWith(new Date(date));
+            expect(employeeService.findByRegisteredDate).toHaveBeenCalledWith(
+                expect.any(String),
+                new Date(date),
+            );
         });
     });
 
@@ -356,6 +361,7 @@ describe("EmployeeController (Integration)", () => {
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(2);
             expect(employeeService.findByRegisteredDateRange).toHaveBeenCalledWith(
+                expect.any(String),
                 new Date(startDate),
                 new Date(endDate),
             );
@@ -381,7 +387,7 @@ describe("EmployeeController (Integration)", () => {
             // Assert
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(2);
-            expect(employeeService.findAllOpenToNextWork).toHaveBeenCalled();
+            expect(employeeService.findAllOpenToNextWork).toHaveBeenCalledWith(expect.any(String));
         });
     });
 
@@ -402,7 +408,7 @@ describe("EmployeeController (Integration)", () => {
 
             // Assert
             expect(response.status).toBe(200);
-            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(5, true);
+            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(expect.any(String), 5, true);
         });
 
         it("should change employee open status to false", async () => {
@@ -418,7 +424,7 @@ describe("EmployeeController (Integration)", () => {
 
             // Assert
             expect(response.status).toBe(200);
-            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(3, false);
+            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(expect.any(String), 3, false);
         });
     });
 
@@ -445,6 +451,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(employeeService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     3,
                     expect.objectContaining({
                         name: "Updated Name",
@@ -470,6 +477,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(employeeService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     4,
                     expect.objectContaining({
                         phone: "010-0000-0000",
@@ -494,6 +502,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(employeeService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     2,
                     expect.objectContaining({
                         workArea: ["Seoul", "Busan", "Daegu"],
@@ -519,7 +528,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.delete).toHaveBeenCalledWith(8);
+                expect(employeeService.delete).toHaveBeenCalledWith(expect.any(String), 8);
             });
         });
 
@@ -535,7 +544,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.delete).toHaveBeenCalledWith(id);
+                expect(employeeService.delete).toHaveBeenCalledWith(expect.any(String), id);
             });
         });
     });

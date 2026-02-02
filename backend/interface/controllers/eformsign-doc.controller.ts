@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Logger } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query, Logger, UseGuards } from "@nestjs/common";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import {
     GetAccessTokenDto,
@@ -7,9 +7,11 @@ import {
     FetchDocumentByIdDto,
     CreateEformsignDocLocalDto,
 } from "interface/dto/eformsign-doc.dto";
-import { CurrentTenant } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
 @Controller("eformsign-docs")
+@UseGuards(JwtGuard, TenantGuard)
 export class EformsignDocController {
     private readonly logger = new Logger(EformsignDocController.name);
 
@@ -68,7 +70,7 @@ export class EformsignDocController {
 
     /**
      * GET /eformsign-docs/document-id?documentId=abc123
-     * Find a stored eformsign document by the eformsign document_id
+     * Find a stored eformsign document by the eformsign documentId
      */
     @Get("document-id")
     findByDocumentId(

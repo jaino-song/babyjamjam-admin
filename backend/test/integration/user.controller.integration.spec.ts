@@ -24,7 +24,7 @@ describe("UserController (Integration)", () => {
     }>;
 
     const createMockUser = (overrides: UserOverrides = {}): UserEntity => {
-        return new UserEntity(
+        return UserEntity.reconstitute(
             overrides.id ?? "user-uuid-1",
             overrides.kakaoId ?? "kakao-123456",
             overrides.email ?? "test@example.com",
@@ -32,6 +32,10 @@ describe("UserController (Integration)", () => {
             overrides.profileImage ?? "https://example.com/profile.jpg",
             overrides.role ?? "user",
             overrides.createdAt ?? new Date("2025-01-01"),
+            null,
+            false,
+            null,
+            overrides.kakaoId ? "kakao" : "email",
         );
     };
 

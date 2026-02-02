@@ -139,7 +139,7 @@ export class EformsignService {
             },
             mode: {
                 type: "01",
-                template_id: templateId || this.EFORMSIGN_TEMPLATE_ID,
+                templateId: templateId || this.EFORMSIGN_TEMPLATE_ID,
             },
             prefill: {
                 document_name: "산모신생아건강관리서비스 계약서",
@@ -171,7 +171,7 @@ export class EformsignService {
                 recipients: [
                     {
                         step_idx: "2",
-                        step_type: "05",
+                        stepType: "05",
                         name: contractData.customerName,
                         id: "",
                         sms: contractData.customerContact,
@@ -324,8 +324,8 @@ export class EformsignService {
             }
         }
 
-        // Sort by created_date descending (newest first)
-        uniqueDocuments.sort((a, b) => b.created_date - a.created_date);
+        // Sort by createdDate descending (newest first)
+        uniqueDocuments.sort((a, b) => b.createdDate - a.createdDate);
 
         return {
             documents: uniqueDocuments,

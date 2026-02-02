@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { EmployeeService } from "application/services/employee.service";
 import {
     ChangeEmployeeOpenStatusDto,
@@ -6,9 +6,11 @@ import {
     EmployeesByRegisteredRangeDto,
     UpdateEmployeeDto,
 } from "interface/dto/employee.dto";
-import { CurrentTenant } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
 @Controller("employees")
+@UseGuards(JwtGuard, TenantGuard)
 export class EmployeeController {
     constructor(private readonly employeeService: EmployeeService) {}
 

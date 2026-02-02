@@ -1,27 +1,6 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
-    TextField,
-    Grid,
-    FormControl,
-    InputLabel,
-    Select,
-    MenuItem,
-    FormControlLabel,
-    Switch,
-    CircularProgress,
-    Alert,
-    Typography,
-    Divider,
-    Box,
-    Chip,
-} from "@mui/material";
 import { useCreateClient, useUpdateClient } from "@/app/hooks/useClients";
 import { useVoucherPriceInfos } from "@/app/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
@@ -32,12 +11,37 @@ import {
     Client,
     CreateClientDto,
     UpdateClientDto,
-    CONTRACT_STATUS_OPTIONS
+    SERVICE_STATUS_OPTIONS
 } from "@/app/lib/client/types";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { getErrorMessage } from "@/app/lib/errors/prisma-error-mapper";
 import voucherOptions from "../messages/templates/json/voucher.json";
+
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+    SelectGroup,
+    SelectLabel,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { StatusBadge } from "@/app/(components)/ui/status-badge";
+import { Spinner } from "@/components/ui/spinner";
 
 interface ClientFormDialogProps {
     open: boolean;
@@ -338,355 +342,371 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     const isSubmitting = createClient.isPending || updateClient.isPending;
 
     return (
-        <Dialog data-component="ClientFormDialog" open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ 'data-testid': 'client-form-dialog' }}>
-            <DialogTitle>
-                {isEditMode
-                    ? t(locale, "clients.form.edit-title")
-                    : t(locale, "clients.form.add-title")
-                }
-            </DialogTitle>
-            <DialogContent dividers>
-                {error && (
-                    <Alert severity="error" sx={{ mb: 2 }}>
-                        {error}
-                    </Alert>
-                )}
+        <Dialog data-component="ClientFormDialog" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="client-form-dialog">
+                <DialogHeader>
+                    <DialogTitle>
+                        {isEditMode
+                            ? t(locale, "clients.form.edit-title")
+                            : t(locale, "clients.form.add-title")
+                        }
+                    </DialogTitle>
+                </DialogHeader>
 
-                <Grid container spacing={2}>
+                <div className="space-y-6 py-4">
+                    {error && (
+                        <Alert variant="destructive">
+                            <AlertDescription>{error}</AlertDescription>
+                        </Alert>
+                    )}
+
                     {/* Basic Info Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                    <div className="space-y-4">
+                        <h4 className="text-sm font-medium text-primary">
                             {t(locale, "clients.form.section-basic")}
-                        </Typography>
-                    </Grid>
+                        </h4>
 
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            required
-                            label={t(locale, "clients.form.name")}
-                            value={formData.name}
-                            onChange={(e) => handleChange("name", e.target.value)}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.birthday")}
-                            placeholder="YYMMDD"
-                            value={formData.birthday}
-                            onChange={(e) => handleChange("birthday", e.target.value)}
-                            inputProps={{ maxLength: 6 }}
-                            helperText={t(locale, "clients.form.birthday-helper")}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            type="date"
-                            label={t(locale, "clients.form.due-date")}
-                            value={formData.dueDate || ""}
-                            onChange={(e) => handleChange("dueDate", e.target.value)}
-                            InputLabelProps={{ shrink: true }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.phone")}
-                            value={formData.phone}
-                            onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
-                            placeholder="010-1234-5678"
-                            inputProps={{ maxLength: 13 }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.address")}
-                            value={formData.address}
-                            onChange={(e) => handleChange("address", e.target.value)}
-                        />
-                    </Grid>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="name">
+                                    {t(locale, "clients.form.name")}
+                                    <span className="text-destructive ml-1">*</span>
+                                </Label>
+                                <Input
+                                    id="name"
+                                    value={formData.name}
+                                    onChange={(e) => handleChange("name", e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="birthday">{t(locale, "clients.form.birthday")}</Label>
+                                <Input
+                                    id="birthday"
+                                    placeholder="YYMMDD"
+                                    value={formData.birthday ?? ""}
+                                    onChange={(e) => handleChange("birthday", e.target.value)}
+                                    maxLength={6}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    {t(locale, "clients.form.birthday-helper")}
+                                </p>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="dueDate">{t(locale, "clients.form.due-date")}</Label>
+                                <Input
+                                    id="dueDate"
+                                    type="date"
+                                    value={formData.dueDate || ""}
+                                    onChange={(e) => handleChange("dueDate", e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="phone">{t(locale, "clients.form.phone")}</Label>
+                                <Input
+                                    id="phone"
+                                    placeholder="010-1234-5678"
+                                    value={formData.phone ?? ""}
+                                    onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
+                                    maxLength={13}
+                                />
+                            </div>
+                            <div className="space-y-2 sm:col-span-2">
+                                <Label htmlFor="address">{t(locale, "clients.form.address")}</Label>
+                                <Input
+                                    id="address"
+                                    value={formData.address ?? ""}
+                                    onChange={(e) => handleChange("address", e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    </div>
 
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+                    <Separator />
 
                     {/* Employee Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                    <div className="space-y-4">
+                        <h4 className="text-sm font-medium text-primary">
                             {t(locale, "clients.form.section-employee")}
-                        </Typography>
-                    </Grid>
+                        </h4>
 
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <EmployeeAutocomplete
-                            value={formData.primaryEmployeeId}
-                            onChange={(id) => handleChange("primaryEmployeeId", id)}
-                            label={t(locale, "clients.form.primary-employee")}
-                            excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
-                            allowManualEntry
-                            onManualEntry={() => {
-                                setEmployeeDialogTarget("primary");
-                                setIsEmployeeDialogOpen(true);
-                            }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <EmployeeAutocomplete
-                            value={formData.secondaryEmployeeId ?? null}
-                            onChange={(id) => handleChange("secondaryEmployeeId", id)}
-                            label={t(locale, "clients.form.secondary-employee")}
-                            excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
-                            allowManualEntry
-                            onManualEntry={() => {
-                                setEmployeeDialogTarget("secondary");
-                                setIsEmployeeDialogOpen(true);
-                            }}
-                        />
-                    </Grid>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <EmployeeAutocomplete
+                                value={formData.primaryEmployeeId}
+                                onChange={(id) => handleChange("primaryEmployeeId", id)}
+                                label={t(locale, "clients.form.primary-employee")}
+                                excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
+                                allowManualEntry
+                                onManualEntry={() => {
+                                    setEmployeeDialogTarget("primary");
+                                    setIsEmployeeDialogOpen(true);
+                                }}
+                            />
+                            <EmployeeAutocomplete
+                                value={formData.secondaryEmployeeId ?? null}
+                                onChange={(id) => handleChange("secondaryEmployeeId", id)}
+                                label={t(locale, "clients.form.secondary-employee")}
+                                excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
+                                allowManualEntry
+                                onManualEntry={() => {
+                                    setEmployeeDialogTarget("secondary");
+                                    setIsEmployeeDialogOpen(true);
+                                }}
+                            />
+                        </div>
+                    </div>
 
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+                    <Separator />
 
                     {/* Service Info Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                    <div className="space-y-4">
+                        <h4 className="text-sm font-medium text-primary">
                             {t(locale, "clients.form.section-service")}
-                        </Typography>
-                    </Grid>
+                        </h4>
 
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <FormControl fullWidth>
-                            <InputLabel>{t(locale, "clients.form.voucher-type")}</InputLabel>
-                            <Select
-                                value={formData.type || ""}
-                                label={t(locale, "clients.form.voucher-type")}
-                                onChange={(e) => handleTypeChange(e.target.value)}
-                            >
-                                {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
-                                    <MenuItem key={groupName} disabled sx={{ fontWeight: 600 }}>
-                                        {groupName}
-                                    </MenuItem>,
-                                    ...Object.entries(types).map(([typeValue, typeData]) => (
-                                        <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
-                                            {typeData.label}
-                                        </MenuItem>
-                                    ))
-                                ])}
-                            </Select>
-                        </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <FormControl fullWidth disabled={!formData.type || isPriceLoading}>
-                            <InputLabel>{t(locale, "clients.form.duration")}</InputLabel>
-                            <Select
-                                value={formData.duration || ""}
-                                label={t(locale, "clients.form.duration")}
-                                onChange={(e) => {
-                                    const value = e.target.value;
-                                    handleChange("duration", value ? Number(value) : null);
-                                    // Reset manual edit flag when duration changes to allow auto-fill
-                                    setPricesManuallyEdited(false);
-                                }}
-                            >
-                                {availableDurations.map((duration) => (
-                                    <MenuItem key={duration} value={duration}>
-                                        {duration}일
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                            {isPriceLoading && (
-                                <CircularProgress
-                                    size={20}
-                                    sx={{
-                                        position: "absolute",
-                                        right: 40,
-                                        top: "50%",
-                                        marginTop: "-10px"
-                                    }}
-                                />
-                            )}
-                        </FormControl>
-                    </Grid>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label>{t(locale, "clients.form.voucher-type")}</Label>
+                                <Select
+                                    value={formData.type || ""}
+                                    onValueChange={handleTypeChange}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder={t(locale, "clients.form.voucher-type")} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                                            <SelectGroup key={groupName}>
+                                                <SelectLabel className="font-semibold">{groupName}</SelectLabel>
+                                                {Object.entries(types).map(([typeValue, typeData]) => (
+                                                    <SelectItem key={typeValue} value={typeValue} className="pl-6">
+                                                        {typeData.label}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectGroup>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label>{t(locale, "clients.form.duration")}</Label>
+                                <div className="relative">
+                                    <Select
+                                        value={formData.duration?.toString() || ""}
+                                        onValueChange={(value) => {
+                                            handleChange("duration", value ? Number(value) : null);
+                                            // Reset manual edit flag when duration changes to allow auto-fill
+                                            setPricesManuallyEdited(false);
+                                        }}
+                                        disabled={!formData.type || isPriceLoading}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder={t(locale, "clients.form.duration")} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {availableDurations.map((duration) => (
+                                                <SelectItem key={duration} value={String(duration)}>
+                                                    {duration}일
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    {isPriceLoading && (
+                                        <div className="absolute right-10 top-1/2 -translate-y-1/2">
+                                            <Spinner className="h-4 w-4" />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+                    <Separator />
 
                     {/* Pricing Section */}
-                    <Grid size={12}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-                            <Typography variant="subtitle2" color="primary">
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-medium text-primary">
                                 {t(locale, "clients.form.section-pricing")}
-                            </Typography>
+                            </h4>
                             {selectedPriceInfo && !pricesManuallyEdited && (
-                                <Chip
-                                    label={t(locale, "clients.form.auto-filled")}
-                                    size="small"
-                                    color="info"
-                                    variant="outlined"
-                                />
+                                <StatusBadge variant="doc_requested" size="sm">
+                                    {t(locale, "clients.form.auto-filled")}
+                                </StatusBadge>
                             )}
-                        </Box>
-                    </Grid>
+                        </div>
 
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.full-price")}
-                            value={formatPrice(formData.fullPrice || "")}
-                            onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
-                            placeholder="0"
-                            InputProps={{
-                                endAdornment: <Typography variant="caption" color="text.secondary">원</Typography>,
-                            }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.grant")}
-                            value={formatPrice(formData.grant || "")}
-                            onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
-                            placeholder="0"
-                            InputProps={{
-                                endAdornment: <Typography variant="caption" color="text.secondary">원</Typography>,
-                            }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                        <TextField
-                            fullWidth
-                            label={t(locale, "clients.form.actual-price")}
-                            value={formatPrice(formData.actualPrice || "")}
-                            onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
-                            placeholder="0"
-                            InputProps={{
-                                endAdornment: <Typography variant="caption" color="text.secondary">원</Typography>,
-                            }}
-                        />
-                    </Grid>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="fullPrice">{t(locale, "clients.form.full-price")}</Label>
+                                <div className="relative">
+                                    <Input
+                                        id="fullPrice"
+                                        placeholder="0"
+                                        value={formatPrice(formData.fullPrice || "")}
+                                        onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                                        className="pr-8"
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                        원
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="grant">{t(locale, "clients.form.grant")}</Label>
+                                <div className="relative">
+                                    <Input
+                                        id="grant"
+                                        placeholder="0"
+                                        value={formatPrice(formData.grant || "")}
+                                        onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
+                                        className="pr-8"
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                        원
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="actualPrice">{t(locale, "clients.form.actual-price")}</Label>
+                                <div className="relative">
+                                    <Input
+                                        id="actualPrice"
+                                        placeholder="0"
+                                        value={formatPrice(formData.actualPrice || "")}
+                                        onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
+                                        className="pr-8"
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                        원
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+                    <Separator />
 
                     {/* Contract Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                    <div className="space-y-4">
+                        <h4 className="text-sm font-medium text-primary">
                             {t(locale, "clients.form.section-contract")}
-                        </Typography>
-                    </Grid>
+                        </h4>
 
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <FormControl fullWidth>
-                            <InputLabel>{t(locale, "clients.form.contract-status")}</InputLabel>
-                            <Select
-                                value={formData.serviceStatus || ""}
-                                label={t(locale, "clients.form.contract-status")}
-                                onChange={(e) => handleChange("serviceStatus", e.target.value)}
-                            >
-                                {CONTRACT_STATUS_OPTIONS.map((status) => (
-                                    <MenuItem key={status.value} value={status.value}>
-                                        {status.label}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 3 }}>
-                        <TextField
-                            fullWidth
-                            type="date"
-                            label={t(locale, "clients.form.start-date")}
-                            value={formData.startDate || ""}
-                            onChange={(e) => handleChange("startDate", e.target.value)}
-                            InputLabelProps={{ shrink: true }}
-                        />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 3 }}>
-                        <TextField
-                            fullWidth
-                            type="date"
-                            label={t(locale, "clients.form.end-date")}
-                            value={formData.endDate || ""}
-                            onChange={(e) => handleChange("endDate", e.target.value)}
-                            InputLabelProps={{ shrink: true }}
-                        />
-                    </Grid>
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                            <div className="space-y-2 sm:col-span-2">
+                                <Label>{t(locale, "clients.form.contract-status")}</Label>
+                                <Select
+                                    value={formData.serviceStatus || ""}
+                                    onValueChange={(value) => handleChange("serviceStatus", value)}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {SERVICE_STATUS_OPTIONS.map((status) => (
+                                            <SelectItem key={status.value} value={status.value}>
+                                                {status.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="startDate">{t(locale, "clients.form.start-date")}</Label>
+                                <Input
+                                    id="startDate"
+                                    type="date"
+                                    value={formData.startDate || ""}
+                                    onChange={(e) => handleChange("startDate", e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="endDate">{t(locale, "clients.form.end-date")}</Label>
+                                <Input
+                                    id="endDate"
+                                    type="date"
+                                    value={formData.endDate || ""}
+                                    onChange={(e) => handleChange("endDate", e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    </div>
 
-                    <Grid size={12}><Divider sx={{ my: 1 }} /></Grid>
+                    <Separator />
 
                     {/* Flags Section */}
-                    <Grid size={12}>
-                        <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                    <div className="space-y-4">
+                        <h4 className="text-sm font-medium text-primary">
                             {t(locale, "clients.form.section-flags")}
-                        </Typography>
-                    </Grid>
+                        </h4>
 
-                    <Grid size={12}>
-                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
-                            <FormControlLabel
-                                control={
-                                    <Switch
-                                        checked={formData.voucherClient}
-                                        onChange={(e) => handleChange("voucherClient", e.target.checked)}
-                                    />
-                                }
-                                label={t(locale, "clients.form.voucher-client")}
-                            />
-                            <FormControlLabel
-                                control={
-                                    <Switch
-                                        checked={formData.careCenter}
-                                        onChange={(e) => handleChange("careCenter", e.target.checked)}
-                                    />
-                                }
-                                label={t(locale, "clients.form.care-center")}
-                            />
-                            <FormControlLabel
-                                control={
-                                    <Switch
-                                        checked={formData.breastPump}
-                                        onChange={(e) => handleChange("breastPump", e.target.checked)}
-                                    />
-                                }
-                                label={t(locale, "clients.form.breast-pump")}
-                            />
-                        </Box>
-                    </Grid>
-                </Grid>
+                        <div className="flex flex-wrap gap-6">
+                            <div className="flex items-center gap-2">
+                                <Switch
+                                    id="voucherClient"
+                                    checked={formData.voucherClient}
+                                    onCheckedChange={(checked) => handleChange("voucherClient", checked)}
+                                />
+                                <Label htmlFor="voucherClient" className="cursor-pointer">
+                                    {t(locale, "clients.form.voucher-client")}
+                                </Label>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Switch
+                                    id="careCenter"
+                                    checked={formData.careCenter}
+                                    onCheckedChange={(checked) => handleChange("careCenter", checked)}
+                                />
+                                <Label htmlFor="careCenter" className="cursor-pointer">
+                                    {t(locale, "clients.form.care-center")}
+                                </Label>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Switch
+                                    id="breastPump"
+                                    checked={formData.breastPump}
+                                    onCheckedChange={(checked) => handleChange("breastPump", checked)}
+                                />
+                                <Label htmlFor="breastPump" className="cursor-pointer">
+                                    {t(locale, "clients.form.breast-pump")}
+                                </Label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <DialogFooter>
+                    <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
+                        {t(locale, "common.cancel")}
+                    </Button>
+                    <Button onClick={handleSubmit} disabled={isSubmitting}>
+                        {isSubmitting ? (
+                            <Spinner className="h-4 w-4" />
+                        ) : isEditMode ? (
+                            t(locale, "common.save")
+                        ) : (
+                            t(locale, "common.create")
+                        )}
+                    </Button>
+                </DialogFooter>
+
+                {/* Nested EmployeeFormDialog for adding new employees */}
+                <EmployeeFormDialog
+                    open={isEmployeeDialogOpen}
+                    onClose={() => {
+                        setIsEmployeeDialogOpen(false);
+                        setEmployeeDialogTarget(null);
+                    }}
+                    onSuccess={(newEmployee: Employee) => {
+                        // Auto-select the newly created employee in the appropriate field
+                        if (employeeDialogTarget === "primary") {
+                            handleChange("primaryEmployeeId", newEmployee.id);
+                        } else if (employeeDialogTarget === "secondary") {
+                            handleChange("secondaryEmployeeId", newEmployee.id);
+                        }
+                    }}
+                />
             </DialogContent>
-            <DialogActions>
-                <Button onClick={onClose} disabled={isSubmitting}>
-                    {t(locale, "common.cancel")}
-                </Button>
-                <Button
-                    variant="contained"
-                    onClick={handleSubmit}
-                    disabled={isSubmitting}
-                >
-                    {isSubmitting ? (
-                        <CircularProgress size={24} />
-                    ) : isEditMode ? (
-                        t(locale, "common.save")
-                    ) : (
-                        t(locale, "common.create")
-                    )}
-                </Button>
-            </DialogActions>
-
-            {/* Nested EmployeeFormDialog for adding new employees */}
-            <EmployeeFormDialog
-                open={isEmployeeDialogOpen}
-                onClose={() => {
-                    setIsEmployeeDialogOpen(false);
-                    setEmployeeDialogTarget(null);
-                }}
-                onSuccess={(newEmployee: Employee) => {
-                    // Auto-select the newly created employee in the appropriate field
-                    if (employeeDialogTarget === "primary") {
-                        handleChange("primaryEmployeeId", newEmployee.id);
-                    } else if (employeeDialogTarget === "secondary") {
-                        handleChange("secondaryEmployeeId", newEmployee.id);
-                    }
-                }}
-            />
         </Dialog>
     );
 }

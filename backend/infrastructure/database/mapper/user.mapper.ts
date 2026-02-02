@@ -1,35 +1,47 @@
-import { UserEntity } from "domain/entities/user.entity";
+import { UserEntity, AuthProvider } from "domain/entities/user.entity";
 
 type UserRow = {
     id: string;
-    kakao_id: string;
+    kakaoId: string | null;
     email: string | null;
     name: string | null;
-    profile_image: string | null;
+    profileImage: string | null;
     role: string | null;
-    created_at: Date;
+    createdAt: Date;
+    passwordHash: string | null;
+    emailVerified: boolean;
+    emailVerifiedAt: Date | null;
+    authProvider: string;
 };
 
 export class UserMapper {
     static toDomain(row: UserRow): UserEntity {
-        return new UserEntity(
+        return UserEntity.reconstitute(
             row.id,
-            row.kakao_id,
+            row.kakaoId,
             row.email,
             row.name,
-            row.profile_image,
+            row.profileImage,
             row.role || 'user',
-            row.created_at,
+            row.createdAt,
+            row.passwordHash,
+            row.emailVerified,
+            row.emailVerifiedAt,
+            (row.authProvider || 'kakao') as AuthProvider,
         );
     }
 
     static toPrismaCreate(entity: UserEntity) {
         return {
-            kakao_id: entity.kakaoId,
+            kakaoId: entity.kakaoId,
             email: entity.email,
             name: entity.name,
-            profile_image: entity.profileImage,
+            profileImage: entity.profileImage,
             role: entity.role,
+            passwordHash: entity.passwordHash,
+            emailVerified: entity.emailVerified,
+            emailVerifiedAt: entity.emailVerifiedAt,
+            authProvider: entity.authProvider,
         };
     }
 
@@ -37,8 +49,12 @@ export class UserMapper {
         return {
             email: entity.email,
             name: entity.name,
-            profile_image: entity.profileImage,
+            profileImage: entity.profileImage,
             role: entity.role,
+            passwordHash: entity.passwordHash,
+            emailVerified: entity.emailVerified,
+            emailVerifiedAt: entity.emailVerifiedAt,
+            authProvider: entity.authProvider,
         };
     }
 }

@@ -26,28 +26,28 @@ export class DocumentRepository implements IDocumentRepository {
 
     async findById(organizationid: string, id: string): Promise<DocumentEntity | null> {
         const doc = await this.prismaService.document.findFirst({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
         return doc ? DocumentMapper.toDomain(doc) : null;
     }
 
     async findByOrgId(organizationid: string, orgid: string): Promise<DocumentEntity[]> {
         const docs = await this.prismaService.document.findMany({
-            where: { orgId: orgid, organization_id: organizationid },
+            where: { orgId: orgid, organizationId: organizationid },
         });
         return docs.map(DocumentMapper.toDomain);
     }
 
     async findByCategoryId(organizationid: string, categoryId: string): Promise<DocumentEntity[]> {
         const docs = await this.prismaService.document.findMany({
-            where: { categoryId, organization_id: organizationid },
+            where: { categoryId, organizationId: organizationid },
         });
         return docs.map(DocumentMapper.toDomain);
     }
 
     async findAll(organizationid: string): Promise<DocumentEntity[]> {
         const docs = await this.prismaService.document.findMany({
-            where: { organization_id: organizationid },
+            where: { organizationId: organizationid },
         });
         return docs.map(DocumentMapper.toDomain);
     }
@@ -56,7 +56,7 @@ export class DocumentRepository implements IDocumentRepository {
         const created = await this.prismaService.document.create({
             data: {
                 ...DocumentMapper.toPrismaCreate(doc),
-                organization_id: organizationid,
+                organizationId: organizationid,
             },
         });
         return DocumentMapper.toDomain(created);
@@ -67,14 +67,14 @@ export class DocumentRepository implements IDocumentRepository {
             throw new Error("Cannot update document without id");
         }
         const result = await this.prismaService.document.updateMany({
-            where: { id: doc.id, organization_id: organizationid },
+            where: { id: doc.id, organizationId: organizationid },
             data: DocumentMapper.toPrismaUpdate(doc),
         });
         if (result.count === 0) {
             throw new Error("Document not found for organization");
         }
         const updated = await this.prismaService.document.findFirst({
-            where: { id: doc.id, organization_id: organizationid },
+            where: { id: doc.id, organizationId: organizationid },
         });
         if (!updated) {
             throw new Error("Document not found after update");
@@ -84,7 +84,7 @@ export class DocumentRepository implements IDocumentRepository {
 
     async delete(organizationid: string, id: string): Promise<void> {
         await this.prismaService.document.deleteMany({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
     }
 }

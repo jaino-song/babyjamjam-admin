@@ -2,10 +2,10 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@n
 import { MessageTemplateService } from "application/services/message-template.service";
 import { CreateMessageTemplateDto, UpdateMessageTemplateDto } from "interface/dto/message-template.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { CurrentTenant } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 
 @Controller("message-templates")
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, TenantGuard)
 export class MessageTemplateController {
     constructor(private readonly messageTemplateService: MessageTemplateService) {}
 

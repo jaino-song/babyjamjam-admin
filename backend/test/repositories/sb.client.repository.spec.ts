@@ -8,6 +8,7 @@ describe("SbClientRepository", () => {
     // ============================================
     
     const createMockPrismaClient = () => ({
+        findFirst: jest.fn(),
         findUnique: jest.fn(),
         findMany: jest.fn(),
         count: jest.fn(),
@@ -23,18 +24,18 @@ describe("SbClientRepository", () => {
         phone: "010-1111-2222",
         type: "A",
         duration: 15,
-        full_price: "100000",
+        fullPrice: "100000",
         grant: "50000",
-        actual_price: "50000",
-        start_date: new Date("2024-01-01T00:00:00.000Z"),
-        end_date: new Date("2024-06-01T00:00:00.000Z"),
-        care_center: true,
-        voucher_client: false,
+        actualPrice: "50000",
+        startDate: new Date("2024-01-01T00:00:00.000Z"),
+        endDate: new Date("2024-06-01T00:00:00.000Z"),
+        careCenter: true,
+        voucherClient: false,
         birthday: "900101",
-        service_status: "completed",
-        breast_pump: true,
-        e_doc_id: null,
-        due_date: null,
+        serviceStatus: "completed",
+        breastPump: true,
+        eDocId: null,
+        dueDate: null,
         ...overrides,
     });
 
@@ -83,14 +84,16 @@ describe("SbClientRepository", () => {
             it("should return the mapped ClientEntity", async () => {
                 // Arrange
                 const row = createClientRow();
-                clientModel.findUnique.mockResolvedValue(row);
+                clientModel.findFirst.mockResolvedValue(row);
 
                 // Act
                 const result = await repository.findById(organizationId, 1);
 
                 // Assert
-                expect(clientModel.findUnique).toHaveBeenCalledTimes(1);
-                expect(clientModel.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
+                expect(clientModel.findFirst).toHaveBeenCalledTimes(1);
+                expect(clientModel.findFirst).toHaveBeenCalledWith({
+                    where: { id: 1, organizationId: organizationId },
+                });
                 expect(result).toBeInstanceOf(ClientEntity);
                 expect(result).toMatchObject({
                     id: 1,
@@ -107,13 +110,15 @@ describe("SbClientRepository", () => {
         describe("given a client id does not exist", () => {
             it("should return null", async () => {
                 // Arrange
-                clientModel.findUnique.mockResolvedValue(null);
+                clientModel.findFirst.mockResolvedValue(null);
 
                 // Act
                 const result = await repository.findById(organizationId, 999);
 
                 // Assert
-                expect(clientModel.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
+                expect(clientModel.findFirst).toHaveBeenCalledWith({
+                    where: { id: 999, organizationId: organizationId },
+                });
                 expect(result).toBeNull();
             });
         });
@@ -136,7 +141,9 @@ describe("SbClientRepository", () => {
                 const result = await repository.findAll(organizationId);
 
                 // Assert
-                expect(clientModel.findMany).toHaveBeenCalledWith();
+                expect(clientModel.findMany).toHaveBeenCalledWith({
+                    where: { organizationId: organizationId },
+                });
                 expect(result).toHaveLength(2);
                 expect(result[0]).toBeInstanceOf(ClientEntity);
                 expect(result[0]).toMatchObject({ id: 1, name: "John" });
@@ -177,12 +184,14 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith({
-                    where: {},
+                    where: { organizationId: organizationId },
                     skip: 0,
                     take: 10,
                     orderBy: { id: "desc" },
                 });
-                expect(clientModel.count).toHaveBeenCalledWith({ where: {} });
+                expect(clientModel.count).toHaveBeenCalledWith({
+                    where: { organizationId: organizationId },
+                });
                 expect(result).toEqual({
                     data: expect.arrayContaining([
                         expect.objectContaining({ id: 1, name: "John" }),
@@ -246,6 +255,7 @@ describe("SbClientRepository", () => {
                         { address: { contains: "John", mode: "insensitive" } },
                         { phone: { contains: "John", mode: "insensitive" } },
                     ],
+                    organizationId: organizationId,
                 };
 
                 // Act
@@ -338,18 +348,19 @@ describe("SbClientRepository", () => {
                         phone: "010-0000-1111",
                         type: "B",
                         duration: 12,
-                        full_price: "120000",
+                        fullPrice: "120000",
                         grant: "60000",
-                        actual_price: "60000",
-                        start_date: new Date("2024-02-01T00:00:00.000Z"),
-                        end_date: new Date("2024-08-01T00:00:00.000Z"),
-                        care_center: false,
-                        voucher_client: true,
+                        actualPrice: "60000",
+                        startDate: new Date("2024-02-01T00:00:00.000Z"),
+                        endDate: new Date("2024-08-01T00:00:00.000Z"),
+                        careCenter: false,
+                        voucherClient: true,
                         birthday: "950315",
-                        service_status: "waiting",
-                        breast_pump: false,
-                        e_doc_id: null,
-        due_date: null,
+                        serviceStatus: "waiting",
+                        breastPump: false,
+                        eDocId: null,
+        dueDate: null,
+                        organizationId: organizationId,
                     },
                 });
                 expect(result).toBeInstanceOf(ClientEntity);
@@ -373,7 +384,7 @@ describe("SbClientRepository", () => {
                     phone: null,
                     type: null,
                     birthday: null,
-                    service_status: null,
+                    serviceStatus: null,
                 });
                 clientModel.create.mockResolvedValue(createdRow);
 
@@ -387,7 +398,7 @@ describe("SbClientRepository", () => {
                         phone: null,
                         type: null,
                         birthday: null,
-                        service_status: null,
+                        serviceStatus: null,
                     }),
                 });
                 expect(result.address).toBeNull();
@@ -432,25 +443,25 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.update).toHaveBeenCalledWith({
-                    where: { id: 7 },
+                    where: { id: 7, organizationId: organizationId },
                     data: {
                         name: "Updated Name",
                         address: "Updated Address",
                         phone: "010-3333-4444",
                         type: "C",
                         duration: 6,
-                        full_price: "60000",
+                        fullPrice: "60000",
                         grant: "30000",
-                        actual_price: "30000",
-                        start_date: new Date("2024-03-01T00:00:00.000Z"),
-                        end_date: new Date("2024-09-01T00:00:00.000Z"),
-                        care_center: true,
-                        voucher_client: false,
+                        actualPrice: "30000",
+                        startDate: new Date("2024-03-01T00:00:00.000Z"),
+                        endDate: new Date("2024-09-01T00:00:00.000Z"),
+                        careCenter: true,
+                        voucherClient: false,
                         birthday: "880520",
-                        service_status: "in_progress",
-                        breast_pump: true,
-                        e_doc_id: null,
-        due_date: null,
+                        serviceStatus: "in_progress",
+                        breastPump: true,
+                        eDocId: null,
+        dueDate: null,
                     },
                 });
                 expect(result).toBeInstanceOf(ClientEntity);
@@ -459,14 +470,14 @@ describe("SbClientRepository", () => {
         });
 
         describe("given entity with breastPump toggled", () => {
-            it("should correctly update breast_pump field", async () => {
+            it("should correctly update breastPump field", async () => {
                 // Arrange
                 const entity = new ClientEntity(
                     8, "Client", null, null, null, null,
                     null, null, null, null, null, false, false,
                     null, null, true, null, // breastPump = true, eDocId = null
                 );
-                const updatedRow = createClientRow({ id: 8, breast_pump: true });
+                const updatedRow = createClientRow({ id: 8, breastPump: true });
                 clientModel.update.mockResolvedValue(updatedRow);
 
                 // Act
@@ -474,9 +485,9 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.update).toHaveBeenCalledWith({
-                    where: { id: 8 },
+                    where: { id: 8, organizationId: organizationId },
                     data: expect.objectContaining({
-                        breast_pump: true,
+                        breastPump: true,
                     }),
                 });
             });
@@ -498,9 +509,9 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.start_date.gt).toBeDefined();
-                expect(callArgs.where.start_date.gte).toBeUndefined();
-                expect(callArgs.where.start_date.lte).toBeDefined();
+                expect(callArgs.where.startDate.gt).toBeDefined();
+                expect(callArgs.where.startDate.gte).toBeUndefined();
+                expect(callArgs.where.startDate.lte).toBeDefined();
             });
 
             it("should return mapped ClientEntity array", async () => {
@@ -549,11 +560,11 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.start_date.gt).toBeDefined();
-                expect(callArgs.where.start_date.gte).toBeUndefined();
+                expect(callArgs.where.startDate.gt).toBeDefined();
+                expect(callArgs.where.startDate.gte).toBeUndefined();
             });
 
-            it("should filter by e_doc_id not null and status_type not 050", async () => {
+            it("should filter by eDocId not null and statusType not 050", async () => {
                 // Arrange
                 clientModel.findMany.mockResolvedValue([]);
 
@@ -562,8 +573,8 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.e_doc_id).toEqual({ not: null });
-                expect(callArgs.where.eformsign_doc_client_e_doc_idToeformsign_doc.status_type).toEqual({ not: '050' });
+                expect(callArgs.where.eDocId).toEqual({ not: null });
+                expect(callArgs.where.eformsign_doc_client_e_doc_idToeformsign_doc.statusType).toEqual({ not: '050' });
             });
         });
     });
@@ -582,11 +593,11 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.start_date.gt).toBeDefined();
-                expect(callArgs.where.start_date.gte).toBeUndefined();
+                expect(callArgs.where.startDate.gt).toBeDefined();
+                expect(callArgs.where.startDate.gte).toBeUndefined();
             });
 
-            it("should filter by e_doc_id being null", async () => {
+            it("should filter by eDocId being null", async () => {
                 // Arrange
                 clientModel.findMany.mockResolvedValue([]);
 
@@ -595,7 +606,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.e_doc_id).toBeNull();
+                expect(callArgs.where.eDocId).toBeNull();
             });
         });
     });
@@ -614,7 +625,9 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.delete).toHaveBeenCalledTimes(1);
-                expect(clientModel.delete).toHaveBeenCalledWith({ where: { id: 4 } });
+                expect(clientModel.delete).toHaveBeenCalledWith({
+                    where: { id: 4, organizationId: organizationId },
+                });
             });
         });
 
@@ -627,7 +640,9 @@ describe("SbClientRepository", () => {
                 await repository.delete(organizationId, id);
 
                 // Assert
-                expect(clientModel.delete).toHaveBeenCalledWith({ where: { id } });
+                expect(clientModel.delete).toHaveBeenCalledWith({
+                    where: { id, organizationId: organizationId },
+                });
             });
         });
     });

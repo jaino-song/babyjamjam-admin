@@ -12,7 +12,7 @@ import {
 } from "@nestjs/common";
 import { NotificationService } from "application/services/notification.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { CurrentTenant } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import {
     SubscribePushDto,
     UnsubscribePushDto,
@@ -78,7 +78,7 @@ export class NotificationController {
      * Get user's notifications with pagination
      */
     @Get()
-    @UseGuards(JwtGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     async getNotifications(
         @CurrentTenant() tenant: { organizationId?: string },
         @Request() req: { user: JwtPayload },
@@ -99,7 +99,7 @@ export class NotificationController {
      * Get unread notifications count
      */
     @Get("unread/count")
-    @UseGuards(JwtGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     async getUnreadCount(
         @CurrentTenant() tenant: { organizationId?: string },
         @Request() req: { user: JwtPayload }
@@ -118,7 +118,7 @@ export class NotificationController {
      * Mark a notification as read
      */
     @Patch(":id/read")
-    @UseGuards(JwtGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     async markAsRead(
         @CurrentTenant() tenant: { organizationId?: string },
         @Request() req: { user: JwtPayload },
@@ -136,7 +136,7 @@ export class NotificationController {
      * Mark all notifications as read
      */
     @Patch("read-all")
-    @UseGuards(JwtGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     async markAllAsRead(
         @CurrentTenant() tenant: { organizationId?: string },
         @Request() req: { user: JwtPayload }
@@ -151,7 +151,7 @@ export class NotificationController {
      * Send notification to a specific user (admin only)
      */
     @Post("send")
-    @UseGuards(JwtGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     async sendNotification(
         @CurrentTenant() tenant: { organizationId?: string },
         @Request() req: { user: JwtPayload },

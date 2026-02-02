@@ -15,9 +15,9 @@ describe("SbBankAccountInfoRepository", () => {
     });
 
     const createBankAccountRow = (overrides = {}) => ({
-        area_id: "Seoul",
-        bank_name: "K-Bank",
-        acc_num: "123-456-7890",
+        areaId: "Seoul",
+        bankName: "K-Bank",
+        accNum: "123-456-7890",
         ...overrides,
     });
 
@@ -49,7 +49,7 @@ describe("SbBankAccountInfoRepository", () => {
                 const result = await repository.findByArea("Seoul");
 
                 // Assert
-                expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { area_id: "Seoul" } });
+                expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { areaId: "Seoul" } });
                 expect(result).toBeInstanceOf(BankAccountInfoEntity);
                 expect(result).toMatchObject({
                     area: "Seoul",
@@ -68,7 +68,7 @@ describe("SbBankAccountInfoRepository", () => {
                 const result = await repository.findByArea("Busan");
 
                 // Assert
-                expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { area_id: "Busan" } });
+                expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { areaId: "Busan" } });
                 expect(result).toBeNull();
             });
         });
@@ -84,7 +84,7 @@ describe("SbBankAccountInfoRepository", () => {
                     await repository.findByArea(area);
 
                     // Assert
-                    expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { area_id: area } });
+                    expect(bankAccountModel.findUnique).toHaveBeenCalledWith({ where: { areaId: area } });
                 }
             );
         });
@@ -99,9 +99,9 @@ describe("SbBankAccountInfoRepository", () => {
                 // Arrange
                 const entity = BankAccountInfoEntity.create("Incheon", "IBK", "987-654-3210");
                 const createdRow = createBankAccountRow({
-                    area_id: "Incheon",
-                    bank_name: "IBK",
-                    acc_num: "987-654-3210",
+                    areaId: "Incheon",
+                    bankName: "IBK",
+                    accNum: "987-654-3210",
                 });
                 bankAccountModel.create.mockResolvedValue(createdRow);
 
@@ -111,9 +111,9 @@ describe("SbBankAccountInfoRepository", () => {
                 // Assert
                 expect(bankAccountModel.create).toHaveBeenCalledWith({
                     data: {
-                        area_id: "Incheon",
-                        bank_name: "IBK",
-                        acc_num: "987-654-3210",
+                        areaId: "Incheon",
+                        bankName: "IBK",
+                        accNum: "987-654-3210",
                     },
                 });
                 expect(result).toBeInstanceOf(BankAccountInfoEntity);
@@ -135,9 +135,9 @@ describe("SbBankAccountInfoRepository", () => {
                 // Arrange
                 const entity = BankAccountInfoEntity.create("TestArea", bankName, accNum);
                 const createdRow = createBankAccountRow({
-                    area_id: "TestArea",
-                    bank_name: bankName,
-                    acc_num: accNum,
+                    areaId: "TestArea",
+                    bankName: bankName,
+                    accNum: accNum,
                 });
                 bankAccountModel.create.mockResolvedValue(createdRow);
 
@@ -147,9 +147,9 @@ describe("SbBankAccountInfoRepository", () => {
                 // Assert
                 expect(bankAccountModel.create).toHaveBeenCalledWith({
                     data: {
-                        area_id: "TestArea",
-                        bank_name: bankName,
-                        acc_num: accNum,
+                        areaId: "TestArea",
+                        bankName: bankName,
+                        accNum: accNum,
                     },
                 });
                 expect(result.bankName).toBe(bankName);
@@ -167,9 +167,9 @@ describe("SbBankAccountInfoRepository", () => {
                 // Arrange
                 const entity = new BankAccountInfoEntity("Daegu", "Shinhan", "444-555-6666");
                 const updatedRow = createBankAccountRow({
-                    area_id: "Daegu",
-                    bank_name: "Shinhan",
-                    acc_num: "444-555-6666",
+                    areaId: "Daegu",
+                    bankName: "Shinhan",
+                    accNum: "444-555-6666",
                 });
                 bankAccountModel.update.mockResolvedValue(updatedRow);
 
@@ -178,10 +178,10 @@ describe("SbBankAccountInfoRepository", () => {
 
                 // Assert
                 expect(bankAccountModel.update).toHaveBeenCalledWith({
-                    where: { area_id: "Daegu" },
+                    where: { areaId: "Daegu" },
                     data: {
-                        bank_name: "Shinhan",
-                        acc_num: "444-555-6666",
+                        bankName: "Shinhan",
+                        accNum: "444-555-6666",
                     },
                 });
                 expect(result).toBeInstanceOf(BankAccountInfoEntity);
@@ -198,9 +198,9 @@ describe("SbBankAccountInfoRepository", () => {
                 // Arrange
                 const entity = new BankAccountInfoEntity("Seoul", "Woori", "123-456-7890");
                 const updatedRow = createBankAccountRow({
-                    area_id: "Seoul",
-                    bank_name: "Woori",
-                    acc_num: "123-456-7890",
+                    areaId: "Seoul",
+                    bankName: "Woori",
+                    accNum: "123-456-7890",
                 });
                 bankAccountModel.update.mockResolvedValue(updatedRow);
 
@@ -217,9 +217,9 @@ describe("SbBankAccountInfoRepository", () => {
                 // Arrange
                 const entity = new BankAccountInfoEntity("Seoul", "K-Bank", "999-888-7777");
                 const updatedRow = createBankAccountRow({
-                    area_id: "Seoul",
-                    bank_name: "K-Bank",
-                    acc_num: "999-888-7777",
+                    areaId: "Seoul",
+                    bankName: "K-Bank",
+                    accNum: "999-888-7777",
                 });
                 bankAccountModel.update.mockResolvedValue(updatedRow);
 
@@ -245,7 +245,7 @@ describe("SbBankAccountInfoRepository", () => {
                 await repository.delete("Daejeon");
 
                 // Assert
-                expect(bankAccountModel.delete).toHaveBeenCalledWith({ where: { area_id: "Daejeon" } });
+                expect(bankAccountModel.delete).toHaveBeenCalledWith({ where: { areaId: "Daejeon" } });
             });
         });
 
@@ -260,7 +260,7 @@ describe("SbBankAccountInfoRepository", () => {
                     await repository.delete(area);
 
                     // Assert
-                    expect(bankAccountModel.delete).toHaveBeenCalledWith({ where: { area_id: area } });
+                    expect(bankAccountModel.delete).toHaveBeenCalledWith({ where: { areaId: area } });
                 }
             );
         });

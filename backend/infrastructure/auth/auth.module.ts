@@ -4,7 +4,13 @@ import { PassportModule } from "@nestjs/passport";
 import { AuthService } from "../../application/services/auth.service";
 import { AuthController } from "../../interface/controllers/auth.controller";
 import { KakaoStrategy } from "./kakao.strategy";
+import { LocalStrategy } from "./local.strategy";
 import { PrismaService } from "../database/prisma.service";
+import { RateLimitGuard } from "./rate-limit.guard";
+import { ResendEmailAdapter } from "../adapters/resend-email.adapter";
+import { SbAuthTokenRepository } from "../database/repositories/sb.auth-token.repository";
+import { EMAIL_PORT } from "../../domain/ports/email.port";
+import { AUTH_TOKEN_REPOSITORY } from "../../domain/repositories/auth-token.repository.interface";
 
 @Module({
     imports: [
@@ -15,7 +21,22 @@ import { PrismaService } from "../database/prisma.service";
         }),
     ],
     controllers: [AuthController],
-    providers: [AuthService, KakaoStrategy, PrismaService],
+    providers: [
+        AuthService,
+        KakaoStrategy,
+        LocalStrategy,
+        PrismaService,
+        RateLimitGuard,
+        {
+            provide: EMAIL_PORT,
+            useClass: ResendEmailAdapter,
+        },
+        {
+            provide: AUTH_TOKEN_REPOSITORY,
+            useClass: SbAuthTokenRepository,
+        },
+    ],
+    exports: [AuthService, RateLimitGuard],
 })
 export class AuthModule { }
 

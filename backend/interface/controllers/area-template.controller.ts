@@ -1,6 +1,7 @@
-import { Controller, Post, Body, Get, Query, Patch, Delete } from "@nestjs/common";
+import { Controller, Post, Body, Get, Query, Patch, Delete, UseGuards } from "@nestjs/common";
 import { AreaTemplateService } from "application/services/area-template.service";
-import { CurrentTenant } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
 interface CreateAreaTemplateDto {
     area: string;
@@ -14,6 +15,7 @@ interface UpdateAreaTemplateDto {
 }
 
 @Controller("area-templates")
+@UseGuards(JwtGuard, TenantGuard)
 export class AreaTemplateController {
     constructor(private readonly areaTemplateService: AreaTemplateService) {}
 

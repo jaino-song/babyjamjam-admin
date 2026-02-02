@@ -37,21 +37,21 @@ export class AdminFeedbackController {
             type,
         });
 
-        const feedbackItems: FeedbackItemDto[] = data.map((feedback) => ({
+        const feedbackItems: FeedbackItemDto[] = data.map((feedback: any) => ({
             id: feedback.id,
             type: feedback.type as 'positive' | 'negative',
             comment: feedback.comment,
-            createdAt: feedback.created_at,
+            createdAt: feedback.createdAt,
             user: {
                 id: feedback.user.id,
                 name: feedback.user.name,
                 email: feedback.user.email,
             },
             message: {
-                id: feedback.message.id,
-                content: feedback.message.content,
-                role: feedback.message.role,
-                timestamp: feedback.message.timestamp,
+                id: feedback.chatMessage.id,
+                content: feedback.chatMessage.content,
+                role: feedback.chatMessage.role,
+                timestamp: feedback.chatMessage.timestamp,
             },
         }));
 
@@ -79,25 +79,26 @@ export class AdminFeedbackController {
             throw new NotFoundException('Feedback not found');
         }
 
+        const f = feedback as any;
         return {
-            id: feedback.id,
-            type: feedback.type as 'positive' | 'negative',
-            comment: feedback.comment,
-            createdAt: feedback.created_at,
+            id: f.id,
+            type: f.type as 'positive' | 'negative',
+            comment: f.comment,
+            createdAt: f.createdAt,
             user: {
-                id: feedback.user.id,
-                name: feedback.user.name,
-                email: feedback.user.email,
+                id: f.user.id,
+                name: f.user.name,
+                email: f.user.email,
             },
             message: {
-                id: feedback.message.id,
-                content: feedback.message.content,
-                role: feedback.message.role,
-                timestamp: feedback.message.timestamp,
+                id: f.chatMessage.id,
+                content: f.chatMessage.content,
+                role: f.chatMessage.role,
+                timestamp: f.chatMessage.timestamp,
             },
             session: {
-                id: feedback.session.id,
-                messages: feedback.session.messages.map((msg) => ({
+                id: f.chatSession.id,
+                messages: f.chatSession.messages.map((msg: any) => ({
                     id: msg.id,
                     role: msg.role,
                     content: msg.content,

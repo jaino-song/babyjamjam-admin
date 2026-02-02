@@ -8,6 +8,7 @@ describe("SbMessageRepository", () => {
     // ============================================
 
     const createMockPrismaMessage = () => ({
+        findFirst: jest.fn(),
         findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
@@ -18,8 +19,8 @@ describe("SbMessageRepository", () => {
         id: 1,
         title: "Hello",
         text: "World",
-        created_at: new Date("2024-01-01T00:00:00.000Z"),
-        edited_at: null,
+        createdAt: new Date("2024-01-01T00:00:00.000Z"),
+        editedAt: null,
         ...overrides,
     });
 
@@ -47,14 +48,16 @@ describe("SbMessageRepository", () => {
             it("should return the mapped MessageEntity", async () => {
                 // Arrange
                 const now = new Date();
-                const row = createMessageRow({ created_at: now });
-                messageModel.findUnique.mockResolvedValue(row);
+                const row = createMessageRow({ createdAt: now });
+                messageModel.findFirst.mockResolvedValue(row);
 
                 // Act
                 const result = await repository.findById(organizationId, 1);
 
                 // Assert
-                expect(messageModel.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
+                expect(messageModel.findFirst).toHaveBeenCalledWith({
+                    where: { id: 1, organizationId: organizationId },
+                });
                 expect(result).toBeInstanceOf(MessageEntity);
                 expect(result).toMatchObject({
                     id: 1,
@@ -66,18 +69,21 @@ describe("SbMessageRepository", () => {
             });
         });
 
-        describe("given a message with edited_at set", () => {
+        describe("given a message with editedAt set", () => {
             it("should map editedAt correctly", async () => {
                 // Arrange
                 const createdAt = new Date("2024-01-01T00:00:00.000Z");
                 const editedAt = new Date("2024-01-02T00:00:00.000Z");
-                const row = createMessageRow({ created_at: createdAt, edited_at: editedAt });
-                messageModel.findUnique.mockResolvedValue(row);
+                const row = createMessageRow({ createdAt: createdAt, editedAt: editedAt });
+                messageModel.findFirst.mockResolvedValue(row);
 
                 // Act
                 const result = await repository.findById(organizationId, 1);
 
                 // Assert
+                expect(messageModel.findFirst).toHaveBeenCalledWith({
+                    where: { id: 1, organizationId: organizationId },
+                });
                 expect(result?.editedAt).toEqual(editedAt);
             });
         });
@@ -85,13 +91,15 @@ describe("SbMessageRepository", () => {
         describe("given no message exists with the specified id", () => {
             it("should return null", async () => {
                 // Arrange
-                messageModel.findUnique.mockResolvedValue(null);
+                messageModel.findFirst.mockResolvedValue(null);
 
                 // Act
                 const result = await repository.findById(organizationId, 999);
 
                 // Assert
-                expect(messageModel.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
+                expect(messageModel.findFirst).toHaveBeenCalledWith({
+                    where: { id: 999, organizationId: organizationId },
+                });
                 expect(result).toBeNull();
             });
         });
@@ -120,6 +128,7 @@ describe("SbMessageRepository", () => {
                     data: {
                         title: "Title",
                         text: "Text",
+                        organizationId: organizationId,
                     },
                 });
                 expect(result).toMatchObject({ id: 2, title: "Title" });
@@ -146,6 +155,7 @@ describe("SbMessageRepository", () => {
                     data: {
                         title: "Long Message",
                         text: longText,
+                        organizationId: organizationId,
                     },
                 });
                 expect(result.text).toBe(longText);
@@ -167,8 +177,8 @@ describe("SbMessageRepository", () => {
                     id: 3,
                     title: "Updated",
                     text: "Message updated",
-                    created_at: createdAt,
-                    edited_at: editedAt,
+                    createdAt: createdAt,
+                    editedAt: editedAt,
                 });
                 messageModel.update.mockResolvedValue(updatedRow);
 
@@ -177,11 +187,11 @@ describe("SbMessageRepository", () => {
 
                 // Assert
                 expect(messageModel.update).toHaveBeenCalledWith({
-                    where: { id: 3 },
+                    where: { id: 3, organizationId: organizationId },
                     data: {
                         title: "Updated",
                         text: "Message updated",
-                        edited_at: editedAt,
+                        editedAt: editedAt,
                     },
                 });
                 expect(result).toMatchObject({ id: 3, title: "Updated" });
@@ -198,7 +208,7 @@ describe("SbMessageRepository", () => {
                     id: 4,
                     title: "New Title",
                     text: "Original text",
-                    edited_at: editedAt,
+                    editedAt: editedAt,
                 });
                 messageModel.update.mockResolvedValue(updatedRow);
 
@@ -221,7 +231,7 @@ describe("SbMessageRepository", () => {
                     id: 5,
                     title: "Original Title",
                     text: "New text",
-                    edited_at: editedAt,
+                    editedAt: editedAt,
                 });
                 messageModel.update.mockResolvedValue(updatedRow);
 
@@ -248,7 +258,9 @@ describe("SbMessageRepository", () => {
                 await repository.delete(organizationId, 4);
 
                 // Assert
-                expect(messageModel.delete).toHaveBeenCalledWith({ where: { id: 4 } });
+                expect(messageModel.delete).toHaveBeenCalledWith({
+                    where: { id: 4, organizationId: organizationId },
+                });
             });
         });
 
@@ -261,7 +273,9 @@ describe("SbMessageRepository", () => {
                 await repository.delete(organizationId, id);
 
                 // Assert
-                expect(messageModel.delete).toHaveBeenCalledWith({ where: { id } });
+                expect(messageModel.delete).toHaveBeenCalledWith({
+                    where: { id, organizationId: organizationId },
+                });
             });
         });
     });

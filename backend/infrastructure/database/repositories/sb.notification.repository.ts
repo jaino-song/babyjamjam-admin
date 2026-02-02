@@ -10,7 +10,7 @@ export class SbNotificationRepository implements INotificationRepository {
 
     async findById(organizationid: string, id: number): Promise<NotificationEntity | null> {
         const row = await this.prismaService.notification.findFirst({
-            where: { id, organization_id: organizationid },
+            where: { id, organizationId: organizationid },
         });
         return row ? NotificationMapper.toDomain(row) : null;
     }
@@ -21,8 +21,8 @@ export class SbNotificationRepository implements INotificationRepository {
         options?: { limit?: number; offset?: number },
     ): Promise<NotificationEntity[]> {
         const rows = await this.prismaService.notification.findMany({
-            where: { user_id: userId, organization_id: organizationid },
-            orderBy: { sent_at: 'desc' },
+            where: { userId: userId, organizationId: organizationid },
+            orderBy: { sentAt: 'desc' },
             take: options?.limit ?? 50,
             skip: options?.offset ?? 0,
         });
@@ -32,11 +32,11 @@ export class SbNotificationRepository implements INotificationRepository {
     async findUnreadByUserId(organizationid: string, userId: string): Promise<NotificationEntity[]> {
         const rows = await this.prismaService.notification.findMany({
             where: {
-                user_id: userId,
-                read_at: null,
-                organization_id: organizationid,
+                userId: userId,
+                readAt: null,
+                organizationId: organizationid,
             },
-            orderBy: { sent_at: 'desc' },
+            orderBy: { sentAt: 'desc' },
         });
         return rows.map(NotificationMapper.toDomain);
     }
@@ -44,9 +44,9 @@ export class SbNotificationRepository implements INotificationRepository {
     async countUnreadByUserId(organizationid: string, userId: string): Promise<number> {
         return this.prismaService.notification.count({
             where: {
-                user_id: userId,
-                read_at: null,
-                organization_id: organizationid,
+                userId: userId,
+                readAt: null,
+                organizationId: organizationid,
             },
         });
     }
@@ -55,7 +55,7 @@ export class SbNotificationRepository implements INotificationRepository {
         const created = await this.prismaService.notification.create({
             data: {
                 ...NotificationMapper.toPrismaCreate(notification),
-                organization_id: organizationid,
+                organizationId: organizationid,
             },
         });
         return NotificationMapper.toDomain(created);
@@ -63,7 +63,7 @@ export class SbNotificationRepository implements INotificationRepository {
 
     async update(organizationid: string, notification: NotificationEntity): Promise<NotificationEntity> {
         const updated = await this.prismaService.notification.update({
-            where: { id: notification.id, organization_id: organizationid },
+            where: { id: notification.id, organizationId: organizationid },
             data: NotificationMapper.toPrismaUpdate(notification),
         });
         return NotificationMapper.toDomain(updated);
@@ -72,12 +72,12 @@ export class SbNotificationRepository implements INotificationRepository {
     async markAllAsReadByUserId(organizationid: string, userId: string): Promise<void> {
         await this.prismaService.notification.updateMany({
             where: {
-                user_id: userId,
-                read_at: null,
-                organization_id: organizationid,
+                userId: userId,
+                readAt: null,
+                organizationId: organizationid,
             },
             data: {
-                read_at: new Date(),
+                readAt: new Date(),
             },
         });
     }
@@ -85,8 +85,8 @@ export class SbNotificationRepository implements INotificationRepository {
     async deleteOlderThan(organizationid: string, date: Date): Promise<number> {
         const result = await this.prismaService.notification.deleteMany({
             where: {
-                sent_at: { lt: date },
-                organization_id: organizationid,
+                sentAt: { lt: date },
+                organizationId: organizationid,
             },
         });
         return result.count;

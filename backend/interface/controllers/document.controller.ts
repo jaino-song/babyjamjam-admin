@@ -12,6 +12,7 @@ import {
     Inject,
     Res,
     Query,
+    UseGuards,
 } from "@nestjs/common";
 import { Response } from "express";
 import { FileInterceptor } from "@nestjs/platform-express";
@@ -24,7 +25,8 @@ import {
 } from "domain/entities/document.entity";
 import { FILE_STORAGE_PORT, FileStoragePort } from "domain/ports/file-storage.port";
 import { v4 as uuidv4 } from "uuid";
-import { CurrentTenant } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
 function toResponse(entity: DocumentEntity) {
     return {
@@ -44,7 +46,8 @@ function toResponse(entity: DocumentEntity) {
     };
 }
 
-@Controller("file-storage")
+@Controller("documents")
+@UseGuards(JwtGuard, TenantGuard)
 export class DocumentController {
     constructor(
         private readonly documentService: DocumentService,

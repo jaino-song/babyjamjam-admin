@@ -28,9 +28,25 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         verifyAsync: jest.fn(),
     });
 
+    const createMockEmailService = () => ({
+        send: jest.fn(),
+        sendVerificationEmail: jest.fn(),
+        sendPasswordResetEmail: jest.fn(),
+    });
+
+    const createMockAuthTokenRepository = () => ({
+        findByToken: jest.fn(),
+        findByUserIdAndType: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+        deleteByUserIdAndType: jest.fn(),
+        deleteExpiredTokens: jest.fn(),
+    });
+
     const mockUser = {
         id: "user-uuid-123",
-        kakao_id: "kakao-12345",
+        kakaoId: "kakao-12345",
         email: "test@example.com",
         name: "Test User",
         role: "user",
@@ -40,13 +56,13 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         id: "org-uuid-123",
         name: "Test Organization",
         slug: "test-org",
-        is_active: true,
+        isActive: true,
     };
 
     const mockUserOrganization = {
         id: "user-org-uuid-123",
-        user_id: mockUser.id,
-        organization_id: mockOrganization.id,
+        userId: mockUser.id,
+        organizationId: mockOrganization.id,
         role: "admin",
     };
 
@@ -54,28 +70,34 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         id: "org-uuid-456",
         name: "Second Organization",
         slug: "second-org",
-        is_active: true,
+        isActive: true,
     };
 
     const mockUserOrganization2 = {
         id: "user-org-uuid-456",
-        user_id: mockUser.id,
-        organization_id: mockOrganization2.id,
+        userId: mockUser.id,
+        organizationId: mockOrganization2.id,
         role: "member",
     };
 
     let service: AuthService;
     let prismaService: ReturnType<typeof createMockPrismaService>;
     let jwtService: ReturnType<typeof createMockJwtService>;
+    let emailService: ReturnType<typeof createMockEmailService>;
+    let authTokenRepository: ReturnType<typeof createMockAuthTokenRepository>;
 
     beforeEach(() => {
         prismaService = createMockPrismaService();
         jwtService = createMockJwtService();
+        emailService = createMockEmailService();
+        authTokenRepository = createMockAuthTokenRepository();
 
         // Type assertion to work around constructor typing
         service = new AuthService(
             prismaService as unknown as PrismaService,
-            jwtService as unknown as JwtService
+            jwtService as unknown as JwtService,
+            emailService as unknown as ReturnType<typeof createMockEmailService>,
+            authTokenRepository as unknown as ReturnType<typeof createMockAuthTokenRepository>
         );
 
         // Setup default mock returns
@@ -286,7 +308,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const newOrgId = mockOrganization2.id;
 
                 prismaService.user_organization.findFirst.mockImplementation((opts: any) => {
-                    if (opts.where.organization_id === newOrgId) {
+                    if (opts.where.organizationId === newOrgId) {
                         return Promise.resolve(mockUserOrganization2);
                     }
                     return Promise.resolve(mockUserOrganization);

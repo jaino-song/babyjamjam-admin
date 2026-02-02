@@ -72,7 +72,7 @@ export const Header = ({ initialUser }: HeaderProps) => {
             {!initialUser && isLoading ? (
               <Avatar />
             ) : user ? (
-              <Avatar alt={user?.name || 'User'} src={user?.profile_image || ''} />
+              <Avatar alt={user?.name || 'User'} src={user?.profileImage || ''} />
             ) : (
               <LoginIcon />
             )}

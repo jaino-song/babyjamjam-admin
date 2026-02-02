@@ -1,14 +1,12 @@
 import { Module } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
 import { JwtStrategy } from "./infrastructure/auth/jwt.strategy";
-import { AuthController } from "interface/controllers/auth.controller";
 import { EformsignController } from "interface/controllers/eformsign.controller";
-import { KakaoStrategy } from "infrastructure/auth/kakao.strategy";
-import { AuthService } from "application/services/auth.service";
 import { EformsignService } from "application/services/eformsign.service";
 import { ConfigModule } from "@nestjs/config";
 import { PassportModule } from "@nestjs/passport";
 import { ScheduleModule } from "@nestjs/schedule";
+import { AuthModule } from "infrastructure/auth/auth.module";
 import { BankAccountInfoModule } from "module/bank-account-info.module";
 import { UserModule } from "module/user.module";
 import { MessageModule } from "module/message.module";
@@ -34,6 +32,7 @@ import { TenantModule } from "./infrastructure/tenant/tenant.module";
             secret: process.env['JWT_SECRET'],
             signOptions: { expiresIn: "7d" },
         }),
+        AuthModule,
         UserModule,
         BankAccountInfoModule,
         MessageModule,
@@ -47,7 +46,7 @@ import { TenantModule } from "./infrastructure/tenant/tenant.module";
         DocumentModule,
         TenantModule,
     ],
-    controllers: [AuthController, EformsignController],
-    providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],
+    controllers: [EformsignController],
+    providers: [EformsignService, JwtStrategy, PrismaService],
 })
 export class AppModule {}

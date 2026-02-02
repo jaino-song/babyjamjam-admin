@@ -1,22 +1,31 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
-import {
-    Autocomplete,
-    TextField,
-    Box,
-    Typography,
-    CircularProgress,
-    Paper,
-    Divider,
-    ButtonBase,
-} from "@mui/material";
-import { UserPlus } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
+import { Check, ChevronsUpDown, UserPlus } from "lucide-react";
 import { useEmployees, Employee } from "@/app/hooks/useEmployees";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { useEmployeeDialogStore } from "@/app/store/employee-dialog-store";
 import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
+import { cn } from "@/lib/utils";
+
+import { Button } from "@/components/ui/button";
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+    CommandSeparator,
+} from "@/components/ui/command";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 
 interface EmployeeAutocompleteProps {
     "data-testid"?: string;
@@ -49,12 +58,12 @@ export function EmployeeAutocomplete({
     // Zustand store for prefilling employee name in EmployeeFormDialog
     const setPrefillName = useEmployeeDialogStore((state) => state.setPrefillName);
 
-    // Track input value for display synchronization
+    // Track input value for display and filtering
     const [inputValue, setInputValue] = useState("");
-    // Track open state - needed for Korean IME compatibility
+    // Track open state
     const [isOpen, setIsOpen] = useState(false);
-    // Ref for the input element - used to blur when closing dropdown
-    const inputRef = useRef<HTMLInputElement>(null);
+    // Track Korean IME composition (used for onCompositionStart/End)
+    const [, setIsComposing] = useState(false);
 
     // Filter out excluded employees
     const availableEmployees = useMemo(() => {
@@ -64,48 +73,46 @@ export function EmployeeAutocomplete({
 
     // Find selected employee
     const selectedEmployee = useMemo(() => {
-        // Use explicit null/undefined check instead of falsy check since 0 is a valid ID
         if (value === null || value === undefined || !employees) return null;
         return employees.find(emp => emp.id === value) || null;
     }, [value, employees]);
 
-    // Sync inputValue when selectedEmployee changes (e.g., after creating a new employee)
-    // This ensures the text field shows the employee name when selection changes externally
+    // Filter employees based on input
+    const filteredEmployees = useMemo(() => {
+        if (!inputValue.trim()) return availableEmployees;
+
+        const searchTerm = inputValue.trim();
+
+        return availableEmployees.filter(emp =>
+            // 초성 search for name (e.g., ㄱ → 김현아)
+            matchesKoreanSearch(emp.name, searchTerm) ||
+            // Work area: simple substring match
+            emp.workArea.some(area => area.toLowerCase().includes(searchTerm.toLowerCase())) ||
+            // Phone: simple substring match
+            emp.phone.includes(searchTerm)
+        );
+    }, [availableEmployees, inputValue]);
+
+    // Sync inputValue when selectedEmployee changes
     useEffect(() => {
         if (selectedEmployee) {
             setInputValue(selectedEmployee.name);
         } else if (value === null || value === undefined) {
-            // Clear input when value is explicitly cleared (null/undefined)
             setInputValue("");
         }
-        // Note: When value is a non-null number but employee not found (e.g., deleted employee),
-        // we don't clear input to allow the useEmployees query to finish loading first.
-        // The selectedEmployee will update once employees are loaded.
     }, [selectedEmployee, value]);
 
-    const handleChange = (
-        _event: React.SyntheticEvent,
-        newValue: Employee | null
-    ) => {
-        // Update input value immediately to show selected name
-        setInputValue(newValue?.name ?? "");
-        onChange(newValue?.id ?? null, newValue);
+    const handleSelect = (employee: Employee) => {
+        setInputValue(employee.name);
+        onChange(employee.id, employee);
+        setIsOpen(false);
     };
 
-    const handleManualEntry = (e: React.MouseEvent) => {
-        // Prevent the Autocomplete from closing before click completes
-        e.preventDefault();
-        e.stopPropagation();
-        // Close the dropdown state
-        setIsOpen(false);
-        // Blur the input using ref to ensure dropdown closes completely
-        // Note: We use ref because the Paper slot is rendered in a Portal,
-        // so DOM traversal with closest() won't find the Autocomplete
-        inputRef.current?.blur();
+    const handleManualEntry = () => {
         // Save typed name to Zustand store for EmployeeFormDialog to prefill
         setPrefillName(inputValue);
-        // Use setTimeout to ensure dropdown is fully closed before opening dialog
-        // This prevents the dropdown from appearing over the new dialog
+        setIsOpen(false);
+        // Use setTimeout to ensure popover is fully closed before opening dialog
         setTimeout(() => {
             if (onManualEntry) {
                 onManualEntry(inputValue);
@@ -113,157 +120,113 @@ export function EmployeeAutocomplete({
         }, 100);
     };
 
-    // Handle input change to track what user types
-    const handleInputChange = (
-        _event: React.SyntheticEvent,
-        newInputValue: string,
-        reason: string
-    ) => {
-        // Accept input changes for:
-        // - "input": user typing
-        // - "clear": user clicked X button
-        // - "reset": MUI resets input (e.g., on blur, selection change)
-        //   But for "reset", only update if it's clearing or syncing with selection
-        if (reason === "input" || reason === "clear") {
-            setInputValue(newInputValue);
-        } else if (reason === "reset") {
-            // Allow reset to clear the input (when value becomes empty)
-            // or sync with selected employee name
-            if (newInputValue === "" || newInputValue === selectedEmployee?.name) {
-                setInputValue(newInputValue);
-            }
-        }
+    // Handle input change during search
+    const handleInputChange = (newValue: string) => {
+        setInputValue(newValue);
+        // Don't clear selection until user explicitly selects something else
     };
 
     return (
-        <Autocomplete<Employee, false, false, false>
-            data-testid={dataTestId ?? "employee-autocomplete"}
-            value={selectedEmployee}
-            onChange={handleChange}
-            inputValue={inputValue}
-            onInputChange={handleInputChange}
-            options={availableEmployees}
-            loading={isLoading}
-            clearOnBlur={false}
-            blurOnSelect={true}
-            // Open on focus for better UX with Korean IME
-            open={isOpen}
-            onOpen={() => setIsOpen(true)}
-            onClose={() => setIsOpen(false)}
-            openOnFocus
-            getOptionLabel={(option) => option.name}
-            isOptionEqualToValue={(option, val) => option.id === val.id}
-            filterOptions={(options, { inputValue: filterInput }) => {
-                // Only show options when user has typed something
-                if (!filterInput.trim()) return [];
-                return options.filter(
-                    emp =>
-                        // 초성 search only for name (e.g., ㄱ → 김현아)
-                        matchesKoreanSearch(emp.name, filterInput) ||
-                        // Work area: simple substring match (no 초성 to avoid false positives)
-                        emp.workArea.some(area => area.toLowerCase().includes(filterInput.toLowerCase())) ||
-                        // Phone: simple substring match
-                        emp.phone.includes(filterInput)
-                );
-            }}
-            renderOption={(props, option) => (
-                <Box component="li" {...props} key={option.id}>
-                    <Box
-                        sx={{
-                            display: "flex",
-                            flexDirection: "column",
-                            width: "100%",
-                        }}
-                    >
-                        <Box
-                            sx={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 1,
-                            }}
-                        >
-                            <Typography variant="body1">{option.name}</Typography>
-                        </Box>
-                        <Typography variant="caption" color="text.secondary">
-                            {option.workArea.join(", ")} · {option.phone}
-                        </Typography>
-                    </Box>
-                </Box>
-            )}
-            renderInput={(params) => (
-                <TextField
-                    {...params}
-                    inputRef={inputRef}
-                    label={label}
-                    required={required}
-                    error={error}
-                    helperText={helperText}
-                    placeholder={t(locale, "clients.form.employee-search-placeholder")}
-                    InputProps={{
-                        ...params.InputProps,
-                        endAdornment: (
-                            <>
-                                {isLoading ? <CircularProgress color="inherit" size={20} /> : null}
-                                {params.InputProps.endAdornment}
-                            </>
-                        ),
-                    }}
-                />
-            )}
-            noOptionsText={
-                <Typography variant="body2" color="text.secondary" sx={{ py: 1, textAlign: "center" }}>
-                    {t(locale, "clients.form.no-employee-found")}
-                </Typography>
-            }
-            slots={{
-                paper: (props) => (
-                    <Paper {...props} elevation={8} data-testid="employee-autocomplete-dropdown">
-                        {props.children}
-                        {allowManualEntry && (
-                            <>
-                                <Divider />
-                                <ButtonBase
-                                    data-testid="employee-autocomplete-add-button"
-                                    onMouseDown={handleManualEntry}
-                                    sx={{
-                                        width: "100%",
-                                        py: 1.5,
-                                        px: 2,
-                                        justifyContent: "flex-start",
-                                        "&:hover": {
-                                            bgcolor: "action.hover",
-                                        },
-                                    }}
-                                >
-                                    <Box
-                                        sx={{
-                                            display: "flex",
-                                            flexDirection: "column",
-                                            width: "100%",
-                                        }}
-                                    >
-                                        <Box
-                                            sx={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: 1,
-                                            }}
-                                        >
-                                            <UserPlus size={16} />
-                                            <Typography variant="body1" color="primary">
-                                                {t(locale, "contract-msg.employee-manual-entry")}
-                                            </Typography>
-                                        </Box>
-                                        <Typography variant="caption" color="text.secondary">
-                                            {t(locale, "contract-msg.employee-manual-entry-description")}
-                                        </Typography>
-                                    </Box>
-                                </ButtonBase>
-                            </>
+        <div className="space-y-2" data-testid={dataTestId ?? "employee-autocomplete"}>
+            <Label className={cn(error && "text-destructive")}>
+                {label}
+                {required && <span className="text-destructive ml-1">*</span>}
+            </Label>
+            <Popover open={isOpen} onOpenChange={setIsOpen}>
+                <PopoverTrigger asChild>
+                    <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={isOpen}
+                        className={cn(
+                            "w-full justify-between font-normal",
+                            !selectedEmployee && "text-muted-foreground",
+                            error && "border-destructive"
                         )}
-                    </Paper>
-                ),
-            }}
-        />
+                    >
+                        {selectedEmployee ? selectedEmployee.name : t(locale, "clients.form.employee-search-placeholder")}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command shouldFilter={false}>
+                        <CommandInput
+                            placeholder={t(locale, "clients.form.employee-search-placeholder")}
+                            value={inputValue}
+                            onValueChange={handleInputChange}
+                            onCompositionStart={() => setIsComposing(true)}
+                            onCompositionEnd={() => setIsComposing(false)}
+                        />
+                        <CommandList data-testid="employee-autocomplete-dropdown">
+                            {isLoading ? (
+                                <div className="flex items-center justify-center py-6">
+                                    <Spinner className="h-4 w-4" />
+                                </div>
+                            ) : filteredEmployees.length === 0 ? (
+                                <CommandEmpty>
+                                    {t(locale, "clients.form.no-employee-found")}
+                                </CommandEmpty>
+                            ) : (
+                                <CommandGroup>
+                                    {filteredEmployees.map((employee) => (
+                                        <CommandItem
+                                            key={employee.id}
+                                            value={String(employee.id)}
+                                            onSelect={() => handleSelect(employee)}
+                                            className="flex flex-col items-start gap-1 py-2"
+                                        >
+                                            <div className="flex items-center gap-2 w-full">
+                                                <Check
+                                                    className={cn(
+                                                        "h-4 w-4",
+                                                        selectedEmployee?.id === employee.id
+                                                            ? "opacity-100"
+                                                            : "opacity-0"
+                                                    )}
+                                                />
+                                                <span className="font-medium">{employee.name}</span>
+                                            </div>
+                                            <span className="text-xs text-muted-foreground ml-6">
+                                                {employee.workArea.join(", ")} · {employee.phone}
+                                            </span>
+                                        </CommandItem>
+                                    ))}
+                                </CommandGroup>
+                            )}
+
+                            {allowManualEntry && (
+                                <>
+                                    <CommandSeparator />
+                                    <CommandGroup>
+                                        <CommandItem
+                                            onSelect={handleManualEntry}
+                                            className="cursor-pointer"
+                                            data-testid="employee-autocomplete-add-button"
+                                        >
+                                            <div className="flex flex-col w-full">
+                                                <div className="flex items-center gap-2">
+                                                    <UserPlus className="h-4 w-4" />
+                                                    <span className="text-primary font-medium">
+                                                        {t(locale, "contract-msg.employee-manual-entry")}
+                                                    </span>
+                                                </div>
+                                                <span className="text-xs text-muted-foreground ml-6">
+                                                    {t(locale, "contract-msg.employee-manual-entry-description")}
+                                                </span>
+                                            </div>
+                                        </CommandItem>
+                                    </CommandGroup>
+                                </>
+                            )}
+                        </CommandList>
+                    </Command>
+                </PopoverContent>
+            </Popover>
+            {helperText && (
+                <p className={cn("text-xs", error ? "text-destructive" : "text-muted-foreground")}>
+                    {helperText}
+                </p>
+            )}
+        </div>
     );
 }

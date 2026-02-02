@@ -2,13 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import {
-    Box,
-    IconButton,
-    Chip,
-    CircularProgress,
-    Alert,
-} from "@mui/material";
 import { Plus } from "lucide-react";
 import { useClients, useDeleteClient, useClient } from "@/app/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/app/lib/client/types";
@@ -18,6 +11,10 @@ import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { DataTable, type DataTableColumn, type FilterOption } from "@/app/(components)/ui/datatable";
+import { StatusBadge } from "@/app/(components)/ui/status-badge";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 // Filter options for service status (includes "전체" for all)
 const STATUS_FILTER_OPTIONS: FilterOption[] = [
@@ -29,16 +26,28 @@ const STATUS_FILTER_OPTIONS: FilterOption[] = [
     })),
 ];
 
-const getStatusChip = (status: string | null) => {
+// Map service status to StatusBadge variant
+type ServiceStatusVariant = "waiting" | "in_progress" | "completed" | "cancelled" | "replacement_requested" | "default";
+
+const getStatusBadge = (status: string | null) => {
     const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
-    if (!option) return <Chip label="-" size="small" variant="outlined" />;
+    if (!option) return <StatusBadge variant="default">-</StatusBadge>;
+
+    const variantMap: Record<string, ServiceStatusVariant> = {
+        pending: "waiting",
+        waiting: "waiting",
+        active: "in_progress",
+        in_progress: "in_progress",
+        completed: "completed",
+        terminated: "cancelled",
+        cancelled: "cancelled",
+        replacement_requested: "replacement_requested",
+    };
 
     return (
-        <Chip
-            label={option.label}
-            color={option.color}
-            size="small"
-        />
+        <StatusBadge variant={variantMap[status || ""] || "default"}>
+            {option.label}
+        </StatusBadge>
     );
 };
 
@@ -132,9 +141,9 @@ export function ClientsTable() {
                 subtitle={t(locale, "clients.subtitle")}
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
-                <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-                    <CircularProgress />
-                </Box>
+                <div className="flex justify-center items-center min-h-[400px]">
+                    <Spinner className="h-8 w-8" />
+                </div>
             </ContentPaper>
         );
     }
@@ -146,7 +155,9 @@ export function ClientsTable() {
                 subtitle={t(locale, "clients.subtitle")}
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
-                <Alert severity="error">{t(locale, "clients.load-error")}</Alert>
+                <Alert variant="destructive">
+                    <AlertDescription>{t(locale, "clients.load-error")}</AlertDescription>
+                </Alert>
             </ContentPaper>
         );
     }
@@ -167,7 +178,7 @@ export function ClientsTable() {
             header: t(locale, "clients.table.status"),
             align: "center",
             width: "40%",
-            render: (client) => getStatusChip(client.serviceStatus),
+            render: (client) => getStatusBadge(client.serviceStatus),
         },
         {
             key: "startDate",
@@ -186,7 +197,7 @@ export function ClientsTable() {
             subtitle={t(locale, "clients.subtitle")}
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
-            <Box data-component="clients-table-container">
+            <div data-component="clients-table-container">
                 <DataTable
                     data={tableData}
                     columns={columns}
@@ -208,14 +219,15 @@ export function ClientsTable() {
                     filterValue={statusFilter}
                     onFilterChange={handleFilterChange}
                     toolbarActions={
-                        <IconButton
-                            size="medium"
-                            sx={{ color: "#1e88e5", ml: "auto" }}
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="ml-auto text-accent hover:text-accent/80"
                             onClick={handleAddNew}
                             data-testid="add-client-button"
                         >
-                            <Plus size={30} strokeWidth={2} />
-                        </IconButton>
+                            <Plus className="h-7 w-7" strokeWidth={2} />
+                        </Button>
                     }
                 />
 
@@ -234,7 +246,7 @@ export function ClientsTable() {
                     onClose={handleFormDialogClose}
                     client={editingClient}
                 />
-            </Box>
+            </div>
         </ContentPaper>
     );
 }

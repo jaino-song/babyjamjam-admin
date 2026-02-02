@@ -4,9 +4,9 @@ type VoucherPriceInfoRow = {
     id: number;
     type: string | null;
     duration: bigint | null;
-    full_price: string | null;
+    fullPrice: string | null;
     grant: string | null;
-    actual_price: string | null;
+    actualPrice: string | null;
     year: number;
 };
 
@@ -16,9 +16,9 @@ export class VoucherPriceInfoMapper {
             row.id,
             row.type,
             row.duration,
-            row.full_price,
+            row.fullPrice,
             row.grant,
-            row.actual_price,
+            row.actualPrice,
             row.year,
         );
     }
@@ -28,9 +28,9 @@ export class VoucherPriceInfoMapper {
             id: entity.id,
             type: entity.type,
             duration: entity.duration,
-            full_price: entity.fullPrice,
+            fullPrice: entity.fullPrice,
             grant: entity.grant,
-            actual_price: entity.actualPrice,
+            actualPrice: entity.actualPrice,
             year: entity.year,
         };
     }
@@ -39,9 +39,9 @@ export class VoucherPriceInfoMapper {
         return {
             type: entity.type,
             duration: entity.duration,
-            full_price: entity.fullPrice,
+            fullPrice: entity.fullPrice,
             grant: entity.grant,
-            actual_price: entity.actualPrice,
+            actualPrice: entity.actualPrice,
             year: entity.year,
         };
     }

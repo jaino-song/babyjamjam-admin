@@ -1,9 +1,11 @@
-import { Body, Controller, Delete, Get, Query, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
 import { CreateEmployeeScheduleDto, UpdateEmployeeScheduleDto } from "interface/dto/employee-schedule.dto";
-import { CurrentTenant } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
 @Controller("employee-schedules")
+@UseGuards(JwtGuard, TenantGuard)
 export class EmployeeScheduleController {
     constructor(private readonly employeeScheduleService: EmployeeScheduleService) {}
 

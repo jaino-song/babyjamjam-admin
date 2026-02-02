@@ -26,6 +26,10 @@ export class UserFactory {
             params.profileImage ?? "https://example.com/profile.jpg",
             params.role ?? "user",
             params.createdAt ?? new Date("2024-01-01"),
+            null,
+            false,
+            null,
+            params.kakaoId ? "kakao" : "email",
         );
     }
 
