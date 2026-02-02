@@ -17,7 +17,7 @@ interface APIErrorResponse {
     error: string;
 }
 
-export async function exchangeToken(code: string): Promise<{ success: boolean; error?: string }> {
+export async function exchangeToken(code: string): Promise<{ success: boolean; error?: string; requiresOrgSelection?: boolean }> {
     try {
         console.log("[Server Action] Exchanging token for code");
         
@@ -54,7 +54,17 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
         });
 
         console.log("[Server Action] Token exchange successful");
-        return { success: true };
+        
+        // Check if user has multiple organizations
+        let requiresOrgSelection = false;
+        try {
+            const decoded = jwtDecode<TokenPayload & { organizations?: any[] }>(data.accessToken);
+            requiresOrgSelection = !!(decoded.organizations && decoded.organizations.length > 1);
+        } catch {
+            // If we can't decode, assume single org
+        }
+        
+        return { success: true, requiresOrgSelection };
     } catch (error) {
         console.error("[Server Action] Token Exchange Error:", error);
 

@@ -49,26 +49,27 @@ export const eformsignApi = {
         return data;
     },
     // Documents APIs - token is read from httpOnly cookie on server
+    // Note: eformsign routes use /eformsign prefix to avoid conflict with file storage /documents
     // Unified endpoint - fetches all documents in single request (more efficient)
     getAllDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents');
+        const { data } = await api.get('/eformsign/documents');
         return data;
     },
     getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents/in-progress');
+        const { data } = await api.get('/eformsign/documents/in-progress');
         return data;
     },
     getCompletedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents/completed');
+        const { data } = await api.get('/eformsign/documents/completed');
         return data;
     },
     getRejectedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents/rejected');
+        const { data } = await api.get('/eformsign/documents/rejected');
         return data;
     },
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents');
+        const { data } = await api.get('/eformsign/documents');
         return data;
     },
 }
