@@ -249,7 +249,6 @@ export default function ChatPage() {
                 <ChatInput
                     onSubmit={sendMessage}
                     disabled={state === "streaming" || state === "connecting"}
-                    compact={false}
                 />
             </div>
         </div>
