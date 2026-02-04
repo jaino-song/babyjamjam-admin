@@ -26,15 +26,15 @@ const statusConfig = {
 
 export function TodayScheduleList() {
   return (
-    <Card className="opacity-0 animate-fade-in" style={{ animationDelay: "500ms" }}>
-      <CardHeader className="flex flex-row items-center justify-between">
+    <Card data-component="today-schedule-list" className="opacity-0 animate-fade-in" style={{ animationDelay: "500ms" }}>
+      <CardHeader data-component="today-schedule-header" className="flex flex-row items-center justify-between">
         <CardTitle className="text-lg font-semibold">오늘의 일정</CardTitle>
-        <Badge variant="secondary" className="font-normal animate-scale-in" style={{ animationDelay: "600ms" }}>
+        <Badge data-component="today-schedule-count" variant="secondary" className="font-normal animate-scale-in" style={{ animationDelay: "600ms" }}>
           총 {todaySchedules.length}건
         </Badge>
       </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
+      <CardContent data-component="today-schedule-content">
+        <div data-component="today-schedule-items" className="space-y-4">
           {todaySchedules.map((schedule, index) => {
             const config = statusConfig[schedule.status];
             const StatusIcon = config.icon;
@@ -42,6 +42,7 @@ export function TodayScheduleList() {
             return (
               <div
                 key={schedule.id}
+                data-component="schedule-item"
                 className={cn(
                   "flex items-start gap-4 rounded-lg border p-3 cursor-pointer",
                   "transition-all duration-200 ease-out",

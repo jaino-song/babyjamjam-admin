@@ -30,15 +30,16 @@ const actions = [
 
 export function QuickActions() {
   return (
-    <Card className="opacity-0 animate-fade-in" style={{ animationDelay: "400ms" }}>
-      <CardHeader>
+    <Card data-component="quick-actions" className="opacity-0 animate-fade-in" style={{ animationDelay: "400ms" }}>
+      <CardHeader data-component="quick-actions-header">
         <CardTitle className="text-lg font-semibold">빠른 실행</CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-3">
+      <CardContent data-component="quick-actions-content">
+        <div data-component="quick-actions-grid" className="grid grid-cols-2 gap-3">
           {actions.map((action, index) => (
             <Button
               key={action.title}
+              data-component="quick-action-button"
               variant={action.variant}
               className={cn(
                 "h-auto flex-col gap-2 py-4 transition-all duration-200",

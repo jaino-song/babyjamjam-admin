@@ -55,9 +55,12 @@ const getStats = (locale: Locale, backendStats?: DashboardStats | null): StatIte
       icon: TrendingUp,
     },
     {
-      title: t(locale, "dashboard.contracts.completion_pending"),
-      firstDataValue: backendStats?.contractsPendingSignature?.toLocaleString() ?? "0",
-      icon: FileCheck,
+      title: t(locale, "dashboard.contracts.status"),
+      variant: "pill",
+      firstTitle: t(locale, "dashboard.contracts.sending_pending"),
+      firstDataValue: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
+      secondTitle: t(locale, "dashboard.contracts.completion_pending"),
+      secondDataValue: backendStats?.contractsPendingSignature?.toLocaleString() ?? "0",
     },
     {
       title: t(locale, "dashboard.pending_clients.title"),
@@ -77,12 +80,12 @@ export default async function Dashboard() {
   const stats = getStats(locale, backendStats);
 
   return (
-    <div className="bg-background">
+    <div data-component="dashboard-page" className="bg-background">
       <section
-        data-component="dashboard"
+        data-component="dashboard-content"
         className="px-4 sm:px-6 md:px-8 lg:px-12 py-6 sm:py-8 mx-auto max-w-7xl"
       >
-        <div className="space-y-6 w-full">
+        <div data-component="dashboard-layout" className="space-y-6 w-full">
           <HeroBanner
             data-component="hero-banner"
             subtitle={t(locale, "dashboard.welcome_back")}
@@ -93,21 +96,27 @@ export default async function Dashboard() {
             secondaryActionHref="/messages"
           />
 
-          <ChatWidget />
+          <div data-component="chat-widget-container">
+            <ChatWidget />
+          </div>
 
-          <StatsGrid stats={stats} />
+          <div data-component="stats-grid-container">
+            <StatsGrid stats={stats} />
+          </div>
 
-          <QuickActions />
+          <div data-component="quick-actions-container">
+            <QuickActions />
+          </div>
 
-          <div className="grid gap-4 min-w-0">
+          <div data-component="service-chart-container" className="grid gap-4 min-w-0">
             <ServiceDistributionChart />
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="lg:col-span-2 min-w-0">
+          <div data-component="dashboard-tables" className="grid gap-4 lg:grid-cols-3">
+            <div data-component="pending-clients-container" className="lg:col-span-2 min-w-0">
               <PendingClientsTable />
             </div>
-            <div>
+            <div data-component="today-schedule-container">
               <TodayScheduleList />
             </div>
           </div>

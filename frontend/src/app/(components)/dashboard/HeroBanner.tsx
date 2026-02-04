@@ -28,6 +28,7 @@ export function HeroBanner({
 }: HeroBannerProps) {
   return (
     <div
+      data-component="hero-banner"
       className={cn(
         "relative overflow-hidden rounded-2xl p-6",
         "bg-gradient-to-br from-primary via-primary to-accent",
@@ -38,16 +39,17 @@ export function HeroBanner({
       <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
       <div className="absolute -left-10 -bottom-10 h-32 w-32 rounded-full bg-white/5 blur-xl" />
 
-      <div className="relative z-10 space-y-4">
-        {/* Greeting */}
-        <div className="space-y-1">
+      <div data-component="hero-content" className="relative z-10 space-y-4">
+        <div data-component="hero-greeting" className="space-y-1">
           <p
+            data-component="hero-subtitle"
             className="text-sm font-medium text-primary-foreground/80 opacity-0 animate-fade-in"
             style={{ animationDelay: "100ms" }}
           >
             {subtitle}
           </p>
           <h1
+            data-component="hero-title"
             className="text-2xl font-bold text-primary-foreground flex items-center gap-2 opacity-0 animate-fade-in"
             style={{ animationDelay: "150ms" }}
           >
@@ -55,6 +57,7 @@ export function HeroBanner({
           </h1>
           {description && (
             <p
+              data-component="hero-description"
               className="text-sm text-primary-foreground/70 max-w-md opacity-0 animate-fade-in"
               style={{ animationDelay: "175ms" }}
             >
@@ -63,12 +66,13 @@ export function HeroBanner({
           )}
         </div>
 
-        {/* Action Buttons */}
         <div
+          data-component="hero-actions"
           className="flex gap-3 opacity-0 animate-fade-in"
           style={{ animationDelay: "200ms" }}
         >
           <Button
+            data-component="hero-primary-action"
             variant="outline"
             asChild={!primaryActionDisabled}
             disabled={primaryActionDisabled}
@@ -92,6 +96,7 @@ export function HeroBanner({
             )}
           </Button>
           <Button
+            data-component="hero-secondary-action"
             variant="outline"
             asChild={!secondaryActionDisabled}
             disabled={secondaryActionDisabled}

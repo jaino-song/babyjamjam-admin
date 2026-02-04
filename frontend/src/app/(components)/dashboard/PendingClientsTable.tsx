@@ -36,15 +36,15 @@ export function PendingClientsTable() {
   };
 
   return (
-    <Card className="opacity-0 animate-fade-in" style={{ animationDelay: "300ms" }}>
-      <CardHeader className="flex flex-row items-center justify-between">
+    <Card data-component="pending-clients-table" className="opacity-0 animate-fade-in" style={{ animationDelay: "300ms" }}>
+      <CardHeader data-component="pending-clients-header" className="flex flex-row items-center justify-between">
         <CardTitle className="text-lg font-semibold">대기 중 고객</CardTitle>
-        <Badge variant="secondary" className="text-xs">
+        <Badge data-component="pending-clients-count" variant="secondary" className="text-xs">
           {pendingClients.length}명
         </Badge>
       </CardHeader>
-      <CardContent className="overflow-x-auto">
-        <Table className="min-w-[300px]">
+      <CardContent data-component="pending-clients-content" className="overflow-x-auto">
+        <Table data-component="pending-clients-data" className="min-w-[300px]">
           <TableHeader>
             <TableRow>
               <TableHead className="whitespace-nowrap w-8"></TableHead>
