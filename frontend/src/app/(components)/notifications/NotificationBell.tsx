@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Bell, BellOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -113,6 +114,18 @@ export function NotificationBell() {
     // Notification data (only fetch when subscribed)
     const { data: unreadCount = 0 } = useUnreadCount(isSubscribed);
     const { data: notifications = [], isLoading: notificationsLoading } = useNotifications(10, 0, isSubscribed);
+
+    // Lock body scroll when modal is open
+    useEffect(() => {
+        if (isOpen) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+        return () => {
+            document.body.style.overflow = '';
+        };
+    }, [isOpen]);
     const markAsRead = useMarkAsRead();
     const markAllAsRead = useMarkAllAsRead();
 
@@ -243,7 +256,7 @@ export function NotificationBell() {
         // Subscribed - show notifications list
         return (
             <>
-                <div className="p-4 flex justify-between items-center">
+                <div className="p-4 flex justify-between items-center bg-popover border-b">
                     <h2 className="text-lg font-semibold">알림</h2>
                     {unreadCount > 0 && (
                         <Button
@@ -257,8 +270,6 @@ export function NotificationBell() {
                     )}
                 </div>
 
-                <Separator />
-
                 {notificationsLoading ? (
                     <div className="p-8 flex justify-center">
                         <Spinner size="default" />
@@ -268,7 +279,7 @@ export function NotificationBell() {
                         <p className="text-muted-foreground">알림이 없습니다</p>
                     </div>
                 ) : (
-                    <div className="max-h-80 overflow-y-auto">
+                    <div className="max-h-80 overflow-y-auto scrollbar-hide">
                         {groupNotificationsByDate(notifications).map((group) => (
                             <div key={group.date}>
                                 <div className="px-4 py-2 bg-muted sticky top-0">
@@ -310,8 +321,16 @@ export function NotificationBell() {
 
     const isLoading = subscribeLoading;
 
+    const backdrop = (
+        <div 
+            className={`fixed inset-0 top-16 bg-black/30 backdrop-blur-[4px] z-40 sm:hidden transition-all duration-300 ${isOpen ? 'opacity-100 visible' : 'opacity-0 invisible'}`}
+            onClick={() => setIsOpen(false)}
+        />
+    );
+
     return (
         <>
+            {typeof window !== 'undefined' && createPortal(backdrop, document.body)}
             <Popover open={isOpen} onOpenChange={setIsOpen}>
                 <PopoverTrigger asChild>
                     <Button
@@ -343,7 +362,10 @@ export function NotificationBell() {
                 </PopoverTrigger>
                 <PopoverContent
                     align="end"
-                    className="w-[360px] max-h-[480px] p-0 overflow-hidden"
+                    sideOffset={8}
+                    avoidCollisions={true}
+                    collisionPadding={16}
+                    className="!w-[80vw] sm:!w-[360px] max-h-[480px] p-0 overflow-hidden"
                     data-testid="notification-popover"
                 >
                     {renderPopoverContent()}

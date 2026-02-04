@@ -1,11 +1,11 @@
-import { Users, TrendingUp, FileCheck, CalendarClock } from "lucide-react";
+import { Users, TrendingUp, CalendarClock } from "lucide-react";
 import { HeroBanner } from "../(components)/dashboard/HeroBanner";
 import { StatsGrid, StatItem } from "../(components)/dashboard/StatsGrid";
 import { ChatWidget } from "../(components)/chat/ChatWidget";
 import { QuickActions } from "../(components)/dashboard/QuickActions";
 import { TodayScheduleList } from "../(components)/dashboard/TodayScheduleList";
 import { PendingClientsTable } from "../(components)/dashboard/PendingClientsTable";
-import { ServiceDistributionChart } from "../(components)/dashboard/ServiceDistributionChart";
+
 import { getCurrentUser } from "../lib/auth/cookies";
 import { t, Locale } from "../lib/i18n/translations";
 import { getLocale } from "../actions/locale";
@@ -39,35 +39,26 @@ async function fetchDashboardStats(): Promise<DashboardStats | null> {
 }
 
 const getStats = (locale: Locale, backendStats?: DashboardStats | null): StatItem[] => {
-  const now = new Date();
-  const thisMonth = `${now.getMonth() + 1}월`;
-  const nextMonth = `${((now.getMonth() + 1) % 12) + 1}월`;
-
   return [
     {
       title: t(locale, "dashboard.active_clients"),
-      firstDataValue: backendStats?.activeClients?.toLocaleString() ?? "0",
+      value: backendStats?.activeClients?.toLocaleString() ?? "0",
       icon: Users,
     },
     {
       title: t(locale, "dashboard.contracts.sending_pending"),
-      firstDataValue: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
+      value: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
       icon: TrendingUp,
     },
     {
-      title: t(locale, "dashboard.contracts.status"),
-      variant: "pill",
-      firstTitle: t(locale, "dashboard.contracts.sending_pending"),
-      firstDataValue: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
-      secondTitle: t(locale, "dashboard.contracts.completion_pending"),
-      secondDataValue: backendStats?.contractsPendingSignature?.toLocaleString() ?? "0",
+      title: t(locale, "dashboard.contracts.completion_pending"),
+      value: backendStats?.contractsPendingSignature?.toLocaleString() ?? "0",
+      icon: TrendingUp,
+      variant: "primary",
     },
     {
       title: t(locale, "dashboard.pending_clients.title"),
-      firstDataLabel: thisMonth,
-      secondDataLabel: nextMonth,
-      firstDataValue: `${backendStats?.upcomingThisMonth?.toLocaleString() ?? "0"} 명`,
-      secondDataValue: `${backendStats?.upcomingNextMonth?.toLocaleString() ?? "0"} 명`,
+      value: `${backendStats?.upcomingThisMonth?.toLocaleString() ?? "0"} 명`,
       icon: CalendarClock,
     },
   ];
@@ -106,10 +97,6 @@ export default async function Dashboard() {
 
           <div data-component="quick-actions-container">
             <QuickActions />
-          </div>
-
-          <div data-component="service-chart-container" className="grid gap-4 min-w-0">
-            <ServiceDistributionChart />
           </div>
 
           <div data-component="dashboard-tables" className="grid gap-4 lg:grid-cols-3">

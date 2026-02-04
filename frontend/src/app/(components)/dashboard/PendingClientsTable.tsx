@@ -1,133 +1,77 @@
 "use client";
 
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Badge } from "@/components/ui/badge";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { pendingClients } from "@/app/data/mockData";
-import { ChevronDown, Phone, MapPin, FileText } from "lucide-react";
+
+const statusConfig = {
+  waiting: {
+    label: "대기중",
+    badgeClass: "bg-warning/10 text-warning border-warning/30",
+    avatarClass: "bg-success/10 text-success",
+  },
+  inProgress: {
+    label: "진행중",
+    badgeClass: "bg-success/10 text-success border-success/30",
+    avatarClass: "bg-primary/10 text-primary",
+  },
+  completed: {
+    label: "완료",
+    badgeClass: "bg-primary text-primary-foreground border-primary",
+    avatarClass: "bg-warning/10 text-warning",
+  },
+};
 
 export function PendingClientsTable() {
-  const [openRows, setOpenRows] = useState<Set<number>>(new Set());
-
-  const toggleRow = (id: number) => {
-    setOpenRows((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
-  };
-
   return (
-    <Card data-component="pending-clients-table" className="opacity-0 animate-fade-in" style={{ animationDelay: "300ms" }}>
-      <CardHeader data-component="pending-clients-header" className="flex flex-row items-center justify-between">
-        <CardTitle className="text-lg font-semibold">대기 중 고객</CardTitle>
-        <Badge data-component="pending-clients-count" variant="secondary" className="text-xs">
-          {pendingClients.length}명
-        </Badge>
-      </CardHeader>
-      <CardContent data-component="pending-clients-content" className="overflow-x-auto">
-        <Table data-component="pending-clients-data" className="min-w-[300px]">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="whitespace-nowrap w-8"></TableHead>
-              <TableHead className="whitespace-nowrap">이름</TableHead>
-              <TableHead className="whitespace-nowrap">시작 날짜</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {pendingClients.map((client, index) => (
-              <Collapsible
-                key={client.id}
-                open={openRows.has(client.id)}
-                onOpenChange={() => toggleRow(client.id)}
-                asChild
+    <div data-component="pending-clients-table" className="opacity-0 animate-fade-in" style={{ animationDelay: "300ms" }}>
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">List Item Cards</p>
+      <div className="rounded-xl border bg-card overflow-hidden">
+        {pendingClients.map((client, index) => {
+          const statusKey = index === 0 ? "inProgress" : index === 1 ? "waiting" : "completed";
+          const status = statusConfig[statusKey];
+          const initials = client.name.slice(0, 2);
+
+          return (
+            <div
+              key={client.id}
+              data-component="list-item-card"
+              className={cn(
+                "flex items-center gap-3 px-4 py-3",
+                "transition-colors cursor-pointer hover:bg-muted/50",
+                index !== pendingClients.length - 1 && "border-b"
+              )}
+            >
+              <div
+                className={cn(
+                  "h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0",
+                  status.avatarClass
+                )}
               >
-                <>
-                  <CollapsibleTrigger asChild>
-                    <TableRow
-                      className={cn(
-                        "cursor-pointer transition-all duration-200",
-                        "hover:bg-muted/50",
-                        "opacity-0 animate-fade-in",
-                        openRows.has(client.id) && "bg-muted/30"
-                      )}
-                      style={{ animationDelay: `${350 + index * 50}ms` }}
-                    >
-                      <TableCell className="w-8">
-                        <ChevronDown
-                          className={cn(
-                            "h-4 w-4 text-muted-foreground transition-transform duration-200",
-                            openRows.has(client.id) && "rotate-180"
-                          )}
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium whitespace-nowrap">
-                        {client.name}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground whitespace-nowrap">
-                        {client.startDate}
-                      </TableCell>
-                    </TableRow>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent asChild>
-                    <TableRow className="bg-muted/20 hover:bg-muted/30">
-                      <TableCell colSpan={3} className="p-0">
-                        <div className="px-4 py-3 space-y-2 animate-fade-in">
-                          <div className="flex items-center gap-2 text-sm flex-wrap">
-                            <Badge variant="outline" className="text-xs">
-                              {client.type}
-                            </Badge>
-                            {client.careCenter && (
-                              <Badge variant="outline" className="text-xs">
-                                조리원 이용
-                              </Badge>
-                            )}
-                            {client.breastPump && (
-                              <Badge variant="outline" className="text-xs">
-                                유축기 대여
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Phone className="h-3.5 w-3.5" />
-                            <span>{client.phone}</span>
-                          </div>
-                          <div className="flex items-start gap-2 text-sm text-muted-foreground">
-                            <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                            <span>{client.address}</span>
-                          </div>
-                          <div className="flex items-start gap-2 text-sm text-muted-foreground">
-                            <FileText className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                            <span>{client.notes}</span>
-                          </div>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  </CollapsibleContent>
-                </>
-              </Collapsible>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+                {initials}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-foreground truncate">{client.name}</p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {client.type} · {client.startDate}
+                </p>
+              </div>
+
+              <div
+                className={cn(
+                  "px-2.5 py-1 rounded-full border text-xs font-medium shrink-0",
+                  status.badgeClass
+                )}
+              >
+                {status.label}
+              </div>
+
+              <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

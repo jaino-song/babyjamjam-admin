@@ -1,59 +1,71 @@
 "use client";
 
-import { UserPlus, CalendarPlus, Send, FileSignature } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { UserPlus, CalendarPlus, Send, FileSignature, LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const actions = [
+interface QuickAction {
+  label: string;
+  icon: LucideIcon;
+  href?: string;
+  iconBgClass?: string;
+  iconColor?: string;
+}
+
+const actions: QuickAction[] = [
   {
-    title: "고객 등록",
+    label: "고객 등록",
     icon: UserPlus,
-    variant: "default" as const,
+    iconBgClass: "bg-primary/10",
+    iconColor: "text-primary",
   },
   {
-    title: "일정 추가",
+    label: "일정 추가",
     icon: CalendarPlus,
-    variant: "outline" as const,
+    iconBgClass: "bg-success/10",
+    iconColor: "text-success",
   },
   {
-    title: "메시지 발송",
+    label: "메시지 발송",
     icon: Send,
-    variant: "outline" as const,
+    iconBgClass: "bg-warning/10",
+    iconColor: "text-warning",
   },
   {
-    title: "계약서 작성",
+    label: "계약서 작성",
     icon: FileSignature,
-    variant: "outline" as const,
+    iconBgClass: "bg-info/10",
+    iconColor: "text-info",
   },
 ];
 
 export function QuickActions() {
   return (
-    <Card data-component="quick-actions" className="opacity-0 animate-fade-in" style={{ animationDelay: "400ms" }}>
-      <CardHeader data-component="quick-actions-header">
-        <CardTitle className="text-lg font-semibold">빠른 실행</CardTitle>
-      </CardHeader>
-      <CardContent data-component="quick-actions-content">
-        <div data-component="quick-actions-grid" className="grid grid-cols-2 gap-3">
-          {actions.map((action, index) => (
-            <Button
-              key={action.title}
-              data-component="quick-action-button"
-              variant={action.variant}
+    <div data-component="quick-actions" className="opacity-0 animate-fade-in" style={{ animationDelay: "400ms" }}>
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Quick Action Cards</p>
+      <div data-component="quick-actions-grid" className="grid grid-cols-4 gap-2">
+        {actions.map((action, index) => {
+          const Icon = action.icon;
+          return (
+            <div
+              key={action.label}
+              data-component="quick-action-card"
               className={cn(
-                "h-auto flex-col gap-2 py-4 transition-all duration-200",
-                "hover:scale-105 hover:-translate-y-0.5 active:scale-95",
-                "group opacity-0 animate-scale-in"
+                "aspect-square flex flex-col items-center justify-center rounded-xl border bg-card",
+                "transition-all active:scale-[0.95] cursor-pointer hover:shadow-md",
+                "opacity-0 animate-scale-in"
               )}
               style={{ animationDelay: `${450 + index * 50}ms` }}
+              role="button"
+              tabIndex={0}
             >
-              <action.icon className="h-5 w-5 transition-transform duration-200 group-hover:-translate-y-1" />
-              <span className="text-xs">{action.title}</span>
-            </Button>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+              <div className={cn("p-2 rounded-full mb-1.5", action.iconBgClass || "bg-primary/10")}>
+                <Icon className={cn("h-4 w-4", action.iconColor || "text-primary")} />
+              </div>
+              <span className="text-xs font-medium text-center">{action.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

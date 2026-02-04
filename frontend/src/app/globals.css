@@ -51,8 +51,8 @@
   --info-foreground: 0 0% 100%;
 
   /* Border & Input */
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
+  --border: 214 32% 85%;
+  --input: 214 32% 85%;
   --ring: 217 71% 24%;
 
   /* Radius */
@@ -213,12 +213,12 @@
   --color-chart-5: hsl(var(--chart-5));
 
   /* Custom Brand Colors */
-  --color-navy: hsl(var(--navy));
-  --color-green: hsl(var(--green));
-  --color-burgundy: hsl(var(--burgundy));
-  --color-gray: hsl(var(--gray));
-  --color-dim-white: hsl(var(--dim-white));
-  --color-orange: hsl(var(--orange));
+  --color-navy: hsl(217 71% 24%);
+  --color-green: hsl(137 34% 31%);
+  --color-burgundy: hsl(355 36% 45%);
+  --color-gray: hsl(0 0% 47%);
+  --color-dim-white: hsl(0 0% 93%);
+  --color-orange: hsl(34 100% 55%);
 
   /* Border Radius */
   --radius-lg: var(--radius);
@@ -255,6 +255,7 @@
     opacity: 0;
     transform: translateY(10px);
   }
+
   100% {
     opacity: 1;
     transform: translateY(0);
@@ -266,6 +267,7 @@
     opacity: 0;
     transform: translateY(20px);
   }
+
   100% {
     opacity: 1;
     transform: translateY(0);
@@ -277,6 +279,7 @@
     opacity: 0;
     transform: scale(0.95);
   }
+
   100% {
     opacity: 1;
     transform: scale(1);
@@ -288,6 +291,7 @@
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -299,6 +303,7 @@
     opacity: 0;
     transform: translateX(-10px);
   }
+
   100% {
     opacity: 1;
     transform: translateX(0);
@@ -310,6 +315,7 @@
     opacity: 0;
     transform: translateX(10px);
   }
+
   100% {
     opacity: 1;
     transform: translateX(0);
@@ -317,18 +323,24 @@
 }
 
 @keyframes bounce-subtle {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-3px);
   }
 }
 
 @keyframes pulse-subtle {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.7;
   }
@@ -338,24 +350,31 @@
   0% {
     background-position: -200% 0;
   }
+
   100% {
     background-position: 200% 0;
   }
 }
 
 @keyframes icon-bounce {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-4px);
   }
 }
 
 @keyframes glow {
-  0%, 100% {
+
+  0%,
+  100% {
     box-shadow: 0 0 5px hsl(var(--primary) / 0.3);
   }
+
   50% {
     box-shadow: 0 0 20px hsl(var(--primary) / 0.6);
   }
@@ -365,6 +384,7 @@
   from {
     height: 0;
   }
+
   to {
     height: var(--radix-accordion-content-height);
   }
@@ -374,39 +394,70 @@
   from {
     height: var(--radix-accordion-content-height);
   }
+
   to {
     height: 0;
   }
 }
 
 @keyframes sheet-slide-in-from-left {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(0); }
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
 }
 
 @keyframes sheet-slide-out-to-left {
-  from { transform: translateX(0); }
-  to { transform: translateX(-100%); }
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-100%);
+  }
 }
 
 @keyframes sheet-slide-in-from-right {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
 }
 
 @keyframes sheet-slide-out-to-right {
-  from { transform: translateX(0); }
-  to { transform: translateX(100%); }
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
 }
 
 @keyframes sheet-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes sheet-fade-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
 }
 
 [data-slot="sheet-overlay"][data-state="open"] {
@@ -442,7 +493,8 @@
   border-color: hsl(var(--border));
 }
 
-html, body {
+html,
+body {
   overscroll-behavior: none;
 }
 
@@ -487,20 +539,54 @@ body {
 }
 
 /* Legacy stagger animation delays (for backward compatibility) */
-.stagger-1 { animation-delay: 0.1s; }
-.stagger-2 { animation-delay: 0.2s; }
-.stagger-3 { animation-delay: 0.3s; }
-.stagger-4 { animation-delay: 0.4s; }
-.stagger-5 { animation-delay: 0.5s; }
-.stagger-6 { animation-delay: 0.6s; }
+.stagger-1 {
+  animation-delay: 0.1s;
+}
+
+.stagger-2 {
+  animation-delay: 0.2s;
+}
+
+.stagger-3 {
+  animation-delay: 0.3s;
+}
+
+.stagger-4 {
+  animation-delay: 0.4s;
+}
+
+.stagger-5 {
+  animation-delay: 0.5s;
+}
+
+.stagger-6 {
+  animation-delay: 0.6s;
+}
 
 /* Reference design stagger delays (faster, more subtle) */
-.animate-stagger-1 { animation-delay: 0ms; }
-.animate-stagger-2 { animation-delay: 75ms; }
-.animate-stagger-3 { animation-delay: 150ms; }
-.animate-stagger-4 { animation-delay: 225ms; }
-.animate-stagger-5 { animation-delay: 300ms; }
-.animate-stagger-6 { animation-delay: 375ms; }
+.animate-stagger-1 {
+  animation-delay: 0ms;
+}
+
+.animate-stagger-2 {
+  animation-delay: 75ms;
+}
+
+.animate-stagger-3 {
+  animation-delay: 150ms;
+}
+
+.animate-stagger-4 {
+  animation-delay: 225ms;
+}
+
+.animate-stagger-5 {
+  animation-delay: 300ms;
+}
+
+.animate-stagger-6 {
+  animation-delay: 375ms;
+}
 
 /* Hover border - border color transition on hover */
 .hover-border {
@@ -602,13 +688,31 @@ body {
    ======================================== */
 
 /* Dashboard-style border radius (24px = MUI borderRadius: 3) */
-.rounded-dashboard { border-radius: 1.5rem; }
+.rounded-dashboard {
+  border-radius: 1.5rem;
+}
 
 /* Dashboard-style padding variants */
-.p-dashboard { padding: 0.625rem; }      /* 10px */
-.p-dashboard-sm { padding: 0.75rem; }    /* 12px */
-.p-dashboard-md { padding: 1rem; }       /* 16px */
-.p-dashboard-lg { padding: 1.5rem; }     /* 24px = MUI p: 3 */
+.p-dashboard {
+  padding: 0.625rem;
+}
+
+/* 10px */
+.p-dashboard-sm {
+  padding: 0.75rem;
+}
+
+/* 12px */
+.p-dashboard-md {
+  padding: 1rem;
+}
+
+/* 16px */
+.p-dashboard-lg {
+  padding: 1.5rem;
+}
+
+/* 24px = MUI p: 3 */
 
 /* Dashboard row hover - subtle lift effect */
 .row-hover-lift {
@@ -621,9 +725,17 @@ body {
 }
 
 /* Dashboard elevation variants (matching MUI elevation) */
-.elevation-1 { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); }
-.elevation-2 { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1); }
-.elevation-3 { box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12); }
+.elevation-1 {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.elevation-2 {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.elevation-3 {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
 
 /* ========================================
    Markdown Content Styles
@@ -646,10 +758,21 @@ body {
   margin-bottom: 0.5em;
 }
 
-.markdown-content h1 { font-size: 1.5rem; }
-.markdown-content h2 { font-size: 1.25rem; }
-.markdown-content h3 { font-size: 1.125rem; }
-.markdown-content h4 { font-size: 1rem; }
+.markdown-content h1 {
+  font-size: 1.5rem;
+}
+
+.markdown-content h2 {
+  font-size: 1.25rem;
+}
+
+.markdown-content h3 {
+  font-size: 1.125rem;
+}
+
+.markdown-content h4 {
+  font-size: 1rem;
+}
 
 .markdown-content p {
   margin-bottom: 1em;
@@ -739,8 +862,16 @@ body {
    ======================================== */
 
 @keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+
+  0%,
+  50% {
+    opacity: 1;
+  }
+
+  51%,
+  100% {
+    opacity: 0;
+  }
 }
 
 .animate-blink {
@@ -756,6 +887,7 @@ body {
     opacity: 0;
     transform: scale(0.96);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
@@ -767,6 +899,7 @@ body {
     opacity: 1;
     transform: scale(1);
   }
+
   to {
     opacity: 0;
     transform: scale(1.05);
@@ -789,4 +922,22 @@ body {
 [data-slot="dropdown-menu-sub-content"][data-state="closed"],
 [data-slot="popover-content"][data-state="closed"] {
   animation: tooltip-pop-out 0.2s ease-in forwards;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  [data-radix-popper-content-wrapper]:has([data-testid="notification-popover"]) {
+    left: 50% !important;
+    right: auto !important;
+    top: 52px !important;
+    transform: translateX(-50%) !important;
+  }
 }

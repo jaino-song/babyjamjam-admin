@@ -14,8 +14,9 @@ export function ChatWidget() {
         <div data-component="chat-widget" className="mt-6">
             <ChatInput
                 onSubmit={handleOpenChat}
-                onFocus={handleOpenChat}
+                onClick={handleOpenChat}
                 placeholder="무엇을 도와드릴까요?"
+                readOnly
             />
         </div>
     );
