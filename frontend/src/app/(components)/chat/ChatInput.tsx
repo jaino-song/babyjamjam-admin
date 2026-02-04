@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, KeyboardEvent, useRef } from "react";
-import { Box, TextField, IconButton, InputAdornment } from "@mui/material";
-import SendIcon from "@mui/icons-material/Send";
-import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import { Sparkles, Send } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 interface ChatInputProps {
     onSubmit: (message: string) => void;
@@ -21,7 +21,7 @@ export function ChatInput({
     compact = true,
 }: ChatInputProps) {
     const [value, setValue] = useState("");
-    const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
 
     const handleSubmit = () => {
         const trimmed = value.trim();
@@ -32,7 +32,7 @@ export function ChatInput({
         }
     };
 
-    const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleSubmit();
@@ -40,66 +40,46 @@ export function ChatInput({
     };
 
     return (
-        <Box
-            sx={{
-                width: "100%",
-                maxWidth: compact ? 600 : "100%",
-                mx: "auto",
-            }}
+        <div
+            className={cn(
+                "w-full mx-auto",
+                compact && "max-w-[600px]"
+            )}
         >
-            <TextField
-                fullWidth
-                inputRef={inputRef}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onFocus={onFocus}
-                disabled={disabled}
-                placeholder={placeholder}
-                variant="outlined"
-                size={compact ? "medium" : "medium"}
-                multiline={!compact}
-                maxRows={compact ? 1 : 4}
-                slotProps={{
-                    input: {
-                        startAdornment: (
-                            <InputAdornment position="start">
-                                <AutoAwesomeIcon
-                                    sx={{
-                                        color: "primary.main",
-                                        fontSize: 20,
-                                    }}
-                                />
-                            </InputAdornment>
-                        ),
-                        endAdornment: (
-                            <InputAdornment position="end">
-                                <IconButton
-                                    onClick={handleSubmit}
-                                    disabled={disabled || !value.trim()}
-                                    color="primary"
-                                    size="small"
-                                >
-                                    <SendIcon fontSize="small" />
-                                </IconButton>
-                            </InputAdornment>
-                        ),
-                    },
-                }}
-                sx={{
-                    "& .MuiOutlinedInput-root": {
-                        borderRadius: 3,
-                        bgcolor: "background.paper",
-                        transition: "box-shadow 0.2s ease-in-out",
-                        "&:hover": {
-                            boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-                        },
-                        "&.Mui-focused": {
-                            boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-                        },
-                    },
-                }}
-            />
-        </Box>
+            <div
+                className={cn(
+                    "flex items-center gap-2 px-4 py-3 rounded-xl bg-card border border-border",
+                    "transition-shadow duration-200",
+                    "hover:shadow-md focus-within:shadow-lg focus-within:border-primary/50"
+                )}
+            >
+                <Sparkles className="w-5 h-5 text-primary shrink-0" />
+                <textarea
+                    ref={inputRef}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onFocus={onFocus}
+                    disabled={disabled}
+                    placeholder={placeholder}
+                    rows={compact ? 1 : 4}
+                    className={cn(
+                        "flex-1 bg-transparent text-foreground placeholder:text-muted-foreground",
+                        "focus:outline-none resize-none",
+                        "text-base leading-normal",
+                        compact && "max-h-[24px] overflow-hidden"
+                    )}
+                />
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleSubmit}
+                    disabled={disabled || !value.trim()}
+                    className="shrink-0 text-primary hover:text-primary hover:bg-primary/10"
+                >
+                    <Send className="w-5 h-5" />
+                </Button>
+            </div>
+        </div>
     );
 }

@@ -21,6 +21,7 @@ import voucherOptions from "../messages/templates/json/voucher.json";
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
     DialogHeader,
     DialogTitle,
     DialogFooter,
@@ -343,7 +344,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     return (
         <Dialog data-component="ClientFormDialog" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="client-form-dialog">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-xl" data-testid="client-form-dialog">
                 <DialogHeader>
                     <DialogTitle>
                         {isEditMode
@@ -351,6 +352,12 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                             : t(locale, "clients.form.add-title")
                         }
                     </DialogTitle>
+                    <DialogDescription className="sr-only">
+                        {isEditMode
+                            ? t(locale, "clients.form.edit-description")
+                            : t(locale, "clients.form.add-description")
+                        }
+                    </DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-6 py-4">

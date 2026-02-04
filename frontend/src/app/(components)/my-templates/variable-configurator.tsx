@@ -1,21 +1,17 @@
 "use client";
 
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
-    Paper,
-    Stack,
-    TextField,
-    FormControl,
-    InputLabel,
     Select,
-    MenuItem,
-    FormControlLabel,
-    Checkbox,
-    Typography,
-    Box,
-    RadioGroup,
-    Radio,
-    Chip
-} from "@mui/material";
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import { TemplateVariable, VariableType } from "@/lib/template/types";
 import { DATA_SOURCES } from "@/lib/template/data-sources";
 import { useLocale } from "@/app/(components)/LocaleProvider";
@@ -29,113 +25,149 @@ interface VariableConfiguratorProps {
 export const VariableConfigurator = ({ variable, onChange }: VariableConfiguratorProps) => {
     const locale = useLocale();
 
-    const handleChange = (field: keyof TemplateVariable, value: any) => {
+    const handleChange = (field: keyof TemplateVariable, value: unknown) => {
         onChange({ ...variable, [field]: value });
     };
 
     return (
-        <Paper data-component="variable-configurator-paper" variant="outlined" sx={{ p: 2 }}>
-            <Stack spacing={2}>
-                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <Typography variant="subtitle1" fontWeight={600} color="primary">
+        <Card data-component="variable-configurator-paper" className="p-4">
+            <div className="flex flex-col gap-4">
+                <div className="flex justify-between items-center">
+                    <p className="text-base font-semibold text-primary">
                         {`{{${variable.key}}}`}
-                    </Typography>
-                    <FormControlLabel
-                        control={
-                            <Checkbox
-                                checked={variable.required}
-                                onChange={(e) => handleChange("required", e.target.checked)}
-                            />
-                        }
-                        label={t(locale, "template-editor.required-label")}
-                    />
-                </Box>
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <Checkbox
+                            id={`required-${variable.key}`}
+                            checked={variable.required}
+                            onCheckedChange={(checked) => handleChange("required", checked)}
+                        />
+                        <Label htmlFor={`required-${variable.key}`} className="text-sm">
+                            {t(locale, "template-editor.required-label")}
+                        </Label>
+                    </div>
+                </div>
 
-                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                    <TextField
-                        fullWidth
-                        label={t(locale, "template-editor.variable-label")}
-                        value={variable.label}
-                        onChange={(e) => handleChange("label", e.target.value)}
-                        size="small"
-                    />
-                    <FormControl fullWidth size="small">
-                        <InputLabel>{t(locale, "template-editor.variable-type")}</InputLabel>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-2">
+                        <Label htmlFor={`label-${variable.key}`} className="text-sm">
+                            {t(locale, "template-editor.variable-label")}
+                        </Label>
+                        <Input
+                            id={`label-${variable.key}`}
+                            value={variable.label}
+                            onChange={(e) => handleChange("label", e.target.value)}
+                        />
+                    </div>
+                    <div className="flex flex-col gap-2">
+                        <Label className="text-sm">
+                            {t(locale, "template-editor.variable-type")}
+                        </Label>
                         <Select
                             value={variable.type}
-                            label={t(locale, "template-editor.variable-type")}
-                            onChange={(e) => handleChange("type", e.target.value as VariableType)}
+                            onValueChange={(value: string) => handleChange("type", value as VariableType)}
                         >
-                            <MenuItem value="text">텍스트</MenuItem>
-                            <MenuItem value="phone">연락처</MenuItem>
-                            <MenuItem value="select">선택 (드롭다운)</MenuItem>
-                            <MenuItem value="date">날짜</MenuItem>
-                            <MenuItem value="number">숫자</MenuItem>
-                            <MenuItem value="textarea">긴 텍스트</MenuItem>
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="text">텍스트</SelectItem>
+                                <SelectItem value="phone">연락처</SelectItem>
+                                <SelectItem value="select">선택 (드롭다운)</SelectItem>
+                                <SelectItem value="date">날짜</SelectItem>
+                                <SelectItem value="number">숫자</SelectItem>
+                                <SelectItem value="textarea">긴 텍스트</SelectItem>
+                            </SelectContent>
                         </Select>
-                    </FormControl>
-                </Stack>
+                    </div>
+                </div>
 
                 {variable.type === "select" && (
-                    <Box sx={{ pl: 2, borderLeft: 2, borderColor: "divider" }}>
-                        <Typography variant="body2" gutterBottom fontWeight={500}>
+                    <div className="pl-4 border-l-2 border-border">
+                        <p className="text-sm font-medium mb-2">
                             {t(locale, "template-editor.option-settings")}
-                        </Typography>
+                        </p>
                         <RadioGroup
-                            row
                             value={variable.optionType || "custom"}
-                            onChange={(e) => handleChange("optionType", e.target.value)}
+                            onValueChange={(value) => handleChange("optionType", value)}
+                            className="flex flex-row gap-4"
                         >
-                            <FormControlLabel value="custom" control={<Radio size="small" />} label="직접 입력" />
-                            <FormControlLabel value="dataSource" control={<Radio size="small" />} label="시스템 데이터" />
+                            <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="custom" id={`custom-${variable.key}`} />
+                                <Label htmlFor={`custom-${variable.key}`} className="text-sm">
+                                    직접 입력
+                                </Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="dataSource" id={`dataSource-${variable.key}`} />
+                                <Label htmlFor={`dataSource-${variable.key}`} className="text-sm">
+                                    시스템 데이터
+                                </Label>
+                            </div>
                         </RadioGroup>
 
                         {variable.optionType === "dataSource" ? (
-                            <FormControl fullWidth size="small" sx={{ mt: 1 }}>
-                                <InputLabel>데이터 소스</InputLabel>
+                            <div className="mt-3">
+                                <Label className="text-sm mb-2 block">데이터 소스</Label>
                                 <Select
                                     value={variable.dataSource || ""}
-                                    label="데이터 소스"
-                                    onChange={(e) => handleChange("dataSource", e.target.value)}
+                                    onValueChange={(value: string) => handleChange("dataSource", value)}
                                 >
-                                    {DATA_SOURCES.map(ds => (
-                                        <MenuItem key={ds.id} value={ds.id}>{ds.label}</MenuItem>
-                                    ))}
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="데이터 소스 선택" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {DATA_SOURCES.map(ds => (
+                                            <SelectItem key={ds.id} value={ds.id}>
+                                                {ds.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
                                 </Select>
-                            </FormControl>
+                            </div>
                         ) : (
-                            <TextField
-                                fullWidth
-                                size="small"
-                                label="옵션 (쉼표로 구분)"
-                                value={variable.options?.join(", ") || ""}
-                                onChange={(e) => handleChange("options", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
-                                placeholder="예: VIP, 일반, 신규"
-                                sx={{ mt: 1 }}
-                            />
+                            <div className="mt-3">
+                                <Label htmlFor={`options-${variable.key}`} className="text-sm mb-2 block">
+                                    옵션 (쉼표로 구분)
+                                </Label>
+                                <Input
+                                    id={`options-${variable.key}`}
+                                    value={variable.options?.join(", ") || ""}
+                                    onChange={(e) => handleChange("options", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                                    placeholder="예: VIP, 일반, 신규"
+                                />
+                            </div>
                         )}
-                    </Box>
+                    </div>
                 )}
 
                 {variable.type === "number" && (
-                    <Stack direction="row" spacing={2}>
-                        <TextField
-                            type="number"
-                            label="최소값"
-                            value={variable.min ?? ""}
-                            onChange={(e) => handleChange("min", e.target.value ? Number(e.target.value) : undefined)}
-                            size="small"
-                        />
-                        <TextField
-                            type="number"
-                            label="최대값"
-                            value={variable.max ?? ""}
-                            onChange={(e) => handleChange("max", e.target.value ? Number(e.target.value) : undefined)}
-                            size="small"
-                        />
-                    </Stack>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-2">
+                            <Label htmlFor={`min-${variable.key}`} className="text-sm">
+                                최소값
+                            </Label>
+                            <Input
+                                id={`min-${variable.key}`}
+                                type="number"
+                                value={variable.min ?? ""}
+                                onChange={(e) => handleChange("min", e.target.value ? Number(e.target.value) : undefined)}
+                            />
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <Label htmlFor={`max-${variable.key}`} className="text-sm">
+                                최대값
+                            </Label>
+                            <Input
+                                id={`max-${variable.key}`}
+                                type="number"
+                                value={variable.max ?? ""}
+                                onChange={(e) => handleChange("max", e.target.value ? Number(e.target.value) : undefined)}
+                            />
+                        </div>
+                    </div>
                 )}
-            </Stack>
-        </Paper>
+            </div>
+        </Card>
     );
 };

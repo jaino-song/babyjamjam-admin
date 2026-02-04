@@ -106,8 +106,8 @@ export default function RegisterPage() {
                         <div className="flex flex-col items-center space-y-4 text-center">
                             {accountsLinked ? (
                                 <>
-                                    <div className="rounded-full bg-blue-500/10 p-3">
-                                        <Link2 className="h-12 w-12 text-blue-500" />
+                                    <div className="rounded-full bg-primary/10 p-3">
+                                        <Link2 className="h-12 w-12 text-primary" />
                                     </div>
                                     <h2 className="text-2xl font-bold">계정이 연결되었습니다!</h2>
                                     <p className="text-muted-foreground">

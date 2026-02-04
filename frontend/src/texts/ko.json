@@ -95,7 +95,9 @@
   },
   "msg-form": {
     "title": "메시지",
-    "select-msg-type": "원하시는 메시지를 선택해 주세요"
+    "select-msg-type": "원하시는 메시지를 선택해 주세요",
+    "add-template": "추가",
+    "edit-template": "수정"
   },
   "price-info-msg": {
     "title": "이용 요금 문자 생성",
@@ -234,7 +236,8 @@
      "delete-confirm-message": "이 문서를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
      "delete-success": "문서가 삭제되었습니다",
      "upload-success": "문서가 업로드되었습니다",
-     "update-success": "문서가 수정되었습니다"
+     "update-success": "문서가 수정되었습니다",
+     "upload-description": "문서 저장소에 업로드할 파일을 선택하세요"
    },
    "documents-list": {
      "title": "계약서",
@@ -247,6 +250,8 @@
   "clients": {
     "title": "고객 관리",
     "subtitle": "등록된 고객 정보를 관리하고 새로운 고객을 등록할 수 있습니다.",
+    "list-title": "고객 목록",
+    "add": "추가",
     "search-placeholder": "이름, 연락처, 주소 검색",
     "no-data": "등록된 고객이 없습니다.",
     "load-error": "고객 목록을 불러오는데 실패했습니다.",
@@ -324,12 +329,18 @@
       "doc-requested": "서명 요청됨",
       "doc-rejected": "거부됨",
       "doc-revoked": "철회됨",
-      "doc-deleted": "삭제됨"
+      "doc-deleted": "삭제됨",
+      "add-description": "새로운 고객을 등록하기 위해 양식을 작성하세요",
+      "edit-description": "고객 정보를 수정합니다"
+    },
+    "detail": {
+      "description": "고객 상세 정보를 확인합니다"
     }
   },
   "employees": {
     "title": "제공인력 관리",
     "subtitle": "등록된 제공인력 정보를 관리하고 새로운 제공인력을 등록할 수 있습니다.",
+    "add": "추가",
     "add-employee": "새 제공인력 등록",
     "search-placeholder": "이름, 연락처, 근무지역 검색",
     "no-employees": "등록된 제공인력이 없습니다.",
@@ -361,10 +372,13 @@
       "error-phone-duplicate": "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
       "error-create-failed": "제공인력 등록에 실패했습니다. 다시 시도해주세요.",
       "error-update-failed": "제공인력 정보 수정에 실패했습니다. 다시 시도해주세요.",
-      "error-save-failed": "저장에 실패했습니다. 다시 시도해주세요."
+      "error-save-failed": "저장에 실패했습니다. 다시 시도해주세요.",
+      "create-description": "새로운 제공인력을 등록하기 위해 양식을 작성하세요",
+      "edit-description": "제공인력 정보를 수정합니다"
     },
     "detail": {
-      "title": "제공인력 상세 정보"
+      "title": "제공인력 상세 정보",
+      "description": "제공인력 상세 정보를 확인합니다"
     },
     "delete-confirm": {
       "title": "제공인력 삭제",

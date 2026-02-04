@@ -1,8 +1,10 @@
 "use client";
 
-import { Avatar, Button, Divider, List, ListItem, ListItemAvatar, ListItemText, Stack, Typography } from "@mui/material";
+import { ArrowRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Separator } from "@/components/ui/separator";
 import { ContentPaper } from "../root/content-paper";
-import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import { Fragment } from "react";
 
 export interface ActivityItem {
@@ -18,42 +20,32 @@ interface RecentActivityProps {
 
 export const RecentActivity = ({ items, title, actionLabel }: RecentActivityProps) => {
   return (
-    <ContentPaper elevation={0} disableAnimation sx={{ p: { xs: 2.5, sm: 3 } }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
-        <Typography variant="subtitle1" fontWeight={600}>
-          {title}
-        </Typography>
-        <Button size="small" endIcon={<ArrowForwardIcon />}>
+    <ContentPaper className="p-5 sm:p-6" disableAnimation>
+      <div className="flex flex-row justify-between items-center">
+        <p className="text-base font-semibold">{title}</p>
+        <Button variant="ghost" size="sm">
           {actionLabel}
+          <ArrowRight className="h-4 w-4 ml-1" />
         </Button>
-      </Stack>
-      <List sx={{ mt: 1.5 }}>
+      </div>
+      <div className="mt-4 space-y-0">
         {items.map((item, index) => (
           <Fragment key={item.primary}>
-            <ListItem sx={{ px: 0 }}>
-              <ListItemAvatar>
-                <Avatar sx={{ bgcolor: "primary.main", color: "primary.contrastText" }}>
+            <div className="flex items-center gap-4 py-3">
+              <Avatar className="bg-primary text-primary-foreground">
+                <AvatarFallback className="bg-primary text-primary-foreground">
                   {item.primary.charAt(0)}
-                </Avatar>
-              </ListItemAvatar>
-              <ListItemText
-                primary={
-                  <Typography variant="body1" fontWeight={600}>
-                    {item.primary}
-                  </Typography>
-                }
-                secondary={
-                  <Typography variant="body2" color="text.secondary">
-                    {item.secondary}
-                  </Typography>
-                }
-              />
-            </ListItem>
-            {index < items.length - 1 && <Divider component="li" sx={{ ml: 7 }} />}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="text-base font-semibold truncate">{item.primary}</p>
+                <p className="text-sm text-muted-foreground truncate">{item.secondary}</p>
+              </div>
+            </div>
+            {index < items.length - 1 && <Separator className="ml-14" />}
           </Fragment>
         ))}
-      </List>
+      </div>
     </ContentPaper>
   );
 };
-

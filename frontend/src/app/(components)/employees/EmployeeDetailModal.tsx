@@ -1,21 +1,22 @@
 "use client";
 
-import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
-    Typography,
-    Box,
-    Chip,
-    Divider,
-    IconButton,
-} from "@mui/material";
 import { Pencil, Trash2, X } from "lucide-react";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { Employee } from "@/app/hooks/useEmployees";
+
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
+import { InfoRow } from "@/app/(components)/ui/info-row";
 
 interface EmployeeDetailModalProps {
     open: boolean;
@@ -37,22 +38,6 @@ const formatPhoneNumber = (phone: string | null | undefined): string => {
     if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
     return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
 };
-
-interface InfoRowProps {
-    label: string;
-    value: React.ReactNode;
-}
-
-const InfoRow = ({ label, value }: InfoRowProps) => (
-    <Box sx={{ display: "flex", py: 1, alignItems: "center" }}>
-        <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>
-            {label}
-        </Typography>
-        <Box sx={{ flex: 1, fontSize: "0.875rem" }}>
-            {value || "-"}
-        </Box>
-    </Box>
-);
 
 export function EmployeeDetailModal({
     open,
@@ -77,80 +62,111 @@ export function EmployeeDetailModal({
         }
     };
 
-    const getStatusChip = (openToNextWork: boolean) => {
+    const getStatusBadge = (openToNextWork: boolean) => {
         if (openToNextWork) {
-            return <Chip label={t(locale, "employees.status.available")} color="success" size="small" />;
+            return (
+                <Badge variant="success">
+                    {t(locale, "employees.status.available")}
+                </Badge>
+            );
         }
-        return <Chip label={t(locale, "employees.status.unavailable")} color="default" size="small" />;
+        return (
+            <Badge variant="secondary">
+                {t(locale, "employees.status.unavailable")}
+            </Badge>
+        );
     };
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <Box component="span" sx={{ fontWeight: 600, fontSize: "1.25rem" }}>
-                    {employee.name}
-                </Box>
-                <IconButton size="small" onClick={onClose}>
-                    <X size={20} />
-                </IconButton>
-            </DialogTitle>
-            <DialogContent dividers>
-                <Box>
-                    {/* Basic Info */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "employees.form.section-basic")}
-                    </Typography>
-                    <InfoRow label={t(locale, "employees.form.name")} value={employee.name} />
-                    <InfoRow label={t(locale, "employees.form.phone")} value={formatPhoneNumber(employee.phone)} />
+        <Dialog
+            data-component="EmployeeDetailModal"
+            open={open}
+            onOpenChange={(isOpen) => !isOpen && onClose()}
+        >
+            <DialogContent className="max-w-lg rounded-lg shadow-xl">
+                <DialogHeader className="flex flex-row items-center justify-between pr-8">
+                    <DialogTitle className="text-xl font-semibold">
+                        {employee.name}
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">
+                        {t(locale, "employees.detail.description")}
+                    </DialogDescription>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-4 top-4 h-8 w-8"
+                        onClick={onClose}
+                    >
+                        <X className="h-4 w-4" />
+                        <span className="sr-only">Close</span>
+                    </Button>
+                </DialogHeader>
 
-                    <Divider sx={{ my: 2 }} />
+                <div className="space-y-4 py-2">
+                    {/* Basic Info */}
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "employees.form.section-basic")}
+                        </h4>
+                        <InfoRow label={t(locale, "employees.form.name")} value={employee.name} />
+                        <InfoRow label={t(locale, "employees.form.phone")} value={formatPhoneNumber(employee.phone)} />
+                    </div>
+
+                    <Separator />
 
                     {/* Work Info */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "employees.form.section-work")}
-                    </Typography>
-                    <InfoRow 
-                        label={t(locale, "employees.form.work-area")} 
-                        value={
-                            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                                {employee.workArea.map((area) => (
-                                    <Chip key={area} label={area} size="small" variant="outlined" />
-                                ))}
-                            </Box>
-                        } 
-                    />
-                    <InfoRow label={t(locale, "employees.form.grade")} value={employee.grade} />
-                    <InfoRow 
-                        label={t(locale, "employees.form.open-to-next-work")} 
-                        value={getStatusChip(employee.openToNextWork)} 
-                    />
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "employees.form.section-work")}
+                        </h4>
+                        <InfoRow
+                            label={t(locale, "employees.form.work-area")}
+                            value={
+                                <div className="flex flex-wrap gap-1">
+                                    {employee.workArea.map((area) => (
+                                        <Badge key={area} variant="outline" className="text-xs">
+                                            {area}
+                                        </Badge>
+                                    ))}
+                                </div>
+                            }
+                        />
+                        <InfoRow label={t(locale, "employees.form.grade")} value={employee.grade} />
+                        <InfoRow
+                            label={t(locale, "employees.form.open-to-next-work")}
+                            value={getStatusBadge(employee.openToNextWork)}
+                        />
+                    </div>
 
-                    <Divider sx={{ my: 2 }} />
+                    <Separator />
 
                     {/* Registration Info */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "employees.form.section-registration")}
-                    </Typography>
-                    <InfoRow label={t(locale, "employees.form.registered-date")} value={formatDate(employee.registeredDate)} />
-                </Box>
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "employees.form.section-registration")}
+                        </h4>
+                        <InfoRow label={t(locale, "employees.form.registered-date")} value={formatDate(employee.registeredDate)} />
+                    </div>
+                </div>
+
+                <DialogFooter className="gap-2 sm:gap-0">
+                    <Button
+                        variant="destructive"
+                        onClick={handleDelete}
+                        className="gap-2"
+                    >
+                        <Trash2 className="h-4 w-4" />
+                        {t(locale, "common.delete")}
+                    </Button>
+                    <Button
+                        onClick={handleEdit}
+                        className="gap-2"
+                    >
+                        <Pencil className="h-4 w-4" />
+                        {t(locale, "common.edit")}
+                    </Button>
+                </DialogFooter>
             </DialogContent>
-            <DialogActions sx={{ px: 3, py: 2 }}>
-                <Button
-                    variant="outlined"
-                    color="error"
-                    startIcon={<Trash2 size={16} />}
-                    onClick={handleDelete}
-                >
-                    {t(locale, "common.delete")}
-                </Button>
-                <Button
-                    variant="contained"
-                    startIcon={<Pencil size={16} />}
-                    onClick={handleEdit}
-                >
-                    {t(locale, "common.edit")}
-                </Button>
-            </DialogActions>
         </Dialog>
     );
 }

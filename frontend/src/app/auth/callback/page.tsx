@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Box, Typography } from "@mui/material";
-import { MoonLoader } from "react-spinners";
+import { Spinner } from "@/components/ui/spinner";
 import { exchangeToken } from "./actions";
 
 export default function AuthCallbackPage() {
@@ -26,10 +25,10 @@ export default function AuthCallbackPage() {
 
             try {
                 console.log("[Auth Callback] Using server action for token exchange");
-                
+
                 // Use server action - bypasses Safari's client-side restrictions
                 const result = await exchangeToken(code);
-                
+
                 if (!result.success) {
                     console.error("[Auth Callback] Token exchange failed:", result.error);
                     setError(result.error || "Authentication Failed");
@@ -37,7 +36,7 @@ export default function AuthCallbackPage() {
                 }
 
                 console.log("[Auth Callback] Token exchange successful");
-                
+
                 if (result.requiresOrgSelection) {
                     console.log("[Auth Callback] Multiple organizations detected, redirecting to selection");
                     router.replace("/select-organization");
@@ -57,25 +56,22 @@ export default function AuthCallbackPage() {
 
     if (error) {
         return (
-            <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", gap: 2 }}>
-                <Typography color="error">{error}</Typography>
-                <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ cursor: "pointer", "&:hover": { textDecoration: "underline" } }}
+            <div className="flex flex-col items-center justify-center h-screen gap-4">
+                <p className="text-destructive">{error}</p>
+                <button
+                    className="text-sm text-muted-foreground cursor-pointer hover:underline"
                     onClick={() => router.push("/login")}
                 >
                     로그인 페이지로 돌아가기
-                </Typography>
-            </Box>
+                </button>
+            </div>
         );
     }
 
     return (
-        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", gap: 2 }}>
-            <MoonLoader />
-            <Typography>로그인 중...</Typography>
-        </Box>
+        <div className="flex flex-col items-center justify-center h-screen gap-4">
+            <Spinner size="lg" />
+            <p className="text-foreground">로그인 중...</p>
+        </div>
     );
-
 }

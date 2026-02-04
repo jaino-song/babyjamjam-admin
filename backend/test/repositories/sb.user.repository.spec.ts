@@ -25,8 +25,22 @@ describe("SbUserRepository", () => {
         ...overrides,
     });
 
-    const createUserEntity = (overrides = {}) => {
-        const defaults = {
+    type UserEntityInput = {
+        id: string;
+        kakaoId: string | null;
+        email: string | null;
+        name: string | null;
+        profileImage: string | null;
+        role: string | null;
+        createdAt: Date;
+        passwordHash: string | null;
+        emailVerified: boolean;
+        emailVerifiedAt: Date | null;
+        authProvider: AuthProvider;
+    };
+
+    const createUserEntity = (overrides: Partial<UserEntityInput> = {}) => {
+        const defaults: UserEntityInput = {
             id: "",
             kakaoId: "kakao-test",
             email: "test@example.com",
@@ -37,7 +51,7 @@ describe("SbUserRepository", () => {
             passwordHash: null,
             emailVerified: false,
             emailVerifiedAt: null,
-            authProvider: "kakao" as AuthProvider,
+            authProvider: "kakao",
         };
         const merged = { ...defaults, ...overrides };
         return UserEntity.reconstitute(
@@ -219,6 +233,10 @@ describe("SbUserRepository", () => {
                         name: "New User",
                         profileImage: "http://example.com/new.png",
                         role: "manager",
+                        passwordHash: null,
+                        emailVerified: false,
+                        emailVerifiedAt: null,
+                        authProvider: "kakao",
                     },
                 });
                 expect(result).toMatchObject({
@@ -293,6 +311,10 @@ describe("SbUserRepository", () => {
                         name: "Updated User",
                         profileImage: "http://example.com/updated.png",
                         role: "manager",
+                        passwordHash: null,
+                        emailVerified: false,
+                        emailVerifiedAt: null,
+                        authProvider: "kakao",
                     },
                 });
                 expect(result).toMatchObject({

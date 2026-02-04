@@ -1,6 +1,6 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
-import { Slot } from "radix-ui"
+import { Slot } from "@radix-ui/react-slot"
 
 import { cn } from "@/lib/utils"
 
@@ -18,6 +18,13 @@ const badgeVariants = cva(
           "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         link: "text-primary underline-offset-4 [a&]:hover:underline",
+        // Semantic variants with opacity backgrounds
+        success:
+          "bg-success/15 text-success border-success/30 [a&]:hover:bg-success/25",
+        warning:
+          "bg-warning/15 text-warning border-warning/30 [a&]:hover:bg-warning/25",
+        info:
+          "bg-info/15 text-info border-info/30 [a&]:hover:bg-info/25",
       },
     },
     defaultVariants: {
@@ -33,7 +40,7 @@ function Badge({
   ...props
 }: React.ComponentProps<"span"> &
   VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
-  const Comp = asChild ? Slot.Root : "span"
+  const Comp = asChild ? Slot : "span"
 
   return (
     <Comp

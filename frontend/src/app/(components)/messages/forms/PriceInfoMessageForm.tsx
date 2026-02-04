@@ -1,16 +1,6 @@
 "use client";
-import { useState, useEffect } from "react";
-import {
-  Box,
-  Button,
-  FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
-  Stack,
-  Typography,
-  Fade,
-} from "@mui/material";
+import { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import voucherOptions from "../templates/json/voucher.json";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import bankAccountJSON from "../templates/json/bank-account.json";
@@ -22,6 +12,21 @@ import { useBankAccountInfos, useVoucherPriceInfos } from "@/app/hooks";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { NameInput } from "./form-components/NameInput";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface PriceInfoFormData {
   name: string;
@@ -53,6 +58,14 @@ function formatPrice(price: string): string {
 export const PriceInfoMessageForm = () => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
+  const [durationTooltipOpen, setDurationTooltipOpen] = useState<boolean>(false);
+  const tooltipTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
+    };
+  }, []);
   const { data: systemTemplate } = useSystemTemplate("PRICE_INFO");
  
   // Subscribe to Zustand store
@@ -130,6 +143,16 @@ export const PriceInfoMessageForm = () => {
     }));
   };
 
+  const handleDurationTooltipOpen = (open: boolean) => {
+    if (!formData.type && open) {
+      setDurationTooltipOpen(true);
+      if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
+      tooltipTimerRef.current = setTimeout(() => setDurationTooltipOpen(false), 3000);
+    } else {
+      setDurationTooltipOpen(false);
+    }
+  };
+
   const handleGenerate = () => {
     const formattedData = {
       ...formData,
@@ -161,123 +184,167 @@ export const PriceInfoMessageForm = () => {
   };
 
   return (
-    <Box data-component="price-info-message-form" sx={{ display: "flex", flexDirection: "column", flexGrow: 1, height: "100%", bgcolor: "background.default" }}>
-      <Fade in appear timeout={500}>
-        <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1 }}>
-          {/* form */}
-          <Stack spacing={3}>
-            <NameInput name={name} setName={setName} label={t(locale, "price-info-msg.name-label")} placeholder={t(locale, "price-info-msg.name-placeholder")} />
-            {/* voucher year & type */}
-            <Stack direction="row" spacing={2}>
-              <FormControl sx={{ minWidth: 100 }}>
-                <InputLabel>연도</InputLabel>
-                <Select
-                  value={voucherYear}
-                  label="연도"
-                  onChange={(e) => {
-                    setVoucherYear(Number(e.target.value));
-                    // 연도 변경시 duration 초기화
-                    setFormData(prev => ({ ...prev, duration: "", voucherId: null }));
-                    setVoucherDuration("");
-                  }}
-                >
-                  {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
-                    <MenuItem key={year} value={year}>
-                      {year}년
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl fullWidth>
-                <InputLabel>{t(locale, "price-info-msg.voucher-type-label")}</InputLabel>
-                <Select
-                  value={formData.type}
-                  label={isVoucherPriceInfosLoading ? t(locale, "common.loading") : t(locale, "price-info-msg.voucher-type-label")}
-                  onChange={(e) => handleVoucherTypeChange(e.target.value)}
-                  disabled={isVoucherPriceInfosLoading}
-                >
-                  {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
-                    <MenuItem key={groupName} disabled sx={{ fontWeight: 600 }}>
-                      {groupName}
-                    </MenuItem>,
-                    ...Object.entries(types).map(([typeValue, typeData]) => (
-                      <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
-                        {typeData.label}
-                      </MenuItem>
-                    ))
-                  ])}
-                </Select>
-              </FormControl>
-            </Stack>
-
-            {/* voucher duration */}
-            {formData.type && voucherPriceInfos.length > 0 && (
-              <FormControl fullWidth>
-                <InputLabel>{t(locale, "price-info-msg.duration-label")}</InputLabel>
-                <Select
-                  value={formData.duration === "" ? "" : formData.duration}
-                  label={t(locale, "price-info-msg.duration-label")}
-                  onChange={(e) => handleDurationChange(e.target.value)}
-                >
-                  {voucherPriceInfos.map((v) => (
-                    <MenuItem key={v.id} value={v.duration}>
-                      {v.duration}일
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            )}
-
-            {/* area */}
-            <FormControl fullWidth>
-              <InputLabel>{t(locale, "price-info-msg.area-label")}</InputLabel>
+    <div
+      data-component="price-info-message-form"
+      className="flex flex-col gap-4 animate-fade-in border-t pt-4"
+    >
+          <div className="grid grid-cols-16 gap-4">
+            <div className="col-span-10">
+              <NameInput
+                name={name}
+                setName={setName}
+                label={t(locale, "price-info-msg.name-label")}
+                placeholder={t(locale, "price-info-msg.name-placeholder")}
+              />
+            </div>
+            <div className="space-y-2 col-span-6">
+              <Label>{t(locale, "price-info-msg.voucher-year-label")}</Label>
               <Select
-                value={formData.area}
-                label={t(locale, "price-info-msg.area-label")}
-                onChange={(e) => handleAreaChange(e.target.value)}
+                value={String(voucherYear)}
+                onValueChange={(value: string) => {
+                  setVoucherYear(Number(value));
+                  setFormData((prev) => ({ ...prev, duration: "", voucherId: null }));
+                  setVoucherDuration("");
+                }}
               >
-                {Object.values(bankAccountInfos).map((bankAccountInfo: BankAccountInfo) => (
-                  <MenuItem key={bankAccountInfo.area} value={bankAccountInfo.area}>
-                    {bankAccountJSON[bankAccountInfo.area as keyof typeof bankAccountJSON].area}
-                  </MenuItem>
-                ))}
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={t(locale, "price-info-msg.voucher-year-label")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
+                    <SelectItem key={year} value={String(year)}>
+                      {year}년
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
-            </FormControl>
+            </div>
 
-            {/* Price Info */}
-            {formData.fullPrice && formData.grant && formData.actualPrice && (
-              <Stack spacing={2}>
-                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.full-price-label")}: {formatPrice(formData.fullPrice)}{t(locale, "common.currency-symbol")}</Typography>
-                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.grant-price-label")}: {formatPrice(formData.grant)}{t(locale, "common.currency-symbol")}</Typography>
-                <Typography variant="body1" fontWeight={500}>{t(locale, "price-info-msg.actual-price-label")}: {formatPrice(formData.actualPrice)}{t(locale, "common.currency-symbol")}</Typography>
-              </Stack>
-            )}
+            <div className="space-y-2 col-span-5">
+              <Label>{t(locale, "price-info-msg.duration-label")}</Label>
+              <TooltipProvider delayDuration={0}>
+                <Tooltip open={durationTooltipOpen} onOpenChange={handleDurationTooltipOpen}>
+                  <TooltipTrigger asChild>
+                    <div tabIndex={!formData.type ? 0 : -1}>
+                      <Select
+                        value={formData.duration || undefined}
+                        onValueChange={handleDurationChange}
+                        disabled={!formData.type || voucherPriceInfos.length === 0}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder={t(locale, "price-info-msg.duration-label")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {voucherPriceInfos.map((v) => (
+                            <SelectItem key={v.id} value={v.duration}>
+                              {v.duration}일
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>바우처 유형을 선택하세요</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
 
-            {/* generate button */}
-            <Button
-              variant="contained"
-              size="large"
-              onClick={handleGenerate}
-              disabled={!formData.name || !formData.type || !formData.area || isVoucherPriceInfosLoading || isBankAccountInfosLoading}
-              data-component="price-info-message-form-generate-button"
-            >
-              {isVoucherPriceInfosLoading || isBankAccountInfosLoading ? t(locale, "common.generate-button-loading") : t(locale, "common.generate-button")}
-            </Button>
-          </Stack>
+            <div className="space-y-2 col-span-5">
+              <Label>{t(locale, "price-info-msg.area-label")}</Label>
+              <Select value={formData.area || undefined} onValueChange={handleAreaChange}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={t(locale, "price-info-msg.area-label")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.values(bankAccountInfos).map((bankAccountInfo: BankAccountInfo) => (
+                    <SelectItem key={bankAccountInfo.area} value={bankAccountInfo.area}>
+                      {bankAccountJSON[bankAccountInfo.area as keyof typeof bankAccountJSON].area}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          {/* generated message */}
-          {generatedMessage && (
-            <GeneratedMsg
-              title={t(locale, "common.generated-message-title")}
-              copyButtonText={t(locale, "common.copy-button")}
-              message={generatedMessage}
-              onMessageChange={setGeneratedMessage}
-              handleCopy={handleCopy}
-            />
+            <div className="space-y-2 col-span-6">
+              <Label>
+                {isVoucherPriceInfosLoading
+                  ? t(locale, "common.loading")
+                  : t(locale, "price-info-msg.voucher-type-label")}
+              </Label>
+              <Select
+                value={formData.type}
+                onValueChange={handleVoucherTypeChange}
+                disabled={isVoucherPriceInfosLoading}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={t(locale, "price-info-msg.voucher-type-label")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                    <div key={groupName}>
+                      <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground">
+                        {groupName}
+                      </div>
+                      {Object.entries(types).map(([typeValue, typeData]) => (
+                        <SelectItem key={typeValue} value={typeValue} className="pl-6">
+                          {typeData.label}
+                        </SelectItem>
+                      ))}
+                    </div>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Price Info */}
+          {formData.fullPrice && formData.grant && formData.actualPrice && (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-medium">
+                {t(locale, "price-info-msg.full-price-label")}: {formatPrice(formData.fullPrice)}
+                {t(locale, "common.currency-symbol")}
+              </p>
+              <p className="text-sm font-medium">
+                {t(locale, "price-info-msg.grant-price-label")}: {formatPrice(formData.grant)}
+                {t(locale, "common.currency-symbol")}
+              </p>
+              <p className="text-sm font-medium">
+                {t(locale, "price-info-msg.actual-price-label")}: {formatPrice(formData.actualPrice)}
+                {t(locale, "common.currency-symbol")}
+              </p>
+            </div>
           )}
-        </Box>
-      </Fade>
-    </Box>
+
+          {/* generate button */}
+          <Button
+            size="lg"
+            onClick={handleGenerate}
+            disabled={
+              !formData.name ||
+              !formData.type ||
+              !formData.area ||
+              isVoucherPriceInfosLoading ||
+              isBankAccountInfosLoading
+            }
+            data-component="price-info-message-form-generate-button"
+          >
+            {isVoucherPriceInfosLoading || isBankAccountInfosLoading
+              ? t(locale, "common.generate-button-loading")
+              : t(locale, "common.generate-button")}
+          </Button>
+
+        {generatedMessage && (
+          <GeneratedMsg
+            title={t(locale, "common.generated-message-title")}
+            copyButtonText={t(locale, "common.copy-button")}
+            message={generatedMessage}
+            onMessageChange={setGeneratedMessage}
+            handleCopy={handleCopy}
+          />
+        )}
+    </div>
   );
 };
 

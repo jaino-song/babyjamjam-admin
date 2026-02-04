@@ -2,16 +2,14 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { QueryProvider } from "./query-provider";
 import { ConditionalHeader } from "./(components)/root/conditional-header";
-import { MuiThemeProvider as ThemeProvider } from "./(components)/mui-theme-provider";
-import EmotionRegistry from "./(components)/EmotionRegistry";
 import localFont from "next/font/local";
 import AnimatedContainer from "./(components)/root/animated-container";
-import { Box } from "@mui/material";
 import { LocaleProvider } from "./(components)/LocaleProvider";
 import { getLocale } from "./actions/locale";
 import { getCurrentUser } from "./lib/auth/cookies";
 import { UserProvider } from "./(components)/providers/UserProvider";
 import { NotificationPermissionPrompt } from "./(components)/notification-permission-prompt";
+import { Toaster } from "@/components/ui/toaster";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",
@@ -37,7 +35,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0047ab",
+  themeColor: "#12366a", // HSL(217, 71%, 24%) - matches --primary
   width: "device-width",
 };
 
@@ -53,24 +51,24 @@ export default async function RootLayout({
 
   return (
     <html lang={locale}>
-      <body className={Pretendard.variable} style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale', height: '100vh', display: 'flex', flexDirection: 'column' }}>
-        <EmotionRegistry>
-          <ThemeProvider>
-            <QueryProvider>
-              <LocaleProvider locale={locale}>
-                <UserProvider user={user}>
-                  <NotificationPermissionPrompt />
-                  <ConditionalHeader />
-                  <AnimatedContainer>
-                    <Box component="main" data-component="main-content" sx={{ m: 1, flexGrow: 1, width: "100%" }}>
-                      {children}
-                    </Box>
-                  </AnimatedContainer>
-                </UserProvider>
-              </LocaleProvider>
-            </QueryProvider>
-          </ThemeProvider>
-        </EmotionRegistry>
+      <body className={`${Pretendard.variable} antialiased h-screen flex flex-col`}>
+        <QueryProvider>
+          <LocaleProvider locale={locale}>
+            <UserProvider user={user}>
+              <NotificationPermissionPrompt />
+              <ConditionalHeader />
+              <AnimatedContainer>
+                <main
+                  data-component="main-content"
+                  className="m-1 flex-grow w-full"
+                >
+                  {children}
+                </main>
+              </AnimatedContainer>
+              <Toaster />
+            </UserProvider>
+          </LocaleProvider>
+        </QueryProvider>
       </body>
     </html>
   );

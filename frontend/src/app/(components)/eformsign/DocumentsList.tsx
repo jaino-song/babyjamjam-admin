@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Box, Chip, Alert, IconButton } from "@mui/material";
 import { Plus } from "lucide-react";
 import { useEformsignDocumentsByType } from "@/app/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/app/hooks/useEformsignAuth";
@@ -16,6 +15,9 @@ import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "../LocaleProvider";
 import Link from "next/link";
 import { DataTable, type DataTableColumn, type FilterOption } from "@/app/(components)/ui/datatable";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 type DocumentRow = EformsignDocumentView & Record<string, unknown>;
 
@@ -93,6 +95,7 @@ export function DocumentsList() {
     setSelectedFilter(filterType);
   };
 
+  // All hooks must be called before any conditional returns (React Rules of Hooks)
   const columns = useMemo<DataTableColumn<DocumentRow>[]>(
     () => [
       {
@@ -115,30 +118,14 @@ export function DocumentsList() {
         align: "center",
         width: "25%",
         render: (doc) => (
-          <Chip
-            label={doc.status}
-            color={getStatusColor(doc.status)}
-            size="small"
-          />
+          <Badge variant={getStatusColor(doc.status)} className="min-w-[50px] justify-center">
+            {doc.status}
+          </Badge>
         ),
       },
     ],
     [locale]
   );
-
-  // Error state
-  if (authError || error) {
-    const errorMessage = authError?.message || (error instanceof Error ? error.message : "Unknown error");
-    return (
-      <Box p={3}>
-        <Alert severity="error">
-          {authError
-            ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
-            : `문서를 불러오는데 실패했습니다: ${errorMessage}`}
-        </Alert>
-      </Box>
-    );
-  }
 
   const documents = useMemo<DocumentRow[]>(() => {
     return (data?.documents || [])
@@ -147,13 +134,29 @@ export function DocumentsList() {
       .map((doc) => doc as DocumentRow);
   }, [data?.documents]);
 
+  // Error state - now after all hooks are called
+  if (authError || error) {
+    const errorMessage = authError?.message || (error instanceof Error ? error.message : "Unknown error");
+    return (
+      <div className="p-3">
+        <Alert variant="destructive">
+          <AlertDescription>
+            {authError
+              ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
+              : `문서를 불러오는데 실패했습니다: ${errorMessage}`}
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   return (
     <ContentPaper
       title={t(locale, "documents-list.title")}
       subtitle={t(locale, "documents-list.subtitle")}
-      sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+      className="min-h-[70vh] flex-grow w-full"
     >
-      <Box data-component="documents-list-container">
+      <div data-component="documents-list-container">
         <DataTable
           data={documents}
           columns={columns}
@@ -169,17 +172,18 @@ export function DocumentsList() {
           pageSize={5}
           emptyMessage="문서가 없습니다"
           toolbarActions={
-            <IconButton
-              size="medium"
-              sx={{ color: "#1e88e5", ml: "auto" }}
-              LinkComponent={Link}
-              href="/contracts/creation"
+            <Button
+              className="gap-2 w-[100px]"
+              asChild
             >
-              <Plus size={30} strokeWidth={2} />
-            </IconButton>
+              <Link href="/contracts/creation">
+                <Plus className="h-4 w-4" />
+                추가
+              </Link>
+            </Button>
           }
         />
-      </Box>
+      </div>
     </ContentPaper>
   );
 }

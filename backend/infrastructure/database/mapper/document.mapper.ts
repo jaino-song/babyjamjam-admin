@@ -1,43 +1,31 @@
-import { Prisma } from '@prisma/client';
-import { DocumentEntity, AllowedMimeType, DocumentCategory } from 'domain/entities/document.entity';
+import { Prisma, document as PrismaDocument } from '@prisma/client';
+import { DocumentEntity } from 'domain/entities/document.entity';
 
-type DocumentRow = {
-    id: string;
-    name: string;
-    description: string | null;
-    categoryId: string;
-    tags: string[];
-    mime_type: string;
-    file_size: number;
-    storage_path: string;
-    storage_url: string | null;
-    org_id: string | null;
-    uploaded_by: string;
-    created_at: Date;
-    updated_at: Date;
-};
+// Use Prisma's generated type directly
+type DocumentRow = PrismaDocument;
 
 export class DocumentMapper {
     static toDomain(row: DocumentRow): DocumentEntity {
-        return DocumentEntity.reconstitute({
-            id: row.id,
-            name: row.name,
-            description: row.description ?? undefined,
-            categoryId: row.categoryId,
-            tags: row.tags,
-            mimetype: row.mimeType,
-            filesize: row.fileSize,
-            storagepath: row.storagePath,
-            storageurl: row.storageUrl ?? undefined,
-            orgid: row.orgId ?? undefined,
-            uploadedby: row.uploadedBy,
-            createdat: row.createdAt,
-            updatedat: row.updatedAt,
-        });
+        return DocumentEntity.reconstitute(
+            row.id,
+            row.name,
+            row.description ?? null,
+            row.categoryId,
+            row.tags,
+            row.mimeType,
+            row.fileSize,
+            row.storagePath,
+            row.storageUrl ?? null,
+            row.orgId ?? null,
+            row.uploadedBy,
+            row.createdAt,
+            row.updatedAt,
+        );
     }
 
-    static toPrismaCreate(entity: DocumentEntity): Prisma.documentCreateInput {
-        const input: Prisma.documentCreateInput = {
+    static toPrismaCreate(entity: DocumentEntity): Omit<Prisma.documentUncheckedCreateInput, 'organizationId'> {
+        const now = new Date();
+        return {
             name: entity.name,
             description: entity.description ?? null,
             categoryId: entity.categoryId,
@@ -45,23 +33,20 @@ export class DocumentMapper {
             mimeType: entity.mimeType,
             fileSize: entity.fileSize,
             storagePath: entity.storagePath,
-            orgId: entity.orgId ?? undefined,
+            storageUrl: entity.storageUrl,
+            orgId: entity.orgId,
             uploadedBy: entity.uploadedBy,
+            updatedAt: now,
         };
-        
-        if (entity.storageUrl !== null) {
-            input.storageUrl = entity.storageUrl;
-        }
-        
-        return input;
     }
 
-    static toPrismaUpdate(entity: DocumentEntity): Prisma.documentUpdateInput {
+    static toPrismaUpdate(entity: DocumentEntity): Prisma.documentUncheckedUpdateInput {
         return {
             name: entity.name,
             description: entity.description ?? null,
             categoryId: entity.categoryId,
             tags: entity.tags,
+            updatedAt: new Date(),
         };
     }
 }

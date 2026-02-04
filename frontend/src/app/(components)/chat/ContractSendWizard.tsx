@@ -2,15 +2,10 @@
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import {
-    Box,
-    Button,
-    Typography,
-    Stack,
-    Chip,
-} from "@mui/material";
 import { FileCheck, Send } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { ClientAutocomplete } from "../clients/ClientAutocomplete";
 import { useFormStore } from "@/app/store/form-store";
 import type { Client } from "@/app/lib/client/types";
@@ -65,17 +60,17 @@ export default function ContractSendWizard({ onComplete }: ContractSendWizardPro
     }, [selectedClient, setClientId, setName, setPhone, setBirthday, setAddress, setDueDate, setIsManualEntry, router, onComplete]);
 
     return (
-        <Box sx={{ minHeight: 300, display: "flex", flexDirection: "column" }}>
-            <Box sx={{ mb: 2 }}>
-                <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+        <div className="min-h-[300px] flex flex-col">
+            <div className="mb-4">
+                <h3 className="text-base font-bold mb-1">
                     계약서 전송
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
+                </h3>
+                <p className="text-sm text-muted-foreground">
                     계약서를 보낼 산모를 선택해주세요.
-                </Typography>
-            </Box>
+                </p>
+            </div>
 
-            <Stack spacing={3} sx={{ flex: 1 }}>
+            <div className="flex flex-col gap-6 flex-1">
                 <ClientAutocomplete
                     value={selectedClientId}
                     onChange={handleClientChange}
@@ -83,50 +78,55 @@ export default function ContractSendWizard({ onComplete }: ContractSendWizardPro
                     required
                 />
 
-                <Box>
-                    <Stack spacing={1.5} sx={{ pl: 2, borderLeft: 3, borderColor: selectedClient ? "primary.main" : "grey.300", mb: 3 }}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, minHeight: 24 }}>
+                <div>
+                    <div
+                        className="flex flex-col gap-3 pl-4 border-l-[3px] mb-6"
+                        style={{
+                            borderColor: selectedClient
+                                ? "hsl(var(--primary))"
+                                : "hsl(var(--muted-foreground) / 0.3)"
+                        }}
+                    >
+                        <div className="flex items-center gap-2 min-h-[24px]">
                             {selectedClient && (
                                 <>
-                                    <Typography variant="body1" fontWeight={600}>
+                                    <span className="text-base font-semibold">
                                         {selectedClient.name}
-                                    </Typography>
+                                    </span>
                                     {selectedClient.hasSigned && (
-                                        <Chip
-                                            icon={<FileCheck size={14} />}
-                                            label="계약 완료"
-                                            size="small"
-                                            color="success"
-                                            variant="outlined"
-                                            sx={{ height: 20, fontSize: "0.7rem" }}
-                                        />
+                                        <Badge
+                                            variant="outline"
+                                            className="text-success border-success h-5 text-[0.7rem]"
+                                        >
+                                            <FileCheck className="w-3.5 h-3.5 mr-1" />
+                                            계약 완료
+                                        </Badge>
                                     )}
                                 </>
                             )}
-                        </Box>
-                        <Typography variant="body2" color="text.secondary">
+                        </div>
+                        <p className="text-sm text-muted-foreground">
                             <strong>연락처:</strong> {selectedClient?.phone || ""}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        </p>
+                        <p className="text-sm text-muted-foreground">
                             <strong>주소:</strong> {selectedClient?.address || ""}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        </p>
+                        <p className="text-sm text-muted-foreground">
                             <strong>출산예정일:</strong> {formatDueDate(selectedClient?.dueDate ?? null)}
-                        </Typography>
-                    </Stack>
+                        </p>
+                    </div>
 
                     <Button
-                        variant="contained"
-                        startIcon={<Send size={18} />}
                         onClick={handleSendContract}
-                        fullWidth
-                        size="large"
+                        className="w-full"
+                        size="lg"
                         disabled={!selectedClient}
                     >
+                        <Send className="w-4 h-4 mr-2" />
                         계약서 전송하러 가기
                     </Button>
-                </Box>
-            </Stack>
-        </Box>
+                </div>
+            </div>
+        </div>
     );
 }

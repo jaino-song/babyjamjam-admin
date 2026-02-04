@@ -1,6 +1,5 @@
 "use client";
 
-import { Box, Typography } from "@mui/material";
 import { TemplateVariable } from "@/lib/template/types";
 
 interface TemplatePreviewProps {
@@ -25,19 +24,10 @@ export const TemplatePreview = ({ content, variables }: TemplatePreviewProps) =>
     };
 
     return (
-        <Box sx={{ 
-            p: 2, 
-            bgcolor: "background.paper", 
-            borderRadius: 1, 
-            border: 1, 
-            borderColor: "divider",
-            minHeight: 100,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word"
-        }}>
-            <Typography variant="body1" sx={{ fontFamily: "monospace" }}>
+        <div className="p-4 bg-card rounded-md border min-h-[100px] whitespace-pre-wrap break-words">
+            <p className="font-mono text-sm">
                 {renderPreview()}
-            </Typography>
-        </Box>
+            </p>
+        </div>
     );
 };

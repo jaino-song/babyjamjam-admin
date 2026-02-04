@@ -1,9 +1,11 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
 import { EmployeeScheduleController } from "interface/controllers/employee-schedule.controller";
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 
 describe("EmployeeScheduleController (Integration)", () => {
     // ============================================
@@ -48,6 +50,19 @@ describe("EmployeeScheduleController (Integration)", () => {
             delete: jest.fn(),
         };
 
+        const mockAuthGuard = {
+            canActivate: (context: ExecutionContext) => {
+                const requestContext = context.switchToHttp().getRequest();
+                requestContext.user = {
+                    userId: "user-1",
+                    organizationId: "org-1",
+                    role: "admin",
+                    orgRole: "admin",
+                };
+                return true;
+            },
+        };
+
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [EmployeeScheduleController],
             providers: [
@@ -56,7 +71,12 @@ describe("EmployeeScheduleController (Integration)", () => {
                     useValue: mockEmployeeScheduleService,
                 },
             ],
-        }).compile();
+        })
+            .overrideGuard(JwtGuard)
+            .useValue(mockAuthGuard)
+            .overrideGuard(TenantGuard)
+            .useValue(mockAuthGuard)
+            .compile();
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));

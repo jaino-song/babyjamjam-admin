@@ -7,9 +7,12 @@ export const allowed_mime_types = [
 ] as const;
 
 export type allowedmimetype = typeof allowed_mime_types[number];
+// Export PascalCase alias for compatibility
+export type AllowedMimeType = allowedmimetype;
 
 // maximum file size (25mb in bytes)
 export const max_file_size = 25 * 1024 * 1024;
+export const MAX_FILE_SIZE = max_file_size;
 
 // predefined document categories
 export const predefined_categories = [
@@ -24,17 +27,18 @@ export const predefined_categories = [
 ] as const;
 
 export type documentcategory = typeof predefined_categories[number];
+// Export PascalCase alias for compatibility
+export type DocumentCategory = documentcategory;
 
-interface DocumentProps {
-    id?: string;
+export interface CreateDocumentProps {
     name: string;
     description?: string;
     categoryId: string;
     tags: string[];
-    mimeType: AllowedMimeType;
+    mimeType: AllowedMimeType | string;
     fileSize: number;
     storagePath: string;
-    storageUrl: string | null;
+    storageUrl?: string | null;
     orgId?: string | null;
     uploadedBy: string;
 }
@@ -51,9 +55,9 @@ export class DocumentEntity {
         public readonly id: string,
         public name: string,
         public description: string | null,
-        public category: DocumentCategory,
+        public categoryId: string,
         public tags: string[],
-        public readonly mimeType: AllowedMimeType,
+        public readonly mimeType: string,
         public readonly fileSize: number,
         public readonly storagePath: string,
         public readonly storageUrl: string | null,
@@ -63,51 +67,43 @@ export class DocumentEntity {
         public updatedAt: Date,
     ) {}
 
+    // Lowercase accessors for controller compatibility
+    get mimetype(): string { return this.mimeType; }
+    get filesize(): number { return this.fileSize; }
+    get storagepath(): string { return this.storagePath; }
+    get storageurl(): string | null { return this.storageUrl; }
+    get orgid(): string | null { return this.orgId; }
+    get uploadedby(): string { return this.uploadedBy; }
+    get createdat(): Date { return this.createdAt; }
+    get updatedat(): Date { return this.updatedAt; }
+
     // 파일 크기 검증
     static validateFileSize(size: number): boolean {
         return size > 0 && size <= MAX_FILE_SIZE;
     }
 
-    /**
-     * Invariants = rules that must always be true for this entity to be valid.
-     * Enforce them once here so the rest of your code can trust the entity.
-     */
-    private assertInvariants(): void {
-        if (!this.props.name) throw new Error("DocumentEntity: name is required");
-        if (!this.props.categoryId) throw new Error("DocumentEntity: categoryId is required");
-        if (!Array.isArray(this.props.tags)) throw new Error("DocumentEntity: tags must be an array");
-        if (!this.props.mimetype) throw new Error("DocumentEntity: mimetype is required");
-        if (typeof this.props.filesize !== "number" || this.props.filesize < 0) {
-            throw new Error("DocumentEntity: filesize must be a non-negative number");
-        }
-        if (!this.props.storagepath) throw new Error("DocumentEntity: storagepath is required");
-        if (!this.props.uploadedby) throw new Error("DocumentEntity: uploadedby is required");
-
-        if (!(this.props.createdat instanceof Date) || Number.isNaN(this.props.createdat.getTime())) {
-            throw new Error("DocumentEntity: createdat must be a valid Date");
-        }
-        if (!(this.props.updatedat instanceof Date) || Number.isNaN(this.props.updatedat.getTime())) {
-            throw new Error("DocumentEntity: updatedat must be a valid Date");
-        }
-        if (this.props.updatedat < this.props.createdat) {
-            throw new Error("DocumentEntity: updatedat cannot be before createdat");
-        }
+    // lowercase alias
+    static validatefilesize(size: number): boolean {
+        return DocumentEntity.validateFileSize(size);
     }
 
-    // Accessors (optional, but keeps props encapsulated)
-    get id(): string | undefined { return this.props.id; }
-    get name(): string { return this.props.name; }
-    get description(): string | undefined { return this.props.description; }
-    get categoryId(): string { return this.props.categoryId; }
-    get tags(): string[] { return this.props.tags; }
-    get mimetype(): string { return this.props.mimetype; }
-    get filesize(): number { return this.props.filesize; }
-    get storagepath(): string { return this.props.storagepath; }
-    get storageurl(): string | undefined { return this.props.storageurl; }
-    get orgid(): string | undefined { return this.props.orgid; }
-    get uploadedby(): string { return this.props.uploadedby; }
-    get createdat(): Date { return this.props.createdat; }
-    get updatedat(): Date { return this.props.updatedat; }
+    static validateMimeType(mimetype: string): boolean {
+        return allowed_mime_types.includes(mimetype as allowedmimetype);
+    }
+
+    // lowercase alias
+    static validatemimetype(mimetype: string): boolean {
+        return DocumentEntity.validateMimeType(mimetype);
+    }
+
+    static validateCategory(category: string): boolean {
+        return predefined_categories.includes(category as documentcategory);
+    }
+
+    // lowercase alias
+    static validatecategory(category: string): boolean {
+        return DocumentEntity.validateCategory(category);
+    }
 
     // 메타데이터만 업데이트 (파일 자체는 불변)
     update(props: UpdateDocumentProps): void {
@@ -117,7 +113,7 @@ export class DocumentEntity {
             if (!DocumentEntity.validateCategory(props.category)) {
                 throw new Error(`유효하지 않은 카테고리: ${props.category}`);
             }
-            this.category = props.category;
+            this.categoryId = props.category;
         }
         if (props.tags !== undefined) this.tags = props.tags;
         this.updatedAt = new Date();
@@ -132,21 +128,18 @@ export class DocumentEntity {
         if (!DocumentEntity.validateMimeType(props.mimeType)) {
             throw new Error(`허용되지 않은 파일 형식: ${props.mimeType}`);
         }
-        if (!DocumentEntity.validateCategory(props.category)) {
-            throw new Error(`유효하지 않은 카테고리: ${props.category}`);
-        }
 
         const now = new Date();
         return new DocumentEntity(
             '',
             props.name,
             props.description ?? null,
-            props.category,
+            props.categoryId,
             props.tags,
             props.mimeType,
             props.fileSize,
             props.storagePath,
-            props.storageUrl,
+            props.storageUrl ?? null,
             props.orgId ?? null,
             props.uploadedBy,
             now,
@@ -159,9 +152,9 @@ export class DocumentEntity {
         id: string,
         name: string,
         description: string | null,
-        category: DocumentCategory,
+        categoryId: string,
         tags: string[],
-        mimeType: AllowedMimeType,
+        mimeType: string,
         fileSize: number,
         storagePath: string,
         storageUrl: string | null,
@@ -174,7 +167,7 @@ export class DocumentEntity {
             id,
             name,
             description,
-            category,
+            categoryId,
             tags,
             mimeType,
             fileSize,
@@ -185,17 +178,5 @@ export class DocumentEntity {
             createdAt,
             updatedAt,
         );
-    }
-
-    static validatefilesize(size: number): boolean {
-        return size > 0 && size <= max_file_size;
-    }
-
-    static validatemimetype(mimetype: string): boolean {
-        return allowed_mime_types.includes(mimetype as allowedmimetype);
-    }
-
-    static validatecategory(category: string): boolean {
-        return predefined_categories.includes(category as documentcategory);
     }
 }

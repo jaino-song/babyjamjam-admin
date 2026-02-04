@@ -1,26 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
-    TextField,
-    FormControl,
-    InputLabel,
-    Select,
-    MenuItem,
-    Grid,
-    FormControlLabel,
-    Switch,
-    Chip,
-    Box,
-    OutlinedInput,
-    SelectChangeEvent,
-    Alert,
-} from "@mui/material";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { getErrorMessage } from "@/app/lib/errors/prisma-error-mapper";
@@ -34,6 +14,32 @@ import {
 } from "@/app/hooks/useEmployees";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEmployeeDialogStore } from "@/app/store/employee-dialog-store";
+
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
+import { X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface EmployeeFormDialogProps {
     open: boolean;
@@ -125,6 +131,22 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
         return value.replace(/[^\d]/g, "");
     };
 
+    const toggleWorkArea = (area: string) => {
+        setFormData((prev) => {
+            const newAreas = prev.workArea.includes(area)
+                ? prev.workArea.filter((a) => a !== area)
+                : [...prev.workArea, area];
+            return { ...prev, workArea: newAreas };
+        });
+    };
+
+    const removeWorkArea = (area: string) => {
+        setFormData((prev) => ({
+            ...prev,
+            workArea: prev.workArea.filter((a) => a !== area),
+        }));
+    };
+
     const handleSubmit = async () => {
         // Mark all fields as touched to show any validation errors
         setTouched({ phone: true, workArea: true });
@@ -201,139 +223,200 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
     };
 
     return (
-        <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth data-component="EmployeeFormDialog">
-            <DialogTitle>
-                {isEditMode
-                    ? t(locale, "employees.form.edit-title")
-                    : t(locale, "employees.form.create-title")}
-            </DialogTitle>
-            <DialogContent dividers data-component="EmployeeFormDialog-Content">
-                {/* Error Alert */}
-                {error && (
-                    <Alert
-                        severity="error"
-                        sx={{ mb: 2 }}
-                        onClose={() => setError(null)}
-                        data-component="EmployeeFormDialog-ErrorAlert"
-                    >
-                        {error}
-                    </Alert>
-                )}
-                <Grid container spacing={2} sx={{ mt: 0.5 }}>
+        <Dialog
+            open={open}
+            onOpenChange={(isOpen) => !isOpen && handleClose()}
+        >
+            <DialogContent
+                data-component="EmployeeFormDialog"
+                className="max-w-lg max-h-[90vh] overflow-y-auto rounded-lg shadow-xl"
+            >
+                <DialogHeader>
+                    <DialogTitle>
+                        {isEditMode
+                            ? t(locale, "employees.form.edit-title")
+                            : t(locale, "employees.form.create-title")}
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">
+                        {isEditMode
+                            ? t(locale, "employees.form.edit-description")
+                            : t(locale, "employees.form.create-description")}
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-6 py-4" data-component="EmployeeFormDialog-Content">
+                    {/* Error Alert */}
+                    {error && (
+                        <Alert
+                            variant="destructive"
+                            data-component="EmployeeFormDialog-ErrorAlert"
+                        >
+                            <AlertDescription>{error}</AlertDescription>
+                        </Alert>
+                    )}
+
                     {/* Name */}
-                    <Grid size={{ xs: 12 }}>
-                        <TextField
-                            fullWidth
-                            required
-                            label={t(locale, "employees.form.name")}
+                    <div className="space-y-2">
+                        <Label htmlFor="name">
+                            {t(locale, "employees.form.name")}
+                            <span className="text-destructive ml-1">*</span>
+                        </Label>
+                        <Input
+                            id="name"
                             value={formData.name}
                             onChange={(e) => handleChange("name", e.target.value)}
                         />
-                    </Grid>
+                    </div>
 
-                    {/* Phone */}
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                            fullWidth
-                            required
-                            label={t(locale, "employees.form.phone")}
-                            value={formatPhoneNumber(formData.phone)}
-                            onChange={(e) => handleChange("phone", parsePhoneNumber(e.target.value))}
-                            onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-                            placeholder="010-1234-5678"
-                            inputProps={{ maxLength: 13 }}
-                            error={touched.phone && !isPhoneValid}
-                            helperText={touched.phone && !isPhoneValid ? t(locale, "employees.form.phone-required") : undefined}
-                        />
-                    </Grid>
-
-                    {/* Work Area - Multi-select */}
-                    <Grid size={{ xs: 12 }}>
-                        <FormControl fullWidth required error={touched.workArea && !isWorkAreaValid}>
-                            <InputLabel>{t(locale, "employees.form.work-area")}</InputLabel>
-                            <Select<string[]>
-                                multiple
-                                value={formData.workArea}
-                                label={t(locale, "employees.form.work-area")}
-                                onChange={(e: SelectChangeEvent<string[]>) => {
-                                    const value = e.target.value;
-                                    handleChange("workArea", typeof value === "string" ? value.split(",") : value);
-                                }}
-                                onBlur={() => setTouched((prev) => ({ ...prev, workArea: true }))}
-                                input={<OutlinedInput label={t(locale, "employees.form.work-area")} />}
-                                renderValue={(selected: string[]) => (
-                                    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                                        {selected.map((value: string) => (
-                                            <Chip key={value} label={value} size="small" />
-                                        ))}
-                                    </Box>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Phone */}
+                        <div className="space-y-2">
+                            <Label htmlFor="phone">
+                                {t(locale, "employees.form.phone")}
+                                <span className="text-destructive ml-1">*</span>
+                            </Label>
+                            <Input
+                                id="phone"
+                                placeholder="010-1234-5678"
+                                value={formatPhoneNumber(formData.phone)}
+                                onChange={(e) => handleChange("phone", parsePhoneNumber(e.target.value))}
+                                onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+                                maxLength={13}
+                                className={cn(
+                                    touched.phone && !isPhoneValid && "border-destructive focus-visible:ring-destructive"
                                 )}
-                            >
-                                {WORK_AREAS.map((area) => (
-                                    <MenuItem key={area} value={area}>
-                                        {area}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                            {touched.workArea && !isWorkAreaValid && (
-                                <Box component="span" sx={{ color: "error.main", fontSize: "0.75rem", mt: 0.5, ml: 1.75 }}>
-                                    {t(locale, "employees.form.work-area-required")}
-                                </Box>
+                            />
+                            {touched.phone && !isPhoneValid && (
+                                <p className="text-xs text-destructive">
+                                    {t(locale, "employees.form.phone-required")}
+                                </p>
                             )}
-                        </FormControl>
-                    </Grid>
+                        </div>
 
-                    {/* Grade */}
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                        <FormControl fullWidth required>
-                            <InputLabel>{t(locale, "employees.form.grade")}</InputLabel>
+                        {/* Grade */}
+                        <div className="space-y-2">
+                            <Label>
+                                {t(locale, "employees.form.grade")}
+                                <span className="text-destructive ml-1">*</span>
+                            </Label>
                             <Select
                                 value={formData.grade}
-                                label={t(locale, "employees.form.grade")}
-                                onChange={(e) => handleChange("grade", e.target.value)}
+                                onValueChange={(value) => handleChange("grade", value)}
                             >
-                                {GRADES.map((grade) => (
-                                    <MenuItem key={grade} value={grade}>
-                                        {grade}
-                                    </MenuItem>
-                                ))}
+                                <SelectTrigger>
+                                    <SelectValue placeholder={t(locale, "employees.form.grade")} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {GRADES.map((grade) => (
+                                        <SelectItem key={grade} value={grade}>
+                                            {grade}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
                             </Select>
-                        </FormControl>
-                    </Grid>
+                        </div>
+                    </div>
 
-                    {/* Open to Next Work */}
-                    <Grid size={{ xs: 12, sm: 6 }} sx={{ display: "flex", alignItems: "center" }}>
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={formData.openToNextWork}
-                                    onChange={(e) => handleChange("openToNextWork", e.target.checked)}
-                                    color="primary"
-                                />
-                            }
-                            label={t(locale, "employees.form.open-to-next-work")}
+                    <Separator />
+
+                    {/* Work Area - Multi-select */}
+                    <div className="space-y-2">
+                        <Label>
+                            {t(locale, "employees.form.work-area")}
+                            <span className="text-destructive ml-1">*</span>
+                        </Label>
+
+                        {/* Selected areas as badges */}
+                        {formData.workArea.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mb-2">
+                                {formData.workArea.map((area) => (
+                                    <Badge key={area} variant="secondary" className="gap-1">
+                                        {area}
+                                        <button
+                                            type="button"
+                                            onClick={() => removeWorkArea(area)}
+                                            className="ml-1 hover:text-destructive"
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    </Badge>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Clickable area options */}
+                        <div
+                            className={cn(
+                                "flex flex-wrap gap-2 p-3 rounded-md border",
+                                touched.workArea && !isWorkAreaValid && "border-destructive"
+                            )}
+                            onBlur={() => setTouched((prev) => ({ ...prev, workArea: true }))}
+                        >
+                            {WORK_AREAS.map((area) => {
+                                const isSelected = formData.workArea.includes(area);
+                                return (
+                                    <Badge
+                                        key={area}
+                                        variant={isSelected ? "default" : "outline"}
+                                        className={cn(
+                                            "cursor-pointer transition-colors",
+                                            isSelected
+                                                ? "bg-primary text-primary-foreground"
+                                                : "hover:bg-muted"
+                                        )}
+                                        onClick={() => toggleWorkArea(area)}
+                                    >
+                                        {area}
+                                    </Badge>
+                                );
+                            })}
+                        </div>
+                        {touched.workArea && !isWorkAreaValid && (
+                            <p className="text-xs text-destructive">
+                                {t(locale, "employees.form.work-area-required")}
+                            </p>
+                        )}
+                    </div>
+
+                    <Separator />
+
+                    {/* Open to Next Work - Switch */}
+                    <div className="flex items-center justify-between">
+                        <Label htmlFor="openToNextWork" className="cursor-pointer">
+                            {t(locale, "employees.form.open-to-next-work")}
+                        </Label>
+                        <Switch
+                            id="openToNextWork"
+                            checked={formData.openToNextWork}
+                            onCheckedChange={(checked) => handleChange("openToNextWork", checked)}
                         />
-                    </Grid>
-                </Grid>
+                    </div>
+                </div>
+
+                <DialogFooter data-component="EmployeeFormDialog-Actions">
+                    <Button
+                        variant="outline"
+                        onClick={handleClose}
+                        disabled={isLoading}
+                        data-component="EmployeeFormDialog-CancelButton"
+                    >
+                        {t(locale, "common.cancel")}
+                    </Button>
+                    <Button
+                        onClick={handleSubmit}
+                        disabled={isLoading || !isFormValid}
+                        data-component="EmployeeFormDialog-SubmitButton"
+                    >
+                        {isLoading ? (
+                            <Spinner className="h-4 w-4" />
+                        ) : isEditMode ? (
+                            t(locale, "common.save")
+                        ) : (
+                            t(locale, "common.create")
+                        )}
+                    </Button>
+                </DialogFooter>
             </DialogContent>
-            <DialogActions data-component="EmployeeFormDialog-Actions">
-                <Button onClick={handleClose} disabled={isLoading} data-component="EmployeeFormDialog-CancelButton">
-                    {t(locale, "common.cancel")}
-                </Button>
-                <Button
-                    variant="contained"
-                    onClick={handleSubmit}
-                    disabled={isLoading || !isFormValid}
-                    data-component="EmployeeFormDialog-SubmitButton"
-                >
-                    {isLoading
-                        ? t(locale, "common.saving")
-                        : isEditMode
-                            ? t(locale, "common.save")
-                            : t(locale, "common.create")}
-                </Button>
-            </DialogActions>
         </Dialog>
     );
 }
-

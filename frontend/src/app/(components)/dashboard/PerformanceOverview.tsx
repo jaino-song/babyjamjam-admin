@@ -1,4 +1,4 @@
-import { Box, LinearProgress, Stack, Typography } from "@mui/material";
+import { Progress } from "@/components/ui/progress";
 import { ContentPaper } from "../root/content-paper";
 
 export interface PerformanceMetric {
@@ -15,33 +15,20 @@ interface PerformanceOverviewProps {
 
 export const PerformanceOverview = ({ metrics, title, subtitle }: PerformanceOverviewProps) => {
   return (
-    <ContentPaper elevation={0} disableAnimation sx={{ flex: 2, p: { xs: 2.5, sm: 3 } }}>
-      <Typography variant="subtitle1" fontWeight={600}>
-        {title}
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-        {subtitle}
-      </Typography>
-      <Stack spacing={2.5} sx={{ mt: 3 }}>
+    <ContentPaper className="flex-[2] p-5 sm:p-6" disableAnimation>
+      <p className="text-base font-semibold">{title}</p>
+      <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>
+      <div className="flex flex-col gap-5 mt-6">
         {metrics.map((metric) => (
-          <Box key={metric.label}>
-            <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
-              <Typography variant="body2" fontWeight={600}>
-                {metric.label}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {metric.conversion}%
-              </Typography>
-            </Stack>
-            <LinearProgress
-              variant="determinate"
-              value={metric.progress}
-              sx={{ height: 10, borderRadius: 999 }}
-            />
-          </Box>
+          <div key={metric.label}>
+            <div className="flex flex-row justify-between mb-1">
+              <p className="text-sm font-semibold">{metric.label}</p>
+              <p className="text-sm text-muted-foreground">{metric.conversion}%</p>
+            </div>
+            <Progress value={metric.progress} className="h-2.5" />
+          </div>
         ))}
-      </Stack>
+      </div>
     </ContentPaper>
   );
 };
-

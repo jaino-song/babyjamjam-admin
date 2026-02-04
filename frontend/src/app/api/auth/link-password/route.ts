@@ -1,5 +1,6 @@
 import { NextResponse, NextRequest } from "next/server";
-import { serverAPIClient, getAuthToken } from "@/app/lib/axios/server";
+import { serverAPIClient } from "@/app/lib/axios/server";
+import { getAuthToken } from "@/app/lib/api/route-utils";
 import { AxiosError } from "axios";
 
 export async function POST(request: NextRequest) {

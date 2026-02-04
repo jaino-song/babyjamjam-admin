@@ -1,9 +1,11 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
 import { AreaTemplateController } from "interface/controllers/area-template.controller";
 import { AreaTemplateService } from "application/services/area-template.service";
 import { AreaTemplateEntity } from "domain/entities/area-template.entity";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 
 describe("AreaTemplateController (Integration)", () => {
     // ============================================
@@ -38,6 +40,19 @@ describe("AreaTemplateController (Integration)", () => {
             delete: jest.fn(),
         };
 
+        const mockAuthGuard = {
+            canActivate: (context: ExecutionContext) => {
+                const requestContext = context.switchToHttp().getRequest();
+                requestContext.user = {
+                    userId: "user-1",
+                    organizationId: "org-1",
+                    role: "admin",
+                    orgRole: "admin",
+                };
+                return true;
+            },
+        };
+
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [AreaTemplateController],
             providers: [
@@ -46,7 +61,12 @@ describe("AreaTemplateController (Integration)", () => {
                     useValue: mockAreaTemplateService,
                 },
             ],
-        }).compile();
+        })
+            .overrideGuard(JwtGuard)
+            .useValue(mockAuthGuard)
+            .overrideGuard(TenantGuard)
+            .useValue(mockAuthGuard)
+            .compile();
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));

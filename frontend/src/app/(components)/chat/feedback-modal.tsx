@@ -3,14 +3,13 @@
 import { useState } from "react";
 import {
     Dialog,
-    DialogTitle,
     DialogContent,
-    DialogActions,
-    TextField,
-    Button,
-    IconButton,
-} from "@mui/material";
-import CloseIcon from "@mui/icons-material/Close";
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 interface FeedbackModalProps {
     open: boolean;
@@ -35,37 +34,32 @@ export function FeedbackModal({ open, onClose, onSubmit }: FeedbackModalProps) {
     };
 
     return (
-        <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-            <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                어떤 점이 불만족스러우셨나요?
-                <IconButton onClick={handleClose} size="small">
-                    <CloseIcon />
-                </IconButton>
-            </DialogTitle>
-            <DialogContent>
-                <TextField
-                    autoFocus
-                    multiline
-                    rows={4}
-                    fullWidth
-                    placeholder="피드백을 입력해주세요..."
-                    value={comment}
-                    onChange={(e) => setComment(e.target.value)}
-                    sx={{ mt: 1 }}
-                />
+        <Dialog open={open} onOpenChange={handleClose}>
+            <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle className="flex items-center justify-between">
+                        어떤 점이 불만족스러우셨나요?
+                    </DialogTitle>
+                </DialogHeader>
+                <div className="py-4">
+                    <Textarea
+                        autoFocus
+                        rows={4}
+                        placeholder="피드백을 입력해주세요..."
+                        value={comment}
+                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setComment(e.target.value)}
+                        className="resize-none"
+                    />
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={handleClose}>
+                        취소
+                    </Button>
+                    <Button onClick={handleSubmit} disabled={!comment.trim()}>
+                        제출
+                    </Button>
+                </DialogFooter>
             </DialogContent>
-            <DialogActions sx={{ px: 3, pb: 2 }}>
-                <Button onClick={handleClose} color="inherit">
-                    취소
-                </Button>
-                <Button
-                    onClick={handleSubmit}
-                    variant="contained"
-                    disabled={!comment.trim()}
-                >
-                    제출
-                </Button>
-            </DialogActions>
         </Dialog>
     );
 }

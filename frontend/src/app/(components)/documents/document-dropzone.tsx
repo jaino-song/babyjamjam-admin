@@ -2,45 +2,39 @@
 
 import { useCallback, useState, useEffect } from "react";
 import { useDocumentCategories } from "@/app/hooks/use-document-categories";
+import { CloudUpload, FileText, X, ImageIcon, File, Loader2 } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import {
-  Box,
-  Typography,
-  Paper,
-  Alert,
-  CircularProgress,
-  TextField,
-  MenuItem,
-  Button,
-  LinearProgress,
-  Stack,
-  Chip,
-  IconButton,
-  Tooltip
-} from "@mui/material";
-import CloudUploadIcon from "@mui/icons-material/CloudUpload";
-import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
-import CloseIcon from "@mui/icons-material/Close";
-import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
-import ImageIcon from "@mui/icons-material/Image";
-import DescriptionIcon from "@mui/icons-material/Description";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 const ALLOWED_TYPES = [
-  "image/png", 
-  "image/jpeg", 
-  "image/jpg", 
-  "application/pdf"
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "application/pdf",
 ];
 const ALLOWED_EXTENSIONS = ".png, .jpg, .jpeg, .pdf";
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
-
 interface DocumentDropzoneProps {
-  onUpload: (params: { 
-    file: File; 
-    name: string; 
-    description?: string; 
-    categoryId: string; 
-    tags: string[] 
+  onUpload: (params: {
+    file: File;
+    name: string;
+    description?: string;
+    categoryId: string;
+    tags: string[];
   }) => Promise<void>;
   isLoading?: boolean;
   uploadProgress?: number;
@@ -95,27 +89,31 @@ export function DocumentDropzone({
 
       setValidationError(null);
       setSelectedFile(file);
-      
-      const fileNameWithoutExt = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+
+      const fileNameWithoutExt =
+        file.name.substring(0, file.name.lastIndexOf(".")) || file.name;
       setName(fileNameWithoutExt);
-      
-      if (file.type.startsWith('image/')) {
+
+      if (file.type.startsWith("image/")) {
         const url = URL.createObjectURL(file);
         setPreviewUrl(url);
       } else {
         setPreviewUrl(null);
       }
     },
-    [validateFile],
+    [validateFile]
   );
 
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!isLoading) {
-      setIsDragOver(true);
-    }
-  }, [isLoading]);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!isLoading) {
+        setIsDragOver(true);
+      }
+    },
+    [isLoading]
+  );
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -136,7 +134,7 @@ export function DocumentDropzone({
         handleFile(files[0]);
       }
     },
-    [handleFile, isLoading],
+    [handleFile, isLoading]
   );
 
   const handleFileInputChange = useCallback(
@@ -146,7 +144,7 @@ export function DocumentDropzone({
         handleFile(files[0]);
       }
     },
-    [handleFile],
+    [handleFile]
   );
 
   const handleRemoveFile = useCallback(() => {
@@ -164,7 +162,7 @@ export function DocumentDropzone({
   }, [previewUrl]);
 
   const handleAddTag = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && tagInput.trim()) {
+    if (e.key === "Enter" && tagInput.trim()) {
       e.preventDefault();
       if (!tags.includes(tagInput.trim())) {
         setTags([...tags, tagInput.trim()]);
@@ -179,13 +177,13 @@ export function DocumentDropzone({
 
   const handleSubmit = async () => {
     if (!selectedFile || !name || !category) return;
-    
+
     await onUpload({
       file: selectedFile,
       name,
       description: description || undefined,
       categoryId: category,
-      tags
+      tags,
     });
   };
 
@@ -196,218 +194,199 @@ export function DocumentDropzone({
   };
 
   const getFileIcon = () => {
-    if (selectedFile?.type === 'application/pdf') {
-      return <PictureAsPdfIcon sx={{ fontSize: 40, color: "error.main" }} />;
+    if (selectedFile?.type === "application/pdf") {
+      return <FileText className="h-10 w-10 text-destructive" />;
     }
-    if (selectedFile?.type.startsWith('image/')) {
-      return <ImageIcon sx={{ fontSize: 40, color: "primary.main" }} />;
+    if (selectedFile?.type.startsWith("image/")) {
+      return <ImageIcon className="h-10 w-10 text-primary" />;
     }
-    return <InsertDriveFileIcon sx={{ fontSize: 40, color: "action.active" }} />;
+    return <File className="h-10 w-10 text-muted-foreground" />;
   };
 
   return (
-    <Box data-component="DocumentDropzone" className="w-full">
+    <div data-component="DocumentDropzone" className="w-full">
       {validationError && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {validationError}
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>{validationError}</AlertDescription>
         </Alert>
       )}
 
       {!selectedFile ? (
-        <Paper
+        <div
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          elevation={0}
-          sx={{
-            position: "relative",
-            p: 6,
-            border: "2px dashed",
-            borderColor: isDragOver
-              ? "primary.main"
-              : "divider",
-            borderRadius: 2,
-            backgroundColor: isDragOver
-              ? "action.hover"
-              : "background.default",
-            cursor: isLoading ? "wait" : "pointer",
-            transition: "all 0.2s ease-in-out",
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 2,
-            "&:hover": {
-              borderColor: isLoading ? "divider" : "primary.main",
-              backgroundColor: isLoading ? "background.default" : "action.hover",
-            },
-          }}
+          className={cn(
+            "relative p-6 border-2 border-dashed rounded-lg flex flex-col items-center gap-4",
+            "transition-all duration-200",
+            isDragOver
+              ? "border-primary bg-primary/5"
+              : "border-border bg-background",
+            isLoading ? "cursor-wait" : "cursor-pointer",
+            !isLoading && "hover:border-primary hover:bg-primary/5"
+          )}
         >
           <input
             type="file"
             accept={ALLOWED_EXTENSIONS}
             onChange={handleFileInputChange}
             disabled={isLoading}
-            style={{
-              position: "absolute",
-              width: "100%",
-              height: "100%",
-              top: 0,
-              left: 0,
-              opacity: 0,
-              cursor: isLoading ? "wait" : "pointer",
-            }}
+            className={cn(
+              "absolute w-full h-full top-0 left-0 opacity-0",
+              isLoading ? "cursor-wait" : "cursor-pointer"
+            )}
           />
-          
-          <CloudUploadIcon sx={{ fontSize: 64, color: "text.secondary", opacity: 0.5 }} />
-          <Box textAlign="center">
-            <Typography variant="h6" fontWeight="medium" gutterBottom>
+
+          <CloudUpload className="h-16 w-16 text-muted-foreground/50" />
+          <div className="text-center">
+            <h6 className="text-lg font-medium mb-1">
               파일을 드래그하거나 클릭하여 업로드
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
+            </h6>
+            <p className="text-sm text-muted-foreground">
               지원 형식: PDF, PNG, JPG (최대 25MB)
-            </Typography>
-          </Box>
-        </Paper>
+            </p>
+          </div>
+        </div>
       ) : (
-        <Paper 
-          elevation={0} 
-          sx={{  
-            p: 3, 
-            border: '1px solid', 
-            borderColor: 'divider',
-            borderRadius: 2
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 4 }}>
+        <div className="p-6 border border-border rounded-lg">
+          <div className="flex items-start gap-4 mb-6">
             {previewUrl ? (
-              <Box 
-                component="img"
+              <img
                 src={previewUrl}
                 alt="Preview"
-                sx={{ 
-                  width: 80, 
-                  height: 80, 
-                  objectFit: 'cover', 
-                  borderRadius: 1,
-                  border: '1px solid',
-                  borderColor: 'divider'
-                }}
+                className="w-20 h-20 object-cover rounded border border-border"
               />
             ) : (
-              <Box sx={{ 
-                width: 80, 
-                height: 80, 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                bgcolor: 'action.hover',
-                borderRadius: 1
-              }}>
+              <div className="w-20 h-20 flex items-center justify-center bg-muted rounded">
                 {getFileIcon()}
-              </Box>
+              </div>
             )}
-            
-            <Box sx={{ flex: 1 }}>
-              <Typography variant="subtitle1" fontWeight="bold">
-                {selectedFile.name}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
+
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold truncate">{selectedFile.name}</p>
+              <p className="text-sm text-muted-foreground">
                 {formatFileSize(selectedFile.size)}
-              </Typography>
-            </Box>
+              </p>
+            </div>
 
-            <IconButton onClick={handleRemoveFile} disabled={isLoading} size="small">
-              <CloseIcon />
-            </IconButton>
-          </Box>
-
-          <Stack spacing={3}>
-            <TextField
-              label="문서 제목"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              fullWidth
-              required
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleRemoveFile}
               disabled={isLoading}
-              size="small"
-            />
-
-            <TextField
-              select
-              label="카테고리"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              fullWidth
-              required
-              disabled={isLoading}
-              size="small"
+              className="shrink-0"
             >
-              {categories.map((option) => (
-                <MenuItem key={option.id} value={option.id}>
-                  {option.label}
-                </MenuItem>
-              ))}
-            </TextField>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
 
-            <Box>
-              <TextField
-                label="태그"
+          <div className="flex flex-col gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="doc-name">문서 제목 *</Label>
+              <Input
+                id="doc-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>카테고리 *</Label>
+              <Select
+                value={category}
+                onValueChange={setCategory}
+                disabled={isLoading}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="카테고리 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="doc-tags">태그</Label>
+              <Input
+                id="doc-tags"
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
                 onKeyDown={handleAddTag}
                 placeholder="태그 입력 후 Enter"
-                fullWidth
                 disabled={isLoading}
-                size="small"
-                helperText="Enter 키를 눌러 태그를 추가하세요"
               />
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
-                {tags.map((tag, index) => (
-                  <Chip
-                    key={index}
-                    label={tag}
-                    onDelete={() => handleDeleteTag(tag)}
-                    disabled={isLoading}
-                    size="small"
-                  />
-                ))}
-              </Box>
-            </Box>
+              <p className="text-xs text-muted-foreground">
+                Enter 키를 눌러 태그를 추가하세요
+              </p>
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {tags.map((tag, index) => (
+                    <Badge
+                      key={index}
+                      variant="secondary"
+                      className="cursor-pointer"
+                      onClick={() => !isLoading && handleDeleteTag(tag)}
+                    >
+                      {tag}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
 
-            <TextField
-              label="설명 (선택사항)"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              multiline
-              rows={3}
-              fullWidth
-              disabled={isLoading}
-              size="small"
-            />
+            <div className="space-y-2">
+              <Label htmlFor="doc-description">설명 (선택사항)</Label>
+              <Textarea
+                id="doc-description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                disabled={isLoading}
+              />
+            </div>
 
             {isLoading && (
-              <Box sx={{ width: '100%' }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                  <Typography variant="body2" color="text.secondary">업로드 중...</Typography>
-                  <Typography variant="body2" color="text.secondary">{Math.round(uploadProgress)}%</Typography>
-                </Box>
-                <LinearProgress variant="determinate" value={uploadProgress} />
-              </Box>
+              <div className="w-full">
+                <div className="flex justify-between mb-2">
+                  <span className="text-sm text-muted-foreground">
+                    업로드 중...
+                  </span>
+                  <span className="text-sm text-muted-foreground">
+                    {Math.round(uploadProgress)}%
+                  </span>
+                </div>
+                <Progress value={uploadProgress} />
+              </div>
             )}
 
             <Button
-              variant="contained"
               onClick={handleSubmit}
               disabled={!name || !category || isLoading}
-              fullWidth
-              size="large"
-              startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : <CloudUploadIcon />}
+              className="w-full"
+              size="lg"
             >
-              {isLoading ? "업로드 중..." : "문서 업로드"}
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                  업로드 중...
+                </>
+              ) : (
+                <>
+                  <CloudUpload className="h-5 w-5 mr-2" />
+                  문서 업로드
+                </>
+              )}
             </Button>
-          </Stack>
-        </Paper>
+          </div>
+        </div>
       )}
-    </Box>
+    </div>
   );
 }

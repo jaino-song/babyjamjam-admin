@@ -1,9 +1,11 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
 import { EmployeeController } from "interface/controllers/employee.controller";
 import { EmployeeService } from "application/services/employee.service";
 import { EmployeeEntity } from "domain/entities/employee.entity";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 
 describe("EmployeeController (Integration)", () => {
     // ============================================
@@ -51,6 +53,19 @@ describe("EmployeeController (Integration)", () => {
             delete: jest.fn(),
         };
 
+        const mockAuthGuard = {
+            canActivate: (context: ExecutionContext) => {
+                const requestContext = context.switchToHttp().getRequest();
+                requestContext.user = {
+                    userId: "user-1",
+                    organizationId: "org-1",
+                    role: "admin",
+                    orgRole: "admin",
+                };
+                return true;
+            },
+        };
+
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [EmployeeController],
             providers: [
@@ -59,7 +74,12 @@ describe("EmployeeController (Integration)", () => {
                     useValue: mockEmployeeService,
                 },
             ],
-        }).compile();
+        })
+            .overrideGuard(JwtGuard)
+            .useValue(mockAuthGuard)
+            .overrideGuard(TenantGuard)
+            .useValue(mockAuthGuard)
+            .compile();
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));

@@ -2,6 +2,7 @@ import { UnauthorizedException, ForbiddenException } from "@nestjs/common";
 import { AuthService } from "../../application/services/auth.service";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { JwtService } from "@nestjs/jwt";
+import { EmailPort } from "../../domain/ports/email.port";
 
 describe("AuthService - Multi-Tenancy Enhancement", () => {
     // ============================================
@@ -28,10 +29,10 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         verifyAsync: jest.fn(),
     });
 
-    const createMockEmailService = () => ({
-        send: jest.fn(),
-        sendVerificationEmail: jest.fn(),
-        sendPasswordResetEmail: jest.fn(),
+    const createMockEmailService = (): EmailPort => ({
+        send: jest.fn().mockResolvedValue("mock-message-id"),
+        sendVerificationEmail: jest.fn().mockResolvedValue("mock-verification-id"),
+        sendPasswordResetEmail: jest.fn().mockResolvedValue("mock-reset-id"),
     });
 
     const createMockAuthTokenRepository = () => ({
@@ -83,7 +84,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     let service: AuthService;
     let prismaService: ReturnType<typeof createMockPrismaService>;
     let jwtService: ReturnType<typeof createMockJwtService>;
-    let emailService: ReturnType<typeof createMockEmailService>;
+    let emailService: EmailPort;
     let authTokenRepository: ReturnType<typeof createMockAuthTokenRepository>;
 
     beforeEach(() => {
@@ -96,7 +97,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         service = new AuthService(
             prismaService as unknown as PrismaService,
             jwtService as unknown as JwtService,
-            emailService as unknown as ReturnType<typeof createMockEmailService>,
+            emailService,
             authTokenRepository as unknown as ReturnType<typeof createMockAuthTokenRepository>
         );
 
@@ -136,7 +137,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 // #then
                 expect(jwtService.signAsync).toHaveBeenCalledTimes(2);
                 const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "access"
+                    (call: any[]) => call[0]?.type === "access"
                 );
                 expect(accessCall?.[0]).toHaveProperty("organizationId", mockOrganization.id);
             });
@@ -163,7 +164,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 // #then
                 expect(result).toBeDefined();
                 const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "access"
+                    (call: any[]) => call[0]?.type === "access"
                 );
                 expect(accessCall?.[0]).not.toHaveProperty("organizationId");
             });
@@ -207,7 +208,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "access"
+                    (call: any[]) => call[0]?.type === "access"
                 );
                 expect(accessCall?.[0]).not.toHaveProperty("organizationId");
             });
@@ -232,7 +233,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "access"
+                    (call: any[]) => call[0]?.type === "access"
                 );
                 expect(accessCall?.[0]).toHaveProperty("organizationId", organizationId);
                 expect(accessCall?.[0]).toHaveProperty("orgRole", "admin");
@@ -289,7 +290,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "access"
+                    (call: any[]) => call[0]?.type === "access"
                 );
                 expect(accessCall?.[0]).toHaveProperty("orgRole", "member");
             });
@@ -307,6 +308,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const currentOrgId = mockOrganization.id;
                 const newOrgId = mockOrganization2.id;
 
+                prismaService.user.findUnique.mockResolvedValue(mockUser);
                 prismaService.user_organization.findFirst.mockImplementation((opts: any) => {
                     if (opts.where.organizationId === newOrgId) {
                         return Promise.resolve(mockUserOrganization2);
@@ -319,7 +321,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "access"
+                    (call: any[]) => call[0]?.type === "access"
                 );
                 expect(accessCall?.[0]).toHaveProperty("organizationId", newOrgId);
             });
@@ -332,6 +334,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const currentOrgId = mockOrganization.id;
                 const invalidOrgId = "org-uuid-999";
 
+                prismaService.user.findUnique.mockResolvedValue(mockUser);
                 prismaService.user_organization.findFirst.mockResolvedValue(null);
 
                 // #when
@@ -367,10 +370,10 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "access"
+                    (call: any[]) => call[0]?.type === "access"
                 );
                 const refreshCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "refresh"
+                    (call: any[]) => call[0]?.type === "refresh"
                 );
                 expect(accessCall?.[0]).toHaveProperty("organizationId", mockOrganization.id);
                 expect(refreshCall?.[0]).toHaveProperty("organizationId", mockOrganization.id);
@@ -395,10 +398,10 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "access"
+                    (call: any[]) => call[0]?.type === "access"
                 );
                 const refreshCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "refresh"
+                    (call: any[]) => call[0]?.type === "refresh"
                 );
                 expect(accessCall?.[0]).not.toHaveProperty("organizationId");
                 expect(refreshCall?.[0]).not.toHaveProperty("organizationId");
@@ -425,10 +428,10 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "access"
+                    (call: any[]) => call[0]?.type === "access"
                 );
                 const refreshCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[1]?.type === "refresh"
+                    (call: any[]) => call[0]?.type === "refresh"
                 );
                 expect(accessCall?.[0]).not.toHaveProperty("organizationId");
                 expect(refreshCall?.[0]).not.toHaveProperty("organizationId");
@@ -445,16 +448,11 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 // #given
                 const userId = mockUser.id;
 
+                prismaService.user.findUnique.mockResolvedValue({ role: "user" });
                 prismaService.user_organization.findMany.mockResolvedValue([
-                    mockUserOrganization,
-                    mockUserOrganization2,
+                    { ...mockUserOrganization, organization: mockOrganization },
+                    { ...mockUserOrganization2, organization: mockOrganization2 },
                 ]);
-                prismaService.organization.findUnique.mockImplementation((opts: any) => {
-                    if (opts.where.id === mockOrganization.id) {
-                        return Promise.resolve(mockOrganization);
-                    }
-                    return Promise.resolve(mockOrganization2);
-                });
 
                 // #when
                 const result = await service.getUserOrganizations(userId);
@@ -481,6 +479,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 // #given
                 const userId = mockUser.id;
 
+                prismaService.user.findUnique.mockResolvedValue({ role: "user" });
                 prismaService.user_organization.findMany.mockResolvedValue([]);
 
                 // #when

@@ -120,8 +120,12 @@ export class DocumentController {
             description: dto.description,
             categoryId: dto.categoryId,
             tags: dto.tags,
-            description: dto.description,
-            uploadedBy,
+            mimetype: dto.mimetype,
+            filesize: dto.filesize,
+            storagepath: dto.storagepath,
+            storageurl: dto.storageurl,
+            orgid: dto.orgid,
+            uploadedby: dto.uploadedby,
         });
         return toResponse(entity);
     }

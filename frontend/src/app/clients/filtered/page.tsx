@@ -2,25 +2,23 @@
 
 import { useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import {
-    Box,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    IconButton,
-    Chip,
-    CircularProgress,
-    Alert,
-    Typography,
-} from "@mui/material";
 import { X } from "lucide-react";
 import { useFilteredClients, useDeleteClient } from "@/app/hooks/useClients";
 import { Client, DocumentStatus } from "@/app/lib/client/types";
 import { ClientDetailModal } from "../../(components)/clients/ClientDetailModal";
 import { ClientFormDialog } from "../../(components)/clients/ClientFormDialog";
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@/components/ui/table";
 
 type FilterType = "starting-soon" | "ending-soon" | "incomplete-contracts" | "no-contract";
 
@@ -31,17 +29,17 @@ const FILTER_CONFIG: Record<FilterType, { title: string }> = {
     "no-contract": { title: "계약서 미발송" },
 };
 
-const getDocumentStatusChip = (status: DocumentStatus) => {
+const getDocumentStatusBadge = (status: DocumentStatus) => {
     switch (status) {
         case "completed":
-            return <Chip label="완료" size="small" color="success" />;
+            return <Badge variant="success">완료</Badge>;
         case "opened":
         case "requested":
-            return <Chip label="진행중" size="small" color="warning" />;
+            return <Badge variant="warning">진행중</Badge>;
         case "created":
-            return <Chip label="생성됨" size="small" color="info" />;
+            return <Badge variant="info">생성됨</Badge>;
         default:
-            return <Chip label="미발송" size="small" variant="outlined" />;
+            return <Badge variant="outline">미발송</Badge>;
     }
 };
 
@@ -91,115 +89,66 @@ export default function FilteredClientsPage() {
 
     if (!filter || !filterConfig) {
         return (
-            <Box sx={{ p: 3 }}>
-                <Alert severity="error">잘못된 필터입니다</Alert>
-            </Box>
+            <div className="p-6">
+                <Alert variant="destructive">잘못된 필터입니다</Alert>
+            </div>
         );
     }
 
     return (
-        <Box sx={{ bgcolor: "background.paper", minHeight: "100vh" }}>
-            <Box
-                sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    px: 2,
-                    py: 1.5,
-                    borderBottom: "1px solid",
-                    borderColor: "divider",
-                }}
-            >
-                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+        <div className="bg-card min-h-screen">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                <h1 className="text-lg font-semibold text-foreground">
                     {filterConfig.title}
-                </Typography>
-                <IconButton onClick={handleClose} size="small">
-                    <X size={24} />
-                </IconButton>
-            </Box>
+                </h1>
+                <Button variant="ghost" size="icon" onClick={handleClose}>
+                    <X className="w-6 h-6" />
+                </Button>
+            </div>
 
-            <Box sx={{ px: { xs: 2, sm: 3 }, py: 2 }}>
+            {/* Content */}
+            <div className="px-4 sm:px-6 py-4">
                 {isLoading ? (
-                    <Box display="flex" justifyContent="center" py={8}>
-                        <CircularProgress />
-                    </Box>
+                    <div className="flex justify-center py-16">
+                        <Spinner size="lg" />
+                    </div>
                 ) : error ? (
-                    <Alert severity="error">데이터를 불러오는데 실패했습니다</Alert>
+                    <Alert variant="destructive">데이터를 불러오는데 실패했습니다</Alert>
                 ) : !clients?.length ? (
-                    <Alert severity="info">해당하는 클라이언트가 없습니다</Alert>
+                    <Alert variant="info">해당하는 클라이언트가 없습니다</Alert>
                 ) : (
-                    <TableContainer>
-                        <Table sx={{ tableLayout: "fixed" }}>
-                            <TableHead>
-                                <TableRow>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "40%",
-                                        }}
-                                    >
-                                        이름
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead className="whitespace-nowrap">이름</TableHead>
+                                <TableHead className="whitespace-nowrap">시작일</TableHead>
+                                <TableHead className="whitespace-nowrap">계약서</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {clients.map((client, index) => (
+                                <TableRow
+                                    key={client.id}
+                                    className="cursor-pointer transition-all duration-200 hover:bg-muted/50 opacity-0 animate-fade-in"
+                                    style={{ animationDelay: `${150 + index * 30}ms` }}
+                                    onClick={() => handleRowClick(client)}
+                                >
+                                    <TableCell className="font-medium whitespace-nowrap">
+                                        {client.name}
                                     </TableCell>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "30%",
-                                        }}
-                                    >
-                                        시작일
+                                    <TableCell className="text-muted-foreground whitespace-nowrap">
+                                        {formatDate(client.startDate)}
                                     </TableCell>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "30%",
-                                        }}
-                                    >
-                                        계약서
+                                    <TableCell>
+                                        {getDocumentStatusBadge(client.documentStatus)}
                                     </TableCell>
                                 </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {clients.map((client) => (
-                                    <TableRow
-                                        key={client.id}
-                                        hover
-                                        onClick={() => handleRowClick(client)}
-                                        sx={{
-                                            cursor: "pointer",
-                                            "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" },
-                                        }}
-                                    >
-                                        <TableCell
-                                            align="center"
-                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
-                                        >
-                                            {client.name}
-                                        </TableCell>
-                                        <TableCell
-                                            align="center"
-                                            sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
-                                        >
-                                            {formatDate(client.startDate)}
-                                        </TableCell>
-                                        <TableCell align="center" sx={{ px: 1 }}>
-                                            {getDocumentStatusChip(client.documentStatus)}
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
+                            ))}
+                        </TableBody>
+                    </Table>
                 )}
-            </Box>
+            </div>
 
             <ClientDetailModal
                 open={detailModalOpen}
@@ -217,6 +166,6 @@ export default function FilteredClientsPage() {
                 }}
                 client={editingClient}
             />
-        </Box>
+        </div>
     );
 }

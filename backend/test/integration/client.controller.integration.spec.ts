@@ -1,9 +1,10 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
 import { ClientController } from "interface/controllers/client.controller";
 import { ClientService } from "application/services/client.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 import { ClientEntity } from "domain/entities/client.entity";
 
 describe("ClientController (Integration)", () => {
@@ -74,6 +75,19 @@ describe("ClientController (Integration)", () => {
             delete: jest.fn(),
         };
 
+        const mockAuthGuard = {
+            canActivate: (context: ExecutionContext) => {
+                const requestContext = context.switchToHttp().getRequest();
+                requestContext.user = {
+                    userId: "user-1",
+                    organizationId: "org-1",
+                    role: "admin",
+                    orgRole: "admin",
+                };
+                return true;
+            },
+        };
+
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [ClientController],
             providers: [
@@ -84,7 +98,9 @@ describe("ClientController (Integration)", () => {
             ],
         })
             .overrideGuard(JwtGuard)
-            .useValue({ canActivate: () => true }) // JWT Guard를 항상 통과하도록 Mock
+            .useValue(mockAuthGuard)
+            .overrideGuard(TenantGuard)
+            .useValue(mockAuthGuard)
             .compile();
 
         app = moduleFixture.createNestApplication();

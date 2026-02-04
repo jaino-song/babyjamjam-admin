@@ -1,6 +1,7 @@
-import { Avatar, Card, CardContent, Typography, Box, Stack } from "@mui/material";
-import { Grid } from "@mui/material";
-import { SvgIconComponent } from "@mui/icons-material";
+import { LucideIcon } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { cn } from "@/lib/utils";
 
 export interface StatItem {
   title: string;
@@ -8,7 +9,7 @@ export interface StatItem {
   secondDataLabel?: string;
   firstDataValue: string;
   secondDataValue?: string;
-  icon?: SvgIconComponent;
+  icon?: LucideIcon;
 }
 
 interface StatsGridProps {
@@ -16,76 +17,91 @@ interface StatsGridProps {
   disabled?: boolean;
 }
 
-export const StatsGrid = ({ stats, disabled=false }: StatsGridProps) => {
+export function StatsGrid({ stats, disabled = false }: StatsGridProps) {
   return (
-    /* Grid for Stats */
-    <Grid container spacing={2}>
-      {stats.map((item) => {
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {stats.map((item, index) => {
         const Icon = item.icon;
         return (
-          /* Grid Item */
-          <Grid key={item.title} data-component="stats-grid-item" size={{ xs: 6, sm: 6, lg: 3 }} sx={{ opacity: disabled ? 0.5 : 1 }}>
-            {/* Card */}
-            <Card elevation={2} data-component="stats-grid-card" sx={{ py: 2.5, px: 3, display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 2, bgcolor: "background.default" }}>
-              <Box sx={{ display: "flex", justifyContent: "center" }}>
-                <Typography variant="body1" fontWeight={600} color="text.secondary">
+          <Card
+            key={item.title}
+            data-component="stats-grid-card"
+            className={cn(
+              "relative overflow-hidden hover-lift hover-border cursor-pointer group opacity-0 animate-fade-in",
+              "bg-card",
+              disabled && "opacity-50 pointer-events-none"
+            )}
+            style={{ animationDelay: `${150 + index * 50}ms` }}
+          >
+            <CardContent className="p-5">
+              <div className="flex flex-col items-center text-center space-y-3">
+                {/* Title */}
+                <p className="text-sm font-semibold text-muted-foreground">
                   {item.title}
-                </Typography>
-              </Box>
-              <CardContent sx={{ display: "flex", alignItems: "center", justifyContent: "center", '&:last-child': { p: 0 } }}>
-                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 1.5 }}>
-                <Stack direction="column" spacing={1}>
-                  <Box key={`${item.firstDataLabel}-${item.firstDataValue}`} sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1.5 }}>
-                    <Avatar
-                      sx={{
-                        bgcolor: disabled ? "text.secondary" : "primary.main",
-                        color: disabled ? "white" : "primary.contrastText",
-                        width: 44,
-                        height: 44,
-                      }}
+                </p>
+
+                {/* Primary Data Row */}
+                <div className="flex items-center justify-center gap-3">
+                  <Avatar
+                    className={cn(
+                      "h-11 w-11 transition-all duration-300 group-hover:scale-110",
+                      disabled
+                        ? "bg-muted text-muted-foreground"
+                        : "bg-primary text-primary-foreground"
+                    )}
+                  >
+                    <AvatarFallback
+                      className={cn(
+                        "font-bold text-sm",
+                        disabled
+                          ? "bg-muted text-muted-foreground"
+                          : "bg-primary text-primary-foreground"
+                      )}
                     >
-                      {item.firstDataLabel && <Typography variant="body1" fontWeight={700} color="white">
-                        {item.firstDataLabel}
-                      </Typography>}
-                      {!item.firstDataLabel && item.icon && <item.icon fontSize="small" />}
-                    </Avatar>
-                    <Box sx={{ minWidth: 50 }}>
-                      <Typography variant="h6" fontWeight={700} sx={{ width: "100%" }}>
-                        {item.firstDataValue}
-                      </Typography>
-                    </Box>
-                  </Box>
-                  {item.secondDataValue && (
-                    <Box key={`${item.secondDataLabel}-${item.secondDataValue}`}>
-                    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1.5 }}>
-                      <Avatar
-                        sx={{
-                          bgcolor: disabled ? "text.secondary" : "primary.main",
-                          color: disabled ? "white" : "primary.contrastText",
-                          width: 44,
-                          height: 44,
-                        }}
+                      {item.firstDataLabel ? (
+                        item.firstDataLabel
+                      ) : Icon ? (
+                        <Icon className="h-5 w-5" />
+                      ) : null}
+                    </AvatarFallback>
+                  </Avatar>
+                  <p className="text-xl font-bold tracking-tight min-w-[50px]">
+                    {item.firstDataValue}
+                  </p>
+                </div>
+
+                {/* Secondary Data Row (if present) */}
+                {item.secondDataValue && (
+                  <div className="flex items-center justify-center gap-3">
+                    <Avatar
+                      className={cn(
+                        "h-11 w-11 transition-all duration-300 group-hover:scale-110",
+                        disabled
+                          ? "bg-muted text-muted-foreground"
+                          : "bg-primary text-primary-foreground"
+                      )}
+                    >
+                      <AvatarFallback
+                        className={cn(
+                          "font-bold text-sm",
+                          disabled
+                            ? "bg-muted text-muted-foreground"
+                            : "bg-primary text-primary-foreground"
+                        )}
                       >
-                        {item.secondDataLabel && <Typography variant="body1" fontWeight={700} color="white">
-                          {item.secondDataLabel}
-                        </Typography>}
-                      </Avatar>
-                      <Box sx={{ minWidth: 50 }}>
-                        <Typography variant="h6" fontWeight={700} sx={{ width: "100%" }}>
-                          {item.secondDataValue}
-                        </Typography>
-                      </Box>
-                    </Box>
-                    </Box>
-                  )}
-                </Stack>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
+                        {item.secondDataLabel}
+                      </AvatarFallback>
+                    </Avatar>
+                    <p className="text-xl font-bold tracking-tight min-w-[50px]">
+                      {item.secondDataValue}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         );
       })}
-    </Grid>
+    </div>
   );
-};
-
+}

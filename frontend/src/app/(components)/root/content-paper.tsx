@@ -1,48 +1,103 @@
 "use client";
 
-import { Paper, PaperProps, Typography, Box } from "@mui/material";
-import { ReactNode } from "react";
+import * as React from "react";
+import { cn } from "@/lib/utils";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
-interface ContentPaperProps extends PaperProps {
-  title?: string;
-  subtitle?: string;
-  children: ReactNode;
+export interface ContentPaperProps extends React.HTMLAttributes<HTMLDivElement> {
+    children: React.ReactNode;
+    title?: string;
+    subtitle?: string;
+    header?: React.ReactNode;
+    /** @deprecated Use className instead. Kept for backward compatibility. */
+    elevation?: number;
+    disableAnimation?: boolean;
+    // sx prop for backwards compatibility - mapped to className
+    sx?: Record<string, unknown>;
+    /** @deprecated Use standard HTML element types with className. */
+    component?: string;
 }
 
-export function ContentPaper({
-  title,
-  subtitle,
-  children,
-  sx,
-  ...props
-}: ContentPaperProps) {
-  return (
-    <Paper
-      elevation={0}
-      sx={{
-        p: 3,
-        borderRadius: 2,
-        border: "1px solid",
-        borderColor: "divider",
-        ...sx,
-      }}
-      {...props}
-    >
-      {(title || subtitle) && (
-        <Box sx={{ mb: 3 }}>
-          {title && (
-            <Typography variant="h5" component="h1" fontWeight={600}>
-              {title}
-            </Typography>
-          )}
-          {subtitle && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {subtitle}
-            </Typography>
-          )}
-        </Box>
-      )}
-      {children}
-    </Paper>
-  );
-}
+export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
+    (
+        {
+            children,
+            title,
+            subtitle,
+            header,
+            elevation: _elevation, // Kept for backward compatibility, not used
+            disableAnimation = false, // Enable fade-in by default
+            className,
+            sx,
+            component: _component, // Kept for backward compatibility, not used
+            ...props
+        },
+        ref
+    ) => {
+        // Build additional classes from sx prop for backwards compatibility
+        const sxClasses = React.useMemo(() => {
+            if (!sx) return "";
+            const classes: string[] = [];
+
+            // Map common sx properties to Tailwind classes
+            if (sx.minHeight === "70vh") classes.push("min-h-[70vh]");
+            if (sx.flexGrow === 1) classes.push("flex-grow");
+            if (sx.width === "100%") classes.push("w-full");
+
+            return classes.join(" ");
+        }, [sx]);
+
+        const renderHeader = () => {
+            if (header) {
+                return header;
+            }
+
+            if (title || subtitle) {
+                return (
+                    <CardHeader>
+                        {title && (
+                            <CardTitle className="text-xl font-bold text-primary">
+                                {title}
+                            </CardTitle>
+                        )}
+                        {subtitle && (
+                            <CardDescription className="text-sm text-muted-foreground">
+                                {subtitle}
+                            </CardDescription>
+                        )}
+                    </CardHeader>
+                );
+            }
+
+            return null;
+        };
+
+        const content = (
+            <>
+                {renderHeader()}
+                <CardContent className={cn(!title && !subtitle && !header && "pt-6")}>
+                    {children}
+                </CardContent>
+            </>
+        );
+
+        return (
+            <Card
+                ref={ref}
+                data-component="ContentPaper"
+                data-testid="ContentPaper"
+                className={cn(
+                    "flex flex-col rounded-lg", // 8px radius - reference design match
+                    !disableAnimation && "animate-fade-in",
+                    sxClasses,
+                    className
+                )}
+                {...props}
+            >
+                {content}
+            </Card>
+        );
+    }
+);
+
+ContentPaper.displayName = "ContentPaper";

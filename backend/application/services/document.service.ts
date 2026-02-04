@@ -1,26 +1,15 @@
-import { Injectable } from "@nestjs/common";
-import {
-    UploadDocumentUsecase,
-    UploadDocumentParams,
-    GetDocumentsUsecase,
-    GetDocumentUsecase,
-    UpdateDocumentUsecase,
-    DeleteDocumentUsecase,
-} from "application/usecases/document";
+import { Injectable, Inject, NotFoundException } from "@nestjs/common";
 import { DocumentEntity } from "domain/entities/document.entity";
-import { DocumentFilter } from "domain/repositories/document.repository.interface";
+import { IDocumentRepository, DOCUMENT_REPOSITORY } from "domain/repositories/document.repository.interface";
 
 @Injectable()
 export class DocumentService {
     constructor(
-        private readonly uploadDocumentUsecase: UploadDocumentUsecase,
-        private readonly getDocumentsUsecase: GetDocumentsUsecase,
-        private readonly getDocumentUsecase: GetDocumentUsecase,
-        private readonly updateDocumentUsecase: UpdateDocumentUsecase,
-        private readonly deleteDocumentUsecase: DeleteDocumentUsecase,
+        @Inject(DOCUMENT_REPOSITORY)
+        private readonly documentRepository: IDocumentRepository,
     ) {}
 
-    async create(organizationid: string, params: {
+    async create(organizationId: string, params: {
         name: string;
         description?: string;
         categoryId: string;
@@ -37,22 +26,21 @@ export class DocumentService {
             description: params.description,
             categoryId: params.categoryId,
             tags: params.tags,
-            mimetype: params.mimetype,
-            filesize: params.filesize,
-            storagepath: params.storagepath,
-            storageurl: params.storageurl,
-            orgid: params.orgid,
-            uploadedby: params.uploadedby,
-            createdat: new Date(),
+            mimeType: params.mimetype,
+            fileSize: params.filesize,
+            storagePath: params.storagepath,
+            storageUrl: params.storageurl,
+            orgId: params.orgid,
+            uploadedBy: params.uploadedby,
         });
-        return this.documentRepository.create(organizationid, doc);
+        return this.documentRepository.create(organizationId, doc);
     }
 
     /**
      * Find a document by ID
      */
-    async findById(organizationid: string, id: string): Promise<DocumentEntity> {
-        const doc = await this.documentRepository.findById(organizationid, id);
+    async findById(organizationId: string, id: string): Promise<DocumentEntity> {
+        const doc = await this.documentRepository.findById(organizationId, id);
         if (!doc) {
             throw new NotFoundException(`Document with id ${id} not found`);
         }
@@ -62,23 +50,23 @@ export class DocumentService {
     /**
      * Find documents by organization ID
      */
-    async findByOrgId(organizationid: string, orgid: string): Promise<DocumentEntity[]> {
-        return this.documentRepository.findByOrgId(organizationid, orgid);
+    async findByOrgId(organizationId: string, orgId: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findByOrgId(organizationId, orgId);
     }
 
-    async findByCategoryId(organizationid: string, categoryId: string): Promise<DocumentEntity[]> {
-        return this.documentRepository.findByCategoryId(organizationid, categoryId);
+    async findByCategoryId(organizationId: string, categoryId: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findByCategoryId(organizationId, categoryId);
     }
 
     /**
      * List all documents
      */
-    async findAll(organizationid: string): Promise<DocumentEntity[]> {
-        return this.documentRepository.findAll(organizationid);
+    async findAll(organizationId: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findAll(organizationId);
     }
 
     async update(
-        organizationid: string,
+        organizationId: string,
         id: string,
         updates: {
             name?: string;
@@ -87,32 +75,32 @@ export class DocumentService {
             tags?: string[];
         },
     ): Promise<DocumentEntity> {
-        const existing = await this.findById(organizationid, id);
+        const existing = await this.findById(organizationId, id);
 
-        const updated = DocumentEntity.reconstitute({
-            id: existing.id,
-            name: params.name ?? existing.name,
-            description: params.description ?? existing.description,
-            categoryId: params.categoryId ?? existing.categoryId,
-            tags: params.tags ?? existing.tags,
-            mimetype: params.mimetype ?? existing.mimetype,
-            filesize: params.filesize ?? existing.filesize,
-            storagepath: params.storagepath ?? existing.storagepath,
-            storageurl: params.storageurl ?? existing.storageurl,
-            orgid: params.orgid ?? existing.orgid,
-            uploadedby: params.uploadedby ?? existing.uploadedby,
-            createdat: existing.createdat,
-            updatedat: new Date(),
-        });
+        const updated = DocumentEntity.reconstitute(
+            existing.id,
+            updates.name ?? existing.name,
+            updates.description ?? existing.description,
+            updates.categoryId ?? existing.categoryId,
+            updates.tags ?? existing.tags,
+            existing.mimeType,
+            existing.fileSize,
+            existing.storagePath,
+            existing.storageUrl,
+            existing.orgId,
+            existing.uploadedBy,
+            existing.createdAt,
+            new Date(),
+        );
 
-        return this.documentRepository.update(organizationid, updated);
+        return this.documentRepository.update(organizationId, updated);
     }
 
     /**
      * Delete a document
      */
-    async delete(organizationid: string, id: string): Promise<void> {
-        await this.findById(organizationid, id); // Ensure it exists
-        await this.documentRepository.delete(organizationid, id);
+    async delete(organizationId: string, id: string): Promise<void> {
+        await this.findById(organizationId, id); // Ensure it exists
+        await this.documentRepository.delete(organizationId, id);
     }
 }

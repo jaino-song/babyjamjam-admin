@@ -9,6 +9,7 @@ import { Locale } from "@/app/actions/locale";
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
     DialogHeader,
     DialogTitle,
     DialogFooter,
@@ -123,11 +124,14 @@ export function ClientDetailModal({
 
     return (
         <Dialog data-component="ClientDetailModal" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-lg rounded-lg shadow-xl">
                 <DialogHeader className="flex flex-row items-center justify-between pr-8">
                     <DialogTitle className="text-xl font-semibold">
                         {client.name}
                     </DialogTitle>
+                    <DialogDescription className="sr-only">
+                        {t(locale, "clients.detail.description")}
+                    </DialogDescription>
                     <Button
                         variant="ghost"
                         size="icon"

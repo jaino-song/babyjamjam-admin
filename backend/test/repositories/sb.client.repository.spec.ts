@@ -574,7 +574,7 @@ describe("SbClientRepository", () => {
                 // Assert
                 const callArgs = clientModel.findMany.mock.calls[0][0];
                 expect(callArgs.where.eDocId).toEqual({ not: null });
-                expect(callArgs.where.eformsign_doc_client_e_doc_idToeformsign_doc.statusType).toEqual({ not: '050' });
+                expect(callArgs.where.eformsignDocByEDocId.statusType).toEqual({ not: '050' });
             });
         });
     });

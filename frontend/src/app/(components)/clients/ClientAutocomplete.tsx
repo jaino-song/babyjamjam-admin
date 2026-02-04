@@ -1,24 +1,32 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import {
-    Autocomplete,
-    TextField,
-    Box,
-    Typography,
-    CircularProgress,
-    Paper,
-    Chip,
-    Divider,
-    ButtonBase,
-} from "@mui/material";
-import { UserPlus, FileCheck } from "lucide-react";
+import { UserPlus, FileCheck, ChevronsUpDown, Check, X, Loader2 } from "lucide-react";
 import { useAllClients } from "@/app/hooks/useClients";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import type { Client } from "@/app/lib/client/types";
 import { useClientDialogStore } from "@/app/store/client-dialog-store";
 import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
+import { cn } from "@/lib/utils";
+
+import { Button } from "@/components/ui/button";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+    CommandSeparator,
+} from "@/components/ui/command";
+import { Label } from "@/components/ui/label";
+import { StatusBadge } from "@/app/(components)/ui/status-badge";
 
 interface ClientAutocompleteProps {
     value: number | null;
@@ -50,9 +58,9 @@ export function ClientAutocomplete({
     // Track input value for display synchronization
     const [inputValue, setInputValue] = useState("");
     // Track open state for controlled dropdown behavior
-    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-    // Ref for the input element - used to blur when closing dropdown
-    const inputRef = useRef<HTMLInputElement>(null);
+    const [isOpen, setIsOpen] = useState(false);
+    // Ref for focusing input after clear
+    const triggerRef = useRef<HTMLButtonElement>(null);
 
     // Filter out excluded clients
     const availableClients = useMemo(() => {
@@ -67,39 +75,47 @@ export function ClientAutocomplete({
     }, [value, clients]);
 
     // Sync inputValue when selectedClient changes (e.g., after creating a new client)
-    // This ensures the text field shows the client name when selection changes externally
     useEffect(() => {
         if (selectedClient) {
             setInputValue(selectedClient.name);
         } else if (value === null) {
-            // Only clear input if value is explicitly null (not when waiting for clients to load)
             setInputValue("");
         }
     }, [selectedClient, value]);
 
-    const handleChange = (
-        _event: React.SyntheticEvent,
-        newValue: Client | null
-    ) => {
-        // Update input value immediately to show selected name
-        setInputValue(newValue?.name ?? "");
-        onChange(newValue?.id ?? null, newValue);
+    // Filter clients based on input - Korean IME compatible
+    const filteredClients = useMemo(() => {
+        if (!inputValue.trim()) return [];
+        return availableClients.filter(
+            (client) =>
+                // 초성 search only for name (e.g., ㄱ → 김현아)
+                matchesKoreanSearch(client.name, inputValue) ||
+                // Phone: simple substring match (no 초성)
+                (client.phone && client.phone.includes(inputValue)) ||
+                // Address: simple substring match (no 초성 to avoid false positives)
+                (client.address && client.address.toLowerCase().includes(inputValue.toLowerCase()))
+        );
+    }, [availableClients, inputValue]);
+
+    const handleSelect = (client: Client) => {
+        setInputValue(client.name);
+        onChange(client.id, client);
+        setIsOpen(false);
     };
 
-    const handleManualEntry = (e: React.MouseEvent) => {
-        // Prevent the Autocomplete from closing before click completes
-        e.preventDefault();
+    const handleClear = (e: React.MouseEvent) => {
         e.stopPropagation();
-        // Close the dropdown state
-        setIsDropdownOpen(false);
-        // Blur the input using ref to ensure dropdown closes completely
-        // Note: We use ref because the Paper slot is rendered in a Portal,
-        // so DOM traversal with closest() won't find the Autocomplete
-        inputRef.current?.blur();
+        setInputValue("");
+        onChange(null, null);
+        // Focus back to trigger for better UX
+        setTimeout(() => triggerRef.current?.focus(), 0);
+    };
+
+    const handleManualEntry = () => {
+        setIsOpen(false);
         // Save the typed name to the store so ClientFormDialog can prefill it
         setPrefillName(inputValue);
         // Use setTimeout to ensure dropdown is fully closed before opening dialog
-        // This prevents the dropdown from appearing over the new dialog
         setTimeout(() => {
             if (onManualEntry) {
                 onManualEntry();
@@ -107,158 +123,126 @@ export function ClientAutocomplete({
         }, 100);
     };
 
-    // Handle input change to track what user types
-    const handleInputChange = (
-        _event: React.SyntheticEvent,
-        newInputValue: string,
-        reason: string
-    ) => {
-        // Update inputValue for user input and clear actions
-        if (reason === "input" || reason === "clear") {
-            setInputValue(newInputValue);
-        }
-    };
-
     return (
-        <Autocomplete<Client, false, false, false>
-            value={selectedClient}
-            onChange={handleChange}
-            inputValue={inputValue}
-            onInputChange={handleInputChange}
-            options={availableClients}
-            loading={isLoading}
-            clearOnBlur={false}
-            blurOnSelect={true}
-            // Control dropdown visibility - opens on focus or when typing
-            open={isDropdownOpen}
-            onOpen={() => setIsDropdownOpen(true)}
-            onClose={() => setIsDropdownOpen(false)}
-            openOnFocus
-            getOptionLabel={(option) => option.name}
-            isOptionEqualToValue={(option, val) => option.id === val.id}
-            filterOptions={(options, { inputValue: filterInput }) => {
-                // Only show options when user has typed something
-                if (!filterInput.trim()) return [];
-                return options.filter(
-                    (client) =>
-                        // 초성 search only for name (e.g., ㄱ → 김현아)
-                        matchesKoreanSearch(client.name, filterInput) ||
-                        // Phone: simple substring match (no 초성)
-                        (client.phone && client.phone.includes(filterInput)) ||
-                        // Address: simple substring match (no 초성 to avoid false positives)
-                        (client.address && client.address.toLowerCase().includes(filterInput.toLowerCase()))
-                );
-            }}
-            renderOption={(props, option) => (
-                <Box component="li" {...props} key={option.id}>
-                    <Box
-                        sx={{
-                            display: "flex",
-                            flexDirection: "column",
-                            width: "100%",
-                        }}
+        <div className="space-y-2">
+            <Label className={cn(error && "text-destructive")}>
+                {label}
+                {required && <span className="text-destructive ml-1">*</span>}
+            </Label>
+            <Popover open={isOpen} onOpenChange={setIsOpen}>
+                <PopoverTrigger asChild>
+                    <Button
+                        ref={triggerRef}
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={isOpen}
+                        className={cn(
+                            "w-full justify-between font-normal",
+                            !selectedClient && "text-muted-foreground",
+                            error && "border-destructive focus:ring-destructive"
+                        )}
                     >
-                        <Box
-                            sx={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 1,
-                            }}
-                        >
-                            <Typography variant="body1">{option.name}</Typography>
-                            {option.hasSigned && (
-                                <Chip
-                                    icon={<FileCheck size={14} />}
-                                    label={t(locale, "contract-msg.client-signed")}
-                                    size="small"
-                                    color="success"
-                                    variant="outlined"
-                                    sx={{ height: 20, fontSize: "0.7rem" }}
+                        <span className="truncate">
+                            {selectedClient
+                                ? selectedClient.name
+                                : t(locale, "contract-msg.client-search-placeholder")}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                            {isLoading && (
+                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            )}
+                            {selectedClient && !isLoading && (
+                                <X
+                                    className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
+                                    onClick={handleClear}
                                 />
                             )}
-                        </Box>
-                        <Typography variant="caption" color="text.secondary">
-                            {option.phone || "-"}{" "}
-                            {option.address && `· ${option.address}`}
-                        </Typography>
-                    </Box>
-                </Box>
-            )}
-            renderInput={(params) => (
-                <TextField
-                    {...params}
-                    inputRef={inputRef}
-                    label={label}
-                    required={required}
-                    error={error}
-                    helperText={helperText}
-                    placeholder={t(locale, "contract-msg.client-search-placeholder")}
-                    InputProps={{
-                        ...params.InputProps,
-                        endAdornment: (
-                            <>
-                                {isLoading ? (
-                                    <CircularProgress color="inherit" size={20} />
-                                ) : null}
-                                {params.InputProps.endAdornment}
-                            </>
-                        ),
-                    }}
-                />
-            )}
-            noOptionsText={
-                <Typography variant="body2" color="text.secondary" sx={{ py: 1, textAlign: "center" }}>
-                    {t(locale, "contract-msg.no-client-found")}
-                </Typography>
-            }
-            slots={{
-                paper: (props) => (
-                    <Paper {...props} data-component="client-autocomplete-paper" elevation={8}>
-                        {props.children}
+                            <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                    </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command shouldFilter={false}>
+                        <CommandInput
+                            placeholder={t(locale, "contract-msg.client-search-placeholder")}
+                            value={inputValue}
+                            onValueChange={setInputValue}
+                        />
+                        <CommandList>
+                            {isLoading ? (
+                                <div className="flex items-center justify-center py-6">
+                                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                </div>
+                            ) : filteredClients.length === 0 ? (
+                                <CommandEmpty>
+                                    <span className="text-muted-foreground">
+                                        {t(locale, "contract-msg.no-client-found")}
+                                    </span>
+                                </CommandEmpty>
+                            ) : (
+                                <CommandGroup>
+                                    {filteredClients.map((client) => (
+                                        <CommandItem
+                                            key={client.id}
+                                            value={client.id.toString()}
+                                            onSelect={() => handleSelect(client)}
+                                            className="flex flex-col items-start gap-1 py-2"
+                                        >
+                                            <div className="flex items-center gap-2 w-full">
+                                                <Check
+                                                    className={cn(
+                                                        "h-4 w-4 shrink-0",
+                                                        selectedClient?.id === client.id
+                                                            ? "opacity-100"
+                                                            : "opacity-0"
+                                                    )}
+                                                />
+                                                <span className="font-medium">{client.name}</span>
+                                                {client.hasSigned && (
+                                                    <StatusBadge variant="doc_completed" className="text-xs py-0 h-5">
+                                                        <FileCheck className="h-3 w-3 mr-1" />
+                                                        {t(locale, "contract-msg.client-signed")}
+                                                    </StatusBadge>
+                                                )}
+                                            </div>
+                                            <span className="text-xs text-muted-foreground ml-6">
+                                                {client.phone || "-"}{" "}
+                                                {client.address && `· ${client.address}`}
+                                            </span>
+                                        </CommandItem>
+                                    ))}
+                                </CommandGroup>
+                            )}
+                        </CommandList>
+
+                        {/* Manual Entry Footer */}
                         {allowManualEntry && (
                             <>
-                                <Divider />
-                                <ButtonBase
-                                    onMouseDown={handleManualEntry}
-                                    sx={{
-                                        width: "100%",
-                                        py: 1.5,
-                                        px: 2,
-                                        justifyContent: "flex-start",
-                                        "&:hover": {
-                                            bgcolor: "action.hover",
-                                        },
-                                    }}
+                                <CommandSeparator />
+                                <div
+                                    className="flex flex-col w-full py-3 px-3 cursor-pointer hover:bg-accent transition-colors"
+                                    onClick={handleManualEntry}
                                 >
-                                    <Box
-                                        sx={{
-                                            display: "flex",
-                                            flexDirection: "column",
-                                            width: "100%",
-                                        }}
-                                    >
-                                        <Box
-                                            sx={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: 1,
-                                            }}
-                                        >
-                                            <UserPlus size={16} />
-                                            <Typography variant="body1" color="primary">
-                                                {t(locale, "contract-msg.manual-entry")}
-                                            </Typography>
-                                        </Box>
-                                        <Typography variant="caption" color="text.secondary">
-                                            {t(locale, "contract-msg.manual-entry-description")}
-                                        </Typography>
-                                    </Box>
-                                </ButtonBase>
+                                    <div className="flex items-center gap-2">
+                                        <UserPlus className="h-4 w-4" />
+                                        <span className="text-sm font-medium text-primary">
+                                            {t(locale, "contract-msg.manual-entry")}
+                                        </span>
+                                    </div>
+                                    <span className="text-xs text-muted-foreground mt-1">
+                                        {t(locale, "contract-msg.manual-entry-description")}
+                                    </span>
+                                </div>
                             </>
                         )}
-                    </Paper>
-                ),
-            }}
-        />
+                    </Command>
+                </PopoverContent>
+            </Popover>
+            {helperText && (
+                <p className={cn("text-sm", error ? "text-destructive" : "text-muted-foreground")}>
+                    {helperText}
+                </p>
+            )}
+        </div>
     );
 }

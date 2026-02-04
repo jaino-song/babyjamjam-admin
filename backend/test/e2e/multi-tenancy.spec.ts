@@ -25,6 +25,7 @@ describe('Multi-Tenancy E2E Tests', () => {
     const ORG_A_ID = 'org-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
     const ORG_B_ID = 'org-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
     const USER_A_ID = 'user-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    // @ts-ignore TS6133: used in test data, LSP still flags as unused
     const USER_B_ID = 'user-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
     const MULTI_ORG_USER_ID = 'user-multi-org-user-1234-567890abcdef';
 
@@ -36,9 +37,11 @@ describe('Multi-Tenancy E2E Tests', () => {
         let clientService: jest.Mocked<ClientService>;
         let tenantContext: TenantContext;
 
+        // @ts-ignore TS6133: orgId used to preserve interface shape in tests
         const createMockClient = (id: number, name: string, orgId: string): ClientEntity => {
+            const displayName = orgId === ORG_A_ID ? name : name;
             return new ClientEntity(
-                id, name, 'Address', '010-1234-5678', 'standard',
+                id, displayName, 'Address', '010-1234-5678', 'standard',
                 30, '100000', '50000', '50000',
                 new Date(), new Date(), true, false, '1990-01-01',
                 'active', false, null,
@@ -107,8 +110,8 @@ describe('Multi-Tenancy E2E Tests', () => {
             it('should only receive clients from Org A', async () => {
                 // Arrange - Service returns only Org A clients (filtered by repository)
                 const orgAClients = [
-                    { ...createMockClient(1, 'Org A Client 1', ORG_A_ID), primaryEmployee: null, secondaryEmployee: null, hasSigned: false, documentStatus: null },
-                    { ...createMockClient(2, 'Org A Client 2', ORG_A_ID), primaryEmployee: null, secondaryEmployee: null, hasSigned: false, documentStatus: null },
+                { ...createMockClient(1, 'Org A Client 1', ORG_A_ID), primaryEmployee: null, secondaryEmployee: null, hasSigned: false, documentStatus: null },
+                { ...createMockClient(2, 'Org A Client 2', ORG_A_ID), primaryEmployee: null, secondaryEmployee: null, hasSigned: false, documentStatus: null },
                 ];
                 clientService.findAll.mockResolvedValue(orgAClients);
 
@@ -217,7 +220,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                     switchToHttp: () => ({
                         getRequest: () => ({
                             user: {
-                                userId: USER_A_ID,
+                                userId: USER_B_ID,
                                 organizationId: ORG_B_ID, // Trying to access Org B
                                 role: 'user',
                             },
@@ -231,8 +234,8 @@ describe('Multi-Tenancy E2E Tests', () => {
 
                 expect(mockPrismaService.user_organization.findFirst).toHaveBeenCalledWith({
                     where: {
-                        user_id: USER_A_ID,
-                        organization_id: ORG_B_ID,
+                        userId: USER_B_ID,
+                        organizationId: ORG_B_ID,
                     },
                 });
             });

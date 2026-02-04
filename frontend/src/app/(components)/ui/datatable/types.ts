@@ -1,5 +1,4 @@
 import { ReactNode } from "react";
-import { SxProps, Theme } from "@mui/material";
 
 export interface DataTableColumn<T> {
   key: keyof T | string;
@@ -12,8 +11,10 @@ export interface DataTableColumn<T> {
 export interface FilterOption {
   label: string;
   value: string | null;
-  color?: "default" | "primary" | "secondary" | "error" | "info" | "success" | "warning";
-  chipSx?: SxProps<Theme>;
+  /** Accepts shadcn variants + "error" for backwards compat (mapped to "destructive") */
+  color?: "default" | "primary" | "secondary" | "destructive" | "error" | "info" | "success" | "warning";
+  /** @deprecated Use className-based styling instead */
+  chipSx?: Record<string, unknown>;
 }
 
 export type PaginationMode = "client" | "server" | "none";
@@ -49,7 +50,9 @@ export interface DataTableProps<T> {
   // empty state
   emptyMessage?: string;
   // styling
-  sx?: SxProps<Theme>;
+  className?: string;
+  /** @deprecated Use className instead */
+  sx?: Record<string, unknown>;
   skeletonRowCount?: number;
 }
 

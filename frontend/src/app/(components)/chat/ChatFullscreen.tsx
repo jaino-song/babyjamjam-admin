@@ -1,21 +1,10 @@
 "use client";
 
 import { useRef, useEffect, useCallback, useLayoutEffect, useState } from "react";
-import {
-    Box,
-    IconButton,
-    Typography,
-    Paper,
-    CircularProgress,
-    Fade,
-    Slide,
-    Stack,
-    Button,
-    Portal,
-} from "@mui/material";
-import CloseIcon from "@mui/icons-material/Close";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
-import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import { X, Trash2, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 import { ChatInput } from "./ChatInput";
 import { AssistantMessage } from "./AssistantMessage";
 import { useChatStream, ChatMessage, ChatState } from "@/app/hooks/useChatStream";
@@ -65,61 +54,39 @@ interface ChatFullscreenProps {
 
 function UserMessage({ message }: { message: ChatMessage }) {
     return (
-        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 2 }}>
-            <Paper
+        <div className="flex justify-end mb-4">
+            <div
                 data-component="user-message-paper"
-                elevation={0}
-                sx={{
-                    maxWidth: "80%",
-                    px: 2,
-                    py: 1.5,
-                    borderRadius: 2,
-                    bgcolor: "primary.main",
-                    color: "primary.contrastText",
-                }}
+                className="max-w-[80%] px-4 py-3 rounded-lg bg-primary text-primary-foreground"
             >
-                <Typography
-                    variant="body1"
-                    sx={{
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                    }}
-                >
+                <p className="whitespace-pre-wrap break-words">
                     {message.content}
-                </Typography>
-            </Paper>
-        </Box>
+                </p>
+            </div>
+        </div>
     );
 }
 
 function ToolExecutingIndicator({ toolName }: { toolName: string | null }) {
     return (
-        <Box
-            sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                mb: 2,
-                px: 2,
-            }}
-        >
-            <CircularProgress size={16} />
-            <Typography variant="body2" color="text.secondary">
+        <div className="flex items-center gap-2 mb-4 px-4">
+            <Spinner size="sm" />
+            <span className="text-sm text-muted-foreground">
                 {toolName ? `${toolName} 실행 중...` : "처리 중..."}
-            </Typography>
-        </Box>
+            </span>
+        </div>
     );
 }
 
 function StateIndicator({ state }: { state: ChatState }) {
     if (state === "connecting") {
         return (
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2, px: 2 }}>
-                <CircularProgress size={16} />
-                <Typography variant="body2" color="text.secondary">
+            <div className="flex items-center gap-2 mb-4 px-4">
+                <Spinner size="sm" />
+                <span className="text-sm text-muted-foreground">
                     연결 중...
-                </Typography>
-            </Box>
+                </span>
+            </div>
         );
     }
     return null;
@@ -222,168 +189,124 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
         (lastMessage.content.includes("하시겠습니까?") ||
             lastMessage.content.includes("Would you like"));
 
+    // Don't render anything when closed
+    if (!open) return null;
+
     return (
-        <Portal>
-            <Slide direction="up" in={open} mountOnEnter unmountOnExit>
-                {/* Full-screen backdrop to cover background content */}
-                <Box
-                    sx={{
-                        position: "fixed",
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        bgcolor: "background.default",
-                        zIndex: 1300,
-                    }}
+        <div
+            className={cn(
+                "fixed inset-0 bg-background z-[1300]",
+                "transition-transform duration-300 ease-out",
+                open ? "translate-y-0" : "translate-y-full"
+            )}
+        >
+            {/* Chat content container with dynamic height for mobile keyboard */}
+            <div
+                className="absolute top-0 left-0 right-0 flex flex-col select-text transition-[height] duration-100 ease-out"
+                style={{
+                    height: viewportHeight !== null ? `${viewportHeight}px` : "100%",
+                }}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card">
+                    <div className="flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-primary" />
+                        <h2 className="text-lg font-semibold">
+                            AI 어시스턴트
+                        </h2>
+                    </div>
+                    <div className="flex items-center gap-1">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={clearSession}
+                            className="h-8 w-8"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={onClose}
+                            className="h-8 w-8"
+                        >
+                            <X className="w-4 h-4" />
+                        </Button>
+                    </div>
+                </div>
+
+                {/* Messages area */}
+                <div
+                    ref={scrollContainerRef}
+                    className="flex-1 overflow-auto px-4 sm:px-8 py-6 select-text"
                 >
-                    {/* Chat content container with dynamic height for mobile keyboard */}
-                    <Box
-                        sx={{
-                            position: "absolute",
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            // Use dynamic height from visualViewport when available (mobile keyboard handling)
-                            // Falls back to 100% when viewportHeight is null (SSR or initial render)
-                            height: viewportHeight !== null ? `${viewportHeight}px` : "100%",
-                            display: "flex",
-                            flexDirection: "column",
-                            userSelect: "text",
-                            WebkitUserSelect: "text",
-                            // Smooth transition for keyboard animation
-                            transition: "height 0.1s ease-out",
-                        }}
-                    >
-                        <Box
-                            sx={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                px: 2,
-                                py: 1.5,
-                                borderBottom: 1,
-                                borderColor: "divider",
-                                bgcolor: "background.paper",
-                            }}
-                        >
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                <AutoAwesomeIcon color="primary" />
-                                <Typography variant="h6" fontWeight={600}>
-                                    AI 어시스턴트
-                                </Typography>
-                            </Box>
-                            <Box>
-                                <IconButton onClick={clearSession} size="small" sx={{ mr: 1 }}>
-                                    <DeleteOutlineIcon />
-                                </IconButton>
-                                <IconButton onClick={onClose} size="small">
-                                    <CloseIcon />
-                                </IconButton>
-                            </Box>
-                        </Box>
-
-                        <Box
-                            ref={scrollContainerRef}
-                            sx={{
-                                flex: 1,
-                                overflow: "auto",
-                                px: { xs: 2, sm: 4 },
-                                py: 3,
-                                userSelect: "text",
-                                WebkitUserSelect: "text",
-                                MozUserSelect: "text",
-                            }}
-                        >
-                            {isLoadingHistory && messages.length > 0 && (
-                                <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
-                                    <CircularProgress size={20} />
-                                </Box>
+                    {isLoadingHistory && messages.length > 0 && (
+                        <div className="flex justify-center p-4">
+                            <Spinner size="sm" />
+                        </div>
+                    )}
+                    {messages.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground animate-fade-in">
+                            <Sparkles className="w-12 h-12 mb-4 opacity-50" />
+                            <h3 className="text-lg font-semibold mb-2">
+                                무엇을 도와드릴까요?
+                            </h3>
+                            <p className="text-sm">
+                                고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.
+                            </p>
+                        </div>
+                    ) : (
+                        <>
+                            {messages.map((msg, idx) =>
+                                msg.role === "user" ? (
+                                    <UserMessage key={idx} message={msg} />
+                                ) : (
+                                    <AssistantMessage
+                                        key={idx}
+                                        message={msg}
+                                        messageIndex={idx}
+                                        sessionId={sessionId}
+                                        isToolExecuting={isToolExecuting}
+                                        currentTool={currentTool}
+                                        onSubmitFeedback={handleSubmitFeedback}
+                                    />
+                                )
                             )}
-                            {messages.length === 0 ? (
-                                <Fade in>
-                                    <Box
-                                        sx={{
-                                            display: "flex",
-                                            flexDirection: "column",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                            height: "100%",
-                                            textAlign: "center",
-                                            color: "text.secondary",
-                                        }}
+                            {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
+                            <StateIndicator state={state} />
+                            {showConfirmButtons && (
+                                <div className="flex gap-2 mb-4 px-4">
+                                    <Button
+                                        size="sm"
+                                        onClick={handleConfirm}
+                                        disabled={state === "streaming"}
                                     >
-                                        <AutoAwesomeIcon sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
-                                        <Typography variant="h6" gutterBottom>
-                                            무엇을 도와드릴까요?
-                                        </Typography>
-                                        <Typography variant="body2">
-                                            고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.
-                                        </Typography>
-                                    </Box>
-                                </Fade>
-                            ) : (
-                                <>
-                                    {messages.map((msg, idx) =>
-                                        msg.role === "user" ? (
-                                            <UserMessage key={idx} message={msg} />
-                                        ) : (
-                                            <AssistantMessage
-                                                key={idx}
-                                                message={msg}
-                                                messageIndex={idx}
-                                                sessionId={sessionId}
-                                                isToolExecuting={isToolExecuting}
-                                                currentTool={currentTool}
-                                                onSubmitFeedback={handleSubmitFeedback}
-                                            />
-                                        )
-                                    )}
-                                    {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
-                                    <StateIndicator state={state} />
-                                    {showConfirmButtons && (
-                                        <Stack direction="row" spacing={1} sx={{ mb: 2, px: 2 }}>
-                                            <Button
-                                                variant="contained"
-                                                size="small"
-                                                onClick={handleConfirm}
-                                                disabled={state === "streaming"}
-                                            >
-                                                확인
-                                            </Button>
-                                            <Button
-                                                variant="outlined"
-                                                size="small"
-                                                onClick={handleCancel}
-                                                disabled={state === "streaming"}
-                                            >
-                                                취소
-                                            </Button>
-                                        </Stack>
-                                    )}
-                                    <div ref={messagesEndRef} />
-                                </>
+                                        확인
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={handleCancel}
+                                        disabled={state === "streaming"}
+                                    >
+                                        취소
+                                    </Button>
+                                </div>
                             )}
-                        </Box>
+                            <div ref={messagesEndRef} />
+                        </>
+                    )}
+                </div>
 
-                        <Box
-                            sx={{
-                                px: { xs: 2, sm: 4 },
-                                py: 2,
-                                borderTop: 1,
-                                borderColor: "divider",
-                                bgcolor: "background.paper",
-                            }}
-                        >
-                            <ChatInput
-                                onSubmit={sendMessage}
-                                disabled={state === "streaming" || state === "connecting"}
-                                compact={false}
-                            />
-                        </Box>
-                    </Box>
-                </Box>
-            </Slide>
-        </Portal>
+                {/* Input area */}
+                <div className="px-4 sm:px-8 py-4 border-t border-border bg-card">
+                    <ChatInput
+                        onSubmit={sendMessage}
+                        disabled={state === "streaming" || state === "connecting"}
+                        compact={false}
+                    />
+                </div>
+            </div>
+        </div>
     );
 }

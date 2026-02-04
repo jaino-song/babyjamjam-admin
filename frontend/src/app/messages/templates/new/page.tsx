@@ -1,8 +1,8 @@
 "use client";
 
-import { Box, IconButton } from "@mui/material";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { ContentPaper } from "@/app/(components)/root/content-paper";
 import { TemplateEditor } from "@/app/(components)/my-templates/template-editor";
 import { useLocale } from "@/app/(components)/LocaleProvider";
@@ -12,33 +12,24 @@ export default function NewTemplatePage() {
     const locale = useLocale();
 
     return (
-        <Box sx={{ bgcolor: "background.paper" }}>
-            <Box
-                component="section"
-                sx={{
-                    px: { xs: 2, sm: 3, md: 6 },
-                    py: { xs: 3, sm: 4 },
-                    mx: "auto",
-                }}
-            >
-                <Box sx={{ mb: 2 }}>
-                    <IconButton
-                        component={Link}
-                        href="/messages/templates"
-                        sx={{ color: "text.secondary" }}
-                    >
-                        <ArrowLeft size={24} />
-                    </IconButton>
-                </Box>
+        <div className="bg-background">
+            <section className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
+                <div className="mb-4">
+                    <Button variant="ghost" size="icon" asChild>
+                        <Link href="/messages/templates">
+                            <ArrowLeft className="h-6 w-6" />
+                        </Link>
+                    </Button>
+                </div>
                 <ContentPaper
                     title={t(locale, "template-editor.create-title")}
                     subtitle={t(locale, "template-editor.create-subtitle")}
-                    sx={{ minHeight: "70vh" }}
+                    className="min-h-[70vh]"
                 >
                     <TemplateEditor />
                 </ContentPaper>
-            </Box>
-        </Box>
+            </section>
+        </div>
     );
 }
 

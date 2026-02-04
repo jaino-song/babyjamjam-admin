@@ -1,9 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Box, IconButton, Typography, Tooltip } from "@mui/material";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import CheckIcon from "@mui/icons-material/Check";
+import { Copy, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
@@ -22,28 +27,33 @@ export function CodeBlock({ children, language = "text" }: CodeBlockProps) {
     };
 
     return (
-        <Box sx={{ position: "relative", my: 2 }}>
-            <Box
-                sx={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    bgcolor: "grey.800",
-                    px: 2,
-                    py: 0.5,
-                    borderTopLeftRadius: 8,
-                    borderTopRightRadius: 8,
-                }}
-            >
-                <Typography variant="caption" sx={{ color: "grey.400" }}>
+        <div className="relative my-4">
+            <div className="flex justify-between items-center bg-zinc-800 px-4 py-1 rounded-t-lg">
+                <span className="text-xs text-zinc-400">
                     {language}
-                </Typography>
-                <Tooltip title={copied ? "Copied!" : "Copy code"}>
-                    <IconButton size="small" onClick={handleCopy} sx={{ color: "grey.400" }}>
-                        {copied ? <CheckIcon fontSize="small" /> : <ContentCopyIcon fontSize="small" />}
-                    </IconButton>
-                </Tooltip>
-            </Box>
+                </span>
+                <TooltipProvider>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={handleCopy}
+                                className="h-6 w-6 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700"
+                            >
+                                {copied ? (
+                                    <Check className="w-4 h-4" />
+                                ) : (
+                                    <Copy className="w-4 h-4" />
+                                )}
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                            {copied ? "Copied!" : "Copy code"}
+                        </TooltipContent>
+                    </Tooltip>
+                </TooltipProvider>
+            </div>
 
             <SyntaxHighlighter
                 language={language}
@@ -58,6 +68,6 @@ export function CodeBlock({ children, language = "text" }: CodeBlockProps) {
             >
                 {children}
             </SyntaxHighlighter>
-        </Box>
+        </div>
     );
 }

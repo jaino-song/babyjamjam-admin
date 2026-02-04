@@ -3,16 +3,16 @@
 import { useState, useCallback, useEffect } from "react";
 import {
   Dialog,
-  DialogTitle,
   DialogContent,
-  DialogActions,
-  Button,
-  TextField,
-  Box,
-  Typography,
-  Alert,
-  InputAdornment,
-} from "@mui/material";
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ParsedVoucherPriceItem } from "@/app/hooks/useVoucherPriceImageParsing";
 
 interface PriceEditModalProps {
@@ -88,93 +88,112 @@ export function PriceEditModal({
   if (!item) return null;
 
   return (
-    <Dialog data-component="PriceEditModal" open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>
-        가격 수정
-        <Typography variant="body2" color="text.secondary">
-          {item.type} · {item.duration}일
-        </Typography>
-      </DialogTitle>
+    <Dialog open={open} onOpenChange={(isOpen: boolean) => !isOpen && onClose()}>
+      <DialogContent data-component="PriceEditModal" className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>가격 수정</DialogTitle>
+          <DialogDescription>
+            {item.type} · {item.duration}일
+          </DialogDescription>
+        </DialogHeader>
 
-      <DialogContent dividers>
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 3, pt: 1 }}>
+        <div className="flex flex-col gap-5 py-4">
           {/* 서비스가격 */}
-          <TextField
-            label="서비스가격"
-            value={fullPrice}
-            onChange={(e) => handleNumberInput(e.target.value, setFullPrice)}
-            InputProps={{
-              endAdornment: <InputAdornment position="end">원</InputAdornment>,
-            }}
-            helperText={`표시: ${formatPriceDisplay(fullPriceNum)}원`}
-            fullWidth
-          />
+          <div className="space-y-2">
+            <Label htmlFor="fullPrice">서비스가격</Label>
+            <div className="relative">
+              <Input
+                id="fullPrice"
+                value={fullPrice}
+                onChange={(e) => handleNumberInput(e.target.value, setFullPrice)}
+                className="pr-8"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                원
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              표시: {formatPriceDisplay(fullPriceNum)}원
+            </p>
+          </div>
 
           {/* 정부지원금 */}
-          <TextField
-            label="정부지원금"
-            value={grant}
-            onChange={(e) => handleNumberInput(e.target.value, setGrant)}
-            InputProps={{
-              endAdornment: <InputAdornment position="end">원</InputAdornment>,
-            }}
-            helperText={`표시: ${formatPriceDisplay(grantNum)}원`}
-            fullWidth
-          />
+          <div className="space-y-2">
+            <Label htmlFor="grant">정부지원금</Label>
+            <div className="relative">
+              <Input
+                id="grant"
+                value={grant}
+                onChange={(e) => handleNumberInput(e.target.value, setGrant)}
+                className="pr-8"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                원
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              표시: {formatPriceDisplay(grantNum)}원
+            </p>
+          </div>
 
           {/* 본인부담금 */}
-          <Box>
-            <TextField
-              label="본인부담금"
-              value={actualPrice}
-              onChange={(e) => handleNumberInput(e.target.value, setActualPrice)}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">원</InputAdornment>,
-              }}
-              helperText={`표시: ${formatPriceDisplay(actualPriceNum)}원`}
-              fullWidth
-            />
+          <div className="space-y-2">
+            <Label htmlFor="actualPrice">본인부담금</Label>
+            <div className="relative">
+              <Input
+                id="actualPrice"
+                value={actualPrice}
+                onChange={(e) => handleNumberInput(e.target.value, setActualPrice)}
+                className="pr-8"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                원
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              표시: {formatPriceDisplay(actualPriceNum)}원
+            </p>
             <Button
-              size="small"
+              variant="link"
+              size="sm"
               onClick={handleAutoCalculate}
-              sx={{ mt: 1 }}
-              variant="text"
+              className="h-auto p-0 text-xs"
             >
               자동 계산 (서비스가격 - 정부지원금)
             </Button>
-          </Box>
+          </div>
 
           {/* 검증 결과 */}
-          <Box sx={{ mt: 1 }}>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
+          <div className="pt-2 border-t">
+            <p className="text-sm text-muted-foreground mb-2">
               검증: 서비스가격 = 정부지원금 + 본인부담금
-            </Typography>
-            <Typography variant="body1">
+            </p>
+            <p className="text-sm font-medium mb-2">
               {formatPriceDisplay(fullPriceNum)} = {formatPriceDisplay(grantNum)} + {formatPriceDisplay(actualPriceNum)} = {formatPriceDisplay(calculatedSum)}
-            </Typography>
+            </p>
 
             {isValid ? (
-              <Alert severity="success" sx={{ mt: 1 }}>
-                가격 계산이 일치합니다.
+              <Alert className="bg-success/10 border-success/30 text-success">
+                <AlertDescription>가격 계산이 일치합니다.</AlertDescription>
               </Alert>
             ) : (
-              <Alert severity="warning" sx={{ mt: 1 }}>
-                가격 불일치: 차이 {formatPriceDisplay(Math.abs(difference))}원
-                {difference > 0 ? " (서비스가격이 더 큼)" : " (합계가 더 큼)"}
+              <Alert className="bg-warning/10 border-warning/30 text-warning">
+                <AlertDescription>
+                  가격 불일치: 차이 {formatPriceDisplay(Math.abs(difference))}원
+                  {difference > 0 ? " (서비스가격이 더 큼)" : " (합계가 더 큼)"}
+                </AlertDescription>
               </Alert>
             )}
-          </Box>
-        </Box>
-      </DialogContent>
+          </div>
+        </div>
 
-      <DialogActions>
-        <Button onClick={onClose} color="inherit">
-          취소
-        </Button>
-        <Button onClick={handleSave} variant="contained" color="primary">
-          저장
-        </Button>
-      </DialogActions>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" onClick={onClose}>
+            취소
+          </Button>
+          <Button onClick={handleSave}>저장</Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   );
 }

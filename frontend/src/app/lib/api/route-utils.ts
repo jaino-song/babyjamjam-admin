@@ -31,6 +31,20 @@ export function getRefreshToken(request: NextRequest): string | null {
 }
 
 /**
+ * Get JWT auth token from httpOnly cookie (for backend authentication)
+ */
+export function getAuthToken(request: NextRequest): string | null {
+    return request.cookies.get("auth_token")?.value || null;
+}
+
+/**
+ * Create Authorization header for backend requests
+ */
+export function getAuthHeaders(token: string | null): Record<string, string> {
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
  * Set auth tokens in httpOnly cookies
  */
 export function setAuthCookies(
@@ -72,23 +86,36 @@ export function errorResponse(error: unknown, context: string) {
 }
 
 /**
- * Proxy GET request to backend with access token
+ * Proxy GET request to backend with access token and JWT auth
  */
 export async function proxyGetRequest(
     request: NextRequest,
     backendPath: string,
     context: string
 ): Promise<NextResponse> {
+    const authToken = getAuthToken(request);
     const accessToken = getAccessToken(request);
-    
+
+    if (!authToken) {
+        return unauthorizedResponse("Authentication required. Please log in.");
+    }
+
     if (!accessToken) {
-        return unauthorizedResponse();
+        return unauthorizedResponse("eFormsign access token required. Please authenticate with eFormsign first.");
     }
 
     try {
         const response = await serverAPIClient.get(backendPath, {
             params: { accessToken },
+            headers: getAuthHeaders(authToken),
         });
+
+        // Check for backend error responses
+        if (response.status >= 400) {
+            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
+            return NextResponse.json({ error: errorMessage }, { status: response.status });
+        }
+
         return NextResponse.json(response.data);
     } catch (error) {
         return errorResponse(error, context);
@@ -96,7 +123,7 @@ export async function proxyGetRequest(
 }
 
 /**
- * Proxy POST request to backend with access token
+ * Proxy POST request to backend with access token and JWT auth
  */
 export async function proxyPostRequest(
     request: NextRequest,
@@ -104,10 +131,15 @@ export async function proxyPostRequest(
     context: string,
     additionalBody?: Record<string, unknown>
 ): Promise<NextResponse> {
+    const authToken = getAuthToken(request);
     const accessToken = getAccessToken(request);
-    
+
+    if (!authToken) {
+        return unauthorizedResponse("Authentication required. Please log in.");
+    }
+
     if (!accessToken) {
-        return unauthorizedResponse();
+        return unauthorizedResponse("eFormsign access token required. Please authenticate with eFormsign first.");
     }
 
     try {
@@ -116,7 +148,16 @@ export async function proxyPostRequest(
             ...body,
             ...additionalBody,
             accessToken,
+        }, {
+            headers: getAuthHeaders(authToken),
         });
+
+        // Check for backend error responses
+        if (response.status >= 400) {
+            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
+            return NextResponse.json({ error: errorMessage }, { status: response.status });
+        }
+
         return NextResponse.json(response.data);
     } catch (error) {
         return errorResponse(error, context);

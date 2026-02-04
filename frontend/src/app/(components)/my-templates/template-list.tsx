@@ -1,21 +1,19 @@
 "use client";
 
+import { Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-    Box,
     Table,
     TableBody,
     TableCell,
-    TableContainer,
     TableHead,
+    TableHeader,
     TableRow,
-    IconButton,
-    CircularProgress,
-    Alert,
-    Divider,
-    Skeleton,
-} from "@mui/material";
-import { Plus } from "lucide-react";
-import { useRouter } from "next/navigation";
+} from "@/components/ui/table";
 import { useMessageTemplates } from "@/app/hooks/use-message-templates";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
@@ -46,150 +44,94 @@ export const TemplateList = () => {
     const rowsPerPage = 5;
 
     return (
-        <Box data-component="template-list-container">
+        <div data-component="template-list-container">
             {/* Toolbar */}
-            <Box
+            <div
                 data-component="template-list-toolbar"
-                sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "flex-end",
-                }}
+                className="flex items-center justify-end"
             >
                 {/* New Template Button */}
-                <IconButton
-                    size="medium"
-                    sx={{ color: "#1e88e5" }}
+                <Button
+                    variant="ghost"
+                    size="icon"
                     onClick={handleCreate}
+                    className="text-primary"
                 >
-                    <Plus size={30} strokeWidth={2} />
-                </IconButton>
-            </Box>
+                    <Plus className="h-7 w-7" strokeWidth={2} />
+                </Button>
+            </div>
 
-            <Divider />
+            <Separator />
 
             {/* Table */}
-            <Box sx={{ minHeight: 200, width: "100%" }}>
+            <div className="min-h-[200px] w-full">
                 {isLoading ? (
-                    <TableContainer data-component="template-list-loading-container">
-                        <Table sx={{ tableLayout: "fixed", width: "100%" }}>
-                            <TableHead>
+                    <div data-component="template-list-loading-container">
+                        <Table>
+                            <TableHeader>
                                 <TableRow>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "60%",
-                                            whiteSpace: "nowrap",
-                                        }}
-                                    >
+                                    <TableHead className="text-center w-[60%] font-medium text-muted-foreground text-sm whitespace-nowrap">
                                         템플릿 이름
-                                    </TableCell>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "40%",
-                                            whiteSpace: "nowrap",
-                                        }}
-                                    >
+                                    </TableHead>
+                                    <TableHead className="text-center w-[40%] font-medium text-muted-foreground text-sm whitespace-nowrap">
                                         최근 수정일
-                                    </TableCell>
+                                    </TableHead>
                                 </TableRow>
-                            </TableHead>
+                            </TableHeader>
                             <TableBody>
                                 {Array.from({ length: rowsPerPage }).map((_, index) => (
                                     <TableRow key={`skeleton-${index}`}>
-                                        <TableCell align="center" sx={{ px: 1 }}>
-                                            <Skeleton variant="text" width="60%" sx={{ mx: "auto" }} />
+                                        <TableCell className="text-center px-1">
+                                            <Skeleton className="h-4 w-[60%] mx-auto" />
                                         </TableCell>
-                                        <TableCell align="center" sx={{ px: 1 }}>
-                                            <Skeleton variant="text" width="70%" sx={{ mx: "auto" }} />
+                                        <TableCell className="text-center px-1">
+                                            <Skeleton className="h-4 w-[70%] mx-auto" />
                                         </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
                         </Table>
-                    </TableContainer>
+                    </div>
                 ) : templates && templates.length > 0 ? (
-                    <TableContainer data-component="template-list-table-container">
-                        <Table sx={{ tableLayout: "fixed", width: "100%" }}>
-                            <TableHead>
+                    <div data-component="template-list-table-container">
+                        <Table>
+                            <TableHeader>
                                 <TableRow>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "60%",
-                                            whiteSpace: "nowrap",
-                                        }}
-                                    >
+                                    <TableHead className="text-center w-[60%] font-medium text-muted-foreground text-sm whitespace-nowrap">
                                         템플릿 이름
-                                    </TableCell>
-                                    <TableCell
-                                        align="center"
-                                        sx={{
-                                            fontWeight: 500,
-                                            color: "rgba(0, 0, 0, 0.6)",
-                                            fontSize: "0.875rem",
-                                            width: "40%",
-                                            whiteSpace: "nowrap",
-                                        }}
-                                    >
+                                    </TableHead>
+                                    <TableHead className="text-center w-[40%] font-medium text-muted-foreground text-sm whitespace-nowrap">
                                         최근 수정일
-                                    </TableCell>
+                                    </TableHead>
                                 </TableRow>
-                            </TableHead>
+                            </TableHeader>
                             <TableBody>
-                                {templates.map((template: MessageTemplate) => (
+                                {templates.map((template: MessageTemplate, index: number) => (
                                     <TableRow
                                         key={template.id}
-                                        hover
                                         onClick={() => handleRowClick(template.id)}
-                                        sx={{
-                                            cursor: "pointer",
-                                            "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" }
-                                        }}
+                                        className="cursor-pointer transition-all duration-200 hover:bg-muted/50 opacity-0 animate-fade-in"
+                                        style={{ animationDelay: `${150 + index * 30}ms` }}
                                     >
-                                        <TableCell
-                                            align="center"
-                                            sx={{
-                                                fontSize: "0.875rem",
-                                                color: "rgba(0, 0, 0, 0.87)",
-                                                whiteSpace: "nowrap",
-                                                px: 1
-                                            }}
-                                        >
+                                        <TableCell className="font-medium whitespace-nowrap">
                                             {template.name}
                                         </TableCell>
-                                        <TableCell
-                                            align="center"
-                                            sx={{
-                                                fontSize: "0.875rem",
-                                                color: "rgba(0, 0, 0, 0.87)",
-                                                whiteSpace: "nowrap",
-                                                px: 1
-                                            }}
-                                        >
+                                        <TableCell className="text-muted-foreground whitespace-nowrap">
                                             {formatDate(template.updatedAt)}
                                         </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
                         </Table>
-                    </TableContainer>
+                    </div>
                 ) : (
-                    <Box sx={{ py: 3 }}>
-                        <Alert severity="info">{t(locale, "common.no-data")}</Alert>
-                    </Box>
+                    <div className="py-4">
+                        <Alert>
+                            <AlertDescription>{t(locale, "common.no-data")}</AlertDescription>
+                        </Alert>
+                    </div>
                 )}
-            </Box>
-        </Box>
+            </div>
+        </div>
     );
 };

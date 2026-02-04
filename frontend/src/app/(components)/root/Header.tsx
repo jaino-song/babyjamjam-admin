@@ -1,8 +1,10 @@
 "use client";
-import { AppBar, Toolbar, IconButton, Box, Typography, Avatar, Drawer } from "@mui/material";
-import MenuIcon from "@mui/icons-material/Menu";
-import LoginIcon from '@mui/icons-material/Login';
+
 import { useState } from "react";
+import { Menu, LogIn } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { NavBar } from "../nav-bar/nav-bar";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
@@ -17,6 +19,7 @@ interface HeaderProps {
 export const Header = ({ initialUser }: HeaderProps) => {
   const locale = useLocale();
   const [isNavOpen, setIsNavOpen] = useState(false);
+
   const handleNavOpen = () => {
     setIsNavOpen(true);
   };
@@ -32,53 +35,78 @@ export const Header = ({ initialUser }: HeaderProps) => {
 
   const shouldShowNotifications = Boolean(user) || isE2EAuth;
 
+  // Get user initials for avatar fallback
+  const getUserInitials = (name?: string | null): string => {
+    if (!name) return 'U';
+    const parts = name.split(' ');
+    if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+    return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+  };
+
   return (
     <>
-      {/* Navbar Drawer */}
-      <Drawer anchor="left" open={isNavOpen} onClose={handleNavClose} sx={{ '& .MuiDrawer-paper': { width: '50%' } }}>
-        <NavBar onClose={handleNavClose} />
-      </Drawer>
+      {/* Navbar Sheet (mobile drawer) */}
+      <Sheet open={isNavOpen} onOpenChange={setIsNavOpen}>
+        <SheetContent side="left" className="w-[280px] sm:w-[320px] p-0 bg-sidebar text-sidebar-foreground border-sidebar-border">
+          <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
+          <SheetDescription className="sr-only">Main navigation links for the application</SheetDescription>
+          <NavBar onClose={handleNavClose} />
+        </SheetContent>
+      </Sheet>
+
       {/* Header */}
-      <AppBar
-        position="static"
+      <header
         data-component="header"
-        elevation={0}
-        sx={{
-          bgcolor: "background.default",
-          borderBottom: (theme) => `1px solid ${theme.palette.divider}`,
-          color: "text.primary",
-        }}
+        className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"
       >
-        <Toolbar sx={{ gap: 1, minHeight: { xs: 64, sm: 72 } }}>
+        <div className="flex h-16 sm:h-18 items-center gap-3 px-4">
           {/* Menu Icon */}
-          <IconButton edge="start" color="inherit" aria-label="open navigation" onClick={handleNavOpen}>
-            <MenuIcon />
-          </IconButton>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleNavOpen}
+            aria-label="open navigation"
+            className="shrink-0"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+
           {/* Company Name */}
-          <Box sx={{ flexGrow: 1 }}>
-            <Typography variant="h6" fontWeight={600}>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-base sm:text-lg font-semibold truncate">
               {t(locale, "header.companyName")}
-            </Typography>
-            {/* Subtitle */}
-            <Typography variant="body2" color="text.secondary">
+            </h1>
+            <p className="text-xs sm:text-sm text-muted-foreground truncate">
               {t(locale, "header.companySubtitle")}
-            </Typography>
-          </Box>
+            </p>
+          </div>
+
           {/* Notifications */}
           {shouldShowNotifications && <NotificationBell />}
+
           {/* User Profile */}
-          {/* initialUser가 있으면 로딩 상태 없이 즉시 렌더링 */}
-          <IconButton color="inherit" aria-label={user ? "user" : "login"} disabled={!initialUser && isLoading}>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={user ? "user profile" : "login"}
+            disabled={!initialUser && isLoading}
+            className="shrink-0 transition-transform duration-200 hover:scale-110 active:scale-95"
+          >
             {!initialUser && isLoading ? (
-              <Avatar />
+              <Avatar className="h-10 w-10">
+                <AvatarFallback className="animate-pulse bg-muted" />
+              </Avatar>
             ) : user ? (
-              <Avatar alt={user?.name || 'User'} src={user?.profileImage || ''} />
+              <Avatar className="h-10 w-10">
+                <AvatarImage src={user?.profileImage || ''} alt={user?.name || 'User'} />
+                <AvatarFallback className="bg-primary text-primary-foreground text-sm">{getUserInitials(user?.name)}</AvatarFallback>
+              </Avatar>
             ) : (
-              <LoginIcon />
+              <LogIn className="h-5 w-5" />
             )}
-          </IconButton>
-        </Toolbar>
-      </AppBar>
+          </Button>
+        </div>
+      </header>
     </>
   );
 }

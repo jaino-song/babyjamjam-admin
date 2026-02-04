@@ -2,22 +2,22 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import {
-    Box,
-    TextField,
-    Button,
-    Typography,
-    Checkbox,
-    FormControlLabel,
-    Select,
-    MenuItem,
-    Alert,
-    CircularProgress,
-    Paper,
-    IconButton,
-} from "@mui/material";
-import { ArrowLeft, Save, X } from "lucide-react";
+import { ArrowLeft, Save, Loader2 } from "lucide-react";
 import { useDebouncedCallback } from "use-debounce";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Card } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import { ContentPaper } from "@/app/(components)/root/content-paper";
 import type { MessageTemplate, TemplateVariable, CreateTemplateDto, UpdateTemplateDto } from "@/features/message-templates";
 
@@ -118,179 +118,167 @@ export function TemplateForm({ mode, initialData, onSubmit, isPending }: Templat
     const isValid = name.trim() !== "" && validationErrors.length === 0;
 
     return (
-        <Box sx={{ bgcolor: "background.paper" }}>
-            <Box sx={{ px: { xs: 2, sm: 3, md: 6 }, py: { xs: 3, sm: 4 }, mx: "auto" }}>
+        <div className="bg-background">
+            <div className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
                 <ContentPaper
-                    sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+                    className="min-h-[70vh] flex-grow w-full"
                     header={
-                        <Box sx={{ mb: 3, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                                <IconButton onClick={handleCancel} size="small">
-                                    <ArrowLeft size={20} />
-                                </IconButton>
-                                <Box>
-                                    <Box component="h5" sx={{ m: 0, color: "primary.main", fontWeight: 700, fontSize: "1.5rem" }}>
-                                        {mode === "create" ? "새 템플릿 만들기" : "템플릿 수정"}
-                                    </Box>
-                                </Box>
-                            </Box>
-                            <Box sx={{ display: "flex", gap: 1 }}>
+                        <div className="mb-6 flex justify-between items-center">
+                            <div className="flex items-center gap-3">
                                 <Button
-                                    variant="outlined"
-                                    size="small"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={handleCancel}
+                                >
+                                    <ArrowLeft className="h-5 w-5" />
+                                </Button>
+                                <h2 className="text-2xl font-bold text-primary">
+                                    {mode === "create" ? "새 템플릿 만들기" : "템플릿 수정"}
+                                </h2>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
                                     onClick={handleCancel}
                                     disabled={isPending}
                                 >
                                     취소
                                 </Button>
                                 <Button
-                                    variant="contained"
-                                    size="small"
-                                    startIcon={isPending ? <CircularProgress size={16} /> : <Save size={16} />}
+                                    size="sm"
                                     onClick={handleSubmit}
                                     disabled={isPending || !isValid}
                                 >
+                                    {isPending ? (
+                                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                    ) : (
+                                        <Save className="h-4 w-4 mr-2" />
+                                    )}
                                     저장
                                 </Button>
-                            </Box>
-                        </Box>
+                            </div>
+                        </div>
                     }
                 >
-                    <Box sx={{ mb: 3 }}>
-                        <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-                            템플릿 이름 *
-                        </Typography>
-                        <TextField
-                            fullWidth
-                            size="small"
+                    <div className="mb-5">
+                        <Label htmlFor="template-name" className="text-sm font-semibold mb-2 block">
+                            템플릿 이름 <span className="text-destructive">*</span>
+                        </Label>
+                        <Input
+                            id="template-name"
                             placeholder="예: 서비스 안내 메시지"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
-                            error={name.trim() === ""}
+                            className={name.trim() === "" ? "border-destructive" : ""}
                         />
-                    </Box>
+                    </div>
 
                     {validationErrors.length > 0 && (
-                        <Alert severity="warning" sx={{ mb: 3 }}>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
-                                변수 불일치 오류
-                            </Typography>
-                            {validationErrors.map((err, i) => (
-                                <Box key={i}>• {err}</Box>
-                            ))}
-                            <Box sx={{ mt: 1, color: "text.secondary", fontSize: "0.875rem" }}>
-                                템플릿 내용과 변수 목록이 일치해야 저장할 수 있습니다.
-                            </Box>
+                        <Alert variant="warning" className="mb-5">
+                            <AlertTitle className="font-semibold">변수 불일치 오류</AlertTitle>
+                            <AlertDescription>
+                                <ul className="mt-2 space-y-1">
+                                    {validationErrors.map((err, i) => (
+                                        <li key={i}>• {err}</li>
+                                    ))}
+                                </ul>
+                                <p className="mt-2 text-sm text-muted-foreground">
+                                    템플릿 내용과 변수 목록이 일치해야 저장할 수 있습니다.
+                                </p>
+                            </AlertDescription>
                         </Alert>
                     )}
 
-                    <Box sx={{ display: "flex", gap: 3, flexDirection: { xs: "column", md: "row" } }}>
-                        <Box sx={{ flex: 1 }}>
-                            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-                                템플릿 내용 *
-                            </Typography>
-                            <TextField
-                                fullWidth
-                                multiline
+                    <div className="flex flex-col md:flex-row gap-5">
+                        <div className="flex-1">
+                            <Label htmlFor="template-content" className="text-sm font-semibold mb-2 block">
+                                템플릿 내용 <span className="text-destructive">*</span>
+                            </Label>
+                            <Textarea
+                                id="template-content"
                                 rows={15}
                                 placeholder={`안녕하세요 {{고객명}}님,\n\n{{서비스유형}} 서비스가 {{서비스일자}}에 예정되어 있습니다.\n\n감사합니다.`}
                                 value={content}
                                 onChange={(e) => setContent(e.target.value)}
-                                sx={{
-                                    "& .MuiInputBase-root": {
-                                        fontFamily: "monospace",
-                                        fontSize: "0.9rem",
-                                    },
-                                }}
+                                className="font-mono text-sm"
                             />
-                            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+                            <p className="mt-2 text-sm text-muted-foreground">
                                 💡 {"{{변수명}}"} 형식으로 변수를 입력하면 자동으로 감지됩니다
-                            </Typography>
-                        </Box>
+                            </p>
+                        </div>
 
-                        <Paper
+                        <Card
                             data-component="template-variable-list-paper"
-                            variant="outlined"
-                            sx={{
-                                flex: 1,
-                                p: 2,
-                                maxHeight: "500px",
-                                overflowY: "auto",
-                                bgcolor: "grey.50",
-                            }}
+                            className="flex-1 p-4 max-h-[500px] overflow-y-auto bg-muted/50"
                         >
-                            <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
+                            <p className="text-sm font-semibold mb-4">
                                 감지된 변수 ({variables.length}개)
-                            </Typography>
+                            </p>
 
                             {variables.length === 0 ? (
-                                <Box sx={{ color: "text.secondary", textAlign: "center", py: 4 }}>
+                                <div className="text-muted-foreground text-center py-8">
                                     템플릿에 {"{{변수명}}"} 형식으로<br />
                                     변수를 추가하세요
-                                </Box>
+                                </div>
                             ) : (
-                                <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                                <div className="flex flex-col gap-4">
                                     {variables.map((variable, index) => (
-                                        <Box
+                                        <div
                                             key={variable.key}
-                                            sx={{
-                                                p: 2,
-                                                bgcolor: "background.paper",
-                                                borderRadius: 1,
-                                                border: 1,
-                                                borderColor: "divider",
-                                            }}
+                                            className="p-4 bg-card rounded-md border"
                                         >
-                                            <Typography variant="body2" sx={{ fontWeight: 600, mb: 1.5, color: "primary.main" }}>
+                                            <p className="text-sm font-semibold mb-3 text-primary">
                                                 {index + 1}. {variable.key}
-                                            </Typography>
+                                            </p>
 
-                                            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-                                                <Box>
-                                                    <Typography variant="caption" color="text.secondary">
+                                            <div className="flex flex-col gap-3">
+                                                <div>
+                                                    <Label className="text-xs text-muted-foreground mb-1 block">
                                                         라벨
-                                                    </Typography>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
+                                                    </Label>
+                                                    <Input
                                                         value={variable.label}
                                                         onChange={(e) => handleVariableChange(variable.key, "label", e.target.value)}
                                                     />
-                                                </Box>
+                                                </div>
 
-                                                <Box>
-                                                    <Typography variant="caption" color="text.secondary">
+                                                <div>
+                                                    <Label className="text-xs text-muted-foreground mb-1 block">
                                                         타입
-                                                    </Typography>
+                                                    </Label>
                                                     <Select
-                                                        fullWidth
-                                                        size="small"
                                                         value={variable.type}
-                                                        onChange={(e) => handleVariableChange(variable.key, "type", e.target.value)}
+                                                        onValueChange={(value: string) => handleVariableChange(variable.key, "type", value)}
                                                     >
-                                                        <MenuItem value="text">텍스트</MenuItem>
+                                                        <SelectTrigger>
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="text">텍스트</SelectItem>
+                                                        </SelectContent>
                                                     </Select>
-                                                </Box>
+                                                </div>
 
-                                                <FormControlLabel
-                                                    control={
-                                                        <Checkbox
-                                                            checked={variable.required}
-                                                            onChange={(e) => handleVariableChange(variable.key, "required", e.target.checked)}
-                                                            size="small"
-                                                        />
-                                                    }
-                                                    label={<Typography variant="body2">필수</Typography>}
-                                                />
-                                            </Box>
-                                        </Box>
+                                                <div className="flex items-center gap-2">
+                                                    <Checkbox
+                                                        id={`required-${variable.key}`}
+                                                        checked={variable.required}
+                                                        onCheckedChange={(checked) => handleVariableChange(variable.key, "required", !!checked)}
+                                                    />
+                                                    <Label htmlFor={`required-${variable.key}`} className="text-sm">
+                                                        필수
+                                                    </Label>
+                                                </div>
+                                            </div>
+                                        </div>
                                     ))}
-                                </Box>
+                                </div>
                             )}
-                        </Paper>
-                    </Box>
+                        </Card>
+                    </div>
                 </ContentPaper>
-            </Box>
-        </Box>
+            </div>
+        </div>
     );
 }

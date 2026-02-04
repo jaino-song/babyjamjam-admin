@@ -2,17 +2,17 @@
 
 import { useMemo, useState } from "react";
 import {
-  Box,
   Table,
   TableBody,
   TableCell,
-  TableContainer,
   TableHead,
+  TableHeader,
   TableRow,
-  Alert,
-  Skeleton,
-  Divider,
-} from "@mui/material";
+} from "@/components/ui/table";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 import { DataTableToolbar } from "./DataTableToolbar";
 import { DataTablePagination } from "./DataTablePagination";
 import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
@@ -42,7 +42,8 @@ export function DataTable<T extends Record<string, unknown>>({
   toolbarActions,
   hideToolbar = false,
   emptyMessage = "데이터가 없습니다",
-  sx,
+  className,
+  sx: _sx, // Kept for backward compatibility, ignored
   skeletonRowCount = 5,
 }: DataTableProps<T>) {
   const [internalPage, setInternalPage] = useState(0);
@@ -128,18 +129,33 @@ export function DataTable<T extends Record<string, unknown>>({
     return filteredData.length;
   }, [pagination, totalCount, filteredData.length]);
 
+  // Helper to get alignment class
+  const getAlignClass = (align?: "left" | "center" | "right") => {
+    switch (align) {
+      case "left":
+        return "text-left";
+      case "right":
+        return "text-right";
+      case "center":
+      default:
+        return "text-center";
+    }
+  };
+
   if (error) {
     return (
-      <Box sx={{ p: 3, ...sx }}>
-        <Alert severity="error">
-          {error.message || "데이터를 불러오는데 실패했습니다"}
+      <div className={cn("p-3", className)}>
+        <Alert variant="destructive">
+          <AlertDescription>
+            {error.message || "데이터를 불러오는데 실패했습니다"}
+          </AlertDescription>
         </Alert>
-      </Box>
+      </div>
     );
   }
 
   return (
-    <Box sx={sx}>
+    <div className={className}>
       {!hideToolbar && (
         <>
           <DataTableToolbar
@@ -153,86 +169,74 @@ export function DataTable<T extends Record<string, unknown>>({
             filterAddAction={filterAddAction}
             actions={toolbarActions}
           />
-          <Divider />
+          <Separator />
         </>
       )}
 
-      <Box sx={{ minHeight: 200, width: "100%" }}>
+      <div className="min-h-[200px] w-full">
         {paginatedData.length > 0 || isLoading ? (
           <>
-            <TableContainer>
-              <Table sx={{ tableLayout: "fixed", width: "100%" }}>
-                <TableHead>
-                  <TableRow>
-                    {columns.map((column, index) => (
-                      <TableCell
-                        key={`header-${column.key as string}-${index}`}
-                        align={column.align || "center"}
-                        sx={{
-                          fontWeight: 500,
-                          color: "rgba(0, 0, 0, 0.6)",
-                          fontSize: "0.875rem",
-                          width: column.width,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {column.header}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {isLoading &&
-                    Array.from({ length: skeletonRowCount }).map((_, rowIndex) => (
-                      <TableRow key={`skeleton-${rowIndex}`}>
-                        {columns.map((column, colIndex) => (
-                          <TableCell
-                            key={`skeleton-cell-${rowIndex}-${colIndex}`}
-                            align={column.align || "center"}
-                            sx={{ px: 1 }}
-                          >
-                            <Skeleton
-                              variant="text"
-                              width="60%"
-                              sx={{ mx: column.align === "center" ? "auto" : 0 }}
-                            />
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
+            <Table className="table-fixed w-full">
+              <TableHeader>
+                <TableRow>
+                  {columns.map((column, index) => (
+                    <TableHead
+                      key={`header-${column.key as string}-${index}`}
+                      className={cn(
+                        "whitespace-nowrap",
+                        getAlignClass(column.align)
+                      )}
+                      style={{ width: column.width }}
+                    >
+                      {column.header}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading &&
+                  Array.from({ length: skeletonRowCount }).map((_, rowIndex) => (
+                    <TableRow key={`skeleton-${rowIndex}`}>
+                      {columns.map((column, colIndex) => (
+                        <TableCell
+                          key={`skeleton-cell-${rowIndex}-${colIndex}`}
+                          className={getAlignClass(column.align)}
+                        >
+                          <Skeleton className="h-4 w-[60%] mx-auto" />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
 
-                  {!isLoading &&
-                    paginatedData.map((row, rowIndex) => (
-                      <TableRow
-                        key={getRowKey(row, rowIndex)}
-                        hover={!!onRowClick}
-                        onClick={() => onRowClick?.(row, rowIndex)}
-                        sx={{
-                          cursor: onRowClick ? "pointer" : "default",
-                          "&:hover": onRowClick ? { bgcolor: "rgba(0, 0, 0, 0.04)" } : {},
-                        }}
-                      >
-                        {columns.map((column, colIndex) => (
-                          <TableCell
-                            key={`cell-${getRowKey(row, rowIndex)}-${colIndex}`}
-                            align={column.align || "center"}
-                            sx={{
-                              fontSize: "0.875rem",
-                              color: "rgba(0, 0, 0, 0.87)",
-                              whiteSpace: "nowrap",
-                              px: 1,
-                            }}
-                          >
-                            {column.render
-                              ? column.render(row, rowIndex)
-                              : String(row[column.key as keyof T] ?? "")}
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                {!isLoading &&
+                  paginatedData.map((row, rowIndex) => (
+                    <TableRow
+                      key={getRowKey(row, rowIndex)}
+                      onClick={() => onRowClick?.(row, rowIndex)}
+                      className={cn(
+                        "transition-all duration-200 opacity-0 animate-fade-in",
+                        onRowClick && "cursor-pointer hover:bg-muted/50"
+                      )}
+                      style={{ animationDelay: `${150 + rowIndex * 30}ms` }}
+                    >
+                      {columns.map((column, colIndex) => (
+                        <TableCell
+                          key={`cell-${getRowKey(row, rowIndex)}-${colIndex}`}
+                          className={cn(
+                            "whitespace-nowrap",
+                            colIndex === 0 ? "font-medium" : "text-muted-foreground",
+                            getAlignClass(column.align)
+                          )}
+                        >
+                          {column.render
+                            ? column.render(row, rowIndex)
+                            : String(row[column.key as keyof T] ?? "")}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+              </TableBody>
+            </Table>
 
             {pagination !== "none" && (
               <DataTablePagination
@@ -245,11 +249,13 @@ export function DataTable<T extends Record<string, unknown>>({
             )}
           </>
         ) : (
-          <Box sx={{ py: 3 }}>
-            <Alert severity="info">{emptyMessage}</Alert>
-          </Box>
+          <div className="py-3">
+            <Alert>
+              <AlertDescription>{emptyMessage}</AlertDescription>
+            </Alert>
+          </div>
         )}
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

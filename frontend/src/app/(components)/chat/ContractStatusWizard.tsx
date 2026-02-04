@@ -1,13 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import {
-    Box,
-    Button,
-    Typography,
-    Stack,
-} from "@mui/material";
 import { Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { ClientAutocomplete } from "../clients/ClientAutocomplete";
 import type { Client, DocumentStatus } from "@/app/lib/client/types";
 
@@ -33,7 +28,7 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
 
     const handleSubmit = useCallback(() => {
         if (!selectedClient) return;
-        
+
         onCheck?.({
             clientId: selectedClient.id,
             clientName: selectedClient.name,
@@ -43,17 +38,17 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
     }, [selectedClient, onCheck]);
 
     return (
-        <Box sx={{ display: "flex", flexDirection: "column" }}>
-            <Box sx={{ mb: 2 }}>
-                <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+        <div className="flex flex-col">
+            <div className="mb-4">
+                <h3 className="text-base font-bold mb-1">
                     계약서 상태 조회
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
+                </h3>
+                <p className="text-sm text-muted-foreground">
                     계약서 상태를 확인할 산모를 선택해주세요.
-                </Typography>
-            </Box>
+                </p>
+            </div>
 
-            <Stack spacing={2}>
+            <div className="flex flex-col gap-4">
                 <ClientAutocomplete
                     value={selectedClientId}
                     onChange={handleClientChange}
@@ -62,16 +57,15 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
                 />
 
                 <Button
-                    variant="contained"
-                    startIcon={<Search size={18} />}
                     onClick={handleSubmit}
-                    fullWidth
-                    size="large"
+                    className="w-full"
+                    size="lg"
                     disabled={!selectedClient}
                 >
+                    <Search className="w-4 h-4 mr-2" />
                     조회하기
                 </Button>
-            </Stack>
-        </Box>
+            </div>
+        </div>
     );
 }

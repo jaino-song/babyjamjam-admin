@@ -1,15 +1,10 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import {
-  Box,
-  Typography,
-  Paper,
-  Alert,
-  CircularProgress,
-} from "@mui/material";
-import CloudUploadIcon from "@mui/icons-material/CloudUpload";
-import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
+import { CloudUpload, FileText } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 
 // 허용되는 파일 형식
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "application/pdf"];
@@ -105,127 +100,87 @@ export function ImageDropzone({
   };
 
   return (
-    <Box data-component="ImageDropzone">
+    <div data-component="ImageDropzone">
       {/* 에러 표시 */}
       {(validationError || error) && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {validationError || error}
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>{validationError || error}</AlertDescription>
         </Alert>
       )}
 
       {/* 드롭존 */}
-      <Paper
+      <div
         data-component="image-dropzone-paper"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        sx={{
-          position: "relative",
-          p: 4,
-          border: "2px dashed",
-          borderColor: isDragOver
-            ? "primary.main"
+        className={cn(
+          "relative p-8 border-2 border-dashed rounded-lg transition-all duration-200",
+          isDragOver
+            ? "border-primary bg-primary/5"
             : validationError
-              ? "error.main"
-              : "divider",
-          borderRadius: 2,
-          backgroundColor: isDragOver
-            ? "action.hover"
-            : "background.paper",
-          cursor: isLoading ? "wait" : "pointer",
-          transition: "all 0.2s ease-in-out",
-          "&:hover": {
-            borderColor: isLoading ? "divider" : "primary.main",
-            backgroundColor: isLoading ? "background.paper" : "action.hover",
-          },
-        }}
+              ? "border-destructive bg-destructive/5"
+              : "border-border bg-background",
+          isLoading ? "cursor-wait" : "cursor-pointer",
+          !isLoading && "hover:border-primary hover:bg-muted/50"
+        )}
       >
         <input
           type="file"
           accept={ALLOWED_EXTENSIONS}
           onChange={handleFileInputChange}
           disabled={isLoading}
-          style={{
-            position: "absolute",
-            width: "100%",
-            height: "100%",
-            top: 0,
-            left: 0,
-            opacity: 0,
-            cursor: isLoading ? "wait" : "pointer",
-          }}
+          className={cn(
+            "absolute inset-0 w-full h-full opacity-0",
+            isLoading ? "cursor-wait" : "cursor-pointer"
+          )}
         />
 
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 2,
-            position: "relative",
-          }}
-        >
+        <div className="flex flex-col items-center gap-4 relative">
           {isLoading ? (
             <>
-              <CircularProgress size={48} />
-              <Typography variant="body1" color="text.secondary">
-                이미지 분석 중...
-              </Typography>
+              <Spinner className="h-12 w-12" />
+              <p className="text-muted-foreground">이미지 분석 중...</p>
             </>
           ) : selectedFile ? (
             <>
-              <InsertDriveFileIcon
-                sx={{ fontSize: 48, color: "primary.main" }}
-              />
-              <Box textAlign="center">
-                <Typography variant="body1" fontWeight="medium">
-                  {selectedFile.name}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
+              <FileText className="h-12 w-12 text-primary" />
+              <div className="text-center">
+                <p className="font-medium">{selectedFile.name}</p>
+                <p className="text-sm text-muted-foreground">
                   {formatFileSize(selectedFile.size)}
-                </Typography>
-              </Box>
-              <Typography variant="caption" color="text.secondary">
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">
                 다른 파일을 선택하려면 클릭하거나 드래그하세요
-              </Typography>
+              </p>
             </>
           ) : (
             <>
-              <CloudUploadIcon
-                sx={{ fontSize: 48, color: "text.secondary" }}
-              />
-              <Box textAlign="center">
-                <Typography variant="body1" fontWeight="medium">
-                  바우처 요금표 이미지를 업로드하세요
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
+              <CloudUpload className="h-12 w-12 text-muted-foreground" />
+              <div className="text-center">
+                <p className="font-medium">바우처 요금표 이미지를 업로드하세요</p>
+                <p className="text-sm text-muted-foreground">
                   드래그 앤 드롭 또는 클릭하여 파일 선택
-                </Typography>
-              </Box>
-              <Typography variant="caption" color="text.secondary">
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">
                 지원 형식: PNG, JPG, JPEG, PDF (최대 10MB)
-              </Typography>
+              </p>
             </>
           )}
-        </Box>
-      </Paper>
+        </div>
+      </div>
 
       {/* 업로드 가이드 */}
-      <Box sx={{ mt: 2, pl: 1 }}>
-        <Typography variant="caption" color="text.secondary" component="div">
-          <strong>업로드 가이드:</strong>
-        </Typography>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          component="ul"
-          sx={{ mt: 0.5, pl: 2 }}
-        >
+      <div className="mt-3 pl-1">
+        <p className="text-xs text-muted-foreground font-semibold">업로드 가이드:</p>
+        <ul className="text-xs text-muted-foreground mt-1 pl-4 list-disc space-y-0.5">
           <li>표 전체가 보이도록 캡처해주세요</li>
           <li>단위 표시(천원/원)가 포함되어야 합니다</li>
           <li>단축, 표준, 연장 헤더가 보여야 합니다</li>
-        </Typography>
-      </Box>
-    </Box>
+        </ul>
+      </div>
+    </div>
   );
 }

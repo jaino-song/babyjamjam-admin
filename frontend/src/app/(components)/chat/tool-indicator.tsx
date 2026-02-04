@@ -1,7 +1,5 @@
 "use client";
 
-import { Box, Typography } from "@mui/material";
-
 interface ToolIndicatorProps {
     toolName: string | null;
     isExecuting: boolean;
@@ -52,42 +50,26 @@ export function ToolIndicator({ toolName, isExecuting }: ToolIndicatorProps) {
     if (!isExecuting) return null;
 
     return (
-        <Box
+        <div
             data-testid="tool-indicator"
-            sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                py: 1,
-                px: 2,
-                bgcolor: "action.hover",
-                borderRadius: 1,
-                mb: 1,
-            }}
+            className="flex items-center gap-2 py-2 px-4 bg-muted/50 rounded mb-2"
         >
             {/* Animated dots */}
-            <Box sx={{ display: "flex", gap: 0.5 }}>
+            <div className="flex gap-1">
                 {[0, 1, 2].map((i) => (
-                    <Box
+                    <span
                         key={i}
-                        sx={{
-                            width: 6,
-                            height: 6,
-                            borderRadius: "50%",
-                            bgcolor: "primary.main",
-                            animation: "pulse 1.4s ease-in-out infinite",
-                            animationDelay: `${i * 0.2}s`,
-                            "@keyframes pulse": {
-                                "0%, 80%, 100%": { opacity: 0.3, transform: "scale(0.8)" },
-                                "40%": { opacity: 1, transform: "scale(1)" },
-                            },
+                        className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"
+                        style={{
+                            animationDelay: `${i * 200}ms`,
+                            animationDuration: "1.4s",
                         }}
                     />
                 ))}
-            </Box>
-            <Typography variant="body2" color="text.secondary">
+            </div>
+            <p className="text-sm text-muted-foreground">
                 {getToolLabel(toolName)}...
-            </Typography>
-        </Box>
+            </p>
+        </div>
     );
 }

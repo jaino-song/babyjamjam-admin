@@ -1,15 +1,14 @@
-import AssessmentIcon from "@mui/icons-material/Assessment";
-import PeopleOutlineIcon from "@mui/icons-material/PeopleOutline";
-import TrendingUpIcon from "@mui/icons-material/TrendingUp";
-import { Box, Stack } from "@mui/material";
+import { Users, TrendingUp, FileCheck, CalendarClock } from "lucide-react";
 import { HeroBanner } from "../(components)/dashboard/HeroBanner";
 import { StatsGrid, StatItem } from "../(components)/dashboard/StatsGrid";
 import { ChatWidget } from "../(components)/chat/ChatWidget";
+import { QuickActions } from "../(components)/dashboard/QuickActions";
+import { TodayScheduleList } from "../(components)/dashboard/TodayScheduleList";
+import { PendingClientsTable } from "../(components)/dashboard/PendingClientsTable";
+import { ServiceDistributionChart } from "../(components)/dashboard/ServiceDistributionChart";
 import { getCurrentUser } from "../lib/auth/cookies";
 import { t, Locale } from "../lib/i18n/translations";
 import { getLocale } from "../actions/locale";
-import { PerformanceMetric } from "../(components)/dashboard/PerformanceOverview";
-import { ActivityItem } from "../(components)/dashboard/RecentActivity";
 import { cookies } from "next/headers";
 
 interface DashboardStats {
@@ -48,17 +47,17 @@ const getStats = (locale: Locale, backendStats?: DashboardStats | null): StatIte
     {
       title: t(locale, "dashboard.active_clients"),
       firstDataValue: backendStats?.activeClients?.toLocaleString() ?? "0",
-      icon: PeopleOutlineIcon,
+      icon: Users,
     },
     {
       title: t(locale, "dashboard.contracts.sending_pending"),
       firstDataValue: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
-      icon: TrendingUpIcon,
+      icon: TrendingUp,
     },
     {
       title: t(locale, "dashboard.contracts.completion_pending"),
       firstDataValue: backendStats?.contractsPendingSignature?.toLocaleString() ?? "0",
-      icon: AssessmentIcon,
+      icon: FileCheck,
     },
     {
       title: t(locale, "dashboard.pending_clients.title"),
@@ -66,26 +65,10 @@ const getStats = (locale: Locale, backendStats?: DashboardStats | null): StatIte
       secondDataLabel: nextMonth,
       firstDataValue: `${backendStats?.upcomingThisMonth?.toLocaleString() ?? "0"} 명`,
       secondDataValue: `${backendStats?.upcomingNextMonth?.toLocaleString() ?? "0"} 명`,
+      icon: CalendarClock,
     },
   ];
 };
-
-const performanceMetrics: PerformanceMetric[] = [
-  { label: "Mon", conversion: 75, progress: 70 },
-  { label: "Tue", conversion: 80, progress: 76 },
-  { label: "Wed", conversion: 85, progress: 82 },
-  { label: "Thu", conversion: 90, progress: 88 },
-  { label: "Fri", conversion: 95, progress: 93 },
-];
-
-const quickActions = ["Add User", "Review Requests", "Create Report", "Schedule Meeting"];
-
-const activity: ActivityItem[] = [
-  { primary: "New partner onboarded", secondary: "Today · Kelly Park" },
-  { primary: "Invoice #3481 approved", secondary: "1 hr ago · Finance" },
-  { primary: "Policy update published", secondary: "Yesterday · Compliance" },
-  { primary: "System maintenance complete", secondary: "2 days ago · IT" },
-];
 
 export default async function Dashboard() {
   const locale = await getLocale();
@@ -94,17 +77,12 @@ export default async function Dashboard() {
   const stats = getStats(locale, backendStats);
 
   return (
-    <Box sx={{ bgcolor: "background.paper" }}>
-      <Box
-        component="section"
+    <div className="bg-background">
+      <section
         data-component="dashboard"
-        sx={{
-          px: { xs: 2, sm: 3, md: 6 },
-          py: { xs: 3, sm: 4 },
-          mx: "auto",
-        }}
+        className="px-4 sm:px-6 md:px-8 lg:px-12 py-6 sm:py-8 mx-auto max-w-7xl"
       >
-        <Stack spacing={3} sx={{ width: "100%" }}>
+        <div className="space-y-6 w-full">
           <HeroBanner
             data-component="hero-banner"
             subtitle={t(locale, "dashboard.welcome_back")}
@@ -118,8 +96,23 @@ export default async function Dashboard() {
           <ChatWidget />
 
           <StatsGrid stats={stats} />
-        </Stack>
-      </Box>
-    </Box>
+
+          <QuickActions />
+
+          <div className="grid gap-4 min-w-0">
+            <ServiceDistributionChart />
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="lg:col-span-2 min-w-0">
+              <PendingClientsTable />
+            </div>
+            <div>
+              <TodayScheduleList />
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }

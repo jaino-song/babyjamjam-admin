@@ -1,26 +1,27 @@
 "use client";
 
+import { useState, useCallback } from "react";
+import { CheckCircle, AlertTriangle, Pencil } from "lucide-react";
 import {
-  Box,
-  Paper,
   Table,
   TableBody,
   TableCell,
-  TableContainer,
   TableHead,
+  TableHeader,
   TableRow,
-  Typography,
-  Alert,
-  Chip,
-  IconButton,
+} from "@/components/ui/table";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
   Tooltip,
-} from "@mui/material";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import WarningIcon from "@mui/icons-material/Warning";
-import EditIcon from "@mui/icons-material/Edit";
-import { useState, useCallback } from "react";
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ParsedVoucherPriceItem } from "@/app/hooks/useVoucherPriceImageParsing";
 import { PriceEditModal } from "./PriceEditModal";
+import { cn } from "@/lib/utils";
 
 interface ParsedDataPreviewProps {
   data: ParsedVoucherPriceItem[];
@@ -75,161 +76,167 @@ export function ParsedDataPreview({
 
   if (data.length === 0) {
     return (
-      <Alert severity="warning">
-        파싱된 데이터가 없습니다. 이미지를 확인해주세요.
+      <Alert className="bg-warning/10 border-warning/30 text-warning">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertDescription>
+          파싱된 데이터가 없습니다. 이미지를 확인해주세요.
+        </AlertDescription>
       </Alert>
     );
   }
 
   return (
-    <Box data-component="ParsedDataPreview">
-      {/* 경고 메시지 */}
-      {warnings.length > 0 && (
-        <Alert severity="warning" sx={{ mb: 2 }}>
-          <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-            검증 경고 ({warnings.length}건)
-          </Typography>
-          <Box component="ul" sx={{ m: 0, pl: 2 }}>
-            {warnings.map((warning, index) => (
-              <li key={index}>
-                <Typography variant="body2">{warning}</Typography>
-              </li>
-            ))}
-          </Box>
-        </Alert>
-      )}
-
-      {/* 요약 정보 */}
-      <Box sx={{ mb: 2, display: "flex", gap: 2, flexWrap: "wrap" }}>
-        <Chip
-          icon={<CheckCircleIcon />}
-          label={`총 ${data.length}개 항목`}
-          color="primary"
-          variant="outlined"
-        />
-        {warnings.length === 0 ? (
-          <Chip
-            icon={<CheckCircleIcon />}
-            label="검증 통과"
-            color="success"
-            variant="outlined"
-          />
-        ) : (
-          <Chip
-            icon={<WarningIcon />}
-            label={`${warnings.length}개 경고`}
-            color="warning"
-            variant="outlined"
-          />
+    <TooltipProvider>
+      <div data-component="ParsedDataPreview">
+        {/* 경고 메시지 */}
+        {warnings.length > 0 && (
+          <Alert className="mb-4 bg-warning/10 border-warning/30 text-warning">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              <p className="font-semibold mb-1">검증 경고 ({warnings.length}건)</p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {warnings.map((warning, index) => (
+                  <li key={index} className="text-sm">{warning}</li>
+                ))}
+              </ul>
+            </AlertDescription>
+          </Alert>
         )}
-      </Box>
 
-      {/* 데이터 테이블 */}
-      <TableContainer data-component="parsed-data-table-container" component={Paper} variant="outlined">
-        <Table size="small">
-          <TableHead>
-            <TableRow sx={{ backgroundColor: "action.hover" }}>
-              <TableCell>유형</TableCell>
-              <TableCell align="right">기간 (일)</TableCell>
-              <TableCell align="right">서비스가격</TableCell>
-              <TableCell align="right">정부지원금</TableCell>
-              <TableCell align="right">본인부담금</TableCell>
-              <TableCell align="center" width={80}>
-                검증
-              </TableCell>
-              {onDataChange && (
-                <TableCell align="center" width={80}>
-                  수정
-                </TableCell>
-              )}
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {data.map((item, index) => {
-              const isValid = validateRow(item);
+        {/* 요약 정보 */}
+        <div className="mb-4 flex gap-2 flex-wrap">
+          <Badge variant="outline" className="gap-1.5">
+            <CheckCircle className="h-3.5 w-3.5" />
+            총 {data.length}개 항목
+          </Badge>
+          {warnings.length === 0 ? (
+            <Badge variant="outline" className="gap-1.5 border-success/50 text-success">
+              <CheckCircle className="h-3.5 w-3.5" />
+              검증 통과
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="gap-1.5 border-warning/50 text-warning">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {warnings.length}개 경고
+            </Badge>
+          )}
+        </div>
 
-              return (
-                <TableRow
-                  key={`voucher-row-${index}`}
-                  sx={{
-                    backgroundColor: isValid ? "inherit" : "warning.light",
-                    "&:hover": {
-                      backgroundColor: isValid
-                        ? "action.hover"
-                        : "warning.main",
-                    },
-                  }}
-                >
-                  {/* 유형 */}
-                  <TableCell sx={{ px: 1 }}>
-                    <Typography variant="body2" fontWeight="medium">
-                      {item.type}
-                    </Typography>
-                  </TableCell>
+        {/* 데이터 테이블 */}
+        <div className="border rounded-lg overflow-hidden" data-component="parsed-data-table-container">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="whitespace-nowrap">유형</TableHead>
+                <TableHead className="text-right whitespace-nowrap">기간 (일)</TableHead>
+                <TableHead className="text-right whitespace-nowrap">서비스가격</TableHead>
+                <TableHead className="text-right whitespace-nowrap">정부지원금</TableHead>
+                <TableHead className="text-right whitespace-nowrap">본인부담금</TableHead>
+                <TableHead className="w-20 whitespace-nowrap">검증</TableHead>
+                {onDataChange && (
+                  <TableHead className="w-20 whitespace-nowrap">수정</TableHead>
+                )}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.map((item, index) => {
+                const isValid = validateRow(item);
 
-                  {/* 기간 */}
-                  <TableCell align="right" sx={{ px: 1 }}>
-                    {item.duration}일
-                  </TableCell>
-
-                  {/* 서비스가격 */}
-                  <TableCell align="right" sx={{ px: 1 }}>
-                    {formatPrice(item.fullPrice)}원
-                  </TableCell>
-
-                  {/* 정부지원금 */}
-                  <TableCell align="right" sx={{ px: 1 }}>
-                    {formatPrice(item.grant)}원
-                  </TableCell>
-
-                  {/* 본인부담금 */}
-                  <TableCell align="right" sx={{ px: 1 }}>
-                    {formatPrice(item.actualPrice)}원
-                  </TableCell>
-
-                  {/* 검증 상태 */}
-                  <TableCell align="center" sx={{ px: 1 }}>
-                    {isValid ? (
-                      <Tooltip title="가격 계산 일치">
-                        <CheckCircleIcon color="success" fontSize="small" />
-                      </Tooltip>
-                    ) : (
-                      <Tooltip title="가격 계산 불일치: 서비스가격 ≠ 정부지원금 + 본인부담금">
-                        <WarningIcon color="warning" fontSize="small" />
-                      </Tooltip>
+                return (
+                  <TableRow
+                    key={`voucher-row-${index}`}
+                    className={cn(
+                      "opacity-0 animate-fade-in transition-colors",
+                      !isValid && "bg-warning/10 hover:bg-warning/20",
+                      isValid && "hover:bg-muted/50"
                     )}
-                  </TableCell>
-
-                  {/* 수정 버튼 */}
-                  {onDataChange && (
-                    <TableCell align="center" sx={{ px: 1 }}>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleStartEdit(index)}
-                      >
-                        <EditIcon fontSize="small" />
-                      </IconButton>
+                    style={{ animationDelay: `${index * 30}ms` }}
+                  >
+                    {/* 유형 */}
+                    <TableCell className="font-medium">
+                      {item.type}
                     </TableCell>
-                  )}
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </TableContainer>
 
-      {/* 수식 설명 */}
-      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
-        * 검증 수식: 서비스가격 = 정부지원금 + 본인부담금
-      </Typography>
+                    {/* 기간 */}
+                    <TableCell className="text-right">
+                      {item.duration}일
+                    </TableCell>
 
-      {/* 가격 수정 모달 */}
-      <PriceEditModal
-        open={modalOpen}
-        item={editingIndex !== null ? data[editingIndex] : null}
-        onClose={handleCloseModal}
-        onSave={handleSaveEdit}
-      />
-    </Box>
+                    {/* 서비스가격 */}
+                    <TableCell className="text-right">
+                      {formatPrice(item.fullPrice)}원
+                    </TableCell>
+
+                    {/* 정부지원금 */}
+                    <TableCell className="text-right">
+                      {formatPrice(item.grant)}원
+                    </TableCell>
+
+                    {/* 본인부담금 */}
+                    <TableCell className="text-right">
+                      {formatPrice(item.actualPrice)}원
+                    </TableCell>
+
+                    {/* 검증 상태 */}
+                    <TableCell className="text-center">
+                      {isValid ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex">
+                              <CheckCircle className="h-4 w-4 text-success" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>가격 계산 일치</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex">
+                              <AlertTriangle className="h-4 w-4 text-warning" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>가격 계산 불일치: 서비스가격 ≠ 정부지원금 + 본인부담금</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </TableCell>
+
+                    {/* 수정 버튼 */}
+                    {onDataChange && (
+                      <TableCell className="text-center">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleStartEdit(index)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 수식 설명 */}
+        <p className="text-xs text-muted-foreground mt-2">
+          * 검증 수식: 서비스가격 = 정부지원금 + 본인부담금
+        </p>
+
+        {/* 가격 수정 모달 */}
+        <PriceEditModal
+          open={modalOpen}
+          item={editingIndex !== null ? data[editingIndex] : null}
+          onClose={handleCloseModal}
+          onSave={handleSaveEdit}
+        />
+      </div>
+    </TooltipProvider>
   );
 }

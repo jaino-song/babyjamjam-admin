@@ -1,6 +1,6 @@
 "use client";
 
-import { Box, CircularProgress, Typography } from "@mui/material";
+import { Loader2 } from "lucide-react";
 import { useServiceWorkerUpdate } from "@/app/hooks/useServiceWorkerUpdate";
 
 export function ServiceWorkerUpdateOverlay() {
@@ -9,29 +9,14 @@ export function ServiceWorkerUpdateOverlay() {
     if (!isUpdating) return null;
 
     return (
-        <Box
-            sx={{
-                position: "fixed",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: "rgba(255, 255, 255, 0.95)",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 9999,
-                gap: 2,
-            }}
-        >
-            <CircularProgress size={48} />
-            <Typography variant="h6" color="text.primary">
+        <div className="fixed inset-0 bg-background/95 flex flex-col items-center justify-center z-[9999] gap-4">
+            <Loader2 className="h-12 w-12 animate-spin text-primary" />
+            <p className="text-lg font-semibold text-foreground">
                 앱 업데이트 중...
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
+            </p>
+            <p className="text-sm text-muted-foreground">
                 잠시만 기다려 주세요
-            </Typography>
-        </Box>
+            </p>
+        </div>
     );
 }

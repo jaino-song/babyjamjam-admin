@@ -1,7 +1,9 @@
 "use client";
-import { Button, ButtonGroup } from "@mui/material";
+
 import { useRouter } from "next/navigation";
 import Cookies from "js-cookie";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export const LanguageSwitcher = () => {
   const router = useRouter();
@@ -15,10 +17,33 @@ export const LanguageSwitcher = () => {
   };
 
   return (
-    <ButtonGroup size="small" variant="outlined" sx={{ height: '3%' }}>
-      <Button onClick={() => handleLanguageChange("en")} variant={currentLang === "en" ? "contained" : "outlined"} sx={{ width: '50%', borderRadius: '10px 0 0 10px' }}>English</Button>
-      <Button onClick={() => handleLanguageChange("ko")} variant={currentLang === "ko" ? "contained" : "outlined"} sx={{ width: '50%', borderRadius: '0 10px 10px 0' }}>한국어</Button>
-    </ButtonGroup>
+    <div className="flex border border-sidebar-border rounded-lg overflow-hidden">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => handleLanguageChange("en")}
+        className={cn(
+          "flex-1 rounded-none border-r border-sidebar-border text-xs text-sidebar-foreground/80",
+          currentLang === "en"
+            ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 hover:text-sidebar-primary-foreground"
+            : "hover:bg-sidebar-accent hover:text-sidebar-foreground"
+        )}
+      >
+        English
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => handleLanguageChange("ko")}
+        className={cn(
+          "flex-1 rounded-none text-xs text-sidebar-foreground/80",
+          currentLang === "ko"
+            ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 hover:text-sidebar-primary-foreground"
+            : "hover:bg-sidebar-accent hover:text-sidebar-foreground"
+        )}
+      >
+        한국어
+      </Button>
+    </div>
   );
 };
-

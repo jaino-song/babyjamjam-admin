@@ -20,6 +20,8 @@ import { AreaTemplateModule } from "module/area-template.module";
 import { DocumentModule } from "module/document.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { TenantModule } from "./infrastructure/tenant/tenant.module";
+import { NotificationModule } from "module/notification.module";
+import { AIChatModule } from "module/ai-chat.module";
 
 @Module({
     imports: [
@@ -45,6 +47,8 @@ import { TenantModule } from "./infrastructure/tenant/tenant.module";
         AreaTemplateModule,
         DocumentModule,
         TenantModule,
+        NotificationModule,
+        AIChatModule,
     ],
     controllers: [EformsignController],
     providers: [EformsignService, JwtStrategy, PrismaService],

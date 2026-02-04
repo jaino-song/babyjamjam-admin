@@ -1,41 +1,34 @@
 "use client";
-import {
-  Button,
-  Card,
-  CardContent,
-  Stack,
-  TextField,
-  Typography,
-  Stepper,
-  Step,
-  StepLabel,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  IconButton,
-  CircularProgress,
-  Alert,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Fade,
-  Box,
-  FormControlLabel,
-  Checkbox,
-  Divider,
-} from "@mui/material";
+import dayjs from "dayjs";
+import "dayjs/locale/ko";
+import { X } from "lucide-react";
 import { ContentPaper } from "@/app/(components)/root/content-paper";
-import CloseIcon from "@mui/icons-material/Close";
 import { t } from "@/app/lib/i18n/translations";
 import { useFormStore } from "@/app/store/form-store";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { eformsignApi } from "@/services/api";
-import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
-import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
-import { DatePicker } from "@mui/x-date-pickers/DatePicker";
-import dayjs, { Dayjs } from "dayjs";
-import "dayjs/locale/ko";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Stepper, Step } from "@/components/ui/stepper";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEformsign } from "@/app/lib/eformsign/useEformsign";
@@ -43,7 +36,6 @@ import type { EformsignDocumentOption } from "@/app/lib/eformsign/types";
 import { eformsignQueryKeys } from "@/app/hooks/useEformsignDocuments";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/app/hooks";
 import voucherOptions from "../templates/json/voucher.json";
-import { MoonLoader } from "react-spinners";
 import { NameInput } from "./form-components/NameInput";
 import { ContactInput } from "./form-components/ContactInput";
 import { ClientAutocomplete } from "../../clients/ClientAutocomplete";
@@ -99,13 +91,6 @@ const parsePrice = (value: string | null | undefined): string => {
 
 // // Set Korean as the global locale
 // dayjs.locale("ko");
-
-// 가격 포맷팅 (천 단위 콤마)
-function formatPrice(price: string): string {
-  const num = parseInt(price.replace(/[,원\s]/g, ""), 10);
-  if (isNaN(num)) return price;
-  return num.toLocaleString("ko-KR");
-}
 
 export const ContractCreationForm = () => {
   const locale = useLocale();
@@ -193,6 +178,18 @@ export const ContractCreationForm = () => {
   // Area templates query - fetches area-to-template mappings
   const { data: areaTemplates = [], isLoading: isAreaTemplatesLoading } = useAreaTemplates();
 
+  // Voucher years query - fetches available years for voucher selection
+  const { data: voucherYears = [], isLoading: isVoucherYearsLoading } = useVoucherYears();
+
+  // Employees query - fetches employees for auto-population
+  const { data: employees } = useEmployees();
+
+  // Client creation mutation - for creating new clients from manual entry
+  const createClientMutation = useCreateClient();
+
+  // Ref to store selected client for delayed employee auto-population
+  const selectedClientRef = useRef<Client | null>(null);
+
   // Cast the result of t() to string[] because the translation returns an array for this key
   const steps = t(locale, "contract-msg.pagination-steps") as unknown as string[];
 
@@ -217,14 +214,6 @@ export const ContractCreationForm = () => {
   // Voucher type change handler - resets duration and prices when type changes
   const handleVoucherTypeChange = (value: string) => {
     setVoucherType(value);
-    setVoucherDuration("");
-    setFullPrice("");
-    setGrant("");
-    setActualPrice("");
-  };
-
-  const handleVoucherYearChange = (value: number) => {
-    setVoucherYear(value);
     setVoucherDuration("");
     setFullPrice("");
     setGrant("");
@@ -551,660 +540,543 @@ export const ContractCreationForm = () => {
   };
 
   return (
-    <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="ko">
-
+    <>
       <ContentPaper
         data-component="contract-creation-form"
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "flex-start",
-          flexGrow: 1,
-          width: "100%",
-          bgcolor: "background.default",
-        }}
+        className="flex flex-col justify-start grow w-full bg-background"
       >
-        <Fade in appear timeout={500}>
-          <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            {/* title */}
-            <Typography
-              variant="h5"
-              color="primary.main"
-              fontWeight={700}
-              gutterBottom
-            >
-              {t(locale, "msg-type.contract")}
-            </Typography>
-            {/* subtitle */}
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              {t(locale, "contract-msg.subtitle")}
-            </Typography>
+        <div className="flex flex-col h-full animate-fade-in">
+          {/* title */}
+          <h2 className="text-xl font-bold text-primary mb-2">
+            {t(locale, "msg-type.contract")}
+          </h2>
+          {/* subtitle */}
+          <p className="text-sm text-muted-foreground mb-6">
+            {t(locale, "contract-msg.subtitle")}
+          </p>
 
-            {/* Stepper */}
-            <Stepper activeStep={activeStep} alternativeLabel sx={{ mb: 4 }}>
-              {steps.map((label) => (
-                <Step key={label}>
-                  <StepLabel sx={{ whiteSpace: "pre-line" }}>{label}</StepLabel>
-                </Step>
-              ))}
-            </Stepper>
+          {/* Stepper */}
+          <Stepper activeStep={activeStep} className="mb-8">
+            {steps.map((label, index) => (
+              <Step key={label}>
+                <span className="text-xs whitespace-pre-line text-center">{label}</span>
+              </Step>
+            ))}
+          </Stepper>
 
-            {/* form */}
-            <Card elevation={0} data-component="contract-creation-form-card" sx={{ flexGrow: 1, overflow: "auto" }}>
-              <CardContent sx={{ bgcolor: "background.default" }}>
+          {/* form */}
+          <Card data-component="contract-creation-form-card" className="grow overflow-auto border-0 shadow-none">
+            <CardContent className="bg-background p-0">
                 {/* Step 0: User Info */}
                 {activeStep === 0 && (
-                  <Fade in appear timeout={300}>
-                    <Stack spacing={3}>
-                      {!isManualEntry ? (
-                        <>
-                          {/* Client selection mode */}
-                          <ClientAutocomplete
-                            value={clientId}
-                            onChange={handleClientSelect}
-                            label={t(locale, "contract-msg.client-select-label")}
-                            required
-                            allowManualEntry
-                            onManualEntry={handleOpenClientDialog}
-                          />
-                          {/* Show selected client info (read-only) */}
-                          {clientId && (
-                            <Fade in timeout={300}>
-                              <Stack spacing={2} sx={{ pl: 1, borderLeft: 3, borderColor: "primary.main" }}>
-                                <Typography variant="body2" color="text.secondary">
-                                  <strong>{t(locale, "contract-msg.phone-label")}:</strong> {phone || "-"}
-                                </Typography>
-                                <Typography variant="body2" color="text.secondary">
-                                  <strong>{t(locale, "contract-msg.birthday-label")}:</strong> {birthday || "-"}
-                                </Typography>
-                                <Typography variant="body2" color="text.secondary">
-                                  <strong>{t(locale, "contract-msg.address-label")}:</strong> {address || "-"}
-                                </Typography>
-                                <Typography variant="body2" color="text.secondary">
-                                  <strong>{t(locale, "clients.form.due-date")}:</strong> {dueDate || "-"}
-                                </Typography>
-                              </Stack>
-                            </Fade>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          {/* Manual entry mode */}
-                          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              {t(locale, "contract-msg.manual-entry-mode")}
-                            </Typography>
-                            <Button
-                              size="small"
-                              variant="text"
-                              onClick={handleToggleManualEntry}
-                            >
-                              {t(locale, "contract-msg.switch-to-search")}
-                            </Button>
-                          </Box>
-                          <NameInput
-                            name={name}
-                            setName={setName}
-                            label={t(locale, "contract-msg.name-label")}
-                            placeholder={t(locale, "contract-msg.name-placeholder")}
-                          />
-                          <ContactInput
-                            phone={phone}
-                            setPhone={setPhone}
-                            label={t(locale, "contract-msg.phone-label")}
-                            placeholder={t(locale, "contract-msg.phone-placeholder")}
-                          />
-                          <TextField
-                            fullWidth
-                            label={t(locale, "contract-msg.birthday-label")}
+                  <div className="flex flex-col gap-6 animate-fade-in">
+                    {!isManualEntry ? (
+                      <>
+                        {/* Client selection mode */}
+                        <ClientAutocomplete
+                          value={clientId}
+                          onChange={handleClientSelect}
+                          label={t(locale, "contract-msg.client-select-label")}
+                          required
+                          allowManualEntry
+                          onManualEntry={handleOpenClientDialog}
+                        />
+                        {/* Show selected client info (read-only) */}
+                        {clientId && (
+                          <div className="flex flex-col gap-2 pl-3 border-l-[3px] border-primary animate-fade-in">
+                            <p className="text-sm text-muted-foreground">
+                              <strong>{t(locale, "contract-msg.phone-label")}:</strong> {phone || "-"}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              <strong>{t(locale, "contract-msg.birthday-label")}:</strong> {birthday || "-"}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              <strong>{t(locale, "contract-msg.address-label")}:</strong> {address || "-"}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              <strong>{t(locale, "clients.form.due-date")}:</strong> {dueDate || "-"}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {/* Manual entry mode */}
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-muted-foreground font-medium">
+                            {t(locale, "contract-msg.manual-entry-mode")}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={handleToggleManualEntry}
+                          >
+                            {t(locale, "contract-msg.switch-to-search")}
+                          </Button>
+                        </div>
+                        <NameInput
+                          name={name}
+                          setName={setName}
+                          label={t(locale, "contract-msg.name-label")}
+                          placeholder={t(locale, "contract-msg.name-placeholder")}
+                        />
+                        <ContactInput
+                          phone={phone}
+                          setPhone={setPhone}
+                          label={t(locale, "contract-msg.phone-label")}
+                          placeholder={t(locale, "contract-msg.phone-placeholder")}
+                        />
+                        <div className="space-y-2">
+                          <Label>{t(locale, "contract-msg.birthday-label")}</Label>
+                          <Input
                             value={birthday}
                             onChange={(e) => setBirthday(e.target.value)}
                             placeholder="YYMMDD"
+                            className="bg-background"
                           />
-                          <TextField
-                            fullWidth
-                            label={t(locale, "contract-msg.address-label")}
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t(locale, "contract-msg.address-label")}</Label>
+                          <Input
                             value={address}
                             onChange={(e) => setAddress(e.target.value)}
                             placeholder={t(locale, "contract-msg.address-placeholder")}
+                            className="bg-background"
                           />
-                          <TextField
-                            fullWidth
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t(locale, "clients.form.due-date")}</Label>
+                          <Input
                             type="date"
-                            label={t(locale, "clients.form.due-date")}
                             value={dueDate}
                             onChange={(e) => setDueDate(e.target.value)}
-                            InputLabelProps={{ shrink: true }}
+                            className="bg-background"
                           />
-                        </>
-                      )}
-                      {/* 지역 선택 (계약서 템플릿) */}
-                      <FormControl fullWidth required sx={{ bgcolor: "background.default" }}>
-                        <InputLabel>{t(locale, "contract-msg.doc-type-label")}</InputLabel>
-                        <Select
-                          value={area}
-                          required
-                          label={t(locale, "contract-msg.doc-type-label")}
-                          onChange={(e) => setArea(e.target.value)}
-                          disabled={isAreaTemplatesLoading}
-                          sx={{ bgcolor: "background.default" }}
-                        >
+                        </div>
+                      </>
+                    )}
+                    {/* 지역 선택 (계약서 템플릿) */}
+                    <div className="space-y-2">
+                      <Label>
+                        {t(locale, "contract-msg.doc-type-label")}
+                        <span className="text-destructive ml-1">*</span>
+                      </Label>
+                      <Select
+                        value={area || undefined}
+                        onValueChange={setArea}
+                        disabled={isAreaTemplatesLoading}
+                      >
+                        <SelectTrigger className="bg-background">
+                          <SelectValue placeholder={t(locale, "contract-msg.doc-type-label")} />
+                        </SelectTrigger>
+                        <SelectContent>
                           {areaTemplates.map((template) => (
-                            <MenuItem key={template.areaId} value={template.areaId}>
+                            <SelectItem key={template.areaId} value={template.areaId}>
                               {template.templateName || template.areaId}
-                            </MenuItem>
+                            </SelectItem>
                           ))}
-                        </Select>
-                      </FormControl>
-                    </Stack>
-                  </Fade>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                 )}
 
                 {/* Step 1: Provider Info */}
                 {activeStep === 1 && (
-                  <Fade in appear timeout={300}>
-                    <Stack spacing={3}>
-                      {/* Employee 1 Section */}
-                      {!isEmployeeManualEntry ? (
-                        <>
-                          {/* 바우처 유형 선택 */}
-                          <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
-                            <InputLabel>{t(locale, "price-info-msg.voucher-type-label")}</InputLabel>
-                            <Select
-                              value={voucherType}
-                              label={t(locale, "price-info-msg.voucher-type-label")}
-                              onChange={(e) => handleVoucherTypeChange(e.target.value)}
-                              sx={{ bgcolor: "background.default" }}
-                            >
-                              {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
-                                <MenuItem key={groupName} disabled sx={{ fontWeight: 600, bgcolor: "background.default" }}>
-                                  {groupName}
-                                </MenuItem>,
-                                ...Object.entries(types).map(([typeValue, typeData]) => (
-                                  <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
-                                    {typeData.label}
-                                  </MenuItem>
-                                ))
-                              ])}
-                            </Select>
-                          </FormControl>
+                  <div className="flex flex-col gap-6 animate-fade-in">
+                    {/* Employee 1 Section */}
+                    {!isEmployeeManualEntry ? (
+                      <>
+                        {/* 바우처 유형 선택 */}
+                        <div className="space-y-2">
+                          <Label>{t(locale, "price-info-msg.voucher-type-label")}</Label>
+                          <Select
+                            value={voucherType || undefined}
+                            onValueChange={handleVoucherTypeChange}
+                          >
+                            <SelectTrigger className="bg-background">
+                              <SelectValue placeholder={t(locale, "price-info-msg.voucher-type-label")} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                                <div key={groupName}>
+                                  <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground">
+                                    {groupName}
+                                  </div>
+                                  {Object.entries(types).map(([typeValue, typeData]) => (
+                                    <SelectItem key={typeValue} value={typeValue} className="pl-6">
+                                      {typeData.label}
+                                    </SelectItem>
+                                  ))}
+                                </div>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
 
-                          {/* 바우처 기간 선택 - 유형 선택 후에만 표시 */}
-                          {voucherType && voucherPriceInfos.length > 0 && (
-                            <Fade in timeout={400}>
-                              <Stack direction="row" spacing={2}>
-                                <FormControl sx={{ minWidth: 100, bgcolor: "background.default" }}>
-                                  <InputLabel>연도</InputLabel>
-                                  <Select
-                                    value={voucherYear}
-                                    label="연도"
-                                    onChange={(e) => handleVoucherYearChange(Number(e.target.value))}
-                                    sx={{ bgcolor: "background.default" }}
-                                  >
-                                    {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
-                                      <MenuItem key={year} value={year}>
-                                        {year}년
-                                      </MenuItem>
-                                    ))}
-                                  </Select>
-                                </FormControl>
-                                <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
-                                  <InputLabel>{t(locale, "price-info-msg.duration-label")}</InputLabel>
-                                  <Select
-                                    value={voucherDuration}
-                                    label={t(locale, "price-info-msg.duration-label")}
-                                    onChange={(e) => handleDurationChange(e.target.value)}
-                                    disabled={isVoucherPriceInfosLoading}
-                                    sx={{ bgcolor: "background.default" }}
-                                  >
-                                    {voucherPriceInfos.map((v) => (
-                                      <MenuItem key={v.duration} value={v.duration} sx={{ bgcolor: "background.default" }}>
-                                        {v.duration}일
-                                      </MenuItem>
-                                    ))}
-                                  </Select>
-                                </FormControl>
-                              </Stack>
-                            </Fade>
-                          )}
+                        {/* 바우처 기간 선택 - 유형 선택 후에만 표시 */}
+                        {voucherType && voucherPriceInfos.length > 0 && (
+                          <div className="flex flex-row gap-4 animate-fade-in">
+                            <div className="space-y-2 min-w-[100px]">
+                              <Label>연도</Label>
+                              <Select
+                                value={String(voucherYear)}
+                                onValueChange={(value: string) => handleVoucherYearChange(Number(value))}
+                              >
+                                <SelectTrigger className="bg-background">
+                                  <SelectValue placeholder="연도" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
+                                    <SelectItem key={year} value={String(year)}>
+                                      {year}년
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2 flex-1">
+                              <Label>{t(locale, "price-info-msg.duration-label")}</Label>
+                              <Select
+                                value={voucherDuration || undefined}
+                                onValueChange={handleDurationChange}
+                                disabled={isVoucherPriceInfosLoading}
+                              >
+                                <SelectTrigger className="bg-background">
+                                  <SelectValue placeholder={t(locale, "price-info-msg.duration-label")} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {voucherPriceInfos.map((v) => (
+                                    <SelectItem key={v.duration} value={v.duration}>
+                                      {v.duration}일
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                        )}
 
-                          {/* 로딩 표시 */}
-                          {voucherType && isVoucherPriceInfosLoading && (
-                            <Fade in timeout={300}>
-                              <Stack spacing={2} sx={{ pl: 1, borderLeft: 3, borderColor: "primary.main" }}>
-                                <Typography variant="body2" color="text.secondary">
-                                  <strong>{t(locale, "contract-msg.employee-phone-label")}:</strong> {employeePhone || "-"}
-                                </Typography>
-                              </Stack>
-                            </Fade>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          {/* 서비스 금액 */}
-                          <Fade in timeout={400}>
-                            <TextField
-                              fullWidth
-                              label={t(locale, "contract-msg.full-price-label")}
+                        {/* 로딩 표시 */}
+                        {voucherType && isVoucherPriceInfosLoading && (
+                          <div className="pl-3 border-l-[3px] border-primary animate-fade-in">
+                            <p className="text-sm text-muted-foreground">
+                              <strong>{t(locale, "contract-msg.employee-phone-label")}:</strong> {employeePhone || "-"}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {/* 서비스 금액 */}
+                        <div className="space-y-2 animate-fade-in">
+                          <Label>{t(locale, "contract-msg.full-price-label")}</Label>
+                          <div className="relative">
+                            <Input
                               value={formatPrice(fullPrice)}
                               onChange={(e) => setFullPrice(parsePrice(e.target.value))}
                               placeholder={t(locale, "contract-msg.price-placeholder")}
-                              slotProps={{
-                                input: {
-                                  endAdornment: <InputAdornment position="end">원</InputAdornment>,
-                                },
-                              }}
+                              className="bg-background pr-12"
                             />
-                          </Fade>
-                          {/* 정부지원금 */}
-                          <Fade in timeout={400} style={{ transitionDelay: "100ms" }}>
-                            <TextField
-                              fullWidth
-                              label={t(locale, "contract-msg.grant-label")}
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                              원
+                            </span>
+                          </div>
+                        </div>
+                        {/* 정부지원금 */}
+                        <div className="space-y-2 animate-fade-in">
+                          <Label>{t(locale, "contract-msg.grant-label")}</Label>
+                          <div className="relative">
+                            <Input
                               value={formatPrice(grant)}
                               onChange={(e) => setGrant(parsePrice(e.target.value))}
                               placeholder={t(locale, "contract-msg.price-placeholder")}
-                              slotProps={{
-                                input: {
-                                  endAdornment: <InputAdornment position="end">원</InputAdornment>,
-                                },
-                              }}
+                              className="bg-background pr-12"
                             />
-                          </Fade>
-                          {/* 본인부담금 */}
-                          <Fade in timeout={400} style={{ transitionDelay: "200ms" }}>
-                            <TextField
-                              fullWidth
-                              label={t(locale, "contract-msg.actual-price-label")}
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                              원
+                            </span>
+                          </div>
+                        </div>
+                        {/* 본인부담금 */}
+                        <div className="space-y-2 animate-fade-in">
+                          <Label>{t(locale, "contract-msg.actual-price-label")}</Label>
+                          <div className="relative">
+                            <Input
                               value={formatPrice(actualPrice)}
                               onChange={(e) => setActualPrice(parsePrice(e.target.value))}
                               placeholder={t(locale, "contract-msg.price-placeholder")}
-                              slotProps={{
-                                input: {
-                                  endAdornment: <InputAdornment position="end">원</InputAdornment>,
-                                },
-                              }}
+                              className="bg-background pr-12"
                             />
-                          </Fade>
-                          {/* 계약 시작일 */}
-                          <Fade in timeout={400} style={{ transitionDelay: "300ms" }}>
-                            <Box>
-                              <DatePicker
-                                label={t(locale, "contract-msg.start-date-label")}
-                                value={startDate ? dayjs(startDate) : null}
-                                onChange={(newValue: Dayjs | null) => {
-                                  setStartDate(newValue ? newValue.format("YYYY-MM-DD") : "");
-                                }}
-                                format="YY년 MM월 DD일"
-                                localeText={{
-                                  clearButtonLabel: "초기화",
-                                  cancelButtonLabel: "취소",
-                                  okButtonLabel: "확인",
-                                  toolbarTitle: "날짜 선택",
-                                }}
-                                slotProps={{
-                                  toolbar: {
-                                    toolbarFormat: "YY년 MM월 DD일",
-                                  },
-                                  textField: {
-                                    fullWidth: true,
-                                    placeholder: "25년 01월 01일",
-                                  },
-                                }}
-                              />
-                            </Box>
-                          </Fade>
-                          {/* 계약 종료일 */}
-                          <Fade in timeout={400} style={{ transitionDelay: "400ms" }}>
-                            <Box>
-                              <DatePicker
-                                label={t(locale, "contract-msg.end-date-label")}
-                                value={endDate ? dayjs(endDate) : null}
-                                onChange={(newValue: Dayjs | null) => {
-                                  setEndDate(newValue ? newValue.format("YYYY-MM-DD") : "");
-                                }}
-                                format="YY년 MM월 DD일"
-                                localeText={{
-                                  clearButtonLabel: "초기화",
-                                  cancelButtonLabel: "취소",
-                                  okButtonLabel: "확인",
-                                  toolbarTitle: "날짜 선택",
-                                }}
-                                slotProps={{
-                                  toolbar: {
-                                    toolbarFormat: "YY년 MM월 DD일",
-                                  },
-                                  textField: {
-                                    fullWidth: true,
-                                    placeholder: "25년 12월 31일",
-                                  },
-                                }}
-                              />
-                            </Box>
-                          </Fade>
-                          {/* 본인부담금 결제일 */}
-                          <Fade in timeout={400} style={{ transitionDelay: "500ms" }}>
-                            <Box>
-                              <DatePicker
-                                label={t(locale, "contract-msg.payment-date-label")}
-                                value={paymentDate ? dayjs(paymentDate) : null}
-                                onChange={(newValue: Dayjs | null) => {
-                                  setPaymentDate(
-                                    newValue ? newValue.format("YYYY-MM-DD") : ""
-                                  );
-                                }}
-                                format="YY년 MM월 DD일"
-                                localeText={{
-                                  clearButtonLabel: "초기화",
-                                  cancelButtonLabel: "취소",
-                                  okButtonLabel: "확인",
-                                  toolbarTitle: "날짜 선택",
-                                }}
-                                slotProps={{
-                                  toolbar: {
-                                    toolbarFormat: "YY년 MM월 DD일",
-                                  },
-                                  textField: {
-                                    fullWidth: true,
-                                    placeholder: "25년 01월 01일",
-                                  },
-                                }}
-                              />
-                            </Box>
-                          </Fade>
-                        </>
-                      )}
-
-                      {/* Employee 2 Toggle */}
-                      <Divider sx={{ my: 1 }} />
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={showEmployee2}
-                            onChange={handleToggleShowEmployee2}
-                            color="primary"
-                            sx={{ pl: 0 }}
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                              원
+                            </span>
+                          </div>
+                        </div>
+                        {/* 계약 시작일 */}
+                        <div className="space-y-2 animate-fade-in">
+                          <Label>{t(locale, "contract-msg.start-date-label")}</Label>
+                          <Input
+                            type="date"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                            className="bg-background"
                           />
-                        }
-                        label={t(locale, "contract-msg.add-employee2-toggle")}
-                      />
+                        </div>
+                        {/* 계약 종료일 */}
+                        <div className="space-y-2 animate-fade-in">
+                          <Label>{t(locale, "contract-msg.end-date-label")}</Label>
+                          <Input
+                            type="date"
+                            value={endDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                            className="bg-background"
+                          />
+                        </div>
+                        {/* 본인부담금 결제일 */}
+                        <div className="space-y-2 animate-fade-in">
+                          <Label>{t(locale, "contract-msg.payment-date-label")}</Label>
+                          <Input
+                            type="date"
+                            value={paymentDate}
+                            onChange={(e) => setPaymentDate(e.target.value)}
+                            className="bg-background"
+                          />
+                        </div>
+                      </>
+                    )}
 
-                      {/* Employee 2 Section */}
-                      {showEmployee2 && (
-                        <Fade in timeout={300}>
-                          <Stack spacing={3}>
-                            {!isEmployee2ManualEntry ? (
-                              <>
-                                {/* Employee 2 selection mode */}
-                                <EmployeeAutocomplete
-                                  value={employee2Id}
-                                  onChange={handleEmployee2Select}
-                                  label={t(locale, "contract-msg.employee2-select-label")}
-                                  allowManualEntry
-                                  onManualEntry={handleToggleEmployee2ManualEntry}
-                                  excludeIds={employeeId !== null ? [employeeId] : []}
-                                />
-                                {/* Show selected employee 2 info (read-only) */}
-                                {employee2Id !== null && (
-                                  <Fade in timeout={300}>
-                                    <Stack spacing={2} sx={{ pl: 1, borderLeft: 3, borderColor: "secondary.main" }}>
-                                      <Typography variant="body2" color="text.secondary">
-                                        <strong>{t(locale, "contract-msg.employee2-phone-label")}:</strong> {employee2Phone || "-"}
-                                      </Typography>
-                                    </Stack>
-                                  </Fade>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                {/* Employee 2 manual entry mode */}
-                                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                  <Typography variant="subtitle2" color="text.secondary">
-                                    {t(locale, "contract-msg.employee2-manual-entry-mode")}
-                                  </Typography>
-                                  <Button
-                                    size="small"
-                                    variant="text"
-                                    onClick={handleToggleEmployee2ManualEntry}
-                                  >
-                                    {t(locale, "contract-msg.switch-to-employee2-search")}
-                                  </Button>
-                                </Box>
-                                <NameInput
-                                  name={employee2Name}
-                                  setName={setEmployee2Name}
-                                  label={t(locale, "contract-msg.employee2-name-label")}
-                                  placeholder={t(locale, "contract-msg.employee-name-placeholder")}
-                                />
-                                <ContactInput
-                                  phone={employee2Phone}
-                                  setPhone={setEmployee2Phone}
-                                  label={t(locale, "contract-msg.employee2-phone-label")}
-                                  placeholder={t(locale, "contract-msg.employee-phone-placeholder")}
-                                />
-                              </>
+                    {/* Employee 2 Toggle */}
+                    <Separator className="my-1" />
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="add-employee2"
+                        checked={showEmployee2}
+                        onCheckedChange={(checked) => {
+                          if (checked === true) {
+                            handleToggleShowEmployee2();
+                          } else if (!checked) {
+                            handleToggleShowEmployee2();
+                          }
+                        }}
+                      />
+                      <Label htmlFor="add-employee2" className="cursor-pointer">
+                        {t(locale, "contract-msg.add-employee2-toggle")}
+                      </Label>
+                    </div>
+
+                    {/* Employee 2 Section */}
+                    {showEmployee2 && (
+                      <div className="flex flex-col gap-6 animate-fade-in">
+                        {!isEmployee2ManualEntry ? (
+                          <>
+                            {/* Employee 2 selection mode */}
+                            <EmployeeAutocomplete
+                              value={employee2Id}
+                              onChange={handleEmployee2Select}
+                              label={t(locale, "contract-msg.employee2-select-label")}
+                              allowManualEntry
+                              onManualEntry={handleToggleEmployee2ManualEntry}
+                              excludeIds={employeeId !== null ? [employeeId] : []}
+                            />
+                            {/* Show selected employee 2 info (read-only) */}
+                            {employee2Id !== null && (
+                              <div className="pl-3 border-l-[3px] border-secondary animate-fade-in">
+                                <p className="text-sm text-muted-foreground">
+                                  <strong>{t(locale, "contract-msg.employee2-phone-label")}:</strong> {employee2Phone || "-"}
+                                </p>
+                              </div>
                             )}
-                          </Stack>
-                        </Fade>
-                      )}
-                    </Stack>
-                  </Fade>
+                          </>
+                        ) : (
+                          <>
+                            {/* Employee 2 manual entry mode */}
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm text-muted-foreground font-medium">
+                                {t(locale, "contract-msg.employee2-manual-entry-mode")}
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={handleToggleEmployee2ManualEntry}
+                              >
+                                {t(locale, "contract-msg.switch-to-employee2-search")}
+                              </Button>
+                            </div>
+                            <NameInput
+                              name={employee2Name}
+                              setName={setEmployee2Name}
+                              label={t(locale, "contract-msg.employee2-name-label")}
+                              placeholder={t(locale, "contract-msg.employee-name-placeholder")}
+                            />
+                            <ContactInput
+                              phone={employee2Phone}
+                              setPhone={setEmployee2Phone}
+                              label={t(locale, "contract-msg.employee2-phone-label")}
+                              placeholder={t(locale, "contract-msg.employee-phone-placeholder")}
+                            />
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Step 2: Voucher Info (바우처 정보) */}
                 {activeStep === 2 && (
-                  <Fade in appear timeout={300}>
-                    <Stack spacing={3}>
-                      {/* 바우처 연도 선택 */}
-                      <FormControl fullWidth size="small" sx={{ bgcolor: "background.default", maxWidth: 120 }}>
-                        <InputLabel>{t(locale, "price-info-msg.voucher-year-label")}</InputLabel>
-                        <Select
-                          value={voucherYear}
-                          label={t(locale, "price-info-msg.voucher-year-label")}
-                          onChange={(e) => handleVoucherYearChange(Number(e.target.value))}
-                          disabled={isVoucherYearsLoading}
-                          sx={{ bgcolor: "background.default" }}
-                        >
+                  <div className="flex flex-col gap-6 animate-fade-in">
+                    {/* 바우처 연도 선택 */}
+                    <div className="space-y-2 max-w-[120px]">
+                      <Label>{t(locale, "price-info-msg.voucher-year-label")}</Label>
+                      <Select
+                        value={String(voucherYear)}
+                        onValueChange={(value: string) => handleVoucherYearChange(Number(value))}
+                        disabled={isVoucherYearsLoading}
+                      >
+                        <SelectTrigger className="bg-background">
+                          <SelectValue placeholder={t(locale, "price-info-msg.voucher-year-label")} />
+                        </SelectTrigger>
+                        <SelectContent>
                           {voucherYears.map((year) => (
-                            <MenuItem key={year} value={year}>
+                            <SelectItem key={year} value={String(year)}>
                               {year}년
-                            </MenuItem>
+                            </SelectItem>
                           ))}
-                        </Select>
-                      </FormControl>
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                      {/* 바우처 유형 선택 */}
-                      <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
-                        <InputLabel>{t(locale, "price-info-msg.voucher-type-label")}</InputLabel>
-                        <Select
-                          value={voucherType}
-                          required
-                          label={t(locale, "price-info-msg.voucher-type-label")}
-                          onChange={(e) => handleVoucherTypeChange(e.target.value)}
-                          sx={{ bgcolor: "background.default" }}
-                        >
-                          {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
-                            <MenuItem key={groupName} disabled sx={{ fontWeight: 600, bgcolor: "background.default" }}>
-                              {groupName}
-                            </MenuItem>,
-                            ...Object.entries(types).map(([typeValue, typeData]) => (
-                              <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
-                                {typeData.label}
-                              </MenuItem>
-                            ))
-                          ])}
-                        </Select>
-                      </FormControl>
-
-                      {/* 바우처 기간 선택 - 유형 선택 후에만 표시 */}
-                      {voucherType && voucherPriceInfos.length > 0 && (
-                        <Fade in timeout={400}>
-                          <FormControl fullWidth sx={{ bgcolor: "background.default" }}>
-                            <InputLabel>{t(locale, "price-info-msg.duration-label")}</InputLabel>
-                            <Select
-                              value={voucherDuration}
-                              label={t(locale, "price-info-msg.duration-label")}
-                              onChange={(e) => handleDurationChange(e.target.value)}
-                              disabled={isVoucherPriceInfosLoading}
-                              sx={{ bgcolor: "background.default" }}
-                            >
-                              {voucherPriceInfos.map((v) => (
-                                <MenuItem key={v.duration} value={v.duration} sx={{ bgcolor: "background.default" }}>
-                                  {v.duration}일
-                                </MenuItem>
+                    {/* 바우처 유형 선택 */}
+                    <div className="space-y-2">
+                      <Label>{t(locale, "price-info-msg.voucher-type-label")}</Label>
+                      <Select
+                        value={voucherType || undefined}
+                        onValueChange={handleVoucherTypeChange}
+                      >
+                        <SelectTrigger className="bg-background">
+                          <SelectValue placeholder={t(locale, "price-info-msg.voucher-type-label")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                            <div key={groupName}>
+                              <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground">
+                                {groupName}
+                              </div>
+                              {Object.entries(types).map(([typeValue, typeData]) => (
+                                <SelectItem key={typeValue} value={typeValue} className="pl-6">
+                                  {typeData.label}
+                                </SelectItem>
                               ))}
-                            </Select>
-                          </FormControl>
-                        </Fade>
-                      )}
+                            </div>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                      {/* 로딩 표시 */}
-                      {voucherType && isVoucherPriceInfosLoading && (
-                        <Fade in timeout={300}>
-                          <Box sx={{ display: "flex", justifyContent: "center" }}>
-                            <MoonLoader
-                              color="#1e88e5"
-                              size={20}
-                            />
-                          </Box>
-                        </Fade>
-                      )}
+                    {/* 바우처 기간 선택 - 유형 선택 후에만 표시 */}
+                    {voucherType && voucherPriceInfos.length > 0 && (
+                      <div className="space-y-2 animate-fade-in">
+                        <Label>{t(locale, "price-info-msg.duration-label")}</Label>
+                        <Select
+                          value={voucherDuration || undefined}
+                          onValueChange={handleDurationChange}
+                          disabled={isVoucherPriceInfosLoading}
+                        >
+                          <SelectTrigger className="bg-background">
+                            <SelectValue placeholder={t(locale, "price-info-msg.duration-label")} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {voucherPriceInfos.map((v) => (
+                              <SelectItem key={v.duration} value={v.duration}>
+                                {v.duration}일
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
 
-                      {/* 가격 정보 - 기간 선택 후 표시 */}
-                      {voucherDuration && fullPrice && grant && actualPrice && (
-                        <Fade in timeout={400}>
-                          <Stack spacing={1}>
-                            <Divider sx={{ my: 1 }} />
-                            <Typography variant="body1" fontWeight={500}>
-                              {t(locale, "contract-msg.full-price-label")}: {formatPrice(fullPrice)}원
-                            </Typography>
-                            <Typography variant="body1" fontWeight={500}>
-                              {t(locale, "contract-msg.grant-label")}: {formatPrice(grant)}원
-                            </Typography>
-                            <Typography variant="body1" fontWeight={500}>
-                              {t(locale, "contract-msg.actual-price-label")}: {formatPrice(actualPrice)}원
-                            </Typography>
-                          </Stack>
-                        </Fade>
-                      )}
-                    </Stack>
-                  </Fade>
+                    {/* 로딩 표시 */}
+                    {voucherType && isVoucherPriceInfosLoading && (
+                      <div className="flex justify-center animate-fade-in">
+                        <Spinner className="h-5 w-5 text-primary" />
+                      </div>
+                    )}
+
+                    {/* 가격 정보 - 기간 선택 후 표시 */}
+                    {voucherDuration && fullPrice && grant && actualPrice && (
+                      <div className="flex flex-col gap-2 animate-fade-in">
+                        <Separator className="my-1" />
+                        <p className="text-base font-medium">
+                          {t(locale, "contract-msg.full-price-label")}: {formatPrice(fullPrice)}원
+                        </p>
+                        <p className="text-base font-medium">
+                          {t(locale, "contract-msg.grant-label")}: {formatPrice(grant)}원
+                        </p>
+                        <p className="text-base font-medium">
+                          {t(locale, "contract-msg.actual-price-label")}: {formatPrice(actualPrice)}원
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Step 3: Contract Info (계약 정보) */}
                 {activeStep === 3 && (
-                  <Fade in appear timeout={300}>
-                    <Stack spacing={3}>
-                      {/* 계약 시작일 */}
-                      <Fade in timeout={400}>
-                        <Box>
-                          <DatePicker
-                            label={t(locale, "contract-msg.start-date-label")}
-                            value={startDate ? dayjs(startDate) : null}
-                            onChange={(newValue: Dayjs | null) => {
-                              setStartDate(newValue ? newValue.format("YYYY-MM-DD") : "");
-                            }}
-                            format="YY년 MM월 DD일"
-                            localeText={{
-                              clearButtonLabel: "초기화",
-                              cancelButtonLabel: "취소",
-                              okButtonLabel: "확인",
-                              toolbarTitle: "날짜 선택",
-                            }}
-                            slotProps={{
-                              toolbar: {
-                                toolbarFormat: "YY년 MM월 DD일",
-                              },
-                              textField: {
-                                fullWidth: true,
-                                placeholder: "25년 01월 01일",
-                              },
-                            }}
-                          />
-                        </Box>
-                      </Fade>
-                      {/* 계약 종료일 */}
-                      <Fade in timeout={400} style={{ transitionDelay: "100ms" }}>
-                        <Box>
-                          <DatePicker
-                            label={t(locale, "contract-msg.end-date-label")}
-                            value={endDate ? dayjs(endDate) : null}
-                            onChange={(newValue: Dayjs | null) => {
-                              setEndDate(newValue ? newValue.format("YYYY-MM-DD") : "");
-                            }}
-                            format="YY년 MM월 DD일"
-                            localeText={{
-                              clearButtonLabel: "초기화",
-                              cancelButtonLabel: "취소",
-                              okButtonLabel: "확인",
-                              toolbarTitle: "날짜 선택",
-                            }}
-                            slotProps={{
-                              toolbar: {
-                                toolbarFormat: "YY년 MM월 DD일",
-                              },
-                              textField: {
-                                fullWidth: true,
-                                placeholder: "25년 12월 31일",
-                              },
-                            }}
-                          />
-                        </Box>
-                      </Fade>
-                      {/* 본인부담금 결제일 */}
-                      <Fade in timeout={400} style={{ transitionDelay: "200ms" }}>
-                        <Box>
-                          <DatePicker
-                            label={t(locale, "contract-msg.payment-date-label")}
-                            value={paymentDate ? dayjs(paymentDate) : null}
-                            onChange={(newValue: Dayjs | null) => {
-                              setPaymentDate(
-                                newValue ? newValue.format("YYYY-MM-DD") : ""
-                              );
-                            }}
-                            format="YY년 MM월 DD일"
-                            localeText={{
-                              clearButtonLabel: "초기화",
-                              cancelButtonLabel: "취소",
-                              okButtonLabel: "확인",
-                              toolbarTitle: "날짜 선택",
-                            }}
-                            slotProps={{
-                              toolbar: {
-                                toolbarFormat: "YY년 MM월 DD일",
-                              },
-                              textField: {
-                                fullWidth: true,
-                                placeholder: "25년 01월 01일",
-                              },
-                            }}
-                          />
-                        </Box>
-                      </Fade>
-                    </Stack>
-                  </Fade>
+                  <div className="flex flex-col gap-6 animate-fade-in">
+                    {/* 계약 시작일 */}
+                    <div className="space-y-2 animate-fade-in">
+                      <Label>{t(locale, "contract-msg.start-date-label")}</Label>
+                      <Input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="bg-background"
+                      />
+                    </div>
+                    {/* 계약 종료일 */}
+                    <div className="space-y-2 animate-fade-in" style={{ animationDelay: "100ms" }}>
+                      <Label>{t(locale, "contract-msg.end-date-label")}</Label>
+                      <Input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        className="bg-background"
+                      />
+                    </div>
+                    {/* 본인부담금 결제일 */}
+                    <div className="space-y-2 animate-fade-in" style={{ animationDelay: "200ms" }}>
+                      <Label>{t(locale, "contract-msg.payment-date-label")}</Label>
+                      <Input
+                        type="date"
+                        value={paymentDate}
+                        onChange={(e) => setPaymentDate(e.target.value)}
+                        className="bg-background"
+                      />
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
 
             {/* Error Messages */}
             {(submitError || eformsignError) && (
-              <Alert severity="error" sx={{ mt: 2 }}>
-                {submitError || eformsignError}
+              <Alert variant="destructive" className="mt-4">
+                <AlertDescription>{submitError || eformsignError}</AlertDescription>
               </Alert>
             )}
 
             {/* Loading indicator for eformsign SDK */}
             {isEformsignLoading && (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                eformsign SDK를 로드하는 중입니다...
+              <Alert className="mt-4">
+                <AlertDescription>eformsign SDK를 로드하는 중입니다...</AlertDescription>
               </Alert>
             )}
 
             {/* Navigation Buttons */}
-            <Stack direction="row" spacing={2} sx={{ mt: 3, justifyContent: "space-between" }}>
+            <div className="flex flex-row justify-between gap-4 mt-6">
               <Button
-                variant="outlined"
+                variant="outline"
                 onClick={handleStepBack}
                 disabled={activeStep === 0 || isSubmitting}
                 data-component="contract-creation-form-back-button"
@@ -1214,16 +1086,14 @@ export const ContractCreationForm = () => {
 
               {activeStep === steps.length - 1 ? (
                 <Button
-                  variant="contained"
                   onClick={handleContractCreation}
                   disabled={!isStep4Valid || isSubmitting || !isEformsignLoaded}
-                  startIcon={isSubmitting ? <CircularProgress size={20} color="inherit" /> : undefined}
                 >
+                  {isSubmitting && <Spinner className="mr-2 h-4 w-4" />}
                   {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
                 </Button>
               ) : (
                 <Button
-                  variant="contained"
                   onClick={handleStepNext}
                   disabled={isNextDisabled()}
                   data-component="contract-creation-form-next-button"
@@ -1231,41 +1101,31 @@ export const ContractCreationForm = () => {
                   {t(locale, "common.next")}
                 </Button>
               )}
-            </Stack>
-          </Box>
-        </Fade>
+            </div>
+          </div>
       </ContentPaper>
 
       {/* eformsign Document Dialog */}
-      <Dialog
-        open={isDialogOpen}
-        onClose={handleDialogClose}
-        data-component="contract-creation-form-dialog"
-        fullScreen
-      >
-        <DialogTitle sx={{ px: 2, py: 1, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          계약서 작성
-          <IconButton onClick={handleDialogClose} size="small">
-            <CloseIcon />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent sx={{ p: 0, overflow: "hidden", display: "flex", flexDirection: "column", flexGrow: 1, height: "calc(100vh - 64px)" }}>
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              overflow: "hidden",
-            }}
-          >
+      <Dialog open={isDialogOpen} onOpenChange={(open: boolean) => !open && handleDialogClose()}>
+        <DialogContent
+          data-component="contract-creation-form-dialog"
+          className="max-w-full w-screen h-screen p-0 gap-0"
+        >
+          <DialogHeader className="px-4 py-2 flex flex-row items-center justify-between border-b">
+            <DialogTitle>계약서 작성</DialogTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleDialogClose}
+              className="h-8 w-8"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </DialogHeader>
+          <div className="flex-1 overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
             <iframe
               id="eformsign_iframe"
-              style={{
-                width: "100%",
-                height: "100%",
-                border: "none",
-                transform: "scale(1)",
-                transformOrigin: "top left",
-              }}
+              className="w-full h-full border-none"
               title="eformsign Document"
             />
           </div>
@@ -1278,6 +1138,6 @@ export const ContractCreationForm = () => {
         onClose={() => setIsClientDialogOpen(false)}
         onSuccess={handleClientCreated}
       />
-    </LocalizationProvider>
+    </>
   );
 };
