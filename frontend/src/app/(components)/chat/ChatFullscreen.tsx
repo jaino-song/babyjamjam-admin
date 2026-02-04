@@ -303,7 +303,6 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                     <ChatInput
                         onSubmit={sendMessage}
                         disabled={state === "streaming" || state === "connecting"}
-                        compact={false}
                     />
                 </div>
             </div>
