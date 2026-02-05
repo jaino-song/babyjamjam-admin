@@ -496,6 +496,8 @@
 html,
 body {
   overscroll-behavior: none;
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 body {

@@ -1,6 +1,6 @@
 "use client";
 
-import { UserPlus, CalendarPlus, Send, FileSignature, LucideIcon } from "lucide-react";
+import { UserPlus, FileSignature, MessageSquare, LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface QuickAction {
@@ -19,29 +19,28 @@ const actions: QuickAction[] = [
     iconColor: "text-primary",
   },
   {
-    label: "일정 추가",
-    icon: CalendarPlus,
+    label: "계약서 전송",
+    icon: FileSignature,
+    iconBgClass: "bg-orange/10",
+    iconColor: "text-orange",
+  },
+  {
+    label: "메시지 작성",
+    icon: MessageSquare,
     iconBgClass: "bg-success/10",
     iconColor: "text-success",
   },
   {
-    label: "메시지 발송",
-    icon: Send,
-    iconBgClass: "bg-warning/10",
-    iconColor: "text-warning",
-  },
-  {
-    label: "계약서 작성",
-    icon: FileSignature,
-    iconBgClass: "bg-info/10",
-    iconColor: "text-info",
+    label: "제공인력 추가",
+    icon: UserPlus,
+    iconBgClass: "bg-burgundy/10",
+    iconColor: "text-burgundy",
   },
 ];
 
 export function QuickActions() {
   return (
     <div data-component="quick-actions" className="opacity-0 animate-fade-in" style={{ animationDelay: "400ms" }}>
-      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Quick Action Cards</p>
       <div data-component="quick-actions-grid" className="grid grid-cols-4 gap-2">
         {actions.map((action, index) => {
           const Icon = action.icon;

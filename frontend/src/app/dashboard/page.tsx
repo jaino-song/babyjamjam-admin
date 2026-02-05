@@ -43,23 +43,26 @@ const getStats = (locale: Locale, backendStats?: DashboardStats | null): StatIte
     {
       title: t(locale, "dashboard.active_clients"),
       value: backendStats?.activeClients?.toLocaleString() ?? "0",
+      unit: "명",
       icon: Users,
     },
     {
-      title: t(locale, "dashboard.contracts.sending_pending"),
-      value: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
-      icon: TrendingUp,
+      title: t(locale, "dashboard.pending_clients.title"),
+      value: backendStats?.upcomingThisMonth?.toLocaleString() ?? "0",
+      unit: "명",
+      icon: CalendarClock,
     },
     {
       title: t(locale, "dashboard.contracts.completion_pending"),
       value: backendStats?.contractsPendingSignature?.toLocaleString() ?? "0",
+      unit: "건",
       icon: TrendingUp,
-      variant: "primary",
     },
     {
-      title: t(locale, "dashboard.pending_clients.title"),
-      value: `${backendStats?.upcomingThisMonth?.toLocaleString() ?? "0"} 명`,
-      icon: CalendarClock,
+      title: t(locale, "dashboard.contracts.sending_pending"),
+      value: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
+      unit: "건",
+      icon: TrendingUp,
     },
   ];
 };
@@ -74,7 +77,7 @@ export default async function Dashboard() {
     <div data-component="dashboard-page" className="bg-background">
       <section
         data-component="dashboard-content"
-        className="px-4 sm:px-6 md:px-8 lg:px-12 py-6 sm:py-8 mx-auto max-w-7xl"
+        className="px-4 sm:px-6 md:px-8 lg:px-12 py-6 sm:py-8 mx-auto max-w-7xl w-full"
       >
         <div data-component="dashboard-layout" className="space-y-6 w-full">
           <HeroBanner

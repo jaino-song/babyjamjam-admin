@@ -69,8 +69,8 @@
     "contracts": {
       "title": "계약서",
       "status": "미완료 계약서",
-      "sending_pending": "발송 전",
-      "completion_pending": "서명 전"
+      "sending_pending": "발송 필요 계약서",
+      "completion_pending": "서명 전 계약서"
     },
     "weekly_performance": "주간 실적",
     "quick_actions": "빠른 작업",

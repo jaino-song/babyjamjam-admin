@@ -60,7 +60,7 @@ export default async function RootLayout({
               <AnimatedContainer>
                 <main
                   data-component="main-content"
-                  className="m-1 flex-grow w-full"
+                  className="flex-grow w-full"
                 >
                   {children}
                 </main>
