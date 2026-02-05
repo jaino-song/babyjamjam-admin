@@ -1,17 +1,15 @@
 "use client";
+
 import { useEffect } from "react";
-import { Box, Stack, IconButton } from "@mui/material";
-import CloseIcon from '@mui/icons-material/Close';
-import { House, MessageCircle, File, Settings, FileText } from 'lucide-react';
+import { X, House, MessageCircle, File, Settings, FileText, Users, UserCog, ShieldCheck } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { SheetClose } from "@/components/ui/sheet";
 import { t } from "@/app/lib/i18n/translations";
 import { usePathname } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { NavButton } from "./nav-button";
 import { LanguageSwitcher } from "./language-switcher";
-import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
-import AssignmentIndOutlinedIcon from '@mui/icons-material/AssignmentIndOutlined';
-import DescriptionIcon from '@mui/icons-material/Description';
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { eformsignQueryKeys } from "@/app/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
@@ -46,6 +44,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
             staleTime: 1000 * 60 * 5,
         });
     }, [queryClient]);
+
     const isDashboard = pathname === "/dashboard";
     const isMessages = pathname === "/messages";
     const isFiles = pathname === "/files";
@@ -56,28 +55,69 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     const isAdminOrOwner = user?.role === 'admin' || user?.role === 'owner';
     const isAdmin = pathname === '/admin' || pathname?.startsWith('/admin/');
 
+    const navItems = [
+        { href: "/dashboard", label: t(locale, "nav-bar.dashboard"), icon: <House className="h-4 w-4" />, active: isDashboard },
+        { href: "/messages", label: t(locale, "nav-bar.messages"), icon: <MessageCircle className="h-4 w-4" />, active: isMessages },
+        { href: "/contracts", label: t(locale, "nav-bar.contracts"), icon: <File className="h-4 w-4" />, active: isContracts },
+        { href: "/clients", label: t(locale, "nav-bar.clients"), icon: <Users className="h-4 w-4" />, active: isClients },
+        { href: "/employees", label: t(locale, "nav-bar.employees"), icon: <UserCog className="h-4 w-4" />, active: isEmployees },
+        { href: "/files", label: t(locale, "nav-bar.files"), icon: <FileText className="h-4 w-4" />, active: isFiles },
+        { href: "/settings", label: t(locale, "nav-bar.settings"), icon: <Settings className="h-4 w-4" />, active: isSettings },
+    ];
+
     return (
-        <Box sx={{ width: '100%', height: '100%', p: 2, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-            <Box sx={{ height: '90%' }}>
-                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-                    <IconButton onClick={onClose}>
-                        <CloseIcon />
-                    </IconButton>
-                </Box>
-                <Stack spacing={1}>
-                    <NavButton href="/dashboard" label={t(locale, "nav-bar.dashboard")} icon={<House size={15} />} active={isDashboard} onClick={onClose} />
-                    <NavButton href="/messages" label={t(locale, "nav-bar.messages")} icon={<MessageCircle size={15} />} active={isMessages} onClick={onClose} />
-                    <NavButton href="/contracts" label={t(locale, "nav-bar.contracts")} icon={<File size={15} />} active={isContracts} onClick={onClose} />
-                    <NavButton href="/clients" label={t(locale, "nav-bar.clients")} icon={<PeopleOutlineIcon fontSize="small" />} active={isClients} onClick={onClose} />
-                    <NavButton href="/employees" label={t(locale, "nav-bar.employees")} icon={<AssignmentIndOutlinedIcon fontSize="small" />} active={isEmployees} onClick={onClose} />
-                    <NavButton href="/files" label={t(locale, "nav-bar.files")} icon={<DescriptionIcon fontSize="small" />} active={isFiles} onClick={onClose} />
-                    <NavButton href="/settings" label={t(locale, "nav-bar.settings")} icon={<Settings size={15} />} active={isSettings} onClick={onClose} />
+        <div data-component="NavBar" className="w-full h-full p-4 flex flex-col justify-between">
+            {/* Main navigation section */}
+            <div className="flex-1">
+                {/* Close button */}
+                <div className="flex justify-end mb-4">
+                    <SheetClose asChild>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="opacity-0 animate-fade-in text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+                        >
+                            <X className="h-5 w-5" />
+                            <span className="sr-only">Close navigation</span>
+                        </Button>
+                    </SheetClose>
+                </div>
+
+                {/* Navigation items */}
+                <nav className="flex flex-col gap-1">
+                    {navItems.map((item, index) => (
+                        <NavButton
+                            key={item.href}
+                            href={item.href}
+                            label={item.label}
+                            icon={item.icon}
+                            active={item.active}
+                            onClick={onClose}
+                            index={index}
+                        />
+                    ))}
+
+                    {/* Admin section - only for admin/owner */}
                     {isAdminOrOwner && (
-                        <NavButton href="/admin" label="관리자" icon={<AdminPanelSettingsIcon fontSize="small" />} active={isAdmin} onClick={onClose} />
+                        <>
+                            <Separator className="my-2 opacity-0 animate-fade-in bg-sidebar-border" style={{ animationDelay: '400ms' }} />
+                            <NavButton
+                                href="/admin"
+                                label="관리자"
+                                icon={<ShieldCheck className="h-4 w-4" />}
+                                active={isAdmin}
+                                onClick={onClose}
+                                index={navItems.length}
+                            />
+                        </>
                     )}
-                </Stack>
-            </Box>
-            <LanguageSwitcher />
-        </Box>
+                </nav>
+            </div>
+
+            {/* Footer with language switcher */}
+            <div className="opacity-0 animate-fade-in" style={{ animationDelay: '500ms' }}>
+                <LanguageSwitcher />
+            </div>
+        </div>
     );
 }

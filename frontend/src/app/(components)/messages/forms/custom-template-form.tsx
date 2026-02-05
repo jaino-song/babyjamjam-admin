@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Box, Button, Stack, Fade } from "@mui/material";
 import { MessageTemplate } from "@/lib/template/types";
 import { renderTemplate } from "@/lib/template/variable-parser";
 import { useFormStore } from "@/app/store/form-store";
@@ -10,6 +9,7 @@ import { useLocale } from "@/app/(components)/LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { DynamicInput } from "./form-components/dynamic-input";
+import { Button } from "@/components/ui/button";
 
 interface CustomTemplateFormProps {
     template: MessageTemplate;
@@ -77,40 +77,40 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
     };
 
     return (
-        <Box data-component="custom-template-form" sx={{ display: "flex", flexDirection: "column", flexGrow: 1, height: "100%", bgcolor: "background.default" }}>
-            <Fade in appear timeout={500}>
-                <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1 }}>
-                    <Stack spacing={3}>
-                        {template.variables.map((variable) => (
-                            <DynamicInput
-                                key={variable.key}
-                                variable={variable}
-                                value={getVariableValue(variable.key)}
-                                onChange={(value) => handleVariableChange(variable.key, value)}
-                            />
-                        ))}
-
-                        <Button
-                            variant="contained"
-                            size="large"
-                            onClick={handleGenerate}
-                            disabled={template.variables.some(v => v.required && !getVariableValue(v.key))}
-                        >
-                            {t(locale, "common.generate-button")}
-                        </Button>
-                    </Stack>
-
-                    {generatedMessage && (
-                        <GeneratedMsg
-                            title={t(locale, "common.generated-message-title")}
-                            copyButtonText={t(locale, "common.copy-button")}
-                            message={generatedMessage}
-                            onMessageChange={setGeneratedMessage}
-                            handleCopy={handleCopy}
+        <div
+            data-component="custom-template-form"
+            className="flex flex-col grow h-full bg-background animate-fade-in"
+        >
+            <div className="flex flex-col grow">
+                <div className="flex flex-col gap-6">
+                    {template.variables.map((variable) => (
+                        <DynamicInput
+                            key={variable.key}
+                            variable={variable}
+                            value={getVariableValue(variable.key)}
+                            onChange={(value) => handleVariableChange(variable.key, value)}
                         />
-                    )}
-                </Box>
-            </Fade>
-        </Box>
+                    ))}
+
+                    <Button
+                        size="lg"
+                        onClick={handleGenerate}
+                        disabled={template.variables.some(v => v.required && !getVariableValue(v.key))}
+                    >
+                        {t(locale, "common.generate-button")}
+                    </Button>
+                </div>
+
+                {generatedMessage && (
+                    <GeneratedMsg
+                        title={t(locale, "common.generated-message-title")}
+                        copyButtonText={t(locale, "common.copy-button")}
+                        message={generatedMessage}
+                        onMessageChange={setGeneratedMessage}
+                        handleCopy={handleCopy}
+                    />
+                )}
+            </div>
+        </div>
     );
 };

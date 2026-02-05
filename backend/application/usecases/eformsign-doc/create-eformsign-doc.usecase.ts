@@ -29,7 +29,10 @@ export class CreateEformsignDocUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    async execute(params: CreateEformsignDocParams): Promise<EformsignDocEntity> {
+    async execute(
+        organizationid: string,
+        params: CreateEformsignDocParams
+    ): Promise<EformsignDocEntity> {
         const now = new Date();
         const entity = EformsignDocEntity.create({
             documentId: params.documentId,
@@ -46,15 +49,15 @@ export class CreateEformsignDocUsecase {
             expiredDate: params.expiredDate,
             expired: false,
         });
-        const createdDoc = await this.eformsignDocRepository.create(entity);
+        const createdDoc = await this.eformsignDocRepository.create(organizationid, entity);
 
         // If linkToClient is true, also update client.e_doc_id to track this document
         if (params.linkToClient) {
             try {
-                const client = await this.clientRepository.findById(params.clientId);
+                const client = await this.clientRepository.findById(organizationid, params.clientId);
                 if (client) {
                     client.update({ eDocId: params.documentId });
-                    await this.clientRepository.update(client);
+                    await this.clientRepository.update(organizationid, client);
                     this.logger.log(`Linked document ${params.documentId} to client ${params.clientId}`);
                 } else {
                     this.logger.warn(`Client ${params.clientId} not found, skipping e_doc_id update`);

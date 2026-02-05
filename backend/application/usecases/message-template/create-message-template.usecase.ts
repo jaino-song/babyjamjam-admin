@@ -15,7 +15,10 @@ export class CreateMessageTemplateUsecase {
         private readonly messageTemplateRepository: IMessageTemplateRepository,
     ) {}
 
-    async execute(params: CreateMessageTemplateParams): Promise<MessageTemplateEntity> {
+    async execute(
+        organizationid: string,
+        params: CreateMessageTemplateParams
+    ): Promise<MessageTemplateEntity> {
         const template = MessageTemplateEntity.create(params);
 
         const validation = template.validateVariables();
@@ -23,6 +26,6 @@ export class CreateMessageTemplateUsecase {
             throw new BadRequestException(validation.errors.join(", "));
         }
 
-        return this.messageTemplateRepository.create(template);
+        return this.messageTemplateRepository.create(organizationid, template);
     }
 }

@@ -34,7 +34,7 @@ export class ToolExecutorService {
         private readonly employeeScheduleService: EmployeeScheduleService,
     ) {}
 
-    async execute(toolName: string, args: ToolArgs): Promise<ToolExecutionResult> {
+    async execute(organizationid: string, toolName: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const argKeys = Object.keys(args || {}).sort();
         const confirmed = args && typeof args['confirmed'] === 'boolean' ? args['confirmed'] : undefined;
         this.logger.log(
@@ -48,62 +48,62 @@ export class ToolExecutorService {
         try {
             switch (toolName) {
                 case "searchClients":
-                    return this.searchClients(args);
+                    return this.searchClients(organizationid, args);
                 case "getClient":
-                    return this.getClient(args);
+                    return this.getClient(organizationid, args);
                 case "createClient":
-                    return this.createClient(args);
+                    return this.createClient(organizationid, args);
                 case "updateClient":
-                    return this.updateClient(args);
+                    return this.updateClient(organizationid, args);
                 case "deleteClient":
-                    return this.deleteClient(args);
+                    return this.deleteClient(organizationid, args);
                 case "searchEmployees":
-                    return this.searchEmployees(args);
+                    return this.searchEmployees(organizationid, args);
                 case "getEmployee":
-                    return this.getEmployee(args);
+                    return this.getEmployee(organizationid, args);
                 case "createEmployee":
-                    return this.createEmployee(args);
+                    return this.createEmployee(organizationid, args);
                 case "updateEmployee":
-                    return this.updateEmployee(args);
+                    return this.updateEmployee(organizationid, args);
                 case "deleteEmployee":
-                    return this.deleteEmployee(args);
+                    return this.deleteEmployee(organizationid, args);
                 case "getMessages":
                     return this.getMessages();
                 case "createMessage":
-                    return this.createMessage(args);
+                    return this.createMessage(organizationid, args);
                 case "updateMessage":
-                    return this.updateMessage(args);
+                    return this.updateMessage(organizationid, args);
                 case "deleteMessage":
-                    return this.deleteMessage(args);
+                    return this.deleteMessage(organizationid, args);
                 case "listAvailableTemplates":
-                    return this.listAvailableTemplates();
+                    return this.listAvailableTemplates(organizationid);
                 case "createAndSendContract":
-                    return this.createAndSendContract(args);
+                    return this.createAndSendContract(organizationid, args);
                 case "getContractStatus":
-                    return this.getContractStatus(args);
+                    return this.getContractStatus(organizationid, args);
                 case "getDashboardStats":
-                    return this.getDashboardStats();
+                    return this.getDashboardStats(organizationid);
                 // Client filters & actions
                 case "getClientsByFilter":
-                    return this.getClientsByFilter(args);
+                    return this.getClientsByFilter(organizationid, args);
                 case "terminateClientService":
-                    return this.terminateClientService(args);
+                    return this.terminateClientService(organizationid, args);
                 case "requestEmployeeReplacement":
-                    return this.requestEmployeeReplacement(args);
+                    return this.requestEmployeeReplacement(organizationid, args);
                 // Employee filters & actions
                 case "getAvailableEmployees":
-                    return this.getAvailableEmployees();
+                    return this.getAvailableEmployees(organizationid);
                 case "getEmployeesByWorkArea":
-                    return this.getEmployeesByWorkArea(args);
+                    return this.getEmployeesByWorkArea(organizationid, args);
                 case "getEmployeesByGrade":
-                    return this.getEmployeesByGrade(args);
+                    return this.getEmployeesByGrade(organizationid, args);
                 case "changeEmployeeAvailability":
-                    return this.changeEmployeeAvailability(args);
+                    return this.changeEmployeeAvailability(organizationid, args);
                 // Schedules
                 case "listSchedules":
-                    return this.listSchedules();
+                    return this.listSchedules(organizationid);
                 case "getSchedulesByEmployee":
-                    return this.getSchedulesByEmployee(args);
+                    return this.getSchedulesByEmployee(organizationid, args);
                 // Voucher prices
                 case "listVoucherPrices":
                     return this.listVoucherPrices();
@@ -116,7 +116,7 @@ export class ToolExecutorService {
                     return this.getBankAccountByArea(args);
                 // Contracts
                 case "listAllContracts":
-                    return this.listAllContracts();
+                    return this.listAllContracts(organizationid);
                 default:
                     return { success: false, error: `Unknown tool: ${toolName}` };
             }
@@ -153,12 +153,12 @@ export class ToolExecutorService {
         };
     }
 
-    private async searchClients(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async searchClients(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const query = String(args['query'] || "");
         const page = Number(args['page']) || 1;
         const limit = Math.min(Number(args['limit']) || 10, 50);
 
-        const result = await this.clientService.findAllPaginated(page, limit, query);
+        const result = await this.clientService.findAllPaginated(organizationid, page, limit, query);
         return {
             success: true,
             data: {
@@ -177,17 +177,17 @@ export class ToolExecutorService {
         };
     }
 
-    private async getClient(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async getClient(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const clientId = Number(args['clientId']);
-        const client = await this.clientService.findById(clientId);
+        const client = await this.clientService.findById(organizationid, clientId);
         if (!client) {
             return { success: false, error: "산모를 찾을 수 없습니다" };
         }
         return { success: true, data: client };
     }
 
-    private async createClient(args: ToolArgs): Promise<ToolExecutionResult> {
-        const client = await this.clientService.create({
+    private async createClient(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
+        const client = await this.clientService.create(organizationid, {
             name: String(args['name']),
             primaryEmployeeId: Number(args['primaryEmployeeId']),
             secondaryEmployeeId: args['secondaryEmployeeId'] ? Number(args['secondaryEmployeeId']) : null,
@@ -205,7 +205,7 @@ export class ToolExecutorService {
         return { success: true, data: { id: client.id, name: client.name, message: "산모가 등록되었습니다" } };
     }
 
-    private async updateClient(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async updateClient(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const clientId = Number(args['clientId']);
         const updateData: Record<string, unknown> = {};
         
@@ -220,19 +220,23 @@ export class ToolExecutorService {
         if (args['endDate'] !== undefined) updateData['endDate'] = args['endDate'] ? String(args['endDate']) : null;
         if (args['serviceStatus'] !== undefined) updateData['serviceStatus'] = args['serviceStatus'] ? String(args['serviceStatus']) : null;
 
-        const client = await this.clientService.update(clientId, updateData as Parameters<typeof this.clientService.update>[1]);
+        const client = await this.clientService.update(
+            organizationid,
+            clientId,
+            updateData as Parameters<typeof this.clientService.update>[2]
+        );
         return { success: true, data: { id: client.id, name: client.name, message: "산모 정보가 수정되었습니다" } };
     }
 
-    private async deleteClient(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async deleteClient(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const clientId = Number(args['clientId']);
-        await this.clientService.delete(clientId);
+        await this.clientService.delete(organizationid, clientId);
         return { success: true, data: { message: "산모가 삭제되었습니다" } };
     }
 
-    private async searchEmployees(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async searchEmployees(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const query = String(args['query'] || "");
-        const employees = await this.employeeService.findAll();
+        const employees = await this.employeeService.findAll(organizationid);
         const filtered = employees.filter(e => 
             e.name.includes(query) || e.phone.includes(query)
         );
@@ -248,17 +252,17 @@ export class ToolExecutorService {
         };
     }
 
-    private async getEmployee(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async getEmployee(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const employeeId = Number(args['employeeId']);
-        const employee = await this.employeeService.findById(employeeId);
+        const employee = await this.employeeService.findById(organizationid, employeeId);
         if (!employee) {
             return { success: false, error: "관리사를 찾을 수 없습니다" };
         }
         return { success: true, data: employee };
     }
 
-    private async createEmployee(args: ToolArgs): Promise<ToolExecutionResult> {
-        const employee = await this.employeeService.create({
+    private async createEmployee(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
+        const employee = await this.employeeService.create(organizationid, {
             name: String(args['name']),
             phone: String(args['phone']),
             grade: String(args['grade']),
@@ -269,7 +273,7 @@ export class ToolExecutorService {
         return { success: true, data: { id: employee.id, name: employee.name, message: "관리사가 등록되었습니다" } };
     }
 
-    private async updateEmployee(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async updateEmployee(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const employeeId = Number(args['employeeId']);
         const updateData: Record<string, unknown> = {};
         
@@ -279,13 +283,17 @@ export class ToolExecutorService {
         if (args['workArea'] !== undefined) updateData['workArea'] = String(args['workArea']).split(",").map(s => s.trim());
         if (args['openToNextWork'] !== undefined) updateData['openToNextWork'] = Boolean(args['openToNextWork']);
 
-        const employee = await this.employeeService.update(employeeId, updateData as Parameters<typeof this.employeeService.update>[1]);
+        const employee = await this.employeeService.update(
+            organizationid,
+            employeeId,
+            updateData as Parameters<typeof this.employeeService.update>[2]
+        );
         return { success: true, data: { id: employee.id, name: employee.name, message: "관리사 정보가 수정되었습니다" } };
     }
 
-    private async deleteEmployee(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async deleteEmployee(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const employeeId = Number(args['employeeId']);
-        await this.employeeService.delete(employeeId);
+        await this.employeeService.delete(organizationid, employeeId);
         return { success: true, data: { message: "관리사가 삭제되었습니다" } };
     }
 
@@ -293,31 +301,32 @@ export class ToolExecutorService {
         return { success: false, error: "메시지 목록 조회는 지원되지 않습니다" };
     }
 
-    private async createMessage(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async createMessage(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const message = await this.messageService.create(
+            organizationid,
             String(args['title']),
             String(args['text']),
         );
         return { success: true, data: { id: message.id, title: message.title, message: "메시지가 등록되었습니다" } };
     }
 
-    private async updateMessage(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async updateMessage(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const messageId = Number(args['messageId']);
         const title = args['title'] !== undefined ? String(args['title']) : "";
         const text = args['text'] !== undefined ? String(args['text']) : "";
 
-        const message = await this.messageService.update(messageId, title, text);
+        const message = await this.messageService.update(organizationid, messageId, title, text);
         return { success: true, data: { id: message.id, title: message.title, message: "메시지가 수정되었습니다" } };
     }
 
-    private async deleteMessage(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async deleteMessage(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const messageId = Number(args['messageId']);
-        await this.messageService.delete(messageId);
+        await this.messageService.delete(organizationid, messageId);
         return { success: true, data: { message: "메시지가 삭제되었습니다" } };
     }
 
-    private async listAvailableTemplates(): Promise<ToolExecutionResult> {
-        const templates = await this.areaTemplateService.findAll();
+    private async listAvailableTemplates(organizationid: string): Promise<ToolExecutionResult> {
+        const templates = await this.areaTemplateService.findAll(organizationid);
         return {
             success: true,
             data: templates.map(t => ({
@@ -328,16 +337,16 @@ export class ToolExecutorService {
         };
     }
 
-    private async createAndSendContract(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async createAndSendContract(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const clientId = Number(args['clientId']);
         const areaId = String(args['areaId']);
 
-        const template = await this.areaTemplateService.findByArea(areaId);
+        const template = await this.areaTemplateService.findByArea(organizationid, areaId);
         if (!template) {
             return { success: false, error: `지역 "${areaId}"에 대한 템플릿을 찾을 수 없습니다` };
         }
 
-        const result = await this.eformsignDocService.createAndSendContract({
+        const result = await this.eformsignDocService.createAndSendContract(organizationid, {
             clientId,
             templateId: template.templateId,
             templateName: template.templateName || undefined,
@@ -356,9 +365,9 @@ export class ToolExecutorService {
         };
     }
 
-    private async getContractStatus(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async getContractStatus(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         if (args['documentId']) {
-            const doc = await this.eformsignDocService.findByDocumentId(String(args['documentId']));
+            const doc = await this.eformsignDocService.findByDocumentId(organizationid, String(args['documentId']));
             if (!doc) {
                 return { success: false, error: "문서를 찾을 수 없습니다" };
             }
@@ -366,20 +375,20 @@ export class ToolExecutorService {
         }
 
         if (args['clientId']) {
-            const docs = await this.eformsignDocService.findByClientId(Number(args['clientId']));
+            const docs = await this.eformsignDocService.findByClientId(organizationid, Number(args['clientId']));
             return { success: true, data: docs };
         }
 
         return { success: false, error: "documentId 또는 clientId가 필요합니다" };
     }
 
-    private async getDashboardStats(): Promise<ToolExecutionResult> {
+    private async getDashboardStats(organizationid: string): Promise<ToolExecutionResult> {
         const [allClients, startingSoon, endingSoon, incompleteContracts, noContract] = await Promise.all([
-            this.clientService.findAll(),
-            this.clientService.findByFilter("starting-soon"),
-            this.clientService.findByFilter("ending-soon"),
-            this.clientService.findByFilter("incomplete-contracts"),
-            this.clientService.findByFilter("no-contract"),
+            this.clientService.findAll(organizationid),
+            this.clientService.findByFilter(organizationid, "starting-soon"),
+            this.clientService.findByFilter(organizationid, "ending-soon"),
+            this.clientService.findByFilter(organizationid, "incomplete-contracts"),
+            this.clientService.findByFilter(organizationid, "no-contract"),
         ]);
 
         return {
@@ -394,9 +403,9 @@ export class ToolExecutorService {
         };
     }
 
-    private async getClientsByFilter(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async getClientsByFilter(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const filter = String(args['filter']);
-        const clients = await this.clientService.findByFilter(filter);
+        const clients = await this.clientService.findByFilter(organizationid, filter);
         return {
             success: true,
             data: {
@@ -415,23 +424,28 @@ export class ToolExecutorService {
         };
     }
 
-    private async terminateClientService(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async terminateClientService(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const clientId = Number(args['clientId']);
         const reason = args['reason'] ? String(args['reason']) : undefined;
-        const client = await this.clientService.terminateService(clientId, reason);
+        const client = await this.clientService.terminateService(organizationid, clientId, reason);
         return { success: true, data: { id: client.id, name: client.name, message: "서비스가 종료되었습니다" } };
     }
 
-    private async requestEmployeeReplacement(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async requestEmployeeReplacement(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const clientId = Number(args['clientId']);
         const newPrimaryEmployeeId = Number(args['newPrimaryEmployeeId']);
         const newSecondaryEmployeeId = args['newSecondaryEmployeeId'] ? Number(args['newSecondaryEmployeeId']) : undefined;
-        const client = await this.clientService.requestReplacement(clientId, newPrimaryEmployeeId, newSecondaryEmployeeId);
+        const client = await this.clientService.requestReplacement(
+            organizationid,
+            clientId,
+            newPrimaryEmployeeId,
+            newSecondaryEmployeeId
+        );
         return { success: true, data: { id: client.id, name: client.name, message: "관리사 교체가 요청되었습니다" } };
     }
 
-    private async getAvailableEmployees(): Promise<ToolExecutionResult> {
-        const employees = await this.employeeService.findAllOpenToNextWork();
+    private async getAvailableEmployees(organizationid: string): Promise<ToolExecutionResult> {
+        const employees = await this.employeeService.findAllOpenToNextWork(organizationid);
         return {
             success: true,
             data: employees.map(e => ({
@@ -444,9 +458,9 @@ export class ToolExecutorService {
         };
     }
 
-    private async getEmployeesByWorkArea(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async getEmployeesByWorkArea(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const workArea = String(args['workArea']);
-        const employees = await this.employeeService.findByWorkArea(workArea);
+        const employees = await this.employeeService.findByWorkArea(organizationid, workArea);
         return {
             success: true,
             data: employees.map(e => ({
@@ -459,9 +473,9 @@ export class ToolExecutorService {
         };
     }
 
-    private async getEmployeesByGrade(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async getEmployeesByGrade(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const grade = String(args['grade']);
-        const employees = await this.employeeService.findByGrade(grade);
+        const employees = await this.employeeService.findByGrade(organizationid, grade);
         return {
             success: true,
             data: employees.map(e => ({
@@ -474,10 +488,10 @@ export class ToolExecutorService {
         };
     }
 
-    private async changeEmployeeAvailability(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async changeEmployeeAvailability(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const employeeId = Number(args['employeeId']);
         const available = Boolean(args['available']);
-        const employee = await this.employeeService.changeOpenStatus(employeeId, available);
+        const employee = await this.employeeService.changeOpenStatus(organizationid, employeeId, available);
         return { 
             success: true, 
             data: { 
@@ -489,8 +503,8 @@ export class ToolExecutorService {
         };
     }
 
-    private async listSchedules(): Promise<ToolExecutionResult> {
-        const schedules = await this.employeeScheduleService.findAll();
+    private async listSchedules(organizationid: string): Promise<ToolExecutionResult> {
+        const schedules = await this.employeeScheduleService.findAll(organizationid);
         return {
             success: true,
             data: schedules.map(s => ({
@@ -506,11 +520,11 @@ export class ToolExecutorService {
         };
     }
 
-    private async getSchedulesByEmployee(args: ToolArgs): Promise<ToolExecutionResult> {
+    private async getSchedulesByEmployee(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const employeeId = Number(args['employeeId']);
         const [primarySchedules, secondarySchedules] = await Promise.all([
-            this.employeeScheduleService.findByPrimaryEmployeeId(employeeId),
-            this.employeeScheduleService.findBySecondaryEmployeeId(employeeId),
+            this.employeeScheduleService.findByPrimaryEmployeeId(organizationid, employeeId),
+            this.employeeScheduleService.findBySecondaryEmployeeId(organizationid, employeeId),
         ]);
         return {
             success: true,
@@ -595,8 +609,8 @@ export class ToolExecutorService {
         };
     }
 
-    private async listAllContracts(): Promise<ToolExecutionResult> {
-        const contracts = await this.eformsignDocService.findAll();
+    private async listAllContracts(organizationid: string): Promise<ToolExecutionResult> {
+        const contracts = await this.eformsignDocService.findAll(organizationid);
         return {
             success: true,
             data: contracts.map(c => ({

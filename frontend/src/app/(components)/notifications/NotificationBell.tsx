@@ -1,24 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { Bell, BellOff } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+
+import { Spinner } from "@/components/ui/spinner";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-    Badge,
-    IconButton,
     Popover,
-    List,
-    ListItem,
-    ListItemText,
-    Typography,
-    Box,
-    Button,
-    Divider,
-    CircularProgress,
-    Alert,
-} from "@mui/material";
-import NotificationsIcon from "@mui/icons-material/Notifications";
-import NotificationsNoneIcon from "@mui/icons-material/NotificationsNone";
-import NotificationsOffIcon from "@mui/icons-material/NotificationsOff";
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
 import {
     useUnreadCount,
     useNotifications,
@@ -33,7 +28,7 @@ import { FilteredClientsDialog } from "./FilteredClientsDialog";
 
 type FilterType = "starting-soon" | "ending-soon" | "incomplete-contracts" | "no-contract";
 
-export type ParsedNotificationUrl = 
+export type ParsedNotificationUrl =
     | { type: "filter"; filterType: FilterType }
     | { type: "client"; clientId: number }
     | null;
@@ -46,12 +41,12 @@ export function parseNotificationUrl(url: string): ParsedNotificationUrl {
     if (filteredMatch) {
         return { type: "filter", filterType: filteredMatch[1] as FilterType };
     }
-    
+
     const clientMatch = url.match(/\/clients\?id=(\d+)/);
     if (clientMatch) {
         return { type: "client", clientId: parseInt(clientMatch[1]) };
     }
-    
+
     return null;
 }
 
@@ -100,9 +95,9 @@ function groupNotificationsByDate(notifications: Notification[]): GroupedNotific
  */
 export function NotificationBell() {
     const router = useRouter();
-    const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
+    const [isOpen, setIsOpen] = useState(false);
     const [subscribeLoading, setSubscribeLoading] = useState(false);
-    
+
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogFilterType, setDialogFilterType] = useState<FilterType | null>(null);
     const [dialogClientId, setDialogClientId] = useState<number | undefined>(undefined);
@@ -112,7 +107,6 @@ export function NotificationBell() {
         isSupported,
         isSubscribed,
         permission,
-        isLoading: subscriptionLoading,
         error: subscriptionError,
         subscribe,
     } = usePushNotification();
@@ -120,12 +114,22 @@ export function NotificationBell() {
     // Notification data (only fetch when subscribed)
     const { data: unreadCount = 0 } = useUnreadCount(isSubscribed);
     const { data: notifications = [], isLoading: notificationsLoading } = useNotifications(10, 0, isSubscribed);
+
+    // Lock body scroll when modal is open
+    useEffect(() => {
+        if (isOpen) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+        return () => {
+            document.body.style.overflow = '';
+        };
+    }, [isOpen]);
     const markAsRead = useMarkAsRead();
     const markAllAsRead = useMarkAllAsRead();
 
-    const open = Boolean(anchorEl);
-
-    const handleClick = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    const handleClick = async () => {
         if (!isSubscribed) {
             // Not subscribed - try to subscribe
             setSubscribeLoading(true);
@@ -134,29 +138,25 @@ export function NotificationBell() {
 
             if (!success) {
                 // Show error in popover
-                setAnchorEl(event.currentTarget);
+                setIsOpen(true);
             }
             // If success, state will update and next click will show notifications
         } else {
-            // Subscribed - show notifications popover
-            setAnchorEl(event.currentTarget);
+            // Subscribed - toggle popover
+            setIsOpen(!isOpen);
         }
-    };
-
-    const handleClose = () => {
-        setAnchorEl(null);
     };
 
     const handleNotificationClick = (notification: Notification) => {
         if (!notification.isRead) {
             markAsRead.mutate(notification.id);
         }
-        handleClose();
-        
+        setIsOpen(false);
+
         if (notification.data?.url) {
             const url = notification.data.url as string;
             const parsed = parseNotificationUrl(url);
-            
+
             if (parsed) {
                 if (parsed.type === "filter") {
                     setDialogFilterType(parsed.filterType);
@@ -171,7 +171,7 @@ export function NotificationBell() {
             }
         }
     };
-    
+
     const handleDialogClose = () => {
         setDialogOpen(false);
         setDialogFilterType(null);
@@ -187,14 +187,16 @@ export function NotificationBell() {
         // Not supported
         if (!isSupported) {
             return (
-                <Box sx={{ p: 2 }}>
-                    <Alert severity="warning">
-                        이 브라우저는 푸시 알림을 지원하지 않습니다.
-                        <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                            Chrome, Firefox, Edge 또는 Safari에서 사용해 주세요.
-                        </Typography>
+                <div className="p-4">
+                    <Alert variant="warning">
+                        <AlertDescription>
+                            이 브라우저는 푸시 알림을 지원하지 않습니다.
+                            <span className="block text-xs mt-2">
+                                Chrome, Firefox, Edge 또는 Safari에서 사용해 주세요.
+                            </span>
+                        </AlertDescription>
                     </Alert>
-                </Box>
+                </div>
             );
         }
 
@@ -204,197 +206,172 @@ export function NotificationBell() {
 
         if (isIOS && !isPWA && !isSubscribed) {
             return (
-                <Box sx={{ p: 2 }}>
-                    <Alert severity="info">
-                        <Typography variant="body2" fontWeight="bold">
-                            iOS에서 알림을 받으려면:
-                        </Typography>
-                        <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                            1. Safari에서 공유 버튼 탭<br />
-                            2. &quot;홈 화면에 추가&quot; 선택<br />
-                            3. 홈 화면에서 앱 실행 후 알림 설정
-                        </Typography>
+                <div className="p-4">
+                    <Alert>
+                        <AlertDescription>
+                            <p className="font-bold text-sm">iOS에서 알림을 받으려면:</p>
+                            <span className="block text-xs mt-2">
+                                1. Safari에서 공유 버튼 탭<br />
+                                2. &quot;홈 화면에 추가&quot; 선택<br />
+                                3. 홈 화면에서 앱 실행 후 알림 설정
+                            </span>
+                        </AlertDescription>
                     </Alert>
-                </Box>
+                </div>
             );
         }
 
         // Permission denied
         if (permission === 'denied') {
             return (
-                <Box sx={{ p: 2 }}>
-                    <Alert severity="error">
-                        알림 권한이 차단되어 있습니다.
-                        <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                            브라우저 설정에서 이 사이트의 알림 권한을 허용해 주세요.
-                        </Typography>
+                <div className="p-4">
+                    <Alert variant="destructive">
+                        <AlertDescription>
+                            알림 권한이 차단되어 있습니다.
+                            <span className="block text-xs mt-2">
+                                브라우저 설정에서 이 사이트의 알림 권한을 허용해 주세요.
+                            </span>
+                        </AlertDescription>
                     </Alert>
-                </Box>
+                </div>
             );
         }
 
         // Subscription error
         if (subscriptionError && !isSubscribed) {
             return (
-                <Box sx={{ p: 2 }}>
-                    <Alert severity="error">
-                        알림 설정 중 오류가 발생했습니다.
-                        <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                            {subscriptionError}
-                        </Typography>
+                <div className="p-4">
+                    <Alert variant="destructive">
+                        <AlertDescription>
+                            알림 설정 중 오류가 발생했습니다.
+                            <span className="block text-xs mt-2">
+                                {subscriptionError}
+                            </span>
+                        </AlertDescription>
                     </Alert>
-                </Box>
+                </div>
             );
         }
 
         // Subscribed - show notifications list
         return (
             <>
-                <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="h6">알림</Typography>
+                <div className="p-4 flex justify-between items-center bg-popover border-b">
+                    <h2 className="text-lg font-semibold">알림</h2>
                     {unreadCount > 0 && (
                         <Button
-                            size="small"
+                            variant="ghost"
+                            size="sm"
                             onClick={handleMarkAllAsRead}
                             disabled={markAllAsRead.isPending}
                         >
                             모두 읽음
                         </Button>
                     )}
-                </Box>
-
-                <Divider />
+                </div>
 
                 {notificationsLoading ? (
-                    <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
-                        <CircularProgress size={24} />
-                    </Box>
+                    <div className="p-8 flex justify-center">
+                        <Spinner size="default" />
+                    </div>
                 ) : notifications.length === 0 ? (
-                    <Box sx={{ p: 4, textAlign: 'center' }}>
-                        <Typography color="text.secondary">
-                            알림이 없습니다
-                        </Typography>
-                    </Box>
+                    <div className="p-8 text-center">
+                        <p className="text-muted-foreground">알림이 없습니다</p>
+                    </div>
                 ) : (
-                    <List sx={{ py: 0 }}>
+                    <div className="max-h-80 overflow-y-auto scrollbar-hide">
                         {groupNotificationsByDate(notifications).map((group) => (
-                            <Box key={group.date}>
-                                <Box
-                                    sx={{
-                                        px: 2,
-                                        py: 1,
-                                        bgcolor: 'grey.100',
-                                        position: 'sticky',
-                                        top: 0,
-                                    }}
-                                >
-                                    <Typography variant="caption" fontWeight="bold" color="text.secondary">
+                            <div key={group.date}>
+                                <div className="px-4 py-2 bg-muted sticky top-0">
+                                    <span className="text-xs font-bold text-muted-foreground">
                                         {group.label}
-                                    </Typography>
-                                </Box>
+                                    </span>
+                                </div>
                                 {group.notifications.map((notification) => (
-                                    <ListItem
+                                    <div
                                         key={notification.id}
                                         onClick={() => handleNotificationClick(notification)}
                                         data-testid={notification.isRead ? 'notification-item' : 'notification-item-unread'}
-                                        sx={{
-                                            cursor: 'pointer',
-                                            bgcolor: notification.isRead ? 'transparent' : 'action.hover',
-                                            '&:hover': {
-                                                bgcolor: 'action.selected',
-                                            },
-                                        }}
-                                        divider
+                                        className={`
+                                            px-4 py-3 cursor-pointer border-b transition-colors
+                                            ${notification.isRead ? 'bg-transparent' : 'bg-accent'}
+                                            hover:bg-accent/80
+                                        `}
                                     >
-                                        <ListItemText
-                                            primary={
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                    <Typography
-                                                        variant="body2"
-                                                        fontWeight={notification.isRead ? 'normal' : 'bold'}
-                                                    >
-                                                        {notification.title}
-                                                    </Typography>
-                                                    <Typography variant="caption" color="text.disabled" sx={{ ml: 1, flexShrink: 0 }}>
-                                                        {format(new Date(notification.sentAt), "a h:mm", { locale: ko })}
-                                                    </Typography>
-                                                </Box>
-                                            }
-                                            secondary={
-                                                <Typography
-                                                    variant="caption"
-                                                    color="text.secondary"
-                                                    component="span"
-                                                    display="block"
-                                                    sx={{
-                                                        overflow: 'hidden',
-                                                        textOverflow: 'ellipsis',
-                                                        whiteSpace: 'nowrap',
-                                                    }}
-                                                >
-                                                    {notification.body}
-                                                </Typography>
-                                            }
-                                        />
-                                    </ListItem>
+                                        <div className="flex justify-between items-center">
+                                            <p className={`text-sm ${notification.isRead ? 'font-normal' : 'font-bold'}`}>
+                                                {notification.title}
+                                            </p>
+                                            <span className="text-xs text-muted-foreground ml-2 shrink-0">
+                                                {format(new Date(notification.sentAt), "a h:mm", { locale: ko })}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground truncate mt-1">
+                                            {notification.body}
+                                        </p>
+                                    </div>
                                 ))}
-                            </Box>
+                            </div>
                         ))}
-                    </List>
+                    </div>
                 )}
             </>
         );
     };
 
-    const isLoading = subscribeLoading; // Only disable during active subscribe, not initial check
+    const isLoading = subscribeLoading;
+
+    const backdrop = (
+        <div 
+            className={`fixed inset-0 top-16 bg-black/30 backdrop-blur-[4px] z-40 sm:hidden transition-all duration-300 ${isOpen ? 'opacity-100 visible' : 'opacity-0 invisible'}`}
+            onClick={() => setIsOpen(false)}
+        />
+    );
 
     return (
         <>
-            <IconButton
-                onClick={handleClick}
-                disabled={isLoading}
-                color="inherit"
-                data-testid="notification-bell"
-            >
-                {isLoading ? (
-                    <CircularProgress size={24} color="inherit" />
-                ) : isSubscribed ? (
-                    <Badge badgeContent={unreadCount} color="error" data-testid="notification-badge">
-                        {/* Subscribed: White filled bell with primary.main outline */}
-                        <NotificationsIcon
-                            sx={(theme) => ({
-                                color: 'white',
-                                stroke: theme.palette.primary.main,
-                                strokeWidth: 1,
-                            })}
-                        />
-                    </Badge>
-                ) : (
-                    // Not subscribed: dark gray bell
-                    <NotificationsOffIcon sx={{ color: 'text.disabled' }} />
-                )}
-            </IconButton>
-
-            <Popover
-                open={open}
-                anchorEl={anchorEl}
-                onClose={handleClose}
-                data-testid="notification-popover"
-                anchorOrigin={{
-                    vertical: 'bottom',
-                    horizontal: 'right',
-                }}
-                transformOrigin={{
-                    vertical: 'top',
-                    horizontal: 'right',
-                }}
-                PaperProps={{
-                    sx: { width: 360, maxHeight: 480 },
-                }}
-            >
-                {renderPopoverContent()}
+            {typeof window !== 'undefined' && createPortal(backdrop, document.body)}
+            <Popover open={isOpen} onOpenChange={setIsOpen}>
+                <PopoverTrigger asChild>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleClick}
+                        disabled={isLoading}
+                        data-testid="notification-bell"
+                        className="relative transition-transform duration-200 hover:scale-110 active:scale-95"
+                    >
+                        {isLoading ? (
+                            <Spinner size="sm" />
+                        ) : isSubscribed ? (
+                            <>
+                                <Bell className="!h-5 !w-5" />
+                                {unreadCount > 0 && (
+                                    <Badge
+                                        data-testid="notification-badge"
+                                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full p-0 text-xs animate-bounce-subtle"
+                                    >
+                                        {unreadCount > 99 ? '99+' : unreadCount}
+                                    </Badge>
+                                )}
+                            </>
+                        ) : (
+                            <BellOff className="h-5 w-5 text-muted-foreground" />
+                        )}
+                    </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                    align="end"
+                    sideOffset={8}
+                    avoidCollisions={true}
+                    collisionPadding={16}
+                    className="!w-[80vw] sm:!w-[360px] max-h-[480px] p-0 overflow-hidden"
+                    data-testid="notification-popover"
+                >
+                    {renderPopoverContent()}
+                </PopoverContent>
             </Popover>
-            
+
             <FilteredClientsDialog
                 open={dialogOpen}
                 onClose={handleDialogClose}

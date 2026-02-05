@@ -1,26 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import {
-  Box,
-  Typography,
-  Button,
-  Stepper,
-  Step,
-  StepLabel,
-  Alert,
-  CircularProgress,
-  Divider,
-  TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-} from "@mui/material";
 import { ContentPaper } from "@/app/(components)/root/content-paper";
-import CloudUploadIcon from "@mui/icons-material/CloudUpload";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import RefreshIcon from "@mui/icons-material/Refresh";
+import { Upload, CheckCircle, RotateCcw } from "lucide-react";
 import { ImageDropzone } from "./ImageDropzone";
 import { ParsedDataPreview } from "./ParsedDataPreview";
 import {
@@ -28,6 +10,18 @@ import {
   useBulkUpdateVoucherPrices,
   ParsedVoucherPriceItem,
 } from "@/app/hooks/useVoucherPriceImageParsing";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 type Step = "upload" | "preview" | "success";
 
@@ -37,6 +31,16 @@ const steps = ["이미지 업로드", "데이터 확인", "완료"];
 const generateYearOptions = (): number[] => {
   const currentYear = new Date().getFullYear();
   return [currentYear - 1, currentYear, currentYear + 1, currentYear + 2];
+};
+
+// 현재 단계의 인덱스 반환
+const getStepIndex = (step: Step): number => {
+  switch (step) {
+    case "upload": return 0;
+    case "preview": return 1;
+    case "success": return 2;
+    default: return 0;
+  }
 };
 
 export function VoucherPriceUploadForm() {
@@ -53,19 +57,7 @@ export function VoucherPriceUploadForm() {
   const parseImageMutation = useParseVoucherImage();
   const bulkUpdateMutation = useBulkUpdateVoucherPrices();
   const yearOptions = generateYearOptions();
-
-  const getStepIndex = (step: Step): number => {
-    switch (step) {
-      case "upload":
-        return 0;
-      case "preview":
-        return 1;
-      case "success":
-        return 2;
-      default:
-        return 0;
-    }
-  };
+  const activeStep = getStepIndex(currentStep);
 
   const handleFileSelect = useCallback(
     async (file: File) => {
@@ -130,32 +122,57 @@ export function VoucherPriceUploadForm() {
   }, [parseImageMutation]);
 
   return (
-    <ContentPaper data-component="VoucherPriceUploadForm">
+    <ContentPaper data-component="VoucherPriceUploadForm" className="opacity-0 animate-fade-in">
       {/* 헤더 */}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          바우처 요금표 업데이트
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          정부지원 바우처 요금표 이미지를 업로드하면 AI가 자동으로 가격 정보를
-          추출합니다.
-        </Typography>
-      </Box>
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold">바우처 요금표 업데이트</h2>
+        <p className="text-sm text-muted-foreground">
+          정부지원 바우처 요금표 이미지를 업로드하면 AI가 자동으로 가격 정보를 추출합니다.
+        </p>
+      </div>
 
       {/* Stepper */}
-      <Stepper activeStep={getStepIndex(currentStep)} sx={{ mb: 4 }}>
-        {steps.map((label) => (
-          <Step key={label}>
-            <StepLabel>{label}</StepLabel>
-          </Step>
-        ))}
-      </Stepper>
+      <div className="mb-6">
+        <div className="flex items-center w-full">
+          {steps.map((label, index) => (
+            <div key={label} className="flex items-center flex-1 last:flex-initial">
+              <div className="flex flex-col items-center gap-2">
+                <div
+                  className={`
+                    flex items-center justify-center w-8 h-8 rounded-full border-2 text-sm font-medium transition-colors
+                    ${index < activeStep
+                      ? "bg-primary border-primary text-primary-foreground"
+                      : index === activeStep
+                      ? "border-primary text-primary bg-primary/10"
+                      : "border-muted-foreground/30 text-muted-foreground"
+                    }
+                  `}
+                >
+                  {index < activeStep ? (
+                    <CheckCircle className="w-4 h-4" />
+                  ) : (
+                    index + 1
+                  )}
+                </div>
+                <span className="text-xs text-muted-foreground hidden sm:block">{label}</span>
+              </div>
+              {index < steps.length - 1 && (
+                <div
+                  className={`flex-1 h-0.5 mx-2 sm:mx-4 ${
+                    index < activeStep ? "bg-primary" : "bg-muted"
+                  }`}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
 
-      <Divider sx={{ mb: 3 }} />
+      <Separator className="mb-4" />
 
       {/* Step 1: 이미지 업로드 */}
       {currentStep === "upload" && (
-        <Box>
+        <div className="opacity-0 animate-fade-in" style={{ animationDelay: "100ms" }}>
           <ImageDropzone
             onFileSelect={handleFileSelect}
             isLoading={parseImageMutation.isPending}
@@ -166,33 +183,34 @@ export function VoucherPriceUploadForm() {
                 : null
             }
           />
-        </Box>
+        </div>
       )}
 
       {/* Step 2: 데이터 미리보기 */}
       {currentStep === "preview" && (
-        <Box>
+        <div className="opacity-0 animate-fade-in" style={{ animationDelay: "100ms" }}>
           {/* 연도 선택 */}
-          <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2 }}>
-            <FormControl size="small" sx={{ minWidth: 120 }}>
-              <InputLabel id="year-select-label">적용 연도</InputLabel>
-              <Select
-                labelId="year-select-label"
-                value={selectedYear}
-                label="적용 연도"
-                onChange={(e) => setSelectedYear(Number(e.target.value))}
-              >
+          <div className="mb-4 flex items-center gap-3">
+            <Label htmlFor="year-select">적용 연도</Label>
+            <Select
+              value={String(selectedYear)}
+              onValueChange={(value: string) => setSelectedYear(Number(value))}
+            >
+              <SelectTrigger id="year-select" className="w-[120px]">
+                <SelectValue placeholder="연도 선택" />
+              </SelectTrigger>
+              <SelectContent>
                 {yearOptions.map((year) => (
-                  <MenuItem key={year} value={year}>
+                  <SelectItem key={year} value={String(year)}>
                     {year}년
-                  </MenuItem>
+                  </SelectItem>
                 ))}
-              </Select>
-            </FormControl>
-            <Typography variant="body2" color="text.secondary">
+              </SelectContent>
+            </Select>
+            <span className="text-sm text-muted-foreground">
               선택한 연도의 요금표로 업데이트됩니다.
-            </Typography>
-          </Box>
+            </span>
+          </div>
 
           <ParsedDataPreview
             data={parsedData}
@@ -201,97 +219,80 @@ export function VoucherPriceUploadForm() {
           />
 
           {/* 액션 버튼 */}
-          <Box
-            sx={{
-              mt: 3,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <Button variant="outlined" onClick={handleBackToUpload}>
+          <div className="mt-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <Button variant="outline" onClick={handleBackToUpload}>
               다른 이미지 업로드
             </Button>
 
-            <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
               {warnings.length > 0 && (
-                <Alert severity="warning" sx={{ py: 0 }}>
-                  경고가 있지만 업데이트를 진행할 수 있습니다
+                <Alert className="py-2 bg-warning/10 border-warning/30 text-warning">
+                  <AlertDescription className="text-sm">
+                    경고가 있지만 업데이트를 진행할 수 있습니다
+                  </AlertDescription>
                 </Alert>
               )}
               <Button
-                variant="contained"
-                color="primary"
                 onClick={handleConfirmUpdate}
                 disabled={bulkUpdateMutation.isPending || parsedData.length === 0}
-                startIcon={
-                  bulkUpdateMutation.isPending ? (
-                    <CircularProgress size={20} />
-                  ) : (
-                    <CloudUploadIcon />
-                  )
-                }
+                className="gap-2"
               >
+                {bulkUpdateMutation.isPending ? (
+                  <Spinner className="h-4 w-4" />
+                ) : (
+                  <Upload className="h-4 w-4" />
+                )}
                 {bulkUpdateMutation.isPending ? "업데이트 중..." : `${selectedYear}년 요금표 업데이트`}
               </Button>
-            </Box>
-          </Box>
+            </div>
+          </div>
 
           {/* 업데이트 에러 */}
           {bulkUpdateMutation.isError && (
-            <Alert severity="error" sx={{ mt: 2 }}>
-              업데이트 실패:{" "}
-              {bulkUpdateMutation.error?.message || "알 수 없는 오류"}
+            <Alert variant="destructive" className="mt-4">
+              <AlertDescription>
+                업데이트 실패: {bulkUpdateMutation.error?.message || "알 수 없는 오류"}
+              </AlertDescription>
             </Alert>
           )}
-        </Box>
+        </div>
       )}
 
       {/* Step 3: 완료 */}
       {currentStep === "success" && updateResult && (
-        <Box
-          sx={{
-            textAlign: "center",
-            py: 4,
-          }}
-        >
-          <CheckCircleIcon
-            sx={{ fontSize: 64, color: "success.main", mb: 2 }}
-          />
-          <Typography variant="h6" gutterBottom>
-            업데이트 완료!
-          </Typography>
+        <div className="text-center py-8 opacity-0 animate-fade-in" style={{ animationDelay: "100ms" }}>
+          <div className="flex justify-center mb-4">
+            <div className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center">
+              <CheckCircle className="w-8 h-8 text-success" />
+            </div>
+          </div>
+          <h3 className="text-xl font-semibold mb-2">업데이트 완료!</h3>
 
-          <Box sx={{ my: 3 }}>
-            <Typography variant="body1">
-              <strong>{updateResult.updated.length}</strong>개 항목 업데이트,{" "}
-              <strong>{updateResult.created.length}</strong>개 항목 신규 생성
-            </Typography>
-          </Box>
+          <div className="my-4">
+            <p className="text-base">
+              <strong className="text-primary">{updateResult.updated.length}</strong>개 항목 업데이트,{" "}
+              <strong className="text-primary">{updateResult.created.length}</strong>개 항목 신규 생성
+            </p>
+          </div>
 
           {updateResult.errors.length > 0 && (
-            <Alert severity="warning" sx={{ mb: 3, textAlign: "left" }}>
-              <Typography variant="subtitle2" gutterBottom>
-                일부 항목 처리 실패:
-              </Typography>
-              <Box component="ul" sx={{ m: 0, pl: 2 }}>
-                {updateResult.errors.map((error, index) => (
-                  <li key={index}>
-                    <Typography variant="body2">{error}</Typography>
-                  </li>
-                ))}
-              </Box>
+            <Alert className="mb-4 text-left bg-warning/10 border-warning/30">
+              <AlertDescription>
+                <p className="font-semibold mb-2">일부 항목 처리 실패:</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  {updateResult.errors.map((error, index) => (
+                    <li key={index} className="text-sm">{error}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
             </Alert>
           )}
 
-          <Button
-            variant="outlined"
-            onClick={handleReset}
-            startIcon={<RefreshIcon />}
-          >
+          <Button variant="outline" onClick={handleReset} className="gap-2">
+            <RotateCcw className="h-4 w-4" />
             새 요금표 업로드
           </Button>
-        </Box>
+        </div>
       )}
     </ContentPaper>
   );

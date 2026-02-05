@@ -1,44 +1,58 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import {
-    Box,
-    IconButton,
-    Chip,
-    CircularProgress,
-    Alert,
-} from "@mui/material";
 import { Plus } from "lucide-react";
 import { useClients, useDeleteClient, useClient } from "@/app/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/app/lib/client/types";
-import { ContentPaper } from "../root/content-paper";
 import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
-import { DataTable, type DataTableColumn, type FilterOption } from "@/app/(components)/ui/datatable";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ContentPaper } from "../root/content-paper";
+import { DataTable, type DataTableColumn, type FilterOption } from "../ui/datatable";
+import { cn } from "@/lib/utils";
 
-// Filter options for service status (includes "전체" for all)
+// Filter options for status dropdown - converted to DataTable FilterOption format
 const STATUS_FILTER_OPTIONS: FilterOption[] = [
-    { label: "전체", value: null, color: "default" },
-    ...SERVICE_STATUS_OPTIONS.map(opt => ({
-        label: opt.label,
-        value: opt.value,
-        color: opt.color,
-    })),
+    { value: null, label: "전체", color: "default" },
+    { value: "active", label: "진행중", color: "success" },
+    { value: "pending", label: "대기", color: "warning" },
+    { value: "completed", label: "완료", color: "info" },
+    { value: "terminated", label: "종료", color: "default" },
 ];
 
-const getStatusChip = (status: string | null) => {
+// Status styles matching reference design
+type ServiceStatus = "active" | "pending" | "completed" | "terminated" | "replacement_requested" | "inactive";
+
+const statusStyles: Record<ServiceStatus, string> = {
+    active: "bg-success/10 text-success border-success/20",
+    pending: "bg-warning/10 text-warning border-warning/20",
+    completed: "bg-info/10 text-info border-info/20",
+    terminated: "bg-muted text-muted-foreground border-muted",
+    replacement_requested: "bg-destructive/10 text-destructive border-destructive/20",
+    inactive: "bg-muted text-muted-foreground border-muted",
+};
+
+const getStatusBadge = (status: string | null) => {
     const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
-    if (!option) return <Chip label="-" size="small" variant="outlined" />;
+    if (!option) {
+        return (
+            <Badge variant="outline" className="bg-muted text-muted-foreground border-muted">
+                -
+            </Badge>
+        );
+    }
+
+    const normalizedStatus = (status || "inactive") as ServiceStatus;
+    const styleClass = statusStyles[normalizedStatus] || statusStyles.inactive;
 
     return (
-        <Chip
-            label={option.label}
-            color={option.color}
-            size="small"
-        />
+        <Badge variant="outline" className={cn(styleClass)}>
+            {option.label}
+        </Badge>
     );
 };
 
@@ -46,6 +60,9 @@ const formatDate = (dateStr: string | null): string => {
     if (!dateStr) return "-";
     return new Date(dateStr).toLocaleDateString("ko-KR");
 };
+
+// Define row type for DataTable
+type ClientRow = Client & Record<string, unknown>;
 
 export function ClientsTable() {
     const locale = useLocale();
@@ -62,7 +79,7 @@ export function ClientsTable() {
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
-    const { data, isLoading, error, isFetching } = useClients(
+    const { data, isLoading, error } = useClients(
         page + 1,
         rowsPerPage,
         searchQuery.trim() ? searchQuery.trim() : undefined
@@ -71,6 +88,7 @@ export function ClientsTable() {
 
     const { data: clientFromParam } = useClient(clientIdParam ? Number(clientIdParam) : 0);
 
+    // Open detail modal when client ID is in URL params
     useEffect(() => {
         if (clientIdParam && clientFromParam) {
             setSelectedClient(clientFromParam);
@@ -78,22 +96,13 @@ export function ClientsTable() {
         }
     }, [clientIdParam, clientFromParam]);
 
-    const handlePageChange = (newPage: number) => {
-        setPage(newPage);
-    };
-
-    const handleFilterChange = (value: string | null) => {
-        setStatusFilter(value);
-        setPage(0);
-    };
-
     const handleAddNew = () => {
         setEditingClient(null);
         setFormDialogOpen(true);
     };
 
-    const handleRowClick = (client: Client) => {
-        setSelectedClient(client);
+    const handleRowClick = (client: ClientRow) => {
+        setSelectedClient(client as Client);
         setDetailModalOpen(true);
     };
 
@@ -125,116 +134,108 @@ export function ClientsTable() {
         }
     };
 
-    if (isLoading) {
-        return (
-            <ContentPaper
-                title={t(locale, "clients.title")}
-                subtitle={t(locale, "clients.subtitle")}
-                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
-            >
-                <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-                    <CircularProgress />
-                </Box>
-            </ContentPaper>
-        );
-    }
+    const handleSearchChange = (query: string) => {
+        setSearchQuery(query);
+        setPage(0);
+    };
 
-    if (error) {
-        return (
-            <ContentPaper
-                title={t(locale, "clients.title")}
-                subtitle={t(locale, "clients.subtitle")}
-                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
-            >
-                <Alert severity="error">{t(locale, "clients.load-error")}</Alert>
-            </ContentPaper>
-        );
-    }
+    const handleFilterChange = (value: string | null) => {
+        setStatusFilter(value);
+        setPage(0);
+    };
 
+    const handlePageChange = (newPage: number) => {
+        setPage(newPage);
+    };
+
+    // Filter clients by status (client-side filtering on server-fetched data)
     const clients = data?.data || [];
+    const filteredClients = useMemo(() => {
+        if (!statusFilter) return clients;
+        return clients.filter((client) => client.serviceStatus === statusFilter);
+    }, [clients, statusFilter]);
+
     const total = data?.total || 0;
-    type ClientRow = Client & Record<string, unknown>;
-    const tableData = clients as ClientRow[];
+
+    // Define columns for DataTable
     const columns: DataTableColumn<ClientRow>[] = [
         {
             key: "name",
             header: t(locale, "clients.table.name"),
             align: "center",
-            width: "30%",
         },
         {
             key: "serviceStatus",
             header: t(locale, "clients.table.status"),
             align: "center",
-            width: "40%",
-            render: (client) => getStatusChip(client.serviceStatus),
+            render: (row) => getStatusBadge(row.serviceStatus as string | null),
         },
         {
             key: "startDate",
             header: t(locale, "clients.table.start-date"),
             align: "center",
-            width: "30%",
-            render: (client) => formatDate(client.startDate),
+            render: (row) => formatDate(row.startDate as string | null),
         },
     ];
-    const searchPlaceholder = t(locale, "clients.search-placeholder") || "이름 검색";
+
+    // Toolbar action button
+    const toolbarActions = (
+        <Button
+            className="gap-2 w-[100px]"
+            onClick={handleAddNew}
+            data-testid="add-client-button"
+        >
+            <Plus className="h-4 w-4" />
+            {t(locale, "clients.add")}
+        </Button>
+    );
 
     return (
         <ContentPaper
-            data-component="ClientsTable"
             title={t(locale, "clients.title")}
             subtitle={t(locale, "clients.subtitle")}
-            sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            className="min-h-[70vh] flex-grow w-full"
         >
-            <Box data-component="clients-table-container">
-                <DataTable
-                    data={tableData}
+            <div data-component="clients-table-container">
+                <DataTable<ClientRow>
+                    data={filteredClients as ClientRow[]}
                     columns={columns}
-                    isLoading={isFetching && !clients.length}
-                    getRowKey={(client) => client.id}
+                    isLoading={isLoading}
+                    error={error instanceof Error ? error : null}
+                    getRowKey={(row) => String(row.id)}
+                    searchEnabled
+                    searchPlaceholder={t(locale, "clients.search-placeholder")}
+                    searchQuery={searchQuery}
+                    onSearch={handleSearchChange}
+                    filterOptions={STATUS_FILTER_OPTIONS}
+                    filterValue={statusFilter}
+                    onFilterChange={handleFilterChange}
                     pagination="server"
                     totalCount={total}
                     pageSize={rowsPerPage}
                     page={page}
                     onPageChange={handlePageChange}
-                    onRowClick={(client) => handleRowClick(client)}
-                    searchEnabled
-                    searchFields={["name"]}
-                    searchPlaceholder={searchPlaceholder}
-                    searchQuery={searchQuery}
-                    onSearch={setSearchQuery}
+                    onRowClick={handleRowClick}
+                    toolbarActions={toolbarActions}
                     emptyMessage={t(locale, "clients.no-data")}
-                    filterOptions={STATUS_FILTER_OPTIONS}
-                    filterValue={statusFilter}
-                    onFilterChange={handleFilterChange}
-                    toolbarActions={
-                        <IconButton
-                            size="medium"
-                            sx={{ color: "#1e88e5", ml: "auto" }}
-                            onClick={handleAddNew}
-                            data-testid="add-client-button"
-                        >
-                            <Plus size={30} strokeWidth={2} />
-                        </IconButton>
-                    }
                 />
+            </div>
 
-                {/* Detail Modal */}
-                <ClientDetailModal
-                    open={detailModalOpen}
-                    onClose={handleDetailModalClose}
-                    client={selectedClient}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                />
+            {/* Detail Modal */}
+            <ClientDetailModal
+                open={detailModalOpen}
+                onClose={handleDetailModalClose}
+                client={selectedClient}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+            />
 
-                {/* Form Dialog */}
-                <ClientFormDialog
-                    open={formDialogOpen}
-                    onClose={handleFormDialogClose}
-                    client={editingClient}
-                />
-            </Box>
+            {/* Form Dialog */}
+            <ClientFormDialog
+                open={formDialogOpen}
+                onClose={handleFormDialogClose}
+                client={editingClient}
+            />
         </ContentPaper>
     );
 }

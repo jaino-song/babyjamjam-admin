@@ -1,25 +1,34 @@
-import { TextField } from "@mui/material";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 interface TextareaInputProps {
-    value: string;
-    onChange: (value: string) => void;
-    label: string;
-    placeholder?: string;
-    required?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  placeholder?: string;
+  required?: boolean;
 }
 
-export const TextareaInput = ({ value, onChange, label, placeholder, required }: TextareaInputProps) => {
-    return (
-        <TextField
-            fullWidth
-            multiline
-            rows={4}
-            label={label}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            required={required}
-            sx={{ bgcolor: "background.default" }}
-        />
-    );
+export const TextareaInput = ({
+  value,
+  onChange,
+  label,
+  placeholder,
+  required,
+}: TextareaInputProps) => {
+  return (
+    <div className="space-y-2">
+      <Label>
+        {label}
+        {required && <span className="text-destructive ml-1">*</span>}
+      </Label>
+      <Textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={4}
+        className="bg-background"
+      />
+    </div>
+  );
 };

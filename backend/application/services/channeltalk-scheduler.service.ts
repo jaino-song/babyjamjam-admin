@@ -22,6 +22,8 @@ export class ChannelTalkSchedulerService {
         this.logger.log("[Scheduler] Starting contract reminder check...");
 
         try {
+            // todo: iterate over all organizations
+            const organizationid = "";
             const now = new Date();
 
             // 3 days from now
@@ -33,7 +35,10 @@ export class ChannelTalkSchedulerService {
             oneDayLater.setDate(oneDayLater.getDate() + 1);
 
             // Send 3-day reminders
-            const clientsFor3Days = await this.clientRepository.findByStartDate(threeDaysLater);
+            const clientsFor3Days = await this.clientRepository.findByStartDate(
+                organizationid,
+                threeDaysLater
+            );
             this.logger.log(`[Scheduler] Found ${clientsFor3Days.length} clients for 3-day reminder`);
 
             for (const client of clientsFor3Days) {
@@ -52,7 +57,10 @@ export class ChannelTalkSchedulerService {
             }
 
             // Send 1-day reminders
-            const clientsFor1Day = await this.clientRepository.findByStartDate(oneDayLater);
+            const clientsFor1Day = await this.clientRepository.findByStartDate(
+                organizationid,
+                oneDayLater
+            );
             this.logger.log(`[Scheduler] Found ${clientsFor1Day.length} clients for 1-day reminder`);
 
             for (const client of clientsFor1Day) {
@@ -88,11 +96,13 @@ export class ChannelTalkSchedulerService {
         this.logger.log("[Scheduler] Starting survey request check...");
 
         try {
+            // todo: iterate over all organizations
+            const organizationid = "";
             // Check clients whose service ended yesterday
             const yesterday = new Date();
             yesterday.setDate(yesterday.getDate() - 1);
 
-            const clients = await this.clientRepository.findByEndDate(yesterday);
+            const clients = await this.clientRepository.findByEndDate(organizationid, yesterday);
             this.logger.log(`[Scheduler] Found ${clients.length} clients for survey request`);
 
             for (const client of clients) {
@@ -130,13 +140,15 @@ export class ChannelTalkSchedulerService {
     /**
      * Check and send payment reminders
      * Runs daily at 9 AM KST
-     * Note: Requires created_at field in client model (currently not available)
+     * Note: Requires createdAt field in client model (currently not available)
      */
     @Cron("0 9 * * *", { timeZone: "Asia/Seoul" })
     async checkPaymentReminders(): Promise<void> {
         this.logger.log("[Scheduler] Starting payment reminder check...");
 
         try {
+            // todo: iterate over all organizations
+            const organizationid = "";
             // Payment reminder intervals (days after registration)
             const reminderIntervals = [3, 7];
 
@@ -144,7 +156,10 @@ export class ChannelTalkSchedulerService {
                 const targetDate = new Date();
                 targetDate.setDate(targetDate.getDate() - days);
 
-                const clients = await this.clientRepository.findByCreatedDate(targetDate);
+                const clients = await this.clientRepository.findByCreatedDate(
+                    organizationid,
+                    targetDate
+                );
                 this.logger.log(
                     `[Scheduler] Found ${clients.length} clients for ${days}-day payment reminder`
                 );

@@ -1,9 +1,10 @@
 'use client';
 
 import { use } from 'react';
-import { Box, Button, CircularProgress, Typography, Chip } from '@mui/material';
-import { ArrowBack } from '@mui/icons-material';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { useSystemTemplate } from '@/features/system-templates/hooks';
 import { SystemTemplateEditor } from '@/features/system-templates/components/system-template-editor';
 import { VersionHistory } from '@/features/system-templates/components/VersionHistory';
@@ -16,87 +17,59 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
 
   if (isLoading) {
     return (
-      <Box sx={{ bgcolor: "background.paper" }}>
-        <Box
-          component="section"
-          sx={{
-            px: { xs: 2, sm: 3, md: 6 },
-            py: { xs: 3, sm: 4 },
-            mx: "auto",
-          }}
-        >
-          <ContentPaper sx={{ minHeight: "70vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <CircularProgress />
+      <div className="bg-background">
+        <section className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
+          <ContentPaper className="min-h-[70vh] flex items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </ContentPaper>
-        </Box>
-      </Box>
+        </section>
+      </div>
     );
   }
 
   if (!template) {
     return (
-      <Box sx={{ bgcolor: "background.paper" }}>
-        <Box
-          component="section"
-          sx={{
-            px: { xs: 2, sm: 3, md: 6 },
-            py: { xs: 3, sm: 4 },
-            mx: "auto",
-          }}
-        >
-          <ContentPaper title="오류" sx={{ minHeight: "70vh" }}>
-            <Typography>템플릿을 찾을 수 없습니다.</Typography>
+      <div className="bg-background">
+        <section className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
+          <ContentPaper title="오류" className="min-h-[70vh]">
+            <p className="text-muted-foreground">템플릿을 찾을 수 없습니다.</p>
           </ContentPaper>
-        </Box>
-      </Box>
+        </section>
+      </div>
     );
   }
 
   const customHeader = (
-    <Box sx={{ mb: 3 }}>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
-        <Typography
-          variant="h5"
-          color="primary.main"
-          fontWeight={700}
-        >
+    <div className="mb-6">
+      <div className="flex items-center gap-3 mb-2">
+        <h2 className="text-xl font-bold text-primary">
           {template.name}
-        </Typography>
-        <Chip 
-          label="시스템" 
-          color="primary" 
-          size="small"
-        />
-      </Box>
-      <Typography variant="body2" color="text.secondary">
+        </h2>
+        <Badge>시스템</Badge>
+      </div>
+      <p className="text-sm text-muted-foreground">
         {template.description}
-      </Typography>
-    </Box>
+      </p>
+    </div>
   );
 
   return (
-    <Box sx={{ bgcolor: "background.paper" }}>
-      <Box
-        component="section"
-        sx={{
-          px: { xs: 2, sm: 3, md: 6 },
-          py: { xs: 3, sm: 4 },
-          mx: "auto",
-        }}
-      >
+    <div className="bg-background">
+      <section className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
         <ContentPaper
           header={customHeader}
-          sx={{ minHeight: "70vh" }}
+          className="min-h-[70vh]"
         >
-          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-            <Button startIcon={<ArrowBack />} onClick={() => router.back()}>
+          <div className="flex justify-between items-center mb-6">
+            <Button variant="ghost" onClick={() => router.back()}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
               뒤로
             </Button>
             <VersionHistory templateKey={template.templateKey} onRollback={() => router.refresh()} />
-          </Box>
+          </div>
           <SystemTemplateEditor template={template} />
         </ContentPaper>
-      </Box>
-    </Box>
+      </section>
+    </div>
   );
 }

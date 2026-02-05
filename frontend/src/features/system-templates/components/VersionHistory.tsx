@@ -1,24 +1,27 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  Box,
-  Drawer,
-  Button,
-  List,
-  IconButton,
-  Typography,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Divider,
-  CircularProgress,
-  Paper,
-} from '@mui/material';
-import { History, Visibility, Restore, RestartAlt } from '@mui/icons-material';
+import { History, Eye, RotateCcw, RefreshCcw, Loader2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
+import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
+import { Card } from '@/components/ui/card';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { systemTemplateService } from '@/services/system-template.service';
 import {
   systemTemplateKeys,
@@ -79,146 +82,143 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
 
   return (
     <>
-      <Button startIcon={<History />} variant="outlined" onClick={() => setOpen(true)}>
-        버전 기록
-      </Button>
-
-      <Drawer anchor="right" open={open} onClose={() => setOpen(false)}>
-        <Box sx={{ width: 350, p: 2 }}>
-          <Typography variant="h6" mb={2}>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          <Button variant="outline">
+            <History className="h-4 w-4 mr-2" />
             버전 기록
-          </Typography>
-
-          {isLoading ? (
-            <CircularProgress />
-          ) : (
-            <List disablePadding sx={{ p: 0, listStyle: 'none' }}>
-              {versions?.map((version) => (
-                <Box
-                  key={version.versionNumber}
-                  component="li"
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 1,
-                    py: 1,
-                    borderBottom: '1px solid',
-                    borderColor: 'divider',
-                    '&:last-of-type': { borderBottom: 'none' },
-                  }}
-                >
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography variant="subtitle2">{`버전 ${version.versionNumber}`}</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {new Date(version.createdAt).toLocaleString('ko-KR')}
-                      {version.createdBy && ` · ${version.createdBy}`}
-                    </Typography>
-                  </Box>
-
-                  <Box sx={{ flexShrink: 0, display: 'flex', gap: 0.5 }}>
-                    <IconButton
-                      size="small"
-                      onClick={() => setPreviewVersion(version)}
-                      title="미리보기"
-                    >
-                      <Visibility fontSize="small" />
-                    </IconButton>
-                    <IconButton
-                      size="small"
-                      onClick={() =>
-                        setConfirmDialog({ type: 'rollback', version: version.versionNumber })
-                      }
-                      title="이 버전으로 복원"
-                    >
-                      <Restore fontSize="small" />
-                    </IconButton>
-                  </Box>
-                </Box>
-              ))}
-            </List>
-          )}
-
-          <Divider sx={{ my: 2 }} />
-
-          <Button
-            fullWidth
-            variant="outlined"
-            color="warning"
-            startIcon={<RestartAlt />}
-            onClick={() => setConfirmDialog({ type: 'reset' })}
-          >
-            기본값으로 초기화
           </Button>
-        </Box>
-      </Drawer>
+        </SheetTrigger>
+        <SheetContent className="w-[350px]">
+          <SheetHeader>
+            <SheetTitle>버전 기록</SheetTitle>
+          </SheetHeader>
 
-      <Dialog open={!!previewVersion} onClose={() => setPreviewVersion(null)} fullWidth maxWidth="sm">
-        <DialogTitle>
-          {previewVersion ? `버전 ${previewVersion.versionNumber} 미리보기` : '버전 미리보기'}
-        </DialogTitle>
-        <DialogContent dividers>
+          <div className="mt-4">
+            {isLoading ? (
+              <div className="flex justify-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : (
+              <ul className="space-y-0">
+                {versions?.map((version) => (
+                  <li
+                    key={version.versionNumber}
+                    className="flex items-start gap-2 py-3 border-b border-border last:border-b-0"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{`버전 ${version.versionNumber}`}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(version.createdAt).toLocaleString('ko-KR')}
+                        {version.createdBy && ` · ${version.createdBy}`}
+                      </p>
+                    </div>
+
+                    <div className="flex-shrink-0 flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => setPreviewVersion(version)}
+                        title="미리보기"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() =>
+                          setConfirmDialog({ type: 'rollback', version: version.versionNumber })
+                        }
+                        title="이 버전으로 복원"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <Separator className="my-4" />
+
+            <Button
+              variant="outline"
+              className="w-full text-warning border-warning hover:bg-warning/10"
+              onClick={() => setConfirmDialog({ type: 'reset' })}
+            >
+              <RefreshCcw className="h-4 w-4 mr-2" />
+              기본값으로 초기화
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Preview Dialog */}
+      <Dialog open={!!previewVersion} onOpenChange={() => setPreviewVersion(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {previewVersion ? `버전 ${previewVersion.versionNumber} 미리보기` : '버전 미리보기'}
+            </DialogTitle>
+          </DialogHeader>
           {isPreviewLoading ? (
-            <Box display="flex" justifyContent="center" py={3}>
-              <CircularProgress />
-            </Box>
+            <div className="flex justify-center py-6">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
           ) : (
             <>
               {previewVersion && (
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                <p className="text-sm text-muted-foreground mb-2">
                   {new Date(previewVersion.createdAt).toLocaleString('ko-KR')}
                   {previewVersion.createdBy && ` · ${previewVersion.createdBy}`}
-                </Typography>
+                </p>
               )}
-              <Paper
-                sx={{
-                  p: 2,
-                  bgcolor: 'grey.50',
-                  maxHeight: 420,
-                  overflow: 'auto',
-                }}
-              >
-                <Typography
-                  variant="body2"
-                  sx={{
-                    whiteSpace: 'pre-wrap',
-                    fontFamily: 'inherit',
-                    lineHeight: 1.6,
-                  }}
-                >
+              <Card className="p-4 bg-muted/50 max-h-[420px] overflow-auto">
+                <p className="text-sm whitespace-pre-wrap leading-relaxed">
                   {previewDetail?.content ?? ''}
-                </Typography>
-              </Paper>
+                </p>
+              </Card>
             </>
           )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPreviewVersion(null)}>
+              닫기
+            </Button>
+          </DialogFooter>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setPreviewVersion(null)}>닫기</Button>
-        </DialogActions>
       </Dialog>
 
-      <Dialog open={!!confirmDialog} onClose={() => setConfirmDialog(null)}>
-        <DialogTitle>
-          {confirmDialog?.type === 'rollback' ? '버전 복원' : '기본값 초기화'}
-        </DialogTitle>
+      {/* Confirm Dialog */}
+      <Dialog open={!!confirmDialog} onOpenChange={() => setConfirmDialog(null)}>
         <DialogContent>
-          {confirmDialog?.type === 'rollback'
-            ? `버전 ${confirmDialog.version}으로 복원하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.`
-            : '기본값으로 초기화하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.'}
+          <DialogHeader>
+            <DialogTitle>
+              {confirmDialog?.type === 'rollback' ? '버전 복원' : '기본값 초기화'}
+            </DialogTitle>
+            <DialogDescription>
+              {confirmDialog?.type === 'rollback'
+                ? `버전 ${confirmDialog.version}으로 복원하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.`
+                : '기본값으로 초기화하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDialog(null)}>
+              취소
+            </Button>
+            <Button
+              variant={confirmDialog?.type === 'reset' ? 'destructive' : 'default'}
+              onClick={() =>
+                confirmDialog?.type === 'rollback'
+                  ? handleRollback(confirmDialog.version!)
+                  : handleReset()
+              }
+            >
+              {confirmDialog?.type === 'rollback' ? '복원' : '초기화'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConfirmDialog(null)}>취소</Button>
-          <Button
-            variant="contained"
-            color={confirmDialog?.type === 'reset' ? 'warning' : 'primary'}
-            onClick={() =>
-              confirmDialog?.type === 'rollback'
-                ? handleRollback(confirmDialog.version!)
-                : handleReset()
-            }
-          >
-            {confirmDialog?.type === 'rollback' ? '복원' : '초기화'}
-          </Button>
-        </DialogActions>
       </Dialog>
     </>
   );

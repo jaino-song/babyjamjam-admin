@@ -1,13 +1,13 @@
 "use client";
 
-import { Box, Avatar } from "@mui/material";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CodeBlock } from "./CodeBlock";
 import { MarkdownContent } from "./MarkdownContent";
 import { ToolIndicator } from "./tool-indicator";
 import { MessageFeedback } from "./message-feedback";
-import type { ChatMessage } from "@/app/hooks/use-chat-stream";
+import type { ChatMessage } from "@/app/hooks/useChatStream";
 
 interface AssistantMessageProps {
     message: ChatMessage;
@@ -18,35 +18,22 @@ interface AssistantMessageProps {
     onSubmitFeedback: (messageIndex: number, type: "positive" | "negative", comment?: string) => Promise<void>;
 }
 
-export function AssistantMessage({ 
-    message, 
-    messageIndex, 
-    sessionId, 
-    isToolExecuting, 
-    currentTool, 
-    onSubmitFeedback 
+export function AssistantMessage({
+    message,
+    messageIndex,
+    sessionId,
+    isToolExecuting,
+    currentTool,
+    onSubmitFeedback
 }: AssistantMessageProps) {
     return (
-        <Box
-            sx={{
-                display: "flex",
-                gap: 2,
-                mb: 3,
-                width: "100%",
-            }}
-        >
-            <Avatar
-                src="/assets/icon-72.png"
-                alt="AI"
-                sx={{
-                    width: 32,
-                    height: 32,
-                    flexShrink: 0,
-                    mt: 0.5,
-                }}
-            />
+        <div className="flex gap-4 mb-6 w-full">
+            <Avatar className="w-8 h-8 shrink-0 mt-1">
+                <AvatarImage src="/assets/icon-72.png" alt="AI" />
+                <AvatarFallback>AI</AvatarFallback>
+            </Avatar>
 
-            <Box sx={{ flex: 1, minWidth: 0 }}>
+            <div className="flex-1 min-w-0">
                 {isToolExecuting && message.isStreaming && (
                     <ToolIndicator toolName={currentTool || null} isExecuting={true} />
                 )}
@@ -54,7 +41,7 @@ export function AssistantMessage({
                     <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
-                            code: ({ className, children, ...props }) => {
+                            code: ({ className, children, ref: _ref, ...props }) => {
                                 const match = /language-(\w+)/.exec(className || "");
                                 const language = match ? match[1] : "";
                                 const codeString = String(children).replace(/\n$/, "");
@@ -81,21 +68,7 @@ export function AssistantMessage({
                     </ReactMarkdown>
 
                     {message.isStreaming && (
-                        <Box
-                            component="span"
-                            sx={{
-                                display: "inline-block",
-                                width: 8,
-                                height: 16,
-                                bgcolor: "text.primary",
-                                ml: 0.5,
-                                animation: "blink 1s infinite",
-                                "@keyframes blink": {
-                                    "0%, 50%": { opacity: 1 },
-                                    "51%, 100%": { opacity: 0 },
-                                },
-                            }}
-                        />
+                        <span className="inline-block w-2 h-4 bg-foreground ml-1 animate-blink" />
                     )}
                 </MarkdownContent>
                 {!message.isStreaming && (
@@ -105,7 +78,7 @@ export function AssistantMessage({
                         onSubmitFeedback={(type, comment) => onSubmitFeedback(messageIndex, type, comment)}
                     />
                 )}
-            </Box>
-        </Box>
+            </div>
+        </div>
     );
 }

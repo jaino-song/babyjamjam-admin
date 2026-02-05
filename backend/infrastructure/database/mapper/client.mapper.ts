@@ -7,18 +7,18 @@ type ClientRow = {
     phone: string | null;
     type: string | null;
     duration: number | null;
-    full_price: string | null;
+    fullPrice: string | null;
     grant: string | null;
-    actual_price: string | null;
-    start_date: Date | null;
-    end_date: Date | null;
-    care_center: boolean;
-    voucher_client: boolean;
+    actualPrice: string | null;
+    startDate: Date | null;
+    endDate: Date | null;
+    careCenter: boolean;
+    voucherClient: boolean;
     birthday: string | null;
-    due_date?: Date | null;
-    service_status: string | null;
-    breast_pump: boolean;
-    e_doc_id: string | null;
+    dueDate?: Date | null;
+    serviceStatus: string | null;
+    breastPump: boolean;
+    eDocId: string | null;
 };
 
 export class ClientMapper {
@@ -30,18 +30,18 @@ export class ClientMapper {
             row.phone,
             row.type,
             row.duration,
-            row.full_price,
+            row.fullPrice,
             row.grant,
-            row.actual_price,
-            row.start_date,
-            row.end_date,
-            row.care_center,
-            row.voucher_client,
+            row.actualPrice,
+            row.startDate,
+            row.endDate,
+            row.careCenter,
+            row.voucherClient,
             row.birthday,
-            row.service_status,
-            row.breast_pump,
-            row.e_doc_id,
-            row.due_date ?? null,
+            row.serviceStatus,
+            row.breastPump,
+            row.eDocId,
+            row.dueDate ?? null,
         );
     }
 
@@ -52,18 +52,18 @@ export class ClientMapper {
             phone: entity.phone,
             type: entity.type,
             duration: entity.duration,
-            full_price: entity.fullPrice,
+            fullPrice: entity.fullPrice,
             grant: entity.grant,
-            actual_price: entity.actualPrice,
-            start_date: entity.startDate,
-            end_date: entity.endDate,
-            care_center: entity.careCenter,
-            voucher_client: entity.voucherClient,
+            actualPrice: entity.actualPrice,
+            startDate: entity.startDate,
+            endDate: entity.endDate,
+            careCenter: entity.careCenter,
+            voucherClient: entity.voucherClient,
             birthday: entity.birthday,
-            due_date: entity.dueDate,
-            service_status: entity.serviceStatus,
-            breast_pump: entity.breastPump,
-            e_doc_id: entity.eDocId,
+            dueDate: entity.dueDate,
+            serviceStatus: entity.serviceStatus,
+            breastPump: entity.breastPump,
+            eDocId: entity.eDocId,
         };
     }
 
@@ -74,18 +74,18 @@ export class ClientMapper {
             phone: entity.phone,
             type: entity.type,
             duration: entity.duration,
-            full_price: entity.fullPrice,
+            fullPrice: entity.fullPrice,
             grant: entity.grant,
-            actual_price: entity.actualPrice,
-            start_date: entity.startDate,
-            end_date: entity.endDate,
-            care_center: entity.careCenter,
-            voucher_client: entity.voucherClient,
+            actualPrice: entity.actualPrice,
+            startDate: entity.startDate,
+            endDate: entity.endDate,
+            careCenter: entity.careCenter,
+            voucherClient: entity.voucherClient,
             birthday: entity.birthday,
-            due_date: entity.dueDate,
-            service_status: entity.serviceStatus,
-            breast_pump: entity.breastPump,
-            e_doc_id: entity.eDocId,
+            dueDate: entity.dueDate,
+            serviceStatus: entity.serviceStatus,
+            breastPump: entity.breastPump,
+            eDocId: entity.eDocId,
         };
     }
 }

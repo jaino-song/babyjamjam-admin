@@ -1,9 +1,10 @@
 "use client";
 
-import { useRouter, useParams } from "next/navigation";
-import { Box, CircularProgress, Alert, IconButton } from "@mui/material";
-import { ArrowLeft } from "lucide-react";
+import { useParams } from "next/navigation";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { TemplateEditor } from "@/app/(components)/my-templates/template-editor";
 import { useMessageTemplate } from "@/app/hooks/use-message-templates";
 import { ContentPaper } from "@/app/(components)/root/content-paper";
@@ -11,7 +12,6 @@ import { useLocale } from "@/app/(components)/LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 
 export default function EditTemplatePage() {
-    const router = useRouter();
     const params = useParams();
     const id = params.id as string;
     const locale = useLocale();
@@ -19,69 +19,62 @@ export default function EditTemplatePage() {
     const { data: template, isLoading, error } = useMessageTemplate(id);
 
     const BackButton = () => (
-        <Box sx={{ mb: 2 }}>
-            <IconButton
-                component={Link}
-                href="/messages/templates"
-                sx={{ color: "text.secondary" }}
-            >
-                <ArrowLeft size={24} />
-            </IconButton>
-        </Box>
+        <div className="mb-4">
+            <Button variant="ghost" size="icon" asChild>
+                <Link href="/messages/templates">
+                    <ArrowLeft className="h-6 w-6" />
+                </Link>
+            </Button>
+        </div>
     );
 
     if (isLoading) {
         return (
-            <Box sx={{ bgcolor: "background.paper" }}>
-                <Box sx={{ px: { xs: 2, sm: 3, md: 6 }, py: { xs: 3, sm: 4 }, mx: "auto" }}>
+            <div className="bg-background">
+                <div className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
                     <BackButton />
                     <ContentPaper
                         title={t(locale, "template-editor.edit-title")}
-                        sx={{ minHeight: "70vh", display: "flex", justifyContent: "center", alignItems: "center" }}
+                        className="min-h-[70vh] flex justify-center items-center"
                     >
-                        <CircularProgress />
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     </ContentPaper>
-                </Box>
-            </Box>
+                </div>
+            </div>
         );
     }
 
     if (error || !template) {
         return (
-            <Box sx={{ bgcolor: "background.paper" }}>
-                <Box sx={{ px: { xs: 2, sm: 3, md: 6 }, py: { xs: 3, sm: 4 }, mx: "auto" }}>
+            <div className="bg-background">
+                <div className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
                     <BackButton />
                     <ContentPaper
                         title={t(locale, "template-editor.edit-title")}
-                        sx={{ minHeight: "70vh" }}
+                        className="min-h-[70vh]"
                     >
-                        <Alert severity="error">{t(locale, "common.error-loading")}</Alert>
+                        <Alert variant="destructive">
+                            <AlertDescription>{t(locale, "common.error-loading")}</AlertDescription>
+                        </Alert>
                     </ContentPaper>
-                </Box>
-            </Box>
+                </div>
+            </div>
         );
     }
 
     return (
-        <Box sx={{ bgcolor: "background.paper" }}>
-            <Box
-                component="section"
-                sx={{
-                    px: { xs: 2, sm: 3, md: 6 },
-                    py: { xs: 3, sm: 4 },
-                    mx: "auto",
-                }}
-            >
+        <div className="bg-background">
+            <section className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
                 <BackButton />
                 <ContentPaper
                     title={t(locale, "template-editor.edit-title")}
                     subtitle={t(locale, "template-editor.edit-subtitle")}
-                    sx={{ minHeight: "70vh" }}
+                    className="min-h-[70vh]"
                 >
                     <TemplateEditor initialData={template} />
                 </ContentPaper>
-            </Box>
-        </Box>
+            </section>
+        </div>
     );
 }
 

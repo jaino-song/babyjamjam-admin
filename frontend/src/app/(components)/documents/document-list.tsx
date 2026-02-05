@@ -1,25 +1,9 @@
 "use client";
 
-import React from "react";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Chip,
-  Typography,
-  Box,
-  Skeleton,
-  useMediaQuery,
-  useTheme,
-} from "@mui/material";
-import {
-  PictureAsPdf as PdfIcon,
-  Image as ImageIcon,
-  Description as FileIcon,
-} from "@mui/icons-material";
+import React, { useState, useEffect } from "react";
+import { FileText, ImageIcon, File } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Document } from "@/app/hooks/use-documents";
 import { DocumentCategory } from "@/app/hooks/use-document-categories";
 
@@ -50,12 +34,12 @@ export const formatDate = (dateString: string): string => {
 
 const getFileIcon = (mimeType: string) => {
   if (mimeType.includes("pdf")) {
-    return <PdfIcon className="text-red-500" />;
+    return <FileText className="h-5 w-5 text-destructive" />;
   }
   if (mimeType.includes("image")) {
-    return <ImageIcon className="text-blue-500" />;
+    return <ImageIcon className="h-5 w-5 text-info" />;
   }
-  return <FileIcon className="text-gray-500" />;
+  return <File className="h-5 w-5 text-muted-foreground" />;
 };
 
 function getCategoryLabel(categoryId: string, categories: DocumentCategory[]): string {
@@ -63,153 +47,128 @@ function getCategoryLabel(categoryId: string, categories: DocumentCategory[]): s
   return category?.label || categoryId;
 }
 
+// Custom hook to detect mobile breakpoint
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
+
+  return isMobile;
+}
+
 export default function DocumentList({
   documents,
   categories,
   isLoading = false,
   onPreview,
-  onEdit,
-  onDelete,
 }: DocumentListProps) {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("md"));
+  const isMobile = useIsMobile();
 
   if (isLoading) {
     return (
-      <TableContainer>
-        <Table sx={{ tableLayout: "fixed", width: "100%" }}>
-          <TableHead>
-            <TableRow>
-              <TableCell
-                align="center"
-                sx={{ fontWeight: 500, color: "rgba(0, 0, 0, 0.6)", fontSize: "0.875rem" }}
-              >
+      <div className="overflow-x-auto">
+        <table className="w-full table-fixed">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="text-center font-medium text-muted-foreground text-sm py-3">
                 문서명
-              </TableCell>
-              <TableCell
-                align="center"
-                sx={{ fontWeight: 500, color: "rgba(0, 0, 0, 0.6)", fontSize: "0.875rem", width: "110px", whiteSpace: "nowrap" }}
-              >
+              </th>
+              <th className="text-center font-medium text-muted-foreground text-sm py-3 w-[110px] whitespace-nowrap">
                 등록일
-              </TableCell>
+              </th>
               {!isMobile && (
-                <TableCell
-                  align="center"
-                  sx={{ fontWeight: 500, color: "rgba(0, 0, 0, 0.6)", fontSize: "0.875rem", width: "120px" }}
-                >
+                <th className="text-center font-medium text-muted-foreground text-sm py-3 w-[120px]">
                   카테고리
-                </TableCell>
+                </th>
               )}
-            </TableRow>
-          </TableHead>
-          <TableBody>
+            </tr>
+          </thead>
+          <tbody>
             {[1, 2, 3].map((i) => (
-              <TableRow key={i}>
-                <TableCell align="center"><Skeleton variant="text" width="80%" /></TableCell>
-                <TableCell align="center"><Skeleton variant="text" width="80%" /></TableCell>
-                {!isMobile && <TableCell align="center"><Skeleton variant="text" width="60%" /></TableCell>}
-              </TableRow>
+              <tr key={i} className="border-b border-border">
+                <td className="text-center py-3">
+                  <Skeleton className="h-4 w-4/5 mx-auto" />
+                </td>
+                <td className="text-center py-3">
+                  <Skeleton className="h-4 w-4/5 mx-auto" />
+                </td>
+                {!isMobile && (
+                  <td className="text-center py-3">
+                    <Skeleton className="h-4 w-3/5 mx-auto" />
+                  </td>
+                )}
+              </tr>
             ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+          </tbody>
+        </table>
+      </div>
     );
   }
 
   if (documents.length === 0) {
     return (
-      <Box className="flex flex-col items-center justify-center py-12 text-gray-500 border border-gray-200 rounded-lg bg-gray-50">
-        <FileIcon className="text-gray-300 w-16 h-16 mb-4" style={{ fontSize: 64 }} />
-        <Typography variant="h6" className="text-gray-600 mb-1">
+      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground border border-border rounded-lg bg-muted/30">
+        <File className="h-16 w-16 text-muted-foreground/30 mb-4" />
+        <h6 className="text-lg font-semibold text-foreground/60 mb-1">
           등록된 문서가 없습니다
-        </Typography>
-        <Typography variant="body2" className="text-gray-400">
+        </h6>
+        <p className="text-sm text-muted-foreground">
           새로운 문서를 업로드해보세요
-        </Typography>
-      </Box>
+        </p>
+      </div>
     );
   }
 
   return (
-    <TableContainer>
-      <Table sx={{ tableLayout: "fixed", width: "100%" }}>
-        <TableHead>
-          <TableRow>
-            <TableCell
-              align="center"
-              sx={{
-                fontWeight: 500,
-                color: "rgba(0, 0, 0, 0.6)",
-                fontSize: "0.875rem",
-              }}
-            >
+    <div className="overflow-x-auto">
+      <table className="w-full table-fixed">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-center font-medium text-muted-foreground text-sm py-3">
               문서명
-            </TableCell>
-            <TableCell
-              align="center"
-              sx={{
-                fontWeight: 500,
-                color: "rgba(0, 0, 0, 0.6)",
-                fontSize: "0.875rem",
-                width: "110px",
-                whiteSpace: "nowrap",
-              }}
-            >
+            </th>
+            <th className="text-center font-medium text-muted-foreground text-sm py-3 w-[110px] whitespace-nowrap">
               등록일
-            </TableCell>
+            </th>
             {!isMobile && (
-              <TableCell
-                align="center"
-                sx={{
-                  fontWeight: 500,
-                  color: "rgba(0, 0, 0, 0.6)",
-                  fontSize: "0.875rem",
-                  width: "120px",
-                }}
-              >
+              <th className="text-center font-medium text-muted-foreground text-sm py-3 w-[120px]">
                 카테고리
-              </TableCell>
+              </th>
             )}
-          </TableRow>
-        </TableHead>
-        <TableBody>
+          </tr>
+        </thead>
+        <tbody>
           {documents.map((doc) => (
-            <TableRow
+            <tr
               key={doc.id}
-              hover
+              className="border-b border-border cursor-pointer hover:bg-muted/50 transition-colors"
               onClick={() => onPreview(doc)}
-              sx={{ cursor: "pointer", "&:hover": { bgcolor: "rgba(0, 0, 0, 0.04)" } }}
             >
-              <TableCell
-                align="center"
-                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", pl: 3, pr: 1 }}
-              >
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "left" }}>
+              <td className="text-center text-sm text-foreground py-3 pl-3 pr-1">
+                <div className="flex items-center gap-2 justify-start">
                   {getFileIcon(doc.mimeType)}
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {doc.name}
-                  </Typography>
-                </Box>
-              </TableCell>
-              <TableCell
-                align="center"
-                sx={{ fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.87)", px: 1 }}
-              >
+                  <span className="font-medium">{doc.name}</span>
+                </div>
+              </td>
+              <td className="text-center text-sm text-foreground py-3 px-1">
                 {formatDate(doc.createdAt)}
-              </TableCell>
+              </td>
               {!isMobile && (
-                <TableCell align="center" sx={{ px: 1 }}>
-                  <Chip
-                    label={getCategoryLabel(doc.categoryId, categories)}
-                    size="small"
-                    sx={{ bgcolor: "rgba(0, 0, 0, 0.08)", color: "rgba(0, 0, 0, 0.87)" }}
-                  />
-                </TableCell>
+                <td className="text-center py-3 px-1">
+                  <Badge variant="secondary">
+                    {getCategoryLabel(doc.categoryId, categories)}
+                  </Badge>
+                </td>
               )}
-            </TableRow>
+            </tr>
           ))}
-        </TableBody>
-      </Table>
-    </TableContainer>
+        </tbody>
+      </table>
+    </div>
   );
 }

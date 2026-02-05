@@ -22,7 +22,7 @@ export class EmployeeScheduleService {
         private readonly deleteEmployeeScheduleUsecase: DeleteEmployeeScheduleUsecase,
     ) {}
 
-    create(params: {
+    create(organizationid: string, params: {
         clientId: number;
         primaryEmployeeId: number;
         secondaryEmployeeId: number | null;
@@ -31,7 +31,7 @@ export class EmployeeScheduleService {
         endDate: string;
         replaced?: boolean;
     }): Promise<EmployeeScheduleEntity> {
-        return this.createEmployeeScheduleUsecase.execute({
+        return this.createEmployeeScheduleUsecase.execute(organizationid, {
             clientId: params.clientId,
             primaryEmployeeId: params.primaryEmployeeId,
             secondaryEmployeeId: params.secondaryEmployeeId ?? null,
@@ -42,29 +42,41 @@ export class EmployeeScheduleService {
         });
     }
 
-    findAll(): Promise<EmployeeScheduleEntity[]> {
-        return this.listEmployeeSchedulesUsecase.execute();
+    findAll(organizationid: string): Promise<EmployeeScheduleEntity[]> {
+        return this.listEmployeeSchedulesUsecase.execute(organizationid);
     }
 
-    findById(id: number): Promise<EmployeeScheduleEntity | null> {
-        return this.findEmployeeScheduleByIdUsecase.execute(id);
+    findById(organizationid: string, id: number): Promise<EmployeeScheduleEntity | null> {
+        return this.findEmployeeScheduleByIdUsecase.execute(organizationid, id);
     }
 
-    findByPrimaryEmployeeId(primaryEmployeeId: number): Promise<EmployeeScheduleEntity[]> {
-        return this.listEmployeeSchedulesByPrimaryEmployeeIdUsecase.execute(primaryEmployeeId);
+    findByPrimaryEmployeeId(
+        organizationid: string,
+        primaryEmployeeId: number
+    ): Promise<EmployeeScheduleEntity[]> {
+        return this.listEmployeeSchedulesByPrimaryEmployeeIdUsecase.execute(
+            organizationid,
+            primaryEmployeeId
+        );
     }
 
-    findBySecondaryEmployeeId(secondaryEmployeeId: number): Promise<EmployeeScheduleEntity[]> {
-        return this.listEmployeeSchedulesBySecondaryEmployeeIdUsecase.execute(secondaryEmployeeId);
+    findBySecondaryEmployeeId(
+        organizationid: string,
+        secondaryEmployeeId: number
+    ): Promise<EmployeeScheduleEntity[]> {
+        return this.listEmployeeSchedulesBySecondaryEmployeeIdUsecase.execute(
+            organizationid,
+            secondaryEmployeeId
+        );
     }
 
-    update(id: number, params: {
+    update(organizationid: string, id: number, params: {
         workAddress?: string;
         startDate?: string;
         endDate?: string;
         replaced?: boolean;
     }): Promise<EmployeeScheduleEntity> {
-        return this.updateEmployeeScheduleUsecase.execute(id, {
+        return this.updateEmployeeScheduleUsecase.execute(organizationid, id, {
             workAddress: params.workAddress,
             startDate: params.startDate ? new Date(params.startDate) : undefined,
             endDate: params.endDate ? new Date(params.endDate) : undefined,
@@ -72,7 +84,7 @@ export class EmployeeScheduleService {
         });
     }
 
-    delete(id: number): Promise<void> {
-        return this.deleteEmployeeScheduleUsecase.execute(id);
+    delete(organizationid: string, id: number): Promise<void> {
+        return this.deleteEmployeeScheduleUsecase.execute(organizationid, id);
     }
 }

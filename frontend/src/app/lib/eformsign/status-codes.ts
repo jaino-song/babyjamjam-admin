@@ -89,11 +89,16 @@ export function mapStatusToLabel(statusCode: string | undefined | null): Documen
 }
 
 /**
- * Get chip color for status
+ * Badge variant type for shadcn Badge component
  */
-export function getStatusColor(status: string): "success" | "warning" | "error" | "info" | "default" {
+export type BadgeVariant = "success" | "warning" | "destructive" | "info" | "secondary" | "default";
+
+/**
+ * Get Badge variant for status (shadcn Badge compatible)
+ */
+export function getStatusColor(status: string): BadgeVariant {
   const lowerStatus = status.toLowerCase();
-  
+
   if (lowerStatus.includes("완료") || lowerStatus.includes("complete") || lowerStatus.includes("signed")) {
     return "success";
   }
@@ -101,10 +106,10 @@ export function getStatusColor(status: string): "success" | "warning" | "error" 
     return "warning";
   }
   if (lowerStatus.includes("거부") || lowerStatus.includes("reject")) {
-    return "error";
+    return "destructive";
   }
   if (lowerStatus.includes("전체") || lowerStatus.includes("all")) {
-    return "default";
+    return "secondary";
   }
   return "info";
 }

@@ -2,8 +2,6 @@
 
 import { motion } from "framer-motion";
 import { ReactNode } from "react";
-import { Box } from "@mui/material";
-
 import { usePathname } from "next/navigation";
 
 const SKIP_ANIMATION_ROUTES = ["/chat"];
@@ -22,24 +20,34 @@ export default function AnimatedContainer({
     const pathname = usePathname();
     const skipAnimation = SKIP_ANIMATION_ROUTES.includes(pathname);
 
+    const containerStyle = {
+        minHeight,
+        minWidth,
+    };
+
+    if (skipAnimation) {
+        return (
+            <article
+                data-component="AnimatedContainer"
+                className="flex flex-col justify-start items-center flex-grow bg-background"
+                style={containerStyle}
+            >
+                {children}
+            </article>
+        );
+    }
+
     return (
-        <Box
-            component={skipAnimation ? "article" : motion.article}
+        <motion.article
             data-component="AnimatedContainer"
-            key={skipAnimation ? undefined : pathname}
-            initial={skipAnimation ? undefined : { opacity: 0, y: 20 }}
-            animate={skipAnimation ? undefined : { opacity: 1, y: 0 }}
-            transition={skipAnimation ? undefined : { duration: 1 }}
-            sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'flex-start',
-                alignItems: 'center',
-                flexGrow: 1,
-                bgcolor: 'background.paper',
-            }}
+            key={pathname}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="flex flex-col justify-start items-center flex-grow bg-background"
+            style={containerStyle}
         >
             {children}
-        </Box>
+        </motion.article>
     );
 }

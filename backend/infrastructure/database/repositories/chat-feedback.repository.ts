@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
+import { nanoid } from "nanoid";
 
 export interface CreateFeedbackDto {
     sessionId: string;
@@ -16,17 +17,18 @@ export class ChatFeedbackRepository {
     async create(data: CreateFeedbackDto) {
         return this.prisma.chat_feedback.create({
             data: {
-                session_id: data.sessionId,
-                message_id: data.messageId,
-                user_id: data.userId,
+                id: nanoid(),
+                sessionId: data.sessionId,
+                messageId: data.messageId,
+                userId: data.userId,
                 type: data.type,
                 comment: data.comment,
             },
             include: {
-                session: {
+                chatSession: {
                     include: { messages: { orderBy: { timestamp: 'asc' } } },
                 },
-                message: true,
+                chatMessage: true,
                 user: { select: { id: true, name: true, email: true } },
             },
         });
@@ -36,10 +38,10 @@ export class ChatFeedbackRepository {
         return this.prisma.chat_feedback.findUnique({
             where: { id },
             include: {
-                session: {
+                chatSession: {
                     include: { messages: { orderBy: { timestamp: 'asc' } } },
                 },
-                message: true,
+                chatMessage: true,
                 user: { select: { id: true, name: true, email: true } },
             },
         });
@@ -47,9 +49,9 @@ export class ChatFeedbackRepository {
 
     async findBySession(sessionId: string) {
         return this.prisma.chat_feedback.findMany({
-            where: { session_id: sessionId },
-            include: { message: true },
-            orderBy: { created_at: 'desc' },
+            where: { sessionId: sessionId },
+            include: { chatMessage: true },
+            orderBy: { createdAt: 'desc' },
         });
     }
 
@@ -68,10 +70,10 @@ export class ChatFeedbackRepository {
                 where,
                 skip,
                 take: limit,
-                orderBy: { created_at: 'desc' },
+                orderBy: { createdAt: 'desc' },
                 include: {
                     user: { select: { id: true, name: true, email: true } },
-                    message: true,
+                    chatMessage: true,
                 },
             }),
             this.prisma.chat_feedback.count({ where }),

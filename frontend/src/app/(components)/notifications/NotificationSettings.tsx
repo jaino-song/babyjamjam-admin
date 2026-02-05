@@ -1,18 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import {
-    Box,
-    Button,
-    Typography,
-    Switch,
-    FormControlLabel,
-    Alert,
-    CircularProgress,
-    Paper,
-} from "@mui/material";
-import NotificationsActiveIcon from "@mui/icons-material/NotificationsActive";
-import NotificationsOffIcon from "@mui/icons-material/NotificationsOff";
+import { Bell, BellOff } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
 import { usePushNotification } from "@/app/hooks/usePushNotification";
 
 /**
@@ -50,11 +45,13 @@ export function NotificationSettings() {
     // Not supported message
     if (!isSupported) {
         return (
-            <Alert severity="warning" sx={{ mt: 2 }}>
-                이 브라우저는 푸시 알림을 지원하지 않습니다.
-                <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                    Chrome, Firefox, Edge 또는 Safari에서 사용해 주세요.
-                </Typography>
+            <Alert variant="warning" className="mt-4">
+                <AlertDescription>
+                    이 브라우저는 푸시 알림을 지원하지 않습니다.
+                    <span className="block text-xs mt-2">
+                        Chrome, Firefox, Edge 또는 Safari에서 사용해 주세요.
+                    </span>
+                </AlertDescription>
             </Alert>
         );
     }
@@ -65,15 +62,15 @@ export function NotificationSettings() {
 
     if (isIOS && !isPWA) {
         return (
-            <Alert severity="info" sx={{ mt: 2 }}>
-                <Typography variant="body2" fontWeight="bold">
-                    iOS에서 알림을 받으려면:
-                </Typography>
-                <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                    1. Safari에서 공유 버튼 탭<br />
-                    2. &quot;홈 화면에 추가&quot; 선택<br />
-                    3. 홈 화면에서 앱 실행 후 알림 설정
-                </Typography>
+            <Alert className="mt-4">
+                <AlertDescription>
+                    <p className="font-bold text-sm">iOS에서 알림을 받으려면:</p>
+                    <span className="block text-xs mt-2">
+                        1. Safari에서 공유 버튼 탭<br />
+                        2. &quot;홈 화면에 추가&quot; 선택<br />
+                        3. 홈 화면에서 앱 실행 후 알림 설정
+                    </span>
+                </AlertDescription>
             </Alert>
         );
     }
@@ -81,11 +78,13 @@ export function NotificationSettings() {
     // Permission denied message
     if (permission === 'denied') {
         return (
-            <Alert severity="error" sx={{ mt: 2 }}>
-                알림 권한이 차단되어 있습니다.
-                <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                    브라우저 설정에서 이 사이트의 알림 권한을 허용해 주세요.
-                </Typography>
+            <Alert variant="destructive" className="mt-4">
+                <AlertDescription>
+                    알림 권한이 차단되어 있습니다.
+                    <span className="block text-xs mt-2">
+                        브라우저 설정에서 이 사이트의 알림 권한을 허용해 주세요.
+                    </span>
+                </AlertDescription>
             </Alert>
         );
     }
@@ -93,46 +92,45 @@ export function NotificationSettings() {
     const loading = isLoading || actionLoading;
 
     return (
-        <Paper data-component="notification-settings-paper" variant="outlined" sx={{ p: 2, mt: 2 }}>
-            <Box display="flex" alignItems="center" justifyContent="space-between">
-                <Box display="flex" alignItems="center" gap={1}>
+        <Card data-component="notification-settings-paper" className="p-4 mt-4">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
                     {isSubscribed ? (
-                        <NotificationsActiveIcon color="primary" />
+                        <Bell className="h-5 w-5 text-primary" />
                     ) : (
-                        <NotificationsOffIcon color="disabled" />
+                        <BellOff className="h-5 w-5 text-muted-foreground" />
                     )}
-                    <Box>
-                        <Typography variant="body1" fontWeight="medium">
-                            푸시 알림
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
+                    <div>
+                        <p className="text-base font-medium">푸시 알림</p>
+                        <p className="text-xs text-muted-foreground">
                             {isSubscribed ? '알림을 받고 있습니다' : '알림이 비활성화되어 있습니다'}
-                        </Typography>
-                    </Box>
-                </Box>
+                        </p>
+                    </div>
+                </div>
 
                 {loading ? (
-                    <CircularProgress size={24} />
+                    <Spinner size="sm" />
                 ) : (
-                    <FormControlLabel
-                        control={
-                            <Switch
-                                checked={isSubscribed}
-                                onChange={handleToggle}
-                                disabled={loading}
-                            />
-                        }
-                        label=""
-                    />
+                    <div className="flex items-center gap-2">
+                        <Label htmlFor="notification-switch" className="sr-only">
+                            푸시 알림 설정
+                        </Label>
+                        <Switch
+                            id="notification-switch"
+                            checked={isSubscribed}
+                            onCheckedChange={handleToggle}
+                            disabled={loading}
+                        />
+                    </div>
                 )}
-            </Box>
+            </div>
 
             {error && (
-                <Alert severity="error" sx={{ mt: 2 }}>
-                    {error}
+                <Alert variant="destructive" className="mt-4">
+                    <AlertDescription>{error}</AlertDescription>
                 </Alert>
             )}
-        </Paper>
+        </Card>
     );
 }
 
@@ -160,12 +158,16 @@ export function NotificationSubscribeButton() {
 
     return (
         <Button
-            variant="outlined"
-            size="small"
+            variant="outline"
+            size="sm"
             onClick={handleClick}
             disabled={isLoading || loading}
-            startIcon={loading ? <CircularProgress size={16} /> : <NotificationsActiveIcon />}
         >
+            {loading ? (
+                <Spinner size="sm" className="mr-2" />
+            ) : (
+                <Bell className="h-4 w-4 mr-2" />
+            )}
             알림 받기
         </Button>
     );

@@ -18,13 +18,22 @@ interface APIErrorResponse {
   error: string;
 }
 
+function getAuthHeaders(token: string | null): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export async function getUserOrganizations(): Promise<{
   success: boolean;
   organizations?: Organization[];
   error?: string;
 }> {
   try {
-    const { data } = await serverAPIClient.get("/auth/organizations");
+    const cookieStore = await cookies();
+    const token = cookieStore.get("auth_token")?.value || null;
+
+    const { data } = await serverAPIClient.get("/auth/organizations", {
+      headers: getAuthHeaders(token),
+    });
 
     return {
       success: true,
@@ -53,11 +62,14 @@ export async function setCurrentOrganization(organizationId: string): Promise<{
   error?: string;
 }> {
   try {
+    const cookieStore = await cookies();
+    const token = cookieStore.get("auth_token")?.value || null;
+
     const { data } = await serverAPIClient.post("/auth/select-organization", {
       organizationId,
+    }, {
+      headers: getAuthHeaders(token),
     });
-
-    const cookieStore = await cookies();
 
     // Update auth token with new organization context
     cookieStore.set("auth_token", data.accessToken, {

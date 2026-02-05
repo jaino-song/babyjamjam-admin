@@ -6,10 +6,10 @@ async function migrate() {
   console.log('[Migration] Starting multi-tenancy migration...');
   try {
     const firstUser = await prisma.user.findFirst({
-      select: { id: true, kakao_id: true },
+      select: { id: true, kakaoId: true },
       orderBy: { id: 'asc' },
     });
-    console.log(`[Migration] First user: ${firstUser?.kakao_id || 'none'}`);
+    console.log(`[Migration] First user: ${firstUser?.kakaoId || 'none'}`);
 
     if (!firstUser) {
       console.error('[Migration] No users found in database. Cannot create organization without owner.');
@@ -30,10 +30,8 @@ async function migrate() {
           email: 'incheon@mirae-incheon.com',
           phone: '',
           address: '',
-          is_active: true,
-          user: {
-            connect: { id: firstUser.id }
-          }
+          isActive: true,
+          ownerId: firstUser.id
         },
       });
       console.log(`[Migration] Created organization: ${org.name} (ID: ${org.id})`);
@@ -43,8 +41,8 @@ async function migrate() {
 
     const existingUserOrg = await prisma.user_organization.findFirst({
       where: {
-        user_id: firstUser.id,
-        organization_id: org.id
+        userId: firstUser.id,
+        organizationId: org.id
       }
     });
     
@@ -52,10 +50,10 @@ async function migrate() {
       await prisma.user_organization.create({
         data: {
           id: crypto.randomUUID(),
-          user_id: firstUser.id,
-          organization_id: org.id,
+          userId: firstUser.id,
+          organizationId: org.id,
           role: 'admin',
-          joined_at: new Date(),
+          joinedAt: new Date(),
         },
       });
       console.log('[Migration] Added first user to organization as admin');
@@ -78,7 +76,7 @@ async function migrate() {
       if (clients.length === 0) break;
       await prisma.client.updateMany({
         where: { id: { in: clients.map((c: {id: number}) => c.id) } },
-        data: { organization_id: org.id },
+        data: { organizationId: org.id },
       });
       clientsUpdated += clients.length;
       skip += batchSize;
@@ -102,7 +100,7 @@ async function migrate() {
       if (employees.length === 0) break;
       await prisma.employee.updateMany({
         where: { id: { in: employees.map((e: {id: number}) => e.id) } },
-        data: { organization_id: org.id },
+        data: { organizationId: org.id },
       });
       employeesUpdated += employees.length;
       skip += batchSize;
@@ -126,7 +124,7 @@ async function migrate() {
       if (schedules.length === 0) break;
       await prisma.employee_schedule.updateMany({
         where: { id: { in: schedules.map((s: {id: number}) => s.id) } },
-        data: { organization_id: org.id },
+        data: { organizationId: org.id },
       });
       schedulesUpdated += schedules.length;
       skip += batchSize;
@@ -150,7 +148,7 @@ async function migrate() {
       if (docs.length === 0) break;
       await prisma.eformsign_doc.updateMany({
         where: { id: { in: docs.map((d: {id: number}) => d.id) } },
-        data: { organization_id: org.id },
+        data: { organizationId: org.id },
       });
       eformDocsUpdated += docs.length;
       skip += batchSize;
@@ -174,7 +172,7 @@ async function migrate() {
       if (messages.length === 0) break;
       await prisma.message.updateMany({
         where: { id: { in: messages.map((m: {id: number}) => m.id) } },
-        data: { organization_id: org.id },
+        data: { organizationId: org.id },
       });
       messagesUpdated += messages.length;
       skip += batchSize;
@@ -198,7 +196,7 @@ async function migrate() {
       if (templates.length === 0) break;
       await prisma.message_template.updateMany({
         where: { id: { in: templates.map((t: {id: string}) => t.id) } },
-        data: { organization_id: org.id, is_custom: true },
+        data: { organizationId: org.id, isCustom: true },
       });
       templatesUpdated += templates.length;
       skip += batchSize;
@@ -222,7 +220,7 @@ async function migrate() {
       if (notifs.length === 0) break;
       await prisma.notification.updateMany({
         where: { id: { in: notifs.map((n: {id: number}) => n.id) } },
-        data: { organization_id: org.id },
+        data: { organizationId: org.id },
       });
       notifsUpdated += notifs.length;
       skip += batchSize;
@@ -246,7 +244,7 @@ async function migrate() {
       if (categories.length === 0) break;
       await prisma.document_category.updateMany({
         where: { id: { in: categories.map((c: {id: string}) => c.id) } },
-        data: { organization_id: org.id, isCustom: true },
+        data: { organizationId: org.id, isCustom: true },
       });
       categoriesUpdated += categories.length;
       skip += batchSize;
@@ -273,7 +271,7 @@ async function migrate() {
       if (docs.length === 0) break;
       await prisma.document.updateMany({
         where: { id: { in: docs.map((d: {id: string}) => d.id) } },
-        data: { organization_id: org.id },
+        data: { organizationId: org.id },
       });
       docsUpdated += docs.length;
       skip += batchSize;
@@ -297,7 +295,7 @@ async function migrate() {
       if (areas.length === 0) break;
       await prisma.area.updateMany({
         where: { id: { in: areas.map((a: {id: string}) => a.id) } },
-        data: { organization_id: org.id },
+        data: { organizationId: org.id },
       });
       areasUpdated += areas.length;
       skip += batchSize;

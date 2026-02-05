@@ -1,24 +1,24 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Spinner } from "@/components/ui/spinner";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Separator } from "@/components/ui/separator";
+import { Stepper, Step, StepLabel } from "@/components/ui/stepper";
 import {
-    Alert,
-    Box,
-    Button,
-    Checkbox,
-    CircularProgress,
-    Divider,
-    FormControl,
-    FormControlLabel,
-    InputLabel,
-    MenuItem,
     Select,
-    Step,
-    StepLabel,
-    Stepper,
-    TextField,
-    Typography,
-} from "@mui/material";
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+    SelectGroup,
+    SelectLabel as SelectGroupLabel,
+} from "@/components/ui/select";
+import { AlertCircle } from "lucide-react";
 import { useVoucherPriceInfos, useVoucherYears } from "@/app/hooks/useVoucherData";
 import { useCreateClient } from "@/app/hooks/useClients";
 import type { CreateClientDto } from "@/app/lib/client/types";
@@ -51,8 +51,8 @@ function formatPrice(price: string): string {
 }
 
 export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizardProps) {
-     const createClientMutation = useCreateClient();
-     const [activeStep, setActiveStep] = useState(0);
+    const createClientMutation = useCreateClient();
+    const [activeStep, setActiveStep] = useState(0);
 
     const [name, setName] = useState("");
     const [phone, setPhone] = useState("");
@@ -120,8 +120,8 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
         setActiveStep((s) => Math.max(s - 1, 0));
     };
 
-    const handleVoucherYearChange = (year: number) => {
-        setVoucherYear(year);
+    const handleVoucherYearChange = (year: string) => {
+        setVoucherYear(Number(year));
         setVoucherType("");
         setVoucherDuration("");
         setFullPrice("");
@@ -183,11 +183,11 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                 payload.actualPrice = actualPrice;
             }
 
-             const created = await createClientMutation.mutateAsync({
-                 ...payload,
-                 primaryEmployeeId: null,
-             } as CreateClientDto);
-             onCreated?.(created);
+            const created = await createClientMutation.mutateAsync({
+                ...payload,
+                primaryEmployeeId: null,
+            } as CreateClientDto);
+            onCreated?.(created);
         } catch (e) {
             const msg = e instanceof Error ? e.message : "등록에 실패했습니다.";
             setSubmitError(msg);
@@ -197,210 +197,243 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
     };
 
     return (
-        <Box sx={{ minHeight: WIZARD_MIN_HEIGHT_PX, display: "flex", flexDirection: "column" }}>
-            <Box sx={{ mb: 2 }}>
-                <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+        <div className="flex flex-col" style={{ minHeight: WIZARD_MIN_HEIGHT_PX }}>
+            <div className="mb-4">
+                <h3 className="text-base font-bold mb-1">
                     산모 등록
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
+                </h3>
+                <p className="text-sm text-muted-foreground">
                     필요한 정보만 빠르게 입력해 등록할 수 있어요.
-                </Typography>
-            </Box>
+                </p>
+            </div>
 
-            <Stepper activeStep={activeStep} sx={{ mb: 2 }}>
-                {steps.map((label) => (
+            <Stepper activeStep={activeStep} className="mb-4">
+                {steps.map((label, index) => (
                     <Step key={label}>
-                        <StepLabel>{label}</StepLabel>
+                        <StepLabel>{index + 1}</StepLabel>
                     </Step>
                 ))}
             </Stepper>
 
-            <Box sx={{ flex: 1, minHeight: 0 }}>
+            <div className="flex-1 min-h-0">
+                {/* Step 1: Basic Info */}
                 {activeStep === 0 && (
-                    <Box sx={{ display: "grid", gap: 2 }}>
-                        <TextField
-                            label="이름"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            autoFocus
-                        />
-                        <TextField
-                            type="date"
-                            label="출산 예정일"
-                            value={dueDate}
-                            onChange={(e) => setDueDate(e.target.value)}
-                            InputLabelProps={{ shrink: true }}
-                        />
-                        <TextField
-                            label="연락처"
-                            value={phone}
-                            onChange={(e) => setPhone(formatPhoneNumber(e.target.value))}
-                            placeholder="010-1234-5678"
-                            inputProps={{ maxLength: 13 }}
-                        />
-                        <TextField
-                            label="생년월일"
-                            value={birthday}
-                            onChange={(e) => setBirthday(e.target.value)}
-                            placeholder="YYMMDD"
-                            inputProps={{ maxLength: 6 }}
-                        />
-                        <TextField label="주소" value={address} onChange={(e) => setAddress(e.target.value)} />
-                    </Box>
+                    <div className="grid gap-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="name">이름</Label>
+                            <Input
+                                id="name"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                autoFocus
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="dueDate">출산 예정일</Label>
+                            <Input
+                                id="dueDate"
+                                type="date"
+                                value={dueDate}
+                                onChange={(e) => setDueDate(e.target.value)}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="phone">연락처</Label>
+                            <Input
+                                id="phone"
+                                value={phone}
+                                onChange={(e) => setPhone(formatPhoneNumber(e.target.value))}
+                                placeholder="010-1234-5678"
+                                maxLength={13}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="birthday">생년월일</Label>
+                            <Input
+                                id="birthday"
+                                value={birthday}
+                                onChange={(e) => setBirthday(e.target.value)}
+                                placeholder="YYMMDD"
+                                maxLength={6}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="address">주소</Label>
+                            <Input
+                                id="address"
+                                value={address}
+                                onChange={(e) => setAddress(e.target.value)}
+                            />
+                        </div>
+                    </div>
                 )}
 
+                {/* Step 2: Voucher Info */}
                 {activeStep === 1 && (
-                    <Box sx={{ display: "grid", gap: 2 }}>
-                        <FormControlLabel
-                            control={
-                                <Checkbox
-                                    checked={voucherClient}
-                                    onChange={(e) => setVoucherClient(e.target.checked)}
-                                />
-                            }
-                            label="바우처 대상"
-                        />
+                    <div className="grid gap-4">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="voucherClient"
+                                checked={voucherClient}
+                                onCheckedChange={(checked) => setVoucherClient(checked === true)}
+                            />
+                            <Label htmlFor="voucherClient">바우처 대상</Label>
+                        </div>
 
                         {voucherClient && (
                             <>
-                                <Box sx={{ display: "flex", gap: 2, alignItems: "center", flexWrap: "wrap" }}>
-                                    <FormControl size="small" sx={{ minWidth: 140 }}>
-                                        <InputLabel id="client-wizard-voucher-year-label">바우처 연도</InputLabel>
+                                <div className="flex gap-4 items-center flex-wrap">
+                                    <div className="space-y-2 min-w-[140px]">
+                                        <Label>바우처 연도</Label>
                                         <Select
-                                            labelId="client-wizard-voucher-year-label"
-                                            id="client-wizard-voucher-year"
-                                            label="바우처 연도"
-                                            value={resolvedVoucherYear ?? ""}
-                                            onChange={(e) => handleVoucherYearChange(Number(e.target.value))}
+                                            value={resolvedVoucherYear?.toString() ?? ""}
+                                            onValueChange={handleVoucherYearChange}
                                             disabled={isVoucherYearsLoading}
                                         >
-                                            {voucherYears.map((year) => (
-                                                <MenuItem key={year} value={year}>
-                                                    {year}년
-                                                </MenuItem>
-                                            ))}
+                                            <SelectTrigger className="w-[140px]">
+                                                <SelectValue placeholder="연도 선택" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {voucherYears.map((year) => (
+                                                    <SelectItem key={year} value={year.toString()}>
+                                                        {year}년
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
                                         </Select>
-                                    </FormControl>
-                                </Box>
+                                    </div>
+                                </div>
 
-                                <FormControl fullWidth disabled={resolvedVoucherYear === null}>
-                                    <InputLabel id="client-wizard-voucher-type-label">바우처 유형</InputLabel>
+                                <div className="space-y-2">
+                                    <Label>바우처 유형</Label>
                                     <Select
-                                        labelId="client-wizard-voucher-type-label"
-                                        id="client-wizard-voucher-type"
-                                        label="바우처 유형"
                                         value={voucherType}
-                                        onChange={(e) => handleVoucherTypeChange(String(e.target.value))}
+                                        onValueChange={handleVoucherTypeChange}
+                                        disabled={resolvedVoucherYear === null}
                                     >
-                                        {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => [
-                                            <MenuItem key={groupName} disabled sx={{ fontWeight: 600 }}>
-                                                {groupName}
-                                            </MenuItem>,
-                                            ...Object.entries(types).map(([typeValue, typeData]) => (
-                                                <MenuItem key={typeValue} value={typeValue} sx={{ pl: 4 }}>
-                                                    {typeData.label}
-                                                </MenuItem>
-                                            )),
-                                        ])}
+                                        <SelectTrigger className="w-full">
+                                            <SelectValue placeholder="유형 선택" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                                                <SelectGroup key={groupName}>
+                                                    <SelectGroupLabel>{groupName}</SelectGroupLabel>
+                                                    {Object.entries(types).map(([typeValue, typeData]) => (
+                                                        <SelectItem key={typeValue} value={typeValue}>
+                                                            {typeData.label}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectGroup>
+                                            ))}
+                                        </SelectContent>
                                     </Select>
-                                </FormControl>
+                                </div>
 
                                 {voucherType && (
-                                    <FormControl fullWidth disabled={isVoucherPriceInfosLoading || voucherPriceInfos.length === 0}>
-                                        <InputLabel id="client-wizard-voucher-duration-label">기간</InputLabel>
+                                    <div className="space-y-2">
+                                        <Label>기간</Label>
                                         <Select
-                                            labelId="client-wizard-voucher-duration-label"
-                                            id="client-wizard-voucher-duration"
-                                            label="기간"
                                             value={voucherDuration}
-                                            onChange={(e) => handleVoucherDurationChange(String(e.target.value))}
+                                            onValueChange={handleVoucherDurationChange}
+                                            disabled={isVoucherPriceInfosLoading || voucherPriceInfos.length === 0}
                                         >
-                                            {voucherPriceInfos.map((v) => (
-                                                <MenuItem key={v.duration} value={v.duration}>
-                                                    {v.duration}일
-                                                </MenuItem>
-                                            ))}
+                                            <SelectTrigger className="w-full">
+                                                <SelectValue placeholder="기간 선택" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {voucherPriceInfos.map((v) => (
+                                                    <SelectItem key={v.duration} value={v.duration}>
+                                                        {v.duration}일
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
                                         </Select>
-                                    </FormControl>
+                                    </div>
                                 )}
 
                                 {voucherType && isVoucherPriceInfosLoading && (
-                                    <Box sx={{ display: "flex", justifyContent: "center", py: 1 }}>
-                                        <CircularProgress size={18} />
-                                    </Box>
+                                    <div className="flex justify-center py-2">
+                                        <Spinner size="sm" />
+                                    </div>
                                 )}
 
                                 {voucherDuration && fullPrice && grant && actualPrice && (
                                     <>
-                                        <Divider />
-                                        <Box sx={{ display: "grid", gap: 0.75 }}>
-                                            <Typography variant="body2" color="text.secondary">
+                                        <Separator />
+                                        <div className="grid gap-1.5">
+                                            <p className="text-sm text-muted-foreground">
                                                 총액: {formatPrice(fullPrice)}원
-                                            </Typography>
-                                            <Typography variant="body2" color="text.secondary">
+                                            </p>
+                                            <p className="text-sm text-muted-foreground">
                                                 정부지원금: {formatPrice(grant)}원
-                                            </Typography>
-                                            <Typography variant="body2" color="text.secondary">
+                                            </p>
+                                            <p className="text-sm text-muted-foreground">
                                                 본인부담금: {formatPrice(actualPrice)}원
-                                            </Typography>
-                                        </Box>
+                                            </p>
+                                        </div>
                                     </>
                                 )}
                             </>
                         )}
-                    </Box>
+                    </div>
                 )}
 
+                {/* Step 3: Settings */}
                 {activeStep === 2 && (
-                    <Box sx={{ display: "grid", gap: 1 }}>
-                        <FormControlLabel
-                            control={
-                                <Checkbox
-                                    checked={careCenter}
-                                    onChange={(e) => setCareCenter(e.target.checked)}
-                                />
-                            }
-                            label="조리원 여부"
-                        />
-                        <FormControlLabel
-                            control={
-                                <Checkbox
-                                    checked={breastPump}
-                                    onChange={(e) => setBreastPump(e.target.checked)}
-                                />
-                            }
-                            label="유축기"
-                        />
-                    </Box>
+                    <div className="grid gap-3">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="careCenter"
+                                checked={careCenter}
+                                onCheckedChange={(checked) => setCareCenter(checked === true)}
+                            />
+                            <Label htmlFor="careCenter">조리원 여부</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="breastPump"
+                                checked={breastPump}
+                                onCheckedChange={(checked) => setBreastPump(checked === true)}
+                            />
+                            <Label htmlFor="breastPump">유축기</Label>
+                        </div>
+                    </div>
                 )}
-            </Box>
+            </div>
 
             {submitError && (
-                <Alert severity="error" sx={{ mt: 2 }}>
-                    {submitError}
+                <Alert variant="destructive" className="mt-4">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{submitError}</AlertDescription>
                 </Alert>
             )}
 
-            <Box sx={{ display: "flex", justifyContent: "space-between", mt: 2 }}>
-                <Button onClick={handleBack} disabled={activeStep === 0 || isSubmitting}>
+            <div className="flex justify-between mt-4">
+                <Button
+                    variant="outline"
+                    onClick={handleBack}
+                    disabled={activeStep === 0 || isSubmitting}
+                >
                     이전
                 </Button>
 
                 {activeStep < steps.length - 1 ? (
-                    <Button variant="contained" onClick={handleNext} disabled={!canGoNext || isSubmitting}>
+                    <Button
+                        onClick={handleNext}
+                        disabled={!canGoNext || isSubmitting}
+                    >
                         다음
                     </Button>
                 ) : (
                     <Button
-                        variant="contained"
                         onClick={handleSubmit}
                         disabled={isSubmitting || !name.trim() || (voucherClient && !isVoucherInfoComplete)}
                     >
                         제출
                     </Button>
                 )}
-            </Box>
-        </Box>
+            </div>
+        </div>
     );
 }
 

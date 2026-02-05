@@ -34,6 +34,9 @@ export const NOTIFICATION_KEYS = {
 // API Functions
 const fetchVapidKey = async (): Promise<string> => {
     const { data } = await api.get<{ publicKey: string }>('/notifications/vapid-key');
+    if (!data.publicKey) {
+        throw new Error('VAPID public key not available');
+    }
     return data.publicKey;
 };
 

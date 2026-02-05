@@ -4,6 +4,7 @@ import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 describe("DeleteEmployeeUsecase", () => {
     let usecase: DeleteEmployeeUsecase;
     let mockRepository: MockEmployeeRepository;
+    const organizationId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -25,10 +26,10 @@ describe("DeleteEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                await usecase.execute(1);
+                await usecase.execute(organizationId, 1);
 
                 // Assert
-                const result = await mockRepository.findById(1);
+                const result = await mockRepository.findById(organizationId, 1);
                 expect(result).toBeNull();
             });
 
@@ -38,7 +39,7 @@ describe("DeleteEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(1);
+                const result = await usecase.execute(organizationId, 1);
 
                 // Assert
                 expect(result).toBeUndefined();
@@ -50,7 +51,7 @@ describe("DeleteEmployeeUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                await usecase.execute(3);
+                await usecase.execute(organizationId, 3);
 
                 // Assert
                 const allEmployees = mockRepository.getAllData();
@@ -68,11 +69,11 @@ describe("DeleteEmployeeUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                await usecase.execute(1);
+                await usecase.execute(organizationId, 1);
 
                 // Assert
                 expect(mockRepository.getAllData()).toHaveLength(2);
-                expect(await mockRepository.findById(1)).toBeNull();
+                expect(await mockRepository.findById(organizationId, 1)).toBeNull();
             });
 
             it("should allow deleting last employee", async () => {
@@ -81,11 +82,11 @@ describe("DeleteEmployeeUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                await usecase.execute(3);
+                await usecase.execute(organizationId, 3);
 
                 // Assert
                 expect(mockRepository.getAllData()).toHaveLength(2);
-                expect(await mockRepository.findById(3)).toBeNull();
+                expect(await mockRepository.findById(organizationId, 3)).toBeNull();
             });
         });
 
@@ -97,14 +98,14 @@ describe("DeleteEmployeeUsecase", () => {
                 // Arrange - empty repository
 
                 // Act & Assert
-                await expect(usecase.execute(999)).rejects.toThrow();
+                await expect(usecase.execute(organizationId, 999)).rejects.toThrow();
             });
 
             it("should throw error with correct message", async () => {
                 // Arrange - empty repository
 
                 // Act & Assert
-                await expect(usecase.execute(42)).rejects.toThrow(
+                await expect(usecase.execute(organizationId, 42)).rejects.toThrow(
                     "Employee with id 42 not found",
                 );
             });
@@ -117,7 +118,7 @@ describe("DeleteEmployeeUsecase", () => {
 
                 // Act
                 try {
-                    await usecase.execute(999);
+                    await usecase.execute(organizationId, 999);
                 } catch {
                     // Expected
                 }
@@ -137,7 +138,7 @@ describe("DeleteEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                await usecase.execute(1);
+                await usecase.execute(organizationId, 1);
 
                 // Assert
                 expect(mockRepository.getAllData()).toHaveLength(0);
@@ -149,10 +150,10 @@ describe("DeleteEmployeeUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act - first deletion should succeed
-                await usecase.execute(1);
+                await usecase.execute(organizationId, 1);
 
                 // Assert - second deletion should fail
-                await expect(usecase.execute(1)).rejects.toThrow();
+                await expect(usecase.execute(organizationId, 1)).rejects.toThrow();
             });
         });
     });

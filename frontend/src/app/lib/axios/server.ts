@@ -14,10 +14,3 @@ export const serverAPIClient = axios.create({
         "Content-Type": "application/json",
     },
 });
-
-/**
- * Helper to extract auth token from request cookies
- */
-export function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}

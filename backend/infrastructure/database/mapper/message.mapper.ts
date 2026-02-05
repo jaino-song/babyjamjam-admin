@@ -4,8 +4,8 @@ type MessageRow = {
     id: number;
     title: string | null;
     text: string | null;
-    created_at: Date;
-    edited_at: Date | null;
+    createdAt: Date;
+    editedAt: Date | null;
 };
 
 export class MessageMapper {
@@ -14,8 +14,8 @@ export class MessageMapper {
             row.id,
             row.title || '',
             row.text || '',
-            row.created_at,
-            row.edited_at,
+            row.createdAt,
+            row.editedAt,
         );
     }
 
@@ -30,7 +30,7 @@ export class MessageMapper {
         return {
             title: entity.title,
             text: entity.text,
-            edited_at: entity.editedAt,
+            editedAt: entity.editedAt,
         };
     }
 }

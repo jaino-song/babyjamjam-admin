@@ -52,12 +52,18 @@ export class SendNotificationUsecase {
     /**
      * Send notification to a specific user
      */
-    async execute(params: SendNotificationParams): Promise<NotificationEntity> {
+    async execute(
+        organizationid: string,
+        params: SendNotificationParams
+    ): Promise<NotificationEntity> {
         const { userId, title, body, data } = params;
 
         // 알림 이력 저장
         const notification = NotificationEntity.create(userId, title, body, data);
-        const savedNotification = await this.notificationRepository.create(notification);
+        const savedNotification = await this.notificationRepository.create(
+            organizationid,
+            notification
+        );
 
         // 사용자의 모든 구독 가져오기
         const subscriptions = await this.pushSubscriptionRepository.findByUserId(userId);

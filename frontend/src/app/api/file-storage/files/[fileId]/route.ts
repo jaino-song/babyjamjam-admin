@@ -17,7 +17,9 @@ export async function GET(
     const { fileId } = await params;
 
     try {
-        const response = await serverAPIClient.get(`/documents/${fileId}`);
+        const response = await serverAPIClient.get(`/documents/${fileId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
         return NextResponse.json(response.data);
     } catch (error) {
         console.error(`[file-storage/files] get ${fileId} error:`, error);
@@ -41,7 +43,9 @@ export async function PUT(
 
     try {
         const body = await request.json().catch(() => ({}));
-        const response = await serverAPIClient.put(`/documents/${fileId}`, body);
+        const response = await serverAPIClient.put(`/documents/${fileId}`, body, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
         return NextResponse.json(response.data);
     } catch (error) {
         console.error(`[file-storage/files] put ${fileId} error:`, error);
@@ -64,7 +68,9 @@ export async function DELETE(
     const { fileId } = await params;
 
     try {
-        const response = await serverAPIClient.delete(`/documents/${fileId}`);
+        const response = await serverAPIClient.delete(`/documents/${fileId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
         return NextResponse.json(response.data);
     } catch (error) {
         console.error(`[file-storage/files] delete ${fileId} error:`, error);

@@ -36,6 +36,8 @@ describe("EmployeeService", () => {
     let changeOpenStatusUsecase: jest.Mocked<ChangeEmployeeOpenStatusUsecase>;
     let listOpenToNextWorkUsecase: jest.Mocked<ListEmployeesOpenToNextWorkUsecase>;
 
+    const organizationId = "org-1";
+
     beforeEach(async () => {
         // Create mock implementations
         const mockCreateUsecase = { execute: jest.fn() };
@@ -101,10 +103,11 @@ describe("EmployeeService", () => {
             createUsecase.execute.mockResolvedValue(mockEmployee);
 
             // Act
-            const result = await service.create(params);
+            const result = await service.create(organizationId, params);
 
             // Assert
             expect(createUsecase.execute).toHaveBeenCalledWith(
+                organizationId,
                 params.name,
                 params.workArea,
                 params.phone,
@@ -129,10 +132,11 @@ describe("EmployeeService", () => {
             createUsecase.execute.mockResolvedValue(mockEmployee);
 
             // Act
-            await service.create(params);
+            await service.create(organizationId, params);
 
             // Assert
             expect(createUsecase.execute).toHaveBeenCalledWith(
+                organizationId,
                 params.name,
                 params.workArea,
                 params.phone,
@@ -155,10 +159,11 @@ describe("EmployeeService", () => {
             createUsecase.execute.mockResolvedValue(mockEmployee);
 
             // Act
-            await service.create(params);
+            await service.create(organizationId, params);
 
             // Assert
             expect(createUsecase.execute).toHaveBeenCalledWith(
+                organizationId,
                 params.name,
                 params.workArea,
                 params.phone,
@@ -179,10 +184,10 @@ describe("EmployeeService", () => {
             findByIdUsecase.execute.mockResolvedValue(mockEmployee);
 
             // Act
-            const result = await service.findById(5);
+            const result = await service.findById(organizationId, 5);
 
             // Assert
-            expect(findByIdUsecase.execute).toHaveBeenCalledWith(5);
+            expect(findByIdUsecase.execute).toHaveBeenCalledWith(organizationId, 5);
             expect(result).toBe(mockEmployee);
         });
 
@@ -191,7 +196,7 @@ describe("EmployeeService", () => {
             findByIdUsecase.execute.mockResolvedValue(null);
 
             // Act
-            const result = await service.findById(999);
+            const result = await service.findById(organizationId, 999);
 
             // Assert
             expect(result).toBeNull();
@@ -212,10 +217,10 @@ describe("EmployeeService", () => {
             updateUsecase.execute.mockResolvedValue(mockEmployee);
 
             // Act
-            const result = await service.update(3, updateParams);
+            const result = await service.update(organizationId, 3, updateParams);
 
             // Assert
-            expect(updateUsecase.execute).toHaveBeenCalledWith(3, updateParams);
+            expect(updateUsecase.execute).toHaveBeenCalledWith(organizationId, 3, updateParams);
             expect(result).toBe(mockEmployee);
         });
 
@@ -226,10 +231,10 @@ describe("EmployeeService", () => {
             updateUsecase.execute.mockResolvedValue(mockEmployee);
 
             // Act
-            await service.update(7, partialParams);
+            await service.update(organizationId, 7, partialParams);
 
             // Assert
-            expect(updateUsecase.execute).toHaveBeenCalledWith(7, partialParams);
+            expect(updateUsecase.execute).toHaveBeenCalledWith(organizationId, 7, partialParams);
         });
 
         it("should handle empty update params", async () => {
@@ -238,10 +243,10 @@ describe("EmployeeService", () => {
             updateUsecase.execute.mockResolvedValue(mockEmployee);
 
             // Act
-            await service.update(1, {});
+            await service.update(organizationId, 1, {});
 
             // Assert
-            expect(updateUsecase.execute).toHaveBeenCalledWith(1, {});
+            expect(updateUsecase.execute).toHaveBeenCalledWith(organizationId, 1, {});
         });
     });
 
@@ -254,10 +259,10 @@ describe("EmployeeService", () => {
             deleteUsecase.execute.mockResolvedValue(undefined);
 
             // Act
-            await service.delete(10);
+            await service.delete(organizationId, 10);
 
             // Assert
-            expect(deleteUsecase.execute).toHaveBeenCalledWith(10);
+            expect(deleteUsecase.execute).toHaveBeenCalledWith(organizationId, 10);
         });
     });
 
@@ -271,10 +276,10 @@ describe("EmployeeService", () => {
             listUsecase.execute.mockResolvedValue(mockEmployees);
 
             // Act
-            const result = await service.findAll();
+            const result = await service.findAll(organizationId);
 
             // Assert
-            expect(listUsecase.execute).toHaveBeenCalled();
+            expect(listUsecase.execute).toHaveBeenCalledWith(organizationId);
             expect(result).toBe(mockEmployees);
         });
 
@@ -283,7 +288,7 @@ describe("EmployeeService", () => {
             listUsecase.execute.mockResolvedValue([]);
 
             // Act
-            const result = await service.findAll();
+            const result = await service.findAll(organizationId);
 
             // Assert
             expect(result).toEqual([]);
@@ -300,10 +305,10 @@ describe("EmployeeService", () => {
             listByWorkAreaUsecase.execute.mockResolvedValue(mockEmployees);
 
             // Act
-            const result = await service.findByWorkArea("인천 연수구");
+            const result = await service.findByWorkArea(organizationId, "인천 연수구");
 
             // Assert
-            expect(listByWorkAreaUsecase.execute).toHaveBeenCalledWith("인천 연수구");
+            expect(listByWorkAreaUsecase.execute).toHaveBeenCalledWith(organizationId, "인천 연수구");
             expect(result).toBe(mockEmployees);
         });
     });
@@ -318,10 +323,10 @@ describe("EmployeeService", () => {
             listByGradeUsecase.execute.mockResolvedValue(mockEmployees);
 
             // Act
-            const result = await service.findByGrade("특급");
+            const result = await service.findByGrade(organizationId, "특급");
 
             // Assert
-            expect(listByGradeUsecase.execute).toHaveBeenCalledWith("특급");
+            expect(listByGradeUsecase.execute).toHaveBeenCalledWith(organizationId, "특급");
             expect(result).toBe(mockEmployees);
         });
     });
@@ -336,10 +341,10 @@ describe("EmployeeService", () => {
             listByOpenStatusUsecase.execute.mockResolvedValue(mockEmployees);
 
             // Act
-            const result = await service.findByOpenStatus(true);
+            const result = await service.findByOpenStatus(organizationId, true);
 
             // Assert
-            expect(listByOpenStatusUsecase.execute).toHaveBeenCalledWith(true);
+            expect(listByOpenStatusUsecase.execute).toHaveBeenCalledWith(organizationId, true);
             expect(result).toBe(mockEmployees);
         });
 
@@ -349,10 +354,10 @@ describe("EmployeeService", () => {
             listByOpenStatusUsecase.execute.mockResolvedValue(mockEmployees);
 
             // Act
-            const result = await service.findByOpenStatus(false);
+            const result = await service.findByOpenStatus(organizationId, false);
 
             // Assert
-            expect(listByOpenStatusUsecase.execute).toHaveBeenCalledWith(false);
+            expect(listByOpenStatusUsecase.execute).toHaveBeenCalledWith(organizationId, false);
             expect(result).toBe(mockEmployees);
         });
     });
@@ -368,10 +373,10 @@ describe("EmployeeService", () => {
             listByRegisteredDateUsecase.execute.mockResolvedValue(mockEmployees);
 
             // Act
-            const result = await service.findByRegisteredDate(date);
+            const result = await service.findByRegisteredDate(organizationId, date);
 
             // Assert
-            expect(listByRegisteredDateUsecase.execute).toHaveBeenCalledWith(date);
+            expect(listByRegisteredDateUsecase.execute).toHaveBeenCalledWith(organizationId, date);
             expect(result).toBe(mockEmployees);
         });
     });
@@ -388,10 +393,10 @@ describe("EmployeeService", () => {
             listByRegisteredDateRangeUsecase.execute.mockResolvedValue(mockEmployees);
 
             // Act
-            const result = await service.findByRegisteredDateRange(start, end);
+            const result = await service.findByRegisteredDateRange(organizationId, start, end);
 
             // Assert
-            expect(listByRegisteredDateRangeUsecase.execute).toHaveBeenCalledWith(start, end);
+            expect(listByRegisteredDateRangeUsecase.execute).toHaveBeenCalledWith(organizationId, start, end);
             expect(result).toBe(mockEmployees);
         });
     });
@@ -406,10 +411,10 @@ describe("EmployeeService", () => {
             changeOpenStatusUsecase.execute.mockResolvedValue(mockEmployee);
 
             // Act
-            const result = await service.changeOpenStatus(5, false);
+            const result = await service.changeOpenStatus(organizationId, 5, false);
 
             // Assert
-            expect(changeOpenStatusUsecase.execute).toHaveBeenCalledWith(5, false);
+            expect(changeOpenStatusUsecase.execute).toHaveBeenCalledWith(organizationId, 5, false);
             expect(result).toBe(mockEmployee);
         });
 
@@ -419,10 +424,10 @@ describe("EmployeeService", () => {
             changeOpenStatusUsecase.execute.mockResolvedValue(mockEmployee);
 
             // Act
-            const result = await service.changeOpenStatus(3, true);
+            const result = await service.changeOpenStatus(organizationId, 3, true);
 
             // Assert
-            expect(changeOpenStatusUsecase.execute).toHaveBeenCalledWith(3, true);
+            expect(changeOpenStatusUsecase.execute).toHaveBeenCalledWith(organizationId, 3, true);
             expect(result.openToNextWork).toBe(true);
         });
     });
@@ -440,10 +445,10 @@ describe("EmployeeService", () => {
             listOpenToNextWorkUsecase.execute.mockResolvedValue(mockEmployees);
 
             // Act
-            const result = await service.findAllOpenToNextWork();
+            const result = await service.findAllOpenToNextWork(organizationId);
 
             // Assert
-            expect(listOpenToNextWorkUsecase.execute).toHaveBeenCalled();
+            expect(listOpenToNextWorkUsecase.execute).toHaveBeenCalledWith(organizationId);
             expect(result).toBe(mockEmployees);
         });
 
@@ -452,7 +457,7 @@ describe("EmployeeService", () => {
             listOpenToNextWorkUsecase.execute.mockResolvedValue([]);
 
             // Act
-            const result = await service.findAllOpenToNextWork();
+            const result = await service.findAllOpenToNextWork(organizationId);
 
             // Assert
             expect(result).toEqual([]);

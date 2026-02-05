@@ -1,60 +1,90 @@
 import { Injectable } from "@nestjs/common";
+import { IDocumentRepository, DocumentFilter } from "domain/repositories/document.repository.interface";
 import { DocumentEntity } from "domain/entities/document.entity";
-import { IDocumentRepository } from "domain/repositories/document.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { DocumentMapper } from "infrastructure/database/mapper/document.mapper";
 
+type PrismaDocumentRow = {
+    id: string;
+    name: string;
+    description: string | null;
+    category: string;
+    tags: string[];
+    mime_type: string;
+    file_size: number;
+    storage_path: string;
+    storage_url: string | null;
+    org_id: string | null;
+    uploaded_by: string;
+    created_at: Date;
+    updated_at: Date;
+};
+
 @Injectable()
-export class SbDocumentRepository implements IDocumentRepository {
+export class DocumentRepository implements IDocumentRepository {
     constructor(private readonly prismaService: PrismaService) {}
 
-    async findById(id: string): Promise<DocumentEntity | null> {
-        const doc = await this.prismaService.document.findUnique({
-            where: { id },
+    async findById(organizationid: string, id: string): Promise<DocumentEntity | null> {
+        const doc = await this.prismaService.document.findFirst({
+            where: { id, organizationId: organizationid },
         });
         return doc ? DocumentMapper.toDomain(doc) : null;
     }
 
-    async findByOrgId(orgid: string): Promise<DocumentEntity[]> {
+    async findByOrgId(organizationid: string, orgid: string): Promise<DocumentEntity[]> {
         const docs = await this.prismaService.document.findMany({
-            where: { orgId: orgid },
+            where: { orgId: orgid, organizationId: organizationid },
         });
         return docs.map(DocumentMapper.toDomain);
     }
 
-    async findByCategoryId(categoryId: string): Promise<DocumentEntity[]> {
+    async findByCategoryId(organizationid: string, categoryId: string): Promise<DocumentEntity[]> {
         const docs = await this.prismaService.document.findMany({
-            where: { categoryId },
+            where: { categoryId, organizationId: organizationid },
         });
         return docs.map(DocumentMapper.toDomain);
     }
 
-    async findAll(): Promise<DocumentEntity[]> {
-        const docs = await this.prismaService.document.findMany();
+    async findAll(organizationid: string): Promise<DocumentEntity[]> {
+        const docs = await this.prismaService.document.findMany({
+            where: { organizationId: organizationid },
+        });
         return docs.map(DocumentMapper.toDomain);
     }
 
-    async create(doc: DocumentEntity): Promise<DocumentEntity> {
+    async create(organizationid: string, doc: DocumentEntity): Promise<DocumentEntity> {
         const created = await this.prismaService.document.create({
-            data: DocumentMapper.toPrismaCreate(doc),
+            data: {
+                ...DocumentMapper.toPrismaCreate(doc),
+                organizationId: organizationid,
+            },
         });
         return DocumentMapper.toDomain(created);
     }
 
-    async update(doc: DocumentEntity): Promise<DocumentEntity> {
+    async update(organizationid: string, doc: DocumentEntity): Promise<DocumentEntity> {
         if (!doc.id) {
             throw new Error("Cannot update document without id");
         }
-        const updated = await this.prismaService.document.update({
-            where: { id: doc.id },
+        const result = await this.prismaService.document.updateMany({
+            where: { id: doc.id, organizationId: organizationid },
             data: DocumentMapper.toPrismaUpdate(doc),
         });
+        if (result.count === 0) {
+            throw new Error("Document not found for organization");
+        }
+        const updated = await this.prismaService.document.findFirst({
+            where: { id: doc.id, organizationId: organizationid },
+        });
+        if (!updated) {
+            throw new Error("Document not found after update");
+        }
         return DocumentMapper.toDomain(updated);
     }
 
-    async delete(id: string): Promise<void> {
-        await this.prismaService.document.delete({
-            where: { id },
+    async delete(organizationid: string, id: string): Promise<void> {
+        await this.prismaService.document.deleteMany({
+            where: { id, organizationId: organizationid },
         });
     }
 }

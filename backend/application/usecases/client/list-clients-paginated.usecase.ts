@@ -9,8 +9,12 @@ export class ListClientsPaginatedUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    execute(page: number, limit: number, search?: string): Promise<PaginatedResult<ClientEntity>> {
-        return this.clientRepository.findAllPaginated(page, limit, search);
+    execute(
+        organizationid: string,
+        page: number,
+        limit: number,
+        search?: string
+    ): Promise<PaginatedResult<ClientEntity>> {
+        return this.clientRepository.findAllPaginated(organizationid, page, limit, search);
     }
 }
-

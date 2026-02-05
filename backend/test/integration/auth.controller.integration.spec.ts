@@ -20,7 +20,7 @@ describe("AuthController (Integration)", () => {
         id: "user-uuid-123",
         name: "Test User",
         email: "test@example.com",
-        profile_image: "https://example.com/profile.jpg",
+        profileImage: "https://example.com/profile.jpg",
         role: "user",
     };
 
@@ -211,7 +211,7 @@ describe("AuthController (Integration)", () => {
                         id: true,
                         name: true,
                         email: true,
-                        profile_image: true,
+                        profileImage: true,
                         role: true,
                     },
                 });

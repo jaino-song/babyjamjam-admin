@@ -37,7 +37,7 @@ describe("AIChatService.chatStream", () => {
         const service = new AIChatService(geminiGateway, toolExecutor, sessionRepository);
 
         const events = [] as any[];
-        for await (const evt of service.chatStream(undefined, "user-1", "hello")) {
+        for await (const evt of service.chatStream(undefined, "user-1", "hello", "org-1")) {
             events.push(evt);
         }
 

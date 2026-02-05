@@ -280,6 +280,7 @@ export class AIChatService {
         sessionId: string | undefined,
         userId: string,
         userMessage: string,
+        organizationid: string,
     ): AsyncGenerator<ChatStreamEvent> {
         let session = sessionId
             ? await this.sessionRepository.findById(sessionId)
@@ -320,7 +321,7 @@ export class AIChatService {
 
                                 yield { type: 'tool_call', toolName: name, toolStatus: 'executing' };
 
-                                const result = await this.toolExecutor.execute(name, args);
+                                const result = await this.toolExecutor.execute(organizationid, name, args);
 
                                 if (result.requiresConfirmation) {
                                     yield {

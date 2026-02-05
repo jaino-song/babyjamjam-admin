@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import { NotificationService } from "application/services/notification.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import {
     SubscribePushDto,
     UnsubscribePushDto,
@@ -77,8 +78,9 @@ export class NotificationController {
      * Get user's notifications with pagination
      */
     @Get()
-    @UseGuards(JwtGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     async getNotifications(
+        @CurrentTenant() tenant: { organizationId?: string },
         @Request() req: { user: JwtPayload },
         @Query() query: GetNotificationsQueryDto,
     ): Promise<NotificationResponseDto[]> {
@@ -86,6 +88,7 @@ export class NotificationController {
             return [];
         }
         const notifications = await this.notificationService.getNotifications(
+            tenant.organizationId ?? "",
             req.user.userId,
             { limit: query.limit, offset: query.offset },
         );
@@ -96,12 +99,18 @@ export class NotificationController {
      * Get unread notifications count
      */
     @Get("unread/count")
-    @UseGuards(JwtGuard)
-    async getUnreadCount(@Request() req: { user: JwtPayload }): Promise<UnreadCountResponseDto> {
+    @UseGuards(JwtGuard, TenantGuard)
+    async getUnreadCount(
+        @CurrentTenant() tenant: { organizationId?: string },
+        @Request() req: { user: JwtPayload }
+    ): Promise<UnreadCountResponseDto> {
         if (req.user.userId === 'dev-user') {
             return { count: 0 };
         }
-        const count = await this.notificationService.countUnreadNotifications(req.user.userId);
+        const count = await this.notificationService.countUnreadNotifications(
+            tenant.organizationId ?? "",
+            req.user.userId
+        );
         return { count };
     }
 
@@ -109,12 +118,17 @@ export class NotificationController {
      * Mark a notification as read
      */
     @Patch(":id/read")
-    @UseGuards(JwtGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     async markAsRead(
+        @CurrentTenant() tenant: { organizationId?: string },
         @Request() req: { user: JwtPayload },
         @Param("id", ParseIntPipe) id: number,
     ): Promise<NotificationResponseDto> {
-        const notification = await this.notificationService.markAsRead(id, req.user.userId);
+        const notification = await this.notificationService.markAsRead(
+            tenant.organizationId ?? "",
+            id,
+            req.user.userId
+        );
         return this.toResponseDto(notification);
     }
 
@@ -122,9 +136,12 @@ export class NotificationController {
      * Mark all notifications as read
      */
     @Patch("read-all")
-    @UseGuards(JwtGuard)
-    async markAllAsRead(@Request() req: { user: JwtPayload }): Promise<{ success: boolean }> {
-        await this.notificationService.markAllAsRead(req.user.userId);
+    @UseGuards(JwtGuard, TenantGuard)
+    async markAllAsRead(
+        @CurrentTenant() tenant: { organizationId?: string },
+        @Request() req: { user: JwtPayload }
+    ): Promise<{ success: boolean }> {
+        await this.notificationService.markAllAsRead(tenant.organizationId ?? "", req.user.userId);
         return { success: true };
     }
 
@@ -134,14 +151,16 @@ export class NotificationController {
      * Send notification to a specific user (admin only)
      */
     @Post("send")
-    @UseGuards(JwtGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     async sendNotification(
+        @CurrentTenant() tenant: { organizationId?: string },
         @Request() req: { user: JwtPayload },
         @Body() dto: SendNotificationDto,
     ): Promise<NotificationResponseDto> {
         // TODO: Add admin role check
         // if (req.user.role !== 'admin') throw new ForbiddenException();
         const notification = await this.notificationService.sendNotification(
+            tenant.organizationId ?? "",
             dto.userId,
             dto.title,
             dto.body,

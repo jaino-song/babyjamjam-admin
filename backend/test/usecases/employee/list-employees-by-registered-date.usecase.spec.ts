@@ -4,6 +4,7 @@ import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 describe("ListEmployeesByRegisteredDateUsecase", () => {
     let usecase: ListEmployeesByRegisteredDateUsecase;
     let mockRepository: MockEmployeeRepository;
+    const organizationId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -30,7 +31,7 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(targetDate);
+                const result = await usecase.execute(organizationId, targetDate);
 
                 // Assert
                 expect(result).toHaveLength(2);
@@ -47,7 +48,7 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(new Date("2024-01-20"));
+                const result = await usecase.execute(organizationId, new Date("2024-01-20"));
 
                 // Assert
                 expect(result).toEqual([]);
@@ -57,7 +58,7 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 // Arrange - empty repository
 
                 // Act
-                const result = await usecase.execute(new Date("2024-01-15"));
+                const result = await usecase.execute(organizationId, new Date("2024-01-15"));
 
                 // Assert
                 expect(result).toEqual([]);
@@ -87,7 +88,7 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(new Date("2024-01-15T10:00:00"));
+                const result = await usecase.execute(organizationId, new Date("2024-01-15T10:00:00"));
 
                 // Assert - all three should match
                 expect(result).toHaveLength(3);
@@ -103,7 +104,7 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(new Date("2024-01-15"));
+                const result = await usecase.execute(organizationId, new Date("2024-01-15"));
 
                 // Assert - only the one from Jan 15 should match
                 expect(result).toHaveLength(1);
@@ -124,7 +125,7 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(new Date("2024-02-01"));
+                const result = await usecase.execute(organizationId, new Date("2024-02-01"));
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -139,7 +140,7 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(new Date("2024-01-31"));
+                const result = await usecase.execute(organizationId, new Date("2024-01-31"));
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -154,7 +155,7 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(new Date("2024-02-29"));
+                const result = await usecase.execute(organizationId, new Date("2024-02-29"));
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -169,8 +170,8 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result2023 = await usecase.execute(new Date("2023-12-31"));
-                const result2024 = await usecase.execute(new Date("2024-01-01"));
+                const result2023 = await usecase.execute(organizationId, new Date("2023-12-31"));
+                const result2024 = await usecase.execute(organizationId, new Date("2024-01-01"));
 
                 // Assert
                 expect(result2023).toHaveLength(1);
@@ -199,7 +200,7 @@ describe("ListEmployeesByRegisteredDateUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute(registeredDate);
+                const result = await usecase.execute(organizationId, registeredDate);
 
                 // Assert
                 expect(result).toHaveLength(1);

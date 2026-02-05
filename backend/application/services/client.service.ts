@@ -16,7 +16,7 @@ import { AlimtalkService } from "./alimtalk.service";
 const FILTER_DAYS_THRESHOLD = 7;
 
 // Document status type for eformsign documents
-// Maps to eformsign_doc.status_type values:
+// Maps to eformsign_doc.statusType values:
 // - 010: created (문서 생성됨)
 // - 020: opened (서명 페이지 열림)
 // - 050: completed (완료)
@@ -77,7 +77,7 @@ export class ClientService {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    async create(params: {
+    async create(organizationid: string, params: {
         name: string;
         primaryEmployeeId?: number | null;
         secondaryEmployeeId?: number | null;
@@ -103,7 +103,7 @@ export class ClientService {
         const dueDate = params.dueDate ? new Date(params.dueDate) : null;
 
         // First create the client
-        const client = await this.createClientUsecase.execute({
+        const client = await this.createClientUsecase.execute(organizationid, {
             name: params.name,
             address: params.address ?? null,
             phone: params.phone ?? null,
@@ -127,12 +127,12 @@ export class ClientService {
         if (params.primaryEmployeeId !== undefined && params.primaryEmployeeId !== null) {
             await this.prismaService.employee_schedule.create({
                 data: {
-                    client_id: client.id,
-                    primary_employee_id: params.primaryEmployeeId,
-                    secondary_employee_id: params.secondaryEmployeeId ?? null,
-                    work_address: params.address ?? "",
-                    start_date: startDate,
-                    end_date: endDate,
+                    clientId: client.id,
+                    primaryEmployeeId: params.primaryEmployeeId,
+                    secondaryEmployeeId: params.secondaryEmployeeId ?? null,
+                    workAddress: params.address ?? "",
+                    startDate: startDate,
+                    endDate: endDate,
                     replaced: false,
                 },
             });
@@ -145,13 +145,23 @@ export class ClientService {
         return client;
     }
 
-    async findAll(): Promise<ClientWithEmployees[]> {
-        const clients = await this.listClientsUsecase.execute();
+    async findAll(organizationid: string): Promise<ClientWithEmployees[]> {
+        const clients = await this.listClientsUsecase.execute(organizationid);
         return this.attachEmployeesToClients(clients);
     }
 
-    async findAllPaginated(page: number, limit: number, search?: string): Promise<PaginatedClientWithEmployees> {
-        const result = await this.listClientsPaginatedUsecase.execute(page, limit, search);
+    async findAllPaginated(
+        organizationid: string,
+        page: number,
+        limit: number,
+        search?: string
+    ): Promise<PaginatedClientWithEmployees> {
+        const result = await this.listClientsPaginatedUsecase.execute(
+            organizationid,
+            page,
+            limit,
+            search
+        );
         const clientsWithEmployees = await this.attachEmployeesToClients(result.data);
         return {
             data: clientsWithEmployees,
@@ -162,29 +172,41 @@ export class ClientService {
         };
     }
 
-    async findById(id: number): Promise<ClientWithEmployees | null> {
-        const client = await this.findClientByIdUsecase.execute(id);
+    async findById(organizationid: string, id: number): Promise<ClientWithEmployees | null> {
+        const client = await this.findClientByIdUsecase.execute(organizationid, id);
         if (!client) return null;
 
         const [withEmployees] = await this.attachEmployeesToClients([client]);
         return withEmployees ?? null;
     }
 
-    async findByFilter(filter: string): Promise<ClientWithEmployees[]> {
+    async findByFilter(organizationid: string, filter: string): Promise<ClientWithEmployees[]> {
         let clients: ClientEntity[];
 
         switch (filter) {
             case 'starting-soon':
-                clients = await this.clientRepository.findStartingWithinDays(FILTER_DAYS_THRESHOLD);
+                clients = await this.clientRepository.findStartingWithinDays(
+                    organizationid,
+                    FILTER_DAYS_THRESHOLD
+                );
                 break;
             case 'ending-soon':
-                clients = await this.clientRepository.findEndingWithinDays(FILTER_DAYS_THRESHOLD);
+                clients = await this.clientRepository.findEndingWithinDays(
+                    organizationid,
+                    FILTER_DAYS_THRESHOLD
+                );
                 break;
             case 'incomplete-contracts':
-                clients = await this.clientRepository.findWithIncompleteContractsStartingWithinDays(FILTER_DAYS_THRESHOLD);
+                clients = await this.clientRepository.findWithIncompleteContractsStartingWithinDays(
+                    organizationid,
+                    FILTER_DAYS_THRESHOLD
+                );
                 break;
             case 'no-contract':
-                clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(FILTER_DAYS_THRESHOLD);
+                clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(
+                    organizationid,
+                    FILTER_DAYS_THRESHOLD
+                );
                 break;
             default:
                 this.logger.warn(`Unknown filter: ${filter}`);
@@ -206,27 +228,27 @@ export class ClientService {
         // Get all active schedules for these clients with employee info
         const schedules = await this.prismaService.employee_schedule.findMany({
             where: {
-                client_id: { in: clientIds },
+                clientId: { in: clientIds },
                 replaced: false,
             },
             include: {
-                employee_employee_schedule_primary_employee_idToemployee: true,
-                employee_employee_schedule_secondary_employee_idToemployee: true,
+                primaryEmployee: true,
+                secondaryEmployee: true,
             },
         });
 
-        // Create a map of client_id to schedule
-        const scheduleMap = new Map(schedules.map(s => [s.client_id, s]));
+        // Create a map of clientId to schedule
+        const scheduleMap = new Map(schedules.map(s => [s.clientId, s]));
 
         // Batch fetch eformsign_docs for all clients with eDocId
         const eDocIds = clients.map(c => c.eDocId).filter((id): id is string => id !== null);
         const docs = eDocIds.length > 0
             ? await this.prismaService.eformsign_doc.findMany({
-                where: { document_id: { in: eDocIds } },
-                select: { document_id: true, status_type: true },
+                where: { documentId: { in: eDocIds } },
+                select: { documentId: true, statusType: true },
             })
             : [];
-        const docStatusMap = new Map(docs.map(d => [d.document_id, d.status_type]));
+        const docStatusMap = new Map(docs.map(d => [d.documentId, d.statusType]));
 
         // Compute and update service status for each client (lazy update strategy)
         const clientsNeedingUpdate: { id: number; newStatus: ServiceStatusType }[] = [];
@@ -267,11 +289,11 @@ export class ClientService {
                     eDocId: client.eDocId,
                     hasSigned: client.eDocId !== null,
                     documentStatus: this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? '')),
-                    primaryEmployee: schedule?.employee_employee_schedule_primary_employee_idToemployee
-                        ? { id: schedule.employee_employee_schedule_primary_employee_idToemployee.id, name: schedule.employee_employee_schedule_primary_employee_idToemployee.name }
+                    primaryEmployee: schedule?.primaryEmployee
+                        ? { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name }
                         : null,
-                    secondaryEmployee: schedule?.employee_employee_schedule_secondary_employee_idToemployee
-                        ? { id: schedule.employee_employee_schedule_secondary_employee_idToemployee.id, name: schedule.employee_employee_schedule_secondary_employee_idToemployee.name }
+                    secondaryEmployee: schedule?.secondaryEmployee
+                        ? { id: schedule.secondaryEmployee.id, name: schedule.secondaryEmployee.name }
                         : null,
                 };
             });
@@ -297,7 +319,7 @@ export class ClientService {
                 try {
                     await this.prismaService.client.update({
                         where: { id },
-                        data: { service_status: newStatus },
+                        data: { serviceStatus: newStatus },
                     });
                     this.logger.debug(`Updated client ${id} service status to ${newStatus}`);
                 } catch (error) {
@@ -322,7 +344,7 @@ export class ClientService {
         }
     }
 
-    async update(id: number, params: {
+    async update(organizationid: string, id: number, params: {
         name?: string;
         primaryEmployeeId?: number;
         secondaryEmployeeId?: number | null;
@@ -344,7 +366,7 @@ export class ClientService {
         eDocId?: string | null;
     }): Promise<ClientEntity> {
         // Get existing client
-        const existingClient = await this.findClientByIdUsecase.execute(id);
+        const existingClient = await this.findClientByIdUsecase.execute(organizationid, id);
         if (!existingClient) {
             throw new Error(`Client with id ${id} not found`);
         }
@@ -358,12 +380,12 @@ export class ClientService {
         if (employeeChanged) {
             // Get current schedule for this client
             const currentSchedule = await this.prismaService.employee_schedule.findFirst({
-                where: { client_id: id, replaced: false },
+                where: { clientId: id, replaced: false },
                 orderBy: { id: 'desc' },
             });
 
-            const currentPrimaryEmployeeId = currentSchedule?.primary_employee_id ?? null;
-            const currentSecondaryEmployeeId = currentSchedule?.secondary_employee_id ?? null;
+            const currentPrimaryEmployeeId = currentSchedule?.primaryEmployeeId ?? null;
+            const currentSecondaryEmployeeId = currentSchedule?.secondaryEmployeeId ?? null;
 
             // Determine new employee values
             const newPrimaryEmployeeId = params.primaryEmployeeId !== undefined 
@@ -382,26 +404,26 @@ export class ClientService {
                 if (currentSchedule) {
                     await this.prismaService.employee_schedule.update({
                         where: { id: currentSchedule.id },
-                        data: { replaced: true, end_date: new Date() },
+                        data: { replaced: true, endDate: new Date() },
                     });
                 }
 
                 // Create new schedule
                 await this.prismaService.employee_schedule.create({
                     data: {
-                        client_id: id,
-                        primary_employee_id: newPrimaryEmployeeId,
-                        secondary_employee_id: newSecondaryEmployeeId,
-                        work_address: params.address ?? existingClient.address ?? "",
-                        start_date: startDate,
-                        end_date: endDate,
+                        clientId: id,
+                        primaryEmployeeId: newPrimaryEmployeeId,
+                        secondaryEmployeeId: newSecondaryEmployeeId,
+                        workAddress: params.address ?? existingClient.address ?? "",
+                        startDate: startDate,
+                        endDate: endDate,
                         replaced: false,
                     },
                 });
             }
         }
 
-        return this.updateClientUsecase.execute(id, {
+        return this.updateClientUsecase.execute(organizationid, id, {
             name: params.name,
             address: params.address,
             phone: params.phone,
@@ -428,8 +450,12 @@ export class ClientService {
      * @param clientId - The client ID
      * @param reason - Optional termination reason for logging
      */
-    async terminateService(clientId: number, reason?: string): Promise<ClientEntity> {
-        const client = await this.findClientByIdUsecase.execute(clientId);
+    async terminateService(
+        organizationid: string,
+        clientId: number,
+        reason?: string
+    ): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(organizationid, clientId);
         if (!client) {
             throw new NotFoundException(`Client with id ${clientId} not found`);
         }
@@ -439,16 +465,16 @@ export class ClientService {
             (reason ? `: ${reason}` : "")
         );
 
-        // Update client with terminated status and set end_date to today
-        const updatedClient = await this.updateClientUsecase.execute(clientId, {
+        // Update client with terminated status and set endDate to today
+        const updatedClient = await this.updateClientUsecase.execute(organizationid, clientId, {
             serviceStatus: SERVICE_STATUS.TERMINATED,
             endDate: new Date(),
         });
 
         // Also mark the current schedule as ended
         await this.prismaService.employee_schedule.updateMany({
-            where: { client_id: clientId, replaced: false },
-            data: { end_date: new Date() },
+            where: { clientId: clientId, replaced: false },
+            data: { endDate: new Date() },
         });
 
         return updatedClient;
@@ -462,11 +488,12 @@ export class ClientService {
      * @param newSecondaryEmployeeId - Optional new secondary employee
      */
     async requestReplacement(
+        organizationid: string,
         clientId: number,
         newPrimaryEmployeeId: number,
         newSecondaryEmployeeId?: number | null,
     ): Promise<ClientEntity> {
-        const client = await this.findClientByIdUsecase.execute(clientId);
+        const client = await this.findClientByIdUsecase.execute(organizationid, clientId);
         if (!client) {
             throw new NotFoundException(`Client with id ${clientId} not found`);
         }
@@ -477,32 +504,32 @@ export class ClientService {
         );
 
         // Update client status to replacement_requested
-        const updatedClient = await this.updateClientUsecase.execute(clientId, {
+        const updatedClient = await this.updateClientUsecase.execute(organizationid, clientId, {
             serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED,
         });
 
         // Get current schedule and mark as replaced
         const currentSchedule = await this.prismaService.employee_schedule.findFirst({
-            where: { client_id: clientId, replaced: false },
+            where: { clientId: clientId, replaced: false },
             orderBy: { id: "desc" },
         });
 
         if (currentSchedule) {
             await this.prismaService.employee_schedule.update({
                 where: { id: currentSchedule.id },
-                data: { replaced: true, end_date: new Date() },
+                data: { replaced: true, endDate: new Date() },
             });
         }
 
         // Create new schedule with new employees
         await this.prismaService.employee_schedule.create({
             data: {
-                client_id: clientId,
-                primary_employee_id: newPrimaryEmployeeId,
-                secondary_employee_id: newSecondaryEmployeeId ?? null,
-                work_address: client.address ?? "",
-                start_date: new Date(),
-                end_date: client.endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+                clientId: clientId,
+                primaryEmployeeId: newPrimaryEmployeeId,
+                secondaryEmployeeId: newSecondaryEmployeeId ?? null,
+                workAddress: client.address ?? "",
+                startDate: new Date(),
+                endDate: client.endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
                 replaced: false,
             },
         });
@@ -515,8 +542,8 @@ export class ClientService {
      * Call this after the replacement has been processed
      * @param clientId - The client ID
      */
-    async completeReplacement(clientId: number): Promise<ClientEntity> {
-        const client = await this.findClientByIdUsecase.execute(clientId);
+    async completeReplacement(organizationid: string, clientId: number): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(organizationid, clientId);
         if (!client) {
             throw new NotFoundException(`Client with id ${clientId} not found`);
         }
@@ -537,16 +564,16 @@ export class ClientService {
             client.endDate,
         );
 
-        return this.updateClientUsecase.execute(clientId, {
+        return this.updateClientUsecase.execute(organizationid, clientId, {
             serviceStatus: computedStatus,
         });
     }
 
-    delete(id: number): Promise<void> {
-        return this.deleteClientUsecase.execute(id);
+    delete(organizationid: string, id: number): Promise<void> {
+        return this.deleteClientUsecase.execute(organizationid, id);
     }
 
-    async getStats(): Promise<{
+    async getStats(organizationid: string): Promise<{
         activeClients: number;
         contractsNotSent: number;
         contractsPendingSignature: number;
@@ -562,27 +589,34 @@ export class ClientService {
         const [activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth] = 
             await Promise.all([
                 this.prismaService.client.count({
-                    where: { service_status: SERVICE_STATUS.ACTIVE },
-                }),
-                this.prismaService.client.count({
-                    where: { e_doc_id: null, service_status: SERVICE_STATUS.WAITING },
+                    where: { serviceStatus: SERVICE_STATUS.ACTIVE, organizationId: organizationid },
                 }),
                 this.prismaService.client.count({
                     where: {
-                        e_doc_id: { not: null },
-                        eformsign_doc_client_e_doc_idToeformsign_doc: { status_type: { not: '050' } },
+                        eDocId: null,
+                        serviceStatus: SERVICE_STATUS.WAITING,
+                        organizationId: organizationid,
                     },
                 }),
                 this.prismaService.client.count({
                     where: {
-                        service_status: SERVICE_STATUS.WAITING,
-                        start_date: { gte: thisMonthStart, lte: thisMonthEnd },
+                        eDocId: { not: null },
+                        eformsignDocByEDocId: { statusType: { not: '050' } },
+                        organizationId: organizationid,
                     },
                 }),
                 this.prismaService.client.count({
                     where: {
-                        service_status: SERVICE_STATUS.WAITING,
-                        start_date: { gte: nextMonthStart, lte: nextMonthEnd },
+                        serviceStatus: SERVICE_STATUS.WAITING,
+                        startDate: { gte: thisMonthStart, lte: thisMonthEnd },
+                        organizationId: organizationid,
+                    },
+                }),
+                this.prismaService.client.count({
+                    where: {
+                        serviceStatus: SERVICE_STATUS.WAITING,
+                        startDate: { gte: nextMonthStart, lte: nextMonthEnd },
+                        organizationId: organizationid,
                     },
                 }),
             ]);

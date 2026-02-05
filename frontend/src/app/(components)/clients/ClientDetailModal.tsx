@@ -1,23 +1,23 @@
 "use client";
 
-import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
-    Typography,
-    Box,
-    Chip,
-    Divider,
-    Grid,
-    IconButton,
-} from "@mui/material";
 import { Pencil, Trash2, X } from "lucide-react";
-import { Client, CONTRACT_STATUS_OPTIONS, DocumentStatus } from "@/app/lib/client/types";
+import { Client, SERVICE_STATUS_OPTIONS, DocumentStatus } from "@/app/lib/client/types";
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { Locale } from "@/app/actions/locale";
+
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { StatusBadge } from "@/app/(components)/ui/status-badge";
+import { InfoRow } from "@/app/(components)/ui/info-row";
 
 interface ClientDetailModalProps {
     open: boolean;
@@ -27,23 +27,28 @@ interface ClientDetailModalProps {
     onDelete: (id: number) => void;
 }
 
-const getStatusChip = (status: string | null) => {
-    const option = CONTRACT_STATUS_OPTIONS.find(o => o.value === status);
-    if (!option) return <Chip label="-" size="small" />;
+// Map service status to StatusBadge variant
+type ServiceStatusVariant = "waiting" | "in_progress" | "completed" | "cancelled" | "replacement_requested" | "default";
 
-    const colorMap: Record<string, "default" | "warning" | "info" | "success" | "error"> = {
-        pending: "warning",
-        in_progress: "info",
-        completed: "success",
-        cancelled: "error",
+const getStatusBadge = (status: string | null) => {
+    const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
+    if (!option) return <StatusBadge variant="default">-</StatusBadge>;
+
+    const variantMap: Record<string, ServiceStatusVariant> = {
+        pending: "waiting",
+        waiting: "waiting",
+        active: "in_progress",
+        in_progress: "in_progress",
+        completed: "completed",
+        terminated: "cancelled",
+        cancelled: "cancelled",
+        replacement_requested: "replacement_requested",
     };
 
     return (
-        <Chip
-            label={option.label}
-            color={colorMap[status || ""] || "default"}
-            size="small"
-        />
+        <StatusBadge variant={variantMap[status || ""] || "default"}>
+            {option.label}
+        </StatusBadge>
     );
 };
 
@@ -60,42 +65,41 @@ const formatPrice = (price: string | null): string => {
     return `${num.toLocaleString("ko-KR")}원`;
 };
 
-const getDocStatusChip = (status: DocumentStatus, locale: Locale) => {
-    switch (status) {
-        case 'completed':
-            return <Chip label={t(locale, "clients.form.doc-completed")} color="success" size="small" />;
-        case 'opened':
-            return <Chip label={t(locale, "clients.form.doc-opened")} color="warning" size="small" />;
-        case 'created':
-            return <Chip label={t(locale, "clients.form.doc-created")} color="default" size="small" />;
-        case 'requested':
-            return <Chip label={t(locale, "clients.form.doc-requested")} color="info" size="small" />;
-        case 'rejected':
-            return <Chip label={t(locale, "clients.form.doc-rejected")} color="error" size="small" />;
-        case 'revoked':
-            return <Chip label={t(locale, "clients.form.doc-revoked")} color="error" size="small" variant="outlined" />;
-        case 'deleted':
-            return <Chip label={t(locale, "clients.form.doc-deleted")} color="default" size="small" variant="outlined" />;
-        default:
-            return <Chip label={t(locale, "clients.form.doc-not-sent")} color="default" size="small" variant="outlined" />;
+// Map document status to StatusBadge variant
+type DocStatusVariant = "doc_created" | "doc_requested" | "doc_opened" | "doc_completed" | "doc_rejected" | "doc_revoked" | "doc_deleted" | "default";
+type NonNullDocumentStatus = Exclude<DocumentStatus, null>;
+
+const getDocStatusBadge = (status: DocumentStatus, locale: Locale) => {
+    // Handle null status
+    if (status === null) {
+        return <StatusBadge variant="default">{t(locale, "clients.form.doc-not-sent")}</StatusBadge>;
     }
+
+    const variantMap: Record<NonNullDocumentStatus, DocStatusVariant> = {
+        completed: "doc_completed",
+        opened: "doc_opened",
+        created: "doc_created",
+        requested: "doc_requested",
+        rejected: "doc_rejected",
+        revoked: "doc_revoked",
+        deleted: "doc_deleted",
+    };
+
+    const labelMap: Record<NonNullDocumentStatus, string> = {
+        completed: t(locale, "clients.form.doc-completed"),
+        opened: t(locale, "clients.form.doc-opened"),
+        created: t(locale, "clients.form.doc-created"),
+        requested: t(locale, "clients.form.doc-requested"),
+        rejected: t(locale, "clients.form.doc-rejected"),
+        revoked: t(locale, "clients.form.doc-revoked"),
+        deleted: t(locale, "clients.form.doc-deleted"),
+    };
+
+    const variant = variantMap[status] || "default";
+    const label = labelMap[status] || t(locale, "clients.form.doc-not-sent");
+
+    return <StatusBadge variant={variant}>{label}</StatusBadge>;
 };
-
-interface InfoRowProps {
-    label: string;
-    value: React.ReactNode;
-}
-
-const InfoRow = ({ label, value }: InfoRowProps) => (
-    <Box sx={{ display: "flex", py: 1, alignItems: "center" }}>
-        <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>
-            {label}
-        </Typography>
-        <Box sx={{ flex: 1, fontSize: "0.875rem" }}>
-            {value || "-"}
-        </Box>
-    </Box>
-);
 
 export function ClientDetailModal({
     open,
@@ -119,121 +123,152 @@ export function ClientDetailModal({
     };
 
     return (
-        <Dialog data-component="ClientDetailModal" open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <Box component="span" sx={{ fontWeight: 600, fontSize: "1.25rem" }}>
-                    {client.name}
-                </Box>
-                <IconButton size="small" onClick={onClose}>
-                    <X size={20} />
-                </IconButton>
-            </DialogTitle>
-            <DialogContent dividers>
-                <Box>
-                    {/* Basic Info */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "clients.form.section-basic")}
-                    </Typography>
-                    <InfoRow label={t(locale, "clients.form.name")} value={client.name} />
-                    <InfoRow label={t(locale, "clients.form.birthday")} value={client.birthday} />
-                    <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(client.dueDate)} />
-                    <InfoRow label={t(locale, "clients.form.phone")} value={client.phone} />
-                    <InfoRow label={t(locale, "clients.form.address")} value={client.address} />
+        <Dialog data-component="ClientDetailModal" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+            <DialogContent className="max-w-lg rounded-lg shadow-xl">
+                <DialogHeader className="flex flex-row items-center justify-between pr-8">
+                    <DialogTitle className="text-xl font-semibold">
+                        {client.name}
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">
+                        {t(locale, "clients.detail.description")}
+                    </DialogDescription>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-4 top-4 h-8 w-8"
+                        onClick={onClose}
+                    >
+                        <X className="h-4 w-4" />
+                        <span className="sr-only">Close</span>
+                    </Button>
+                </DialogHeader>
 
-                    <Divider sx={{ my: 2 }} />
+                <div className="space-y-4 py-2">
+                    {/* Basic Info */}
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "clients.form.section-basic")}
+                        </h4>
+                        <InfoRow label={t(locale, "clients.form.name")} value={client.name} />
+                        <InfoRow label={t(locale, "clients.form.birthday")} value={client.birthday} />
+                        <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(client.dueDate)} />
+                        <InfoRow label={t(locale, "clients.form.phone")} value={client.phone} />
+                        <InfoRow label={t(locale, "clients.form.address")} value={client.address} />
+                    </div>
+
+                    <Separator />
 
                     {/* Employee Info */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "clients.form.section-employee")}
-                    </Typography>
-                    <InfoRow label={t(locale, "clients.form.primary-employee")} value={client.primaryEmployee?.name ?? "-"} />
-                    <InfoRow label={t(locale, "clients.form.secondary-employee")} value={client.secondaryEmployee?.name ?? "-"} />
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "clients.form.section-employee")}
+                        </h4>
+                        <InfoRow label={t(locale, "clients.form.primary-employee")} value={client.primaryEmployee?.name ?? "-"} />
+                        <InfoRow label={t(locale, "clients.form.secondary-employee")} value={client.secondaryEmployee?.name ?? "-"} />
+                    </div>
 
-                    <Divider sx={{ my: 2 }} />
+                    <Separator />
 
                     {/* Service Info */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "clients.form.section-service")}
-                    </Typography>
-                    <InfoRow label={t(locale, "clients.form.voucher-type")} value={client.type} />
-                    <InfoRow
-                        label={t(locale, "clients.form.duration")}
-                        value={client.duration ? `${client.duration}일` : "-"}
-                    />
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "clients.form.section-service")}
+                        </h4>
+                        <InfoRow label={t(locale, "clients.form.voucher-type")} value={client.type} />
+                        <InfoRow
+                            label={t(locale, "clients.form.duration")}
+                            value={client.duration ? `${client.duration}일` : "-"}
+                        />
+                    </div>
 
-                    <Divider sx={{ my: 2 }} />
+                    <Separator />
 
                     {/* Pricing Info */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "clients.form.section-pricing")}
-                    </Typography>
-                    <InfoRow label={t(locale, "clients.form.full-price")} value={formatPrice(client.fullPrice)} />
-                    <InfoRow label={t(locale, "clients.form.grant")} value={formatPrice(client.grant)} />
-                    <InfoRow label={t(locale, "clients.form.actual-price")} value={formatPrice(client.actualPrice)} />
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "clients.form.section-pricing")}
+                        </h4>
+                        <InfoRow label={t(locale, "clients.form.full-price")} value={formatPrice(client.fullPrice)} />
+                        <InfoRow label={t(locale, "clients.form.grant")} value={formatPrice(client.grant)} />
+                        <InfoRow label={t(locale, "clients.form.actual-price")} value={formatPrice(client.actualPrice)} />
+                    </div>
 
-                    <Divider sx={{ my: 2 }} />
+                    <Separator />
 
                     {/* Contract Info */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "clients.form.section-contract")}
-                    </Typography>
-                    <InfoRow
-                        label={t(locale, "clients.form.contract-status")}
-                        value={getStatusChip(client.serviceStatus)}
-                    />
-                    <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(client.startDate)} />
-                    <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(client.endDate)} />
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "clients.form.section-contract")}
+                        </h4>
+                        <InfoRow
+                            label={t(locale, "clients.form.contract-status")}
+                            value={getStatusBadge(client.serviceStatus)}
+                        />
+                        <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(client.startDate)} />
+                        <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(client.endDate)} />
+                    </div>
 
-                    <Divider sx={{ my: 2 }} />
+                    <Separator />
 
                     {/* Flags */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "clients.form.section-flags")}
-                    </Typography>
-                    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mt: 1 }}>
-                        {client.voucherClient && (
-                            <Chip label={t(locale, "clients.form.voucher-client")} size="small" color="primary" variant="outlined" />
-                        )}
-                        {client.careCenter && (
-                            <Chip label={t(locale, "clients.form.care-center")} size="small" color="primary" variant="outlined" />
-                        )}
-                        {client.breastPump && (
-                            <Chip label={t(locale, "clients.form.breast-pump")} size="small" color="primary" variant="outlined" />
-                        )}
-                        {!client.voucherClient && !client.careCenter && !client.breastPump && (
-                            <Typography variant="body2" color="text.secondary">-</Typography>
-                        )}
-                    </Box>
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "clients.form.section-flags")}
+                        </h4>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                            {client.voucherClient && (
+                                <StatusBadge variant="outline">
+                                    {t(locale, "clients.form.voucher-client")}
+                                </StatusBadge>
+                            )}
+                            {client.careCenter && (
+                                <StatusBadge variant="outline">
+                                    {t(locale, "clients.form.care-center")}
+                                </StatusBadge>
+                            )}
+                            {client.breastPump && (
+                                <StatusBadge variant="outline">
+                                    {t(locale, "clients.form.breast-pump")}
+                                </StatusBadge>
+                            )}
+                            {!client.voucherClient && !client.careCenter && !client.breastPump && (
+                                <span className="text-sm text-muted-foreground">-</span>
+                            )}
+                        </div>
+                    </div>
 
-                    <Divider sx={{ my: 2 }} />
+                    <Separator />
 
                     {/* Document Signing Status */}
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                        {t(locale, "clients.form.section-document")}
-                    </Typography>
-                    <InfoRow
-                        label={t(locale, "clients.form.document-status")}
-                        value={getDocStatusChip(client.documentStatus, locale)}
-                    />
-                </Box>
+                    <div>
+                        <h4 className="text-sm font-medium text-primary mb-2">
+                            {t(locale, "clients.form.section-document")}
+                        </h4>
+                        <InfoRow
+                            label={t(locale, "clients.form.document-status")}
+                            value={getDocStatusBadge(client.documentStatus, locale)}
+                        />
+                    </div>
+                </div>
+
+                <DialogFooter className="gap-2 sm:gap-0">
+                    <Button
+                        variant="destructive"
+                        onClick={handleDelete}
+                        className="gap-2"
+                    >
+                        <Trash2 className="h-4 w-4" />
+                        {t(locale, "common.delete")}
+                    </Button>
+                    <Button
+                        onClick={handleEdit}
+                        className="gap-2"
+                    >
+                        <Pencil className="h-4 w-4" />
+                        {t(locale, "common.edit")}
+                    </Button>
+                </DialogFooter>
             </DialogContent>
-            <DialogActions sx={{ px: 3, py: 2 }}>
-                <Button
-                    variant="outlined"
-                    color="error"
-                    startIcon={<Trash2 size={16} />}
-                    onClick={handleDelete}
-                >
-                    {t(locale, "common.delete")}
-                </Button>
-                <Button
-                    variant="contained"
-                    startIcon={<Pencil size={16} />}
-                    onClick={handleEdit}
-                >
-                    {t(locale, "common.edit")}
-                </Button>
-            </DialogActions>
         </Dialog>
     );
 }

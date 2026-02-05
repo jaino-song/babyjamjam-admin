@@ -29,16 +29,16 @@ export default function FeedbackDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
+      <div className="min-h-screen bg-muted/50 p-8">
         <div className="max-w-4xl mx-auto">
           <div className="animate-pulse">
-            <div className="h-8 bg-gray-200 rounded w-32 mb-8"></div>
-            <div className="bg-white rounded-lg shadow p-6 mb-6">
-              <div className="h-6 bg-gray-200 rounded w-48 mb-4"></div>
+            <div className="h-8 bg-muted rounded w-32 mb-8"></div>
+            <div className="bg-card rounded-lg shadow p-6 mb-6">
+              <div className="h-6 bg-muted rounded w-48 mb-4"></div>
               <div className="space-y-3">
-                <div className="h-4 bg-gray-200 rounded w-full"></div>
-                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                <div className="h-4 bg-gray-200 rounded w-5/6"></div>
+                <div className="h-4 bg-muted rounded w-full"></div>
+                <div className="h-4 bg-muted rounded w-3/4"></div>
+                <div className="h-4 bg-muted rounded w-5/6"></div>
               </div>
             </div>
           </div>
@@ -49,17 +49,17 @@ export default function FeedbackDetailPage() {
 
   if (error || !feedback) {
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
+      <div className="min-h-screen bg-muted/50 p-8">
         <div className="max-w-4xl mx-auto">
           <button
             onClick={() => router.push('/admin')}
-            className="mb-8 text-blue-600 hover:text-blue-800 font-medium flex items-center gap-2"
+            className="mb-8 text-primary hover:text-primary/80 font-medium flex items-center gap-2"
           >
             ← 목록으로
           </button>
-          <div className="bg-white rounded-lg shadow p-12 text-center">
-            <p className="text-red-600 text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
-            <p className="text-gray-500">요청하신 피드백이 존재하지 않거나 삭제되었습니다.</p>
+          <div className="bg-card rounded-lg shadow p-12 text-center">
+            <p className="text-destructive text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
+            <p className="text-muted-foreground">요청하신 피드백이 존재하지 않거나 삭제되었습니다.</p>
           </div>
         </div>
       </div>
@@ -67,53 +67,53 @@ export default function FeedbackDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen bg-muted/50 p-8">
       <div className="max-w-4xl mx-auto">
         <button
           onClick={() => router.push('/admin')}
-          className="mb-8 text-blue-600 hover:text-blue-800 font-medium flex items-center gap-2 transition-colors"
+          className="mb-8 text-primary hover:text-primary/80 font-medium flex items-center gap-2 transition-colors"
         >
           ← 목록으로
         </button>
 
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">피드백 정보</h2>
+        <div className="bg-card rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-bold text-foreground mb-4">피드백 정보</h2>
           <div className="space-y-3">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-gray-600 w-24">유형:</span>
+              <span className="text-sm font-medium text-muted-foreground w-24">유형:</span>
               <span className="flex items-center gap-2">
                 <span className="text-2xl">{feedback.type === 'positive' ? '👍' : '👎'}</span>
-                <span className="font-medium text-gray-900">
+                <span className="font-medium text-foreground">
                   {feedback.type === 'positive' ? '긍정적' : '부정적'}
                 </span>
               </span>
             </div>
             <div className="flex items-start gap-3">
-              <span className="text-sm font-medium text-gray-600 w-24">사용자:</span>
+              <span className="text-sm font-medium text-muted-foreground w-24">사용자:</span>
               <div>
-                <p className="font-medium text-gray-900">
+                <p className="font-medium text-foreground">
                   {feedback.user.name || '익명'}
                 </p>
                 {feedback.user.email && (
-                  <p className="text-sm text-gray-500">{feedback.user.email}</p>
+                  <p className="text-sm text-muted-foreground">{feedback.user.email}</p>
                 )}
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-gray-600 w-24">날짜:</span>
-              <span className="text-gray-900">{formatDate(feedback.createdAt)}</span>
+              <span className="text-sm font-medium text-muted-foreground w-24">날짜:</span>
+              <span className="text-foreground">{formatDate(feedback.createdAt)}</span>
             </div>
             {feedback.comment && (
               <div className="flex items-start gap-3">
-                <span className="text-sm font-medium text-gray-600 w-24">코멘트:</span>
-                <p className="text-gray-900 flex-1">{feedback.comment}</p>
+                <span className="text-sm font-medium text-muted-foreground w-24">코멘트:</span>
+                <p className="text-foreground flex-1">{feedback.comment}</p>
               </div>
             )}
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-6">대화 내역</h2>
+        <div className="bg-card rounded-lg shadow p-6">
+          <h2 className="text-xl font-bold text-foreground mb-6">대화 내역</h2>
           <div className="space-y-4">
             {feedback.session.messages.map((message: SessionMessage) => {
               const isHighlighted = message.id === feedback.message.id;
@@ -127,33 +127,33 @@ export default function FeedbackDetailPage() {
                   <div
                     className={`max-w-[80%] rounded-lg p-4 ${
                       isHighlighted
-                        ? 'ring-2 ring-yellow-400 bg-yellow-50'
+                        ? 'ring-2 ring-warning bg-warning/10'
                         : isUser
-                        ? 'bg-blue-500 text-white'
-                        : 'bg-gray-100 text-gray-900'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-foreground'
                     }`}
                   >
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`text-xs font-medium ${
                         isHighlighted
-                          ? 'text-yellow-700'
+                          ? 'text-warning'
                           : isUser
-                          ? 'text-blue-100'
-                          : 'text-gray-500'
+                          ? 'text-primary-foreground/80'
+                          : 'text-muted-foreground'
                       }`}>
                         {isUser ? '사용자' : 'AI 어시스턴트'}
                       </span>
                       <span className={`text-xs ${
                         isHighlighted
-                          ? 'text-yellow-600'
+                          ? 'text-warning/80'
                           : isUser
-                          ? 'text-blue-100'
-                          : 'text-gray-400'
+                          ? 'text-primary-foreground/60'
+                          : 'text-muted-foreground/80'
                       }`}>
                         {formatDate(message.timestamp)}
                       </span>
                       {isHighlighted && (
-                        <span className="text-xs font-bold text-yellow-700 ml-auto">
+                        <span className="text-xs font-bold text-warning ml-auto">
                           ⭐ 피드백 대상
                         </span>
                       )}
@@ -162,7 +162,7 @@ export default function FeedbackDetailPage() {
                       <p className="whitespace-pre-wrap break-words">{message.content}</p>
                     ) : (
                       <div className={`prose prose-sm max-w-none ${
-                        isHighlighted ? 'prose-yellow' : 'prose-gray'
+                        isHighlighted ? 'prose-yellow' : 'prose-neutral dark:prose-invert'
                       }`}>
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
@@ -182,7 +182,7 @@ export default function FeedbackDetailPage() {
                             code: ({ className, children }) => {
                               const isInline = !className;
                               return isInline ? (
-                                <code className="bg-gray-200 text-gray-800 px-1.5 py-0.5 rounded text-sm font-mono">
+                                <code className="bg-muted text-foreground px-1.5 py-0.5 rounded text-sm font-mono">
                                   {children}
                                 </code>
                               ) : (
@@ -190,7 +190,7 @@ export default function FeedbackDetailPage() {
                               );
                             },
                             pre: ({ children }) => (
-                              <pre className="bg-gray-800 text-gray-100 p-4 rounded-lg overflow-x-auto mb-3">
+                              <pre className="bg-card-foreground text-card p-4 rounded-lg overflow-x-auto mb-3">
                                 {children}
                               </pre>
                             ),
@@ -205,28 +205,28 @@ export default function FeedbackDetailPage() {
                             ),
                             table: ({ children }) => (
                               <div className="overflow-x-auto mb-3">
-                                <table className="min-w-full border-collapse border border-gray-300">
+                                <table className="min-w-full border-collapse border border-border">
                                   {children}
                                 </table>
                               </div>
                             ),
                             th: ({ children }) => (
-                              <th className="border border-gray-300 bg-gray-100 px-3 py-2 text-left font-semibold">
+                              <th className="border border-border bg-muted px-3 py-2 text-left font-semibold">
                                 {children}
                               </th>
                             ),
                             td: ({ children }) => (
-                              <td className="border border-gray-300 px-3 py-2">{children}</td>
+                              <td className="border border-border px-3 py-2">{children}</td>
                             ),
                             blockquote: ({ children }) => (
-                              <blockquote className="border-l-4 border-gray-300 pl-4 italic my-3 text-gray-700">
+                              <blockquote className="border-l-4 border-border pl-4 italic my-3 text-muted-foreground">
                                 {children}
                               </blockquote>
                             ),
                             a: ({ href, children }) => (
                               <a
                                 href={href}
-                                className="text-blue-600 hover:underline"
+                                className="text-primary hover:underline"
                                 target="_blank"
                                 rel="noopener noreferrer"
                               >

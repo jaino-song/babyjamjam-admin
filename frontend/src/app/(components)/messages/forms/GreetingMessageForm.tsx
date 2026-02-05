@@ -1,9 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import {
-  Fade,
-  Box,
-} from "@mui/material";
 import { greetingMsgTemplate } from "../templates/messageTemplate/greetingMsg";
 import { t } from "@/app/lib/i18n/translations";
 import { useLocale } from "@/app/(components)/LocaleProvider";
@@ -34,24 +30,25 @@ export const GreetingMessageForm = () => {
   };
 
   return (
-    <Box data-component="greeting-message-form" sx={{ display: "flex", flexDirection: "column", justifyContent: "center", flexGrow: 1, width: "100%", height: "100%", bgcolor: "background.default" }}>
-      <Fade in appear timeout={500}>
-        <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-          {/* generated message */}
-          {generatedMessage && (
-            <GeneratedMsg 
-              title={t(locale, "common.generated-message-title")} 
-              copyButtonText={t(locale, "common.copy-button")} 
-              message={generatedMessage}
-              onMessageChange={(message) => {
-                setIsDirty(true);
-                setGeneratedMessage(message);
-              }}
-              handleCopy={handleCopy}
-            />
-          )}
-        </Box>
-      </Fade>
-    </Box>
+    <div
+      data-component="greeting-message-form"
+      className="flex flex-col justify-center grow w-full h-full animate-fade-in"
+    >
+      <div className="flex flex-col h-full">
+        {/* generated message */}
+        {generatedMessage && (
+          <GeneratedMsg
+            title={t(locale, "common.generated-message-title")}
+            copyButtonText={t(locale, "common.copy-button")}
+            message={generatedMessage}
+            onMessageChange={(message) => {
+              setIsDirty(true);
+              setGeneratedMessage(message);
+            }}
+            handleCopy={handleCopy}
+          />
+        )}
+      </div>
+    </div>
   );
 };

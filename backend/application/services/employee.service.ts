@@ -40,8 +40,12 @@ export class EmployeeService {
         private readonly listEmployeesOpenToNextWorkUsecase: ListEmployeesOpenToNextWorkUsecase,
     ) {}
 
-    create(params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string }): Promise<EmployeeEntity> {
+    create(
+        organizationid: string,
+        params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string }
+    ): Promise<EmployeeEntity> {
         return this.createEmployeeUsecase.execute(
+            organizationid,
             params.name,
             params.workArea,
             params.phone,
@@ -51,48 +55,47 @@ export class EmployeeService {
         );
     }
 
-    findById(id: number): Promise<EmployeeEntity | null> {
-        return this.findEmployeeByIdUsecase.execute(id);
+    findById(organizationid: string, id: number): Promise<EmployeeEntity | null> {
+        return this.findEmployeeByIdUsecase.execute(organizationid, id);
     }
 
-    update(id: number, params: EmployeeUpdateParams): Promise<EmployeeEntity> {
-        return this.updateEmployeeUsecase.execute(id, params);
+    update(organizationid: string, id: number, params: EmployeeUpdateParams): Promise<EmployeeEntity> {
+        return this.updateEmployeeUsecase.execute(organizationid, id, params);
     }
 
-    delete(id: number): Promise<void> {
-        return this.deleteEmployeeUsecase.execute(id);
+    delete(organizationid: string, id: number): Promise<void> {
+        return this.deleteEmployeeUsecase.execute(organizationid, id);
     }
 
-    findAll(): Promise<EmployeeEntity[]> {
-        return this.listEmployeesUsecase.execute();
+    findAll(organizationid: string): Promise<EmployeeEntity[]> {
+        return this.listEmployeesUsecase.execute(organizationid);
     }
 
-    findByWorkArea(workArea: string): Promise<EmployeeEntity[]> {
-        return this.listEmployeesByWorkAreaUsecase.execute(workArea);
+    findByWorkArea(organizationid: string, workArea: string): Promise<EmployeeEntity[]> {
+        return this.listEmployeesByWorkAreaUsecase.execute(organizationid, workArea);
     }
 
-    findByGrade(grade: string): Promise<EmployeeEntity[]> {
-        return this.listEmployeesByGradeUsecase.execute(grade);
+    findByGrade(organizationid: string, grade: string): Promise<EmployeeEntity[]> {
+        return this.listEmployeesByGradeUsecase.execute(organizationid, grade);
     }
 
-    findByOpenStatus(openToNextWork: boolean): Promise<EmployeeEntity[]> {
-        return this.listEmployeesByOpenStatusUsecase.execute(openToNextWork);
+    findByOpenStatus(organizationid: string, openToNextWork: boolean): Promise<EmployeeEntity[]> {
+        return this.listEmployeesByOpenStatusUsecase.execute(organizationid, openToNextWork);
     }
 
-    findByRegisteredDate(date: Date): Promise<EmployeeEntity[]> {
-        return this.listEmployeesByRegisteredDateUsecase.execute(date);
+    findByRegisteredDate(organizationid: string, date: Date): Promise<EmployeeEntity[]> {
+        return this.listEmployeesByRegisteredDateUsecase.execute(organizationid, date);
     }
 
-    findByRegisteredDateRange(start: Date, end: Date): Promise<EmployeeEntity[]> {
-        return this.listEmployeesByRegisteredDateRangeUsecase.execute(start, end);
+    findByRegisteredDateRange(organizationid: string, start: Date, end: Date): Promise<EmployeeEntity[]> {
+        return this.listEmployeesByRegisteredDateRangeUsecase.execute(organizationid, start, end);
     }
 
-    changeOpenStatus(id: number, open: boolean): Promise<EmployeeEntity> {
-        return this.changeEmployeeOpenStatusUsecase.execute(id, open);
+    changeOpenStatus(organizationid: string, id: number, open: boolean): Promise<EmployeeEntity> {
+        return this.changeEmployeeOpenStatusUsecase.execute(organizationid, id, open);
     }
 
-    findAllOpenToNextWork(): Promise<EmployeeEntity[]> {
-        return this.listEmployeesOpenToNextWorkUsecase.execute();
+    findAllOpenToNextWork(organizationid: string): Promise<EmployeeEntity[]> {
+        return this.listEmployeesOpenToNextWorkUsecase.execute(organizationid);
     }
 }
-

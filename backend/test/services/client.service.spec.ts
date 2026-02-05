@@ -97,6 +97,8 @@ describe("ClientService", () => {
         null,
     );
 
+    const organizationId = "org-1";
+
     let service: ClientService;
     let createClientUsecase: ReturnType<typeof createMockCreateClientUsecase>;
     let updateClientUsecase: ReturnType<typeof createMockUpdateClientUsecase>;
@@ -141,10 +143,10 @@ describe("ClientService", () => {
     // ============================================
     describe("create", () => {
         describe("given valid client data with primary employee", () => {
-            it("should create client first, then create employee_schedule with client_id", async () => {
+            it("should create client first, then create employee_schedule with clientId", async () => {
                 // Arrange
                 const mockClient = createClientEntity();
-                const mockSchedule = { id: 10, client_id: 1 };
+                const mockSchedule = { id: 10, clientId: 1 };
                 createClientUsecase.execute.mockResolvedValue(mockClient);
                 prismaService.employee_schedule.create.mockResolvedValue(mockSchedule);
 
@@ -161,22 +163,23 @@ describe("ClientService", () => {
                 };
 
                 // Act
-                const result = await service.create(params);
+                const result = await service.create(organizationId, params);
 
                 // Assert
                 // Client should be created first
                 expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                    organizationId,
                     expect.objectContaining({
                         name: "New Client",
                         address: "123 Main St",
                     })
                 );
-                // Then schedule with client_id
+                // Then schedule with clientId
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
-                        client_id: 1,
-                        primary_employee_id: 5,
-                        work_address: "123 Main St",
+                        clientId: 1,
+                        primaryEmployeeId: 5,
+                        workAddress: "123 Main St",
                         replaced: false,
                     }),
                 });
@@ -200,10 +203,11 @@ describe("ClientService", () => {
                 };
 
                 // Act
-                const result = await service.create(params);
+                const result = await service.create(organizationId, params);
 
                 // Assert
                 expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                    organizationId,
                     expect.objectContaining({
                         name: "New Client",
                         address: "123 Main St",
@@ -218,7 +222,7 @@ describe("ClientService", () => {
             it("should create single schedule with both employees", async () => {
                 // Arrange
                 const mockClient = createClientEntity();
-                const mockSchedule = { id: 10, client_id: 1 };
+                const mockSchedule = { id: 10, clientId: 1 };
                 createClientUsecase.execute.mockResolvedValue(mockClient);
                 prismaService.employee_schedule.create.mockResolvedValue(mockSchedule);
 
@@ -233,15 +237,15 @@ describe("ClientService", () => {
                 };
 
                 // Act
-                await service.create(params);
+                await service.create(organizationId, params);
 
                 // Assert
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledTimes(1);
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
-                        client_id: 1,
-                        primary_employee_id: 5,
-                        secondary_employee_id: 6,
+                        clientId: 1,
+                        primaryEmployeeId: 5,
+                        secondaryEmployeeId: 6,
                     }),
                 });
             });
@@ -262,13 +266,13 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                const result = await service.update(1, { name: "New Name", address: "New Address" });
+                const result = await service.update(organizationId, 1, { name: "New Name", address: "New Address" });
 
                 // Assert
-                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(1);
+                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(1, expect.objectContaining({
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, expect.objectContaining({
                     name: "New Name",
                     address: "New Address",
                 }));
@@ -286,33 +290,33 @@ describe("ClientService", () => {
                 // Mock findFirst to return current schedule with a different employee
                 prismaService.employee_schedule.findFirst.mockResolvedValue({ 
                     id: 10, 
-                    client_id: 1,
-                    primary_employee_id: 5,
-                    secondary_employee_id: null,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: null,
                 });
                 prismaService.employee_schedule.update.mockResolvedValue({});
-                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, client_id: 1 });
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                await service.update(1, { primaryEmployeeId: 7 });
+                await service.update(organizationId, 1, { primaryEmployeeId: 7 });
 
                 // Assert
-                // Should lookup current schedule by client_id
+                // Should lookup current schedule by clientId
                 expect(prismaService.employee_schedule.findFirst).toHaveBeenCalledWith({
-                    where: { client_id: 1, replaced: false },
+                    where: { clientId: 1, replaced: false },
                     orderBy: { id: 'desc' },
                 });
                 // Mark old schedule as replaced
                 expect(prismaService.employee_schedule.update).toHaveBeenCalledWith({
                     where: { id: 10 },
-                    data: { replaced: true, end_date: expect.any(Date) },
+                    data: { replaced: true, endDate: expect.any(Date) },
                 });
-                // Create new schedule with client_id
+                // Create new schedule with clientId
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
-                        client_id: 1,
-                        primary_employee_id: 7,
+                        clientId: 1,
+                        primaryEmployeeId: 7,
                         replaced: false,
                     }),
                 });
@@ -327,14 +331,14 @@ describe("ClientService", () => {
                 // Mock findFirst to return current schedule with the SAME employee
                 prismaService.employee_schedule.findFirst.mockResolvedValue({ 
                     id: 10, 
-                    client_id: 1,
-                    primary_employee_id: 7,
-                    secondary_employee_id: null,
+                    clientId: 1,
+                    primaryEmployeeId: 7,
+                    secondaryEmployeeId: null,
                 });
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                await service.update(1, { primaryEmployeeId: 7 });
+                await service.update(organizationId, 1, { primaryEmployeeId: 7 });
 
                 // Assert
                 // Should lookup current schedule
@@ -351,7 +355,7 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.update(999, { name: "New Name" }))
+                await expect(service.update(organizationId, 999, { name: "New Name" }))
                     .rejects
                     .toThrow("Client with id 999 not found");
             });
@@ -366,18 +370,18 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
                 // No existing schedule
                 prismaService.employee_schedule.findFirst.mockResolvedValue(null);
-                prismaService.employee_schedule.create.mockResolvedValue({ id: 21, client_id: 1 });
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 21, clientId: 1 });
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                await service.update(1, { primaryEmployeeId: 5, secondaryEmployeeId: 8 });
+                await service.update(organizationId, 1, { primaryEmployeeId: 5, secondaryEmployeeId: 8 });
 
                 // Assert
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
-                        client_id: 1,
-                        primary_employee_id: 5,
-                        secondary_employee_id: 8,
+                        clientId: 1,
+                        primaryEmployeeId: 5,
+                        secondaryEmployeeId: 8,
                         replaced: false,
                     }),
                 });
@@ -394,27 +398,27 @@ describe("ClientService", () => {
                 // Current schedule has secondary employee
                 prismaService.employee_schedule.findFirst.mockResolvedValue({ 
                     id: 15, 
-                    client_id: 1,
-                    primary_employee_id: 5,
-                    secondary_employee_id: 6,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: 6,
                 });
                 prismaService.employee_schedule.update.mockResolvedValue({});
-                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, client_id: 1 });
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                await service.update(1, { secondaryEmployeeId: null });
+                await service.update(organizationId, 1, { secondaryEmployeeId: null });
 
                 // Assert
                 expect(prismaService.employee_schedule.update).toHaveBeenCalledWith({
                     where: { id: 15 },
-                    data: { replaced: true, end_date: expect.any(Date) },
+                    data: { replaced: true, endDate: expect.any(Date) },
                 });
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
-                        client_id: 1,
-                        primary_employee_id: 5,
-                        secondary_employee_id: null,
+                        clientId: 1,
+                        primaryEmployeeId: 5,
+                        secondaryEmployeeId: null,
                     }),
                 });
             });
@@ -431,10 +435,10 @@ describe("ClientService", () => {
             listClientsUsecase.execute.mockResolvedValue(mockClients);
 
             // Act
-            const result = await service.findAll();
+            const result = await service.findAll(organizationId);
 
             // Assert
-            expect(listClientsUsecase.execute).toHaveBeenCalled();
+            expect(listClientsUsecase.execute).toHaveBeenCalledWith(organizationId);
             expect(result).toHaveLength(1);
             expect(result[0]).toMatchObject({
                 id: 1,
@@ -456,10 +460,10 @@ describe("ClientService", () => {
             findClientByIdUsecase.execute.mockResolvedValue(mockClient);
 
             // Act
-            const result = await service.findById(1);
+            const result = await service.findById(organizationId, 1);
 
             // Assert
-            expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(1);
+            expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
             expect(result).toMatchObject({
                 id: 1,
                 name: "Test Client",
@@ -479,10 +483,10 @@ describe("ClientService", () => {
             deleteClientUsecase.execute.mockResolvedValue(undefined);
 
             // Act
-            await service.delete(1);
+            await service.delete(organizationId, 1);
 
             // Assert
-            expect(deleteClientUsecase.execute).toHaveBeenCalledWith(1);
+            expect(deleteClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
         });
     });
 
@@ -504,17 +508,17 @@ describe("ClientService", () => {
                 prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
 
                 // Act
-                const result = await service.terminateService(1, "Client requested");
+                const result = await service.terminateService(organizationId, 1, "Client requested");
 
                 // Assert
-                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(1);
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(1, {
+                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, {
                     serviceStatus: "terminated",
                     endDate: expect.any(Date),
                 });
                 expect(prismaService.employee_schedule.updateMany).toHaveBeenCalledWith({
-                    where: { client_id: 1, replaced: false },
-                    data: { end_date: expect.any(Date) },
+                    where: { clientId: 1, replaced: false },
+                    data: { endDate: expect.any(Date) },
                 });
                 expect(result.serviceStatus).toBe("terminated");
             });
@@ -532,10 +536,10 @@ describe("ClientService", () => {
                 prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
 
                 // Act
-                await service.terminateService(1);
+                await service.terminateService(organizationId, 1);
 
                 // Assert
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(1, expect.objectContaining({
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, expect.objectContaining({
                     serviceStatus: "terminated",
                 }));
             });
@@ -547,7 +551,7 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.terminateService(999))
+                await expect(service.terminateService(organizationId, 999))
                     .rejects
                     .toThrow("Client with id 999 not found");
             });
@@ -571,32 +575,32 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
                 prismaService.employee_schedule.findFirst.mockResolvedValue({
                     id: 10,
-                    client_id: 1,
-                    primary_employee_id: 5,
-                    secondary_employee_id: null,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: null,
                 });
                 prismaService.employee_schedule.update.mockResolvedValue({});
-                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, client_id: 1 });
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
 
                 // Act
-                const result = await service.requestReplacement(1, 7, 8);
+                const result = await service.requestReplacement(organizationId, 1, 7, 8);
 
                 // Assert
                 // Should update status
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(1, {
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, {
                     serviceStatus: "replacement_requested",
                 });
                 // Should mark old schedule as replaced
                 expect(prismaService.employee_schedule.update).toHaveBeenCalledWith({
                     where: { id: 10 },
-                    data: { replaced: true, end_date: expect.any(Date) },
+                    data: { replaced: true, endDate: expect.any(Date) },
                 });
                 // Should create new schedule with new employees
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
-                        client_id: 1,
-                        primary_employee_id: 7,
-                        secondary_employee_id: 8,
+                        clientId: 1,
+                        primaryEmployeeId: 7,
+                        secondaryEmployeeId: 8,
                         replaced: false,
                     }),
                 });
@@ -614,17 +618,17 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(mockClient);
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
                 prismaService.employee_schedule.findFirst.mockResolvedValue(null); // No existing schedule
-                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, client_id: 1 });
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
 
                 // Act
-                await service.requestReplacement(1, 7);
+                await service.requestReplacement(organizationId, 1, 7);
 
                 // Assert
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
-                        client_id: 1,
-                        primary_employee_id: 7,
-                        secondary_employee_id: null,
+                        clientId: 1,
+                        primaryEmployeeId: 7,
+                        secondaryEmployeeId: null,
                         replaced: false,
                     }),
                 });
@@ -637,7 +641,7 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.requestReplacement(999, 7))
+                await expect(service.requestReplacement(organizationId, 999, 7))
                     .rejects
                     .toThrow("Client with id 999 not found");
             });
@@ -668,12 +672,12 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(completedClient);
 
                 // Act
-                await service.completeReplacement(1);
+                await service.completeReplacement(organizationId, 1);
 
                 // Assert
-                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(1);
+                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
                 // Should compute status (active since we're between start and end dates)
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(1, {
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, {
                     serviceStatus: expect.stringMatching(/active|waiting|completed/),
                 });
             });
@@ -692,7 +696,7 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(mockClient);
 
                 // Act
-                await service.completeReplacement(1);
+                await service.completeReplacement(organizationId, 1);
 
                 // Assert
                 // Should still update status
@@ -706,7 +710,7 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.completeReplacement(999))
+                await expect(service.completeReplacement(organizationId, 999))
                     .rejects
                     .toThrow("Client with id 999 not found");
             });
@@ -730,10 +734,10 @@ describe("ClientService", () => {
             listClientsPaginatedUsecase.execute.mockResolvedValue(paginatedResult);
 
             // Act
-            const result = await service.findAllPaginated(1, 10, "Test");
+            const result = await service.findAllPaginated(organizationId, 1, 10, "Test");
 
             // Assert
-            expect(listClientsPaginatedUsecase.execute).toHaveBeenCalledWith(1, 10, "Test");
+            expect(listClientsPaginatedUsecase.execute).toHaveBeenCalledWith(organizationId, 1, 10, "Test");
             expect(result.data).toHaveLength(1);
             expect(result.total).toBe(1);
             expect(result.page).toBe(1);
@@ -752,7 +756,7 @@ describe("ClientService", () => {
             listClientsPaginatedUsecase.execute.mockResolvedValue(paginatedResult);
 
             // Act
-            const result = await service.findAllPaginated(1, 10, "NonExistent");
+            const result = await service.findAllPaginated(organizationId, 1, 10, "NonExistent");
 
             // Assert
             expect(result.data).toHaveLength(0);
@@ -784,7 +788,7 @@ describe("ClientService", () => {
             prismaService.client = { update: jest.fn().mockResolvedValue({}) } as unknown as typeof prismaService.client;
 
             // Act
-            const result = await service.findAll();
+            const result = await service.findAll(organizationId);
 
             // Assert
             // Should return computed status, not stored status

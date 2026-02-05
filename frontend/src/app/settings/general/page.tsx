@@ -1,24 +1,20 @@
 "use client";
 
-import {
-  Box,
-  Typography,
-  Switch,
-  FormControlLabel,
-  Divider,
-  RadioGroup,
-  Radio,
-  CircularProgress,
-  Alert,
-  Snackbar,
-} from "@mui/material";
-import { ContentPaper } from "@/app/(components)/root/content-paper";
 import { useState } from "react";
+import { ContentPaper } from "@/app/(components)/root/content-paper";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { settingsApi, AlimtalkProvider } from "@/services/api";
 import { MessageSquare } from "lucide-react";
 import { useGetAuthUser } from "@/app/hooks/useGetAuthUser";
 import { NotificationTestSection } from "@/app/(components)/settings/NotificationTestSection";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
+import { useToast } from "@/app/hooks/use-toast";
+import { Toaster } from "@/components/ui/toaster";
 
 const PROVIDER_OPTIONS: { value: AlimtalkProvider; label: string; description: string }[] = [
   {
@@ -41,11 +37,7 @@ const PROVIDER_OPTIONS: { value: AlimtalkProvider; label: string; description: s
 export default function GeneralSettingsPage() {
   const [notifications, setNotifications] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: "success" | "error" }>({
-    open: false,
-    message: "",
-    severity: "success",
-  });
+  const { toast } = useToast();
 
   const queryClient = useQueryClient();
   const { data: user } = useGetAuthUser();
@@ -60,145 +52,149 @@ export default function GeneralSettingsPage() {
     mutationFn: settingsApi.updateAlimtalkProvider,
     onSuccess: (data) => {
       queryClient.setQueryData(["settings", "alimtalk-provider"], data);
-      setSnackbar({
-        open: true,
-        message: "알림톡 설정이 저장되었습니다.",
-        severity: "success",
+      toast({
+        title: "설정 저장됨",
+        description: "알림톡 설정이 저장되었습니다.",
       });
     },
     onError: () => {
-      setSnackbar({
-        open: true,
-        message: "설정 저장에 실패했습니다. 다시 시도해주세요.",
-        severity: "error",
+      toast({
+        title: "오류",
+        description: "설정 저장에 실패했습니다. 다시 시도해주세요.",
+        variant: "destructive",
       });
     },
   });
 
-  const handleProviderChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const newProvider = event.target.value as AlimtalkProvider;
+  const handleProviderChange = (value: string) => {
+    const newProvider = value as AlimtalkProvider;
     updateAlimtalkMutation.mutate(newProvider);
   };
 
-  const handleCloseSnackbar = () => {
-    setSnackbar((prev) => ({ ...prev, open: false }));
-  };
-
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <ContentPaper>
-        <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2 }}>
-          <MessageSquare size={24} className="text-yellow-600" />
-          <Box>
-            <Typography variant="h6" gutterBottom sx={{ mb: 0 }}>
-              알림톡 설정
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
+    <div className="flex flex-col gap-4">
+      {/* 알림톡 설정 카드 */}
+      <ContentPaper className="opacity-0 animate-fade-in" style={{ animationDelay: "100ms" }}>
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-warning/10">
+            <MessageSquare size={20} className="text-warning" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">알림톡 설정</h2>
+            <p className="text-sm text-muted-foreground">
               카카오 알림톡 발송 서비스를 선택합니다.
-            </Typography>
-          </Box>
-        </Box>
+            </p>
+          </div>
+        </div>
 
-        <Divider sx={{ mb: 3 }} />
+        <Separator className="mb-4" />
 
         {isLoadingAlimtalk ? (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
-            <CircularProgress size={24} />
-          </Box>
+          <div className="flex justify-center py-6">
+            <Spinner className="h-6 w-6" />
+          </div>
         ) : alimtalkError ? (
-          <Alert severity="error">설정을 불러오는데 실패했습니다.</Alert>
+          <Alert variant="destructive">
+            <AlertDescription>설정을 불러오는데 실패했습니다.</AlertDescription>
+          </Alert>
         ) : (
           <RadioGroup
             value={alimtalkSettings?.provider || "aligo"}
-            onChange={handleProviderChange}
+            onValueChange={handleProviderChange}
+            className="space-y-3"
           >
-            {PROVIDER_OPTIONS.map((option) => (
-              <Box key={option.value} sx={{ mb: 2 }}>
-                <FormControlLabel
+            {PROVIDER_OPTIONS.map((option, index) => (
+              <div
+                key={option.value}
+                className="flex items-start space-x-3 opacity-0 animate-fade-in"
+                style={{ animationDelay: `${200 + index * 50}ms` }}
+              >
+                <RadioGroupItem
                   value={option.value}
-                  control={<Radio disabled={updateAlimtalkMutation.isPending} />}
-                  label={
-                    <Box>
-                      <Typography variant="body1" fontWeight={500}>
-                        {option.label}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {option.description}
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ alignItems: "flex-start", ml: 0 }}
+                  id={option.value}
+                  disabled={updateAlimtalkMutation.isPending}
+                  className="mt-1"
                 />
-              </Box>
+                <div className="grid gap-1">
+                  <Label
+                    htmlFor={option.value}
+                    className="font-medium cursor-pointer"
+                  >
+                    {option.label}
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {option.description}
+                  </p>
+                </div>
+              </div>
             ))}
           </RadioGroup>
         )}
 
         {alimtalkSettings?.updatedAt && (
-          <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: "block" }}>
+          <p className="text-xs text-muted-foreground mt-4">
             마지막 수정: {new Date(alimtalkSettings.updatedAt).toLocaleString("ko-KR")}
-          </Typography>
+          </p>
         )}
       </ContentPaper>
 
-      <ContentPaper>
-        <Box sx={{ mb: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            기타 설정
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
+      {/* 기타 설정 카드 */}
+      <ContentPaper className="opacity-0 animate-fade-in" style={{ animationDelay: "200ms" }}>
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold">기타 설정</h2>
+          <p className="text-sm text-muted-foreground">
             시스템 환경 설정을 관리합니다.
-          </Typography>
-        </Box>
+          </p>
+        </div>
 
-        <Divider sx={{ mb: 3 }} />
+        <Separator className="mb-4" />
 
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={notifications}
-                onChange={(e) => setNotifications(e.target.checked)}
-              />
-            }
-            label="알림 수신"
-          />
-          <Typography variant="body2" color="text.secondary" sx={{ ml: 6, mt: -1 }}>
-            시스템 알림 및 중요 업데이트를 이메일로 수신합니다.
-          </Typography>
+        <div className="space-y-4">
+          {/* 알림 수신 */}
+          <div className="flex items-center justify-between opacity-0 animate-fade-in" style={{ animationDelay: "250ms" }}>
+            <div className="space-y-0.5">
+              <Label htmlFor="notifications" className="text-sm font-medium">
+                알림 수신
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                시스템 알림 및 중요 업데이트를 이메일로 수신합니다.
+              </p>
+            </div>
+            <Switch
+              id="notifications"
+              checked={notifications}
+              onCheckedChange={setNotifications}
+            />
+          </div>
 
-          <FormControlLabel
-            control={
-              <Switch
-                checked={darkMode}
-                onChange={(e) => setDarkMode(e.target.checked)}
-              />
-            }
-            label="다크 모드 (준비 중)"
-            disabled
-          />
-          <Typography variant="body2" color="text.secondary" sx={{ ml: 6, mt: -1 }}>
-            어두운 테마로 전환합니다. (추후 지원 예정)
-          </Typography>
-        </Box>
+          {/* 다크 모드 */}
+          <div className="flex items-center justify-between opacity-0 animate-fade-in" style={{ animationDelay: "300ms" }}>
+            <div className="space-y-0.5">
+              <Label htmlFor="dark-mode" className="text-sm font-medium text-muted-foreground">
+                다크 모드 (준비 중)
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                어두운 테마로 전환합니다. (추후 지원 예정)
+              </p>
+            </div>
+            <Switch
+              id="dark-mode"
+              checked={darkMode}
+              onCheckedChange={setDarkMode}
+              disabled
+            />
+          </div>
+        </div>
       </ContentPaper>
 
+      {/* 알림 테스트 (Owner만 표시) */}
       {isOwner && (
-        <ContentPaper>
+        <ContentPaper className="opacity-0 animate-fade-in" style={{ animationDelay: "300ms" }}>
           <NotificationTestSection />
         </ContentPaper>
       )}
 
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={3000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: "100%" }}>
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
-    </Box>
+      <Toaster />
+    </div>
   );
 }

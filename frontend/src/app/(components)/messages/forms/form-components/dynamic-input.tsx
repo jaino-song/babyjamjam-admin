@@ -5,7 +5,8 @@ import { TextareaInput } from "./textarea-input";
 import { DynamicSelect } from "./dynamic-select";
 import { NameInput } from "./NameInput";
 import { ContactInput } from "./ContactInput";
-import { TextField } from "@mui/material";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface DynamicInputProps {
     variable: TemplateVariable;
@@ -52,27 +53,33 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
                 return <NameInput name={value} setName={onChange} label={label} placeholder={placeholder || ""} />;
             }
             return (
-                <TextField
-                    fullWidth
-                    label={label}
-                    value={value}
-                    onChange={(e) => onChange(e.target.value)}
-                    placeholder={placeholder}
-                    required={required}
-                    sx={{ bgcolor: "background.default" }}
-                />
+                <div className="space-y-2">
+                    <Label>
+                        {label}
+                        {required && <span className="text-destructive ml-1">*</span>}
+                    </Label>
+                    <Input
+                        value={value}
+                        onChange={(e) => onChange(e.target.value)}
+                        placeholder={placeholder}
+                        className="bg-background"
+                    />
+                </div>
             );
         default:
             return (
-                <TextField
-                    fullWidth
-                    label={label}
-                    value={value}
-                    onChange={(e) => onChange(e.target.value)}
-                    placeholder={placeholder}
-                    required={required}
-                    sx={{ bgcolor: "background.default" }}
-                />
+                <div className="space-y-2">
+                    <Label>
+                        {label}
+                        {required && <span className="text-destructive ml-1">*</span>}
+                    </Label>
+                    <Input
+                        value={value}
+                        onChange={(e) => onChange(e.target.value)}
+                        placeholder={placeholder}
+                        className="bg-background"
+                    />
+                </div>
             );
     }
 };

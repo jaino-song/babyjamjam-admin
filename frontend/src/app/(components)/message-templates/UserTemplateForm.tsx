@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Box, TextField, Button, Typography } from "@mui/material";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import type { MessageTemplate } from "@/features/message-templates";
 import { GeneratedMsg } from "../messages/templates/GeneratedMsg";
 import { useLocale } from "@/app/(components)/LocaleProvider";
@@ -40,30 +42,31 @@ export function UserTemplateForm({ template }: UserTemplateFormProps) {
     };
 
     return (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-4">
                 {template.variables.map((variable) => (
-                    <TextField
-                        key={variable.key}
-                        label={variable.label}
-                        required={variable.required}
-                        value={values[variable.key] || ""}
-                        onChange={(e) => handleValueChange(variable.key, e.target.value)}
-                        size="small"
-                        fullWidth
-                    />
+                    <div key={variable.key} className="flex flex-col gap-2">
+                        <Label htmlFor={`var-${variable.key}`}>
+                            {variable.label}
+                            {variable.required && <span className="text-destructive ml-1">*</span>}
+                        </Label>
+                        <Input
+                            id={`var-${variable.key}`}
+                            value={values[variable.key] || ""}
+                            onChange={(e) => handleValueChange(variable.key, e.target.value)}
+                        />
+                    </div>
                 ))}
-            </Box>
+            </div>
 
             {template.variables.length === 0 && (
-                <Typography variant="body2" color="text.secondary">
+                <p className="text-sm text-muted-foreground">
                     이 템플릿에는 입력 변수가 없습니다.
-                </Typography>
+                </p>
             )}
 
             <Button
-                variant="contained"
-                size="large"
+                size="lg"
                 onClick={handleGenerate}
                 disabled={!allRequiredFilled && template.variables.some(v => v.required)}
             >
@@ -79,6 +82,6 @@ export function UserTemplateForm({ template }: UserTemplateFormProps) {
                     handleCopy={handleCopy}
                 />
             )}
-        </Box>
+        </div>
     );
 }

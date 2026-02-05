@@ -1,14 +1,12 @@
 import { Module } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
 import { JwtStrategy } from "./infrastructure/auth/jwt.strategy";
-import { AuthController } from "interface/controllers/auth.controller";
 import { EformsignController } from "interface/controllers/eformsign.controller";
-import { KakaoStrategy } from "infrastructure/auth/kakao.strategy";
-import { AuthService } from "application/services/auth.service";
 import { EformsignService } from "application/services/eformsign.service";
 import { ConfigModule } from "@nestjs/config";
 import { PassportModule } from "@nestjs/passport";
 import { ScheduleModule } from "@nestjs/schedule";
+import { AuthModule } from "infrastructure/auth/auth.module";
 import { BankAccountInfoModule } from "module/bank-account-info.module";
 import { UserModule } from "module/user.module";
 import { MessageModule } from "module/message.module";
@@ -19,16 +17,11 @@ import { EmployeeScheduleModule } from "module/employee-schedule.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { EformsignWebhookModule } from "module/eformsign-webhook.module";
 import { AreaTemplateModule } from "module/area-template.module";
-import { NotificationModule } from "module/notification.module";
-import { ChannelTalkModule } from "module/channeltalk.module";
-import { SystemSettingModule } from "module/system-setting.module";
-import { AligoModule } from "module/aligo.module";
-import { AlimtalkModule } from "module/alimtalk.module";
-import { AIChatModule } from "module/ai-chat.module";
-import { MessageTemplateModule } from "module/message-template.module";
-import { SystemTemplateModule } from "module/system-template.module";
 import { DocumentModule } from "module/document.module";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { TenantModule } from "./infrastructure/tenant/tenant.module";
+import { NotificationModule } from "module/notification.module";
+import { AIChatModule } from "module/ai-chat.module";
 
 @Module({
     imports: [
@@ -41,6 +34,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
             secret: process.env['JWT_SECRET'],
             signOptions: { expiresIn: "7d" },
         }),
+        AuthModule,
         UserModule,
         BankAccountInfoModule,
         MessageModule,
@@ -51,18 +45,12 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         EformsignDocModule,
         EformsignWebhookModule,
         AreaTemplateModule,
-        NotificationModule,
-        ChannelTalkModule,
-        SystemSettingModule,
-        AligoModule,
-        AlimtalkModule,
-        AIChatModule,
-        MessageTemplateModule,
-        SystemTemplateModule,
         DocumentModule,
+        TenantModule,
+        NotificationModule,
+        AIChatModule,
     ],
-    controllers: [AuthController, EformsignController],
-    providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],
+    controllers: [EformsignController],
+    providers: [EformsignService, JwtStrategy, PrismaService],
 })
 export class AppModule {}
-

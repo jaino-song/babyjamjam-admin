@@ -27,7 +27,7 @@ describe("NotificationCleanupSchedulerService", () => {
 
                 await scheduler.cleanupOldNotifications();
 
-                expect(cleanupUsecase.execute).toHaveBeenCalledWith(30);
+                expect(cleanupUsecase.execute).toHaveBeenCalledWith(expect.any(String), 30);
                 expect(cleanupUsecase.execute).toHaveBeenCalledTimes(1);
             });
         });

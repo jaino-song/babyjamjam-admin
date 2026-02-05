@@ -3,7 +3,7 @@ import { SystemSettingEntity } from "domain/entities/system-setting.entity";
 
 export class SystemSettingMapper {
     static toDomain(row: SystemSettingRow): SystemSettingEntity {
-        return new SystemSettingEntity(row.key, row.value, row.updated_at);
+        return new SystemSettingEntity(row.key, row.value, row.updatedAt);
     }
 
     static toPrismaUpsert(entity: SystemSettingEntity): {

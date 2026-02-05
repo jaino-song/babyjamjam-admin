@@ -43,9 +43,9 @@ export class BulkUpdateVoucherPriceInfoUsecase {
             await tx.voucher_price_info.update({
               where: { id: existing.id },
               data: {
-                full_price: item.fullPrice,
+                fullPrice: item.fullPrice,
                 grant: item.grant,
-                actual_price: item.actualPrice,
+                actualPrice: item.actualPrice,
               },
             });
             updated.push(existing.id);
@@ -65,9 +65,9 @@ export class BulkUpdateVoucherPriceInfoUsecase {
                 year: year,
                 type: item.type,
                 duration: BigInt(item.duration),
-                full_price: item.fullPrice,
+                fullPrice: item.fullPrice,
                 grant: item.grant,
-                actual_price: item.actualPrice,
+                actualPrice: item.actualPrice,
               },
             });
             created.push(newId);

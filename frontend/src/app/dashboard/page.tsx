@@ -1,15 +1,14 @@
-import AssessmentIcon from "@mui/icons-material/Assessment";
-import PeopleOutlineIcon from "@mui/icons-material/PeopleOutline";
-import TrendingUpIcon from "@mui/icons-material/TrendingUp";
-import { Box, Stack } from "@mui/material";
+import { Users, TrendingUp, CalendarClock } from "lucide-react";
 import { HeroBanner } from "../(components)/dashboard/HeroBanner";
 import { StatsGrid, StatItem } from "../(components)/dashboard/StatsGrid";
 import { ChatWidget } from "../(components)/chat/ChatWidget";
+import { QuickActions } from "../(components)/dashboard/QuickActions";
+import { TodayScheduleList } from "../(components)/dashboard/TodayScheduleList";
+import { PendingClientsTable } from "../(components)/dashboard/PendingClientsTable";
+
 import { getCurrentUser } from "../lib/auth/cookies";
 import { t, Locale } from "../lib/i18n/translations";
 import { getLocale } from "../actions/locale";
-import { PerformanceMetric } from "../(components)/dashboard/PerformanceOverview";
-import { ActivityItem } from "../(components)/dashboard/RecentActivity";
 import { cookies } from "next/headers";
 
 interface DashboardStats {
@@ -40,52 +39,30 @@ async function fetchDashboardStats(): Promise<DashboardStats | null> {
 }
 
 const getStats = (locale: Locale, backendStats?: DashboardStats | null): StatItem[] => {
-  const now = new Date();
-  const thisMonth = `${now.getMonth() + 1}월`;
-  const nextMonth = `${((now.getMonth() + 1) % 12) + 1}월`;
-
   return [
     {
       title: t(locale, "dashboard.active_clients"),
-      firstDataValue: backendStats?.activeClients?.toLocaleString() ?? "0",
-      icon: PeopleOutlineIcon,
+      value: backendStats?.activeClients?.toLocaleString() ?? "0",
+      icon: Users,
     },
     {
       title: t(locale, "dashboard.contracts.sending_pending"),
-      firstDataValue: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
-      icon: TrendingUpIcon,
+      value: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
+      icon: TrendingUp,
     },
     {
       title: t(locale, "dashboard.contracts.completion_pending"),
-      firstDataValue: backendStats?.contractsPendingSignature?.toLocaleString() ?? "0",
-      icon: AssessmentIcon,
+      value: backendStats?.contractsPendingSignature?.toLocaleString() ?? "0",
+      icon: TrendingUp,
+      variant: "primary",
     },
     {
       title: t(locale, "dashboard.pending_clients.title"),
-      firstDataLabel: thisMonth,
-      secondDataLabel: nextMonth,
-      firstDataValue: `${backendStats?.upcomingThisMonth?.toLocaleString() ?? "0"} 명`,
-      secondDataValue: `${backendStats?.upcomingNextMonth?.toLocaleString() ?? "0"} 명`,
+      value: `${backendStats?.upcomingThisMonth?.toLocaleString() ?? "0"} 명`,
+      icon: CalendarClock,
     },
   ];
 };
-
-const performanceMetrics: PerformanceMetric[] = [
-  { label: "Mon", conversion: 75, progress: 70 },
-  { label: "Tue", conversion: 80, progress: 76 },
-  { label: "Wed", conversion: 85, progress: 82 },
-  { label: "Thu", conversion: 90, progress: 88 },
-  { label: "Fri", conversion: 95, progress: 93 },
-];
-
-const quickActions = ["Add User", "Review Requests", "Create Report", "Schedule Meeting"];
-
-const activity: ActivityItem[] = [
-  { primary: "New partner onboarded", secondary: "Today · Kelly Park" },
-  { primary: "Invoice #3481 approved", secondary: "1 hr ago · Finance" },
-  { primary: "Policy update published", secondary: "Yesterday · Compliance" },
-  { primary: "System maintenance complete", secondary: "2 days ago · IT" },
-];
 
 export default async function Dashboard() {
   const locale = await getLocale();
@@ -94,17 +71,12 @@ export default async function Dashboard() {
   const stats = getStats(locale, backendStats);
 
   return (
-    <Box sx={{ bgcolor: "background.paper" }}>
-      <Box
-        component="section"
-        data-component="dashboard"
-        sx={{
-          px: { xs: 2, sm: 3, md: 6 },
-          py: { xs: 3, sm: 4 },
-          mx: "auto",
-        }}
+    <div data-component="dashboard-page" className="bg-background">
+      <section
+        data-component="dashboard-content"
+        className="px-4 sm:px-6 md:px-8 lg:px-12 py-6 sm:py-8 mx-auto max-w-7xl"
       >
-        <Stack spacing={3} sx={{ width: "100%" }}>
+        <div data-component="dashboard-layout" className="space-y-6 w-full">
           <HeroBanner
             data-component="hero-banner"
             subtitle={t(locale, "dashboard.welcome_back")}
@@ -115,11 +87,28 @@ export default async function Dashboard() {
             secondaryActionHref="/messages"
           />
 
-          <ChatWidget />
+          <div data-component="chat-widget-container">
+            <ChatWidget />
+          </div>
 
-          <StatsGrid stats={stats} />
-        </Stack>
-      </Box>
-    </Box>
+          <div data-component="stats-grid-container">
+            <StatsGrid stats={stats} />
+          </div>
+
+          <div data-component="quick-actions-container">
+            <QuickActions />
+          </div>
+
+          <div data-component="dashboard-tables" className="grid gap-4 lg:grid-cols-3">
+            <div data-component="pending-clients-container" className="lg:col-span-2 min-w-0">
+              <PendingClientsTable />
+            </div>
+            <div data-component="today-schedule-container">
+              <TodayScheduleList />
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }

@@ -75,7 +75,7 @@ async function migrateDocuments(categoryMap: Map<string, string>): Promise<void>
         
         const finalCategoryId = categoryId;
         await prisma.$executeRaw`
-            UPDATE document SET category_id = ${finalCategoryId} WHERE id = ${doc.id}
+            UPDATE document SET categoryId = ${finalCategoryId} WHERE id = ${doc.id}
         `;
         console.log(`  ✓ Migrated document ${doc.id}: ${doc.category} -> ${categoryId}`);
     }
@@ -88,26 +88,26 @@ async function main() {
 
     console.log("\nChecking current schema...");
     const hasOldCategoryColumn = await checkColumnExists("document", "category");
-    const hasCategoryIdColumn = await checkColumnExists("document", "category_id");
+    const hasCategoryIdColumn = await checkColumnExists("document", "categoryId");
     
     console.log(`  Old 'category' column exists: ${hasOldCategoryColumn}`);
-    console.log(`  New 'category_id' column exists: ${hasCategoryIdColumn}`);
+    console.log(`  New 'categoryId' column exists: ${hasCategoryIdColumn}`);
 
     if (hasOldCategoryColumn && !hasCategoryIdColumn) {
-        console.log("\nAdding category_id column...");
-        await prisma.$executeRaw`ALTER TABLE document ADD COLUMN category_id TEXT`;
-        console.log("  ✓ Added category_id column");
+        console.log("\nAdding categoryId column...");
+        await prisma.$executeRaw`ALTER TABLE document ADD COLUMN categoryId TEXT`;
+        console.log("  ✓ Added categoryId column");
 
         await migrateDocuments(categoryMap);
 
         console.log("\nAdding constraints...");
-        await prisma.$executeRaw`ALTER TABLE document ALTER COLUMN category_id SET NOT NULL`;
-        console.log("  ✓ Made category_id NOT NULL");
+        await prisma.$executeRaw`ALTER TABLE document ALTER COLUMN categoryId SET NOT NULL`;
+        console.log("  ✓ Made categoryId NOT NULL");
 
         await prisma.$executeRaw`
             ALTER TABLE document 
             ADD CONSTRAINT document_category_id_fkey 
-            FOREIGN KEY (category_id) REFERENCES document_category(id)
+            FOREIGN KEY (categoryId) REFERENCES document_category(id)
         `;
         console.log("  ✓ Added foreign key constraint");
 
@@ -116,12 +116,12 @@ async function main() {
         await prisma.$executeRaw`ALTER TABLE document DROP COLUMN category`;
         console.log("  ✓ Dropped old category column");
 
-        console.log("\nAdding index on category_id...");
-        await prisma.$executeRaw`CREATE INDEX document_category_id_idx ON document(category_id)`;
+        console.log("\nAdding index on categoryId...");
+        await prisma.$executeRaw`CREATE INDEX document_category_id_idx ON document(categoryId)`;
         console.log("  ✓ Added index");
 
     } else if (hasCategoryIdColumn) {
-        console.log("\nMigration already completed (category_id column exists)");
+        console.log("\nMigration already completed (categoryId column exists)");
     } else {
         console.log("\nNo documents table or unexpected schema state");
     }

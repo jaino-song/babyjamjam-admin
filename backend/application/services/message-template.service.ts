@@ -20,23 +20,27 @@ export class MessageTemplateService {
         private readonly findMessageTemplateByIdUsecase: FindMessageTemplateByIdUsecase,
     ) {}
 
-    async create(params: CreateMessageTemplateParams): Promise<MessageTemplateEntity> {
-        return this.createMessageTemplateUsecase.execute(params);
+    async create(organizationid: string, params: CreateMessageTemplateParams): Promise<MessageTemplateEntity> {
+        return this.createMessageTemplateUsecase.execute(organizationid, params);
     }
 
-    async update(id: string, params: UpdateMessageTemplateParams): Promise<MessageTemplateEntity> {
-        return this.updateMessageTemplateUsecase.execute(id, params);
+    async update(
+        organizationid: string,
+        id: string,
+        params: UpdateMessageTemplateParams
+    ): Promise<MessageTemplateEntity> {
+        return this.updateMessageTemplateUsecase.execute(organizationid, id, params);
     }
 
-    async delete(id: string): Promise<void> {
-        return this.deleteMessageTemplateUsecase.execute(id);
+    async delete(organizationid: string, id: string): Promise<void> {
+        return this.deleteMessageTemplateUsecase.execute(organizationid, id);
     }
 
-    async findAll(): Promise<MessageTemplateEntity[]> {
-        return this.listMessageTemplatesUsecase.execute();
+    async findAll(organizationid: string): Promise<MessageTemplateEntity[]> {
+        return this.listMessageTemplatesUsecase.execute(organizationid);
     }
 
-    async findById(id: string): Promise<MessageTemplateEntity> {
-        return this.findMessageTemplateByIdUsecase.execute(id);
+    async findById(organizationid: string, id: string): Promise<MessageTemplateEntity> {
+        return this.findMessageTemplateByIdUsecase.execute(organizationid, id);
     }
 }

@@ -1,29 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { Plus, Upload, FileText, Image, File, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert } from "@/components/ui/alert";
 import {
-    Box,
-    Button,
     Dialog,
     DialogContent,
+    DialogHeader,
     DialogTitle,
-    DialogActions,
-    Typography,
-    Snackbar,
-    Alert,
-    CircularProgress,
-    IconButton,
-    Chip,
-    useMediaQuery,
-    useTheme,
-} from "@mui/material";
-import {
-    PictureAsPdf as PdfIcon,
-    Image as ImageIcon,
-    Description as FileIcon,
-} from "@mui/icons-material";
-import { Plus } from "lucide-react";
-import CloudUploadIcon from "@mui/icons-material/CloudUpload";
+    DialogFooter,
+    DialogDescription,
+} from "@/components/ui/dialog";
+import { toast } from "@/app/hooks/use-toast";
 
 import { useLocale } from "../LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
@@ -43,24 +33,40 @@ import {
 import { useDocumentCategories, useCreateDocumentCategory, DocumentCategory } from "@/app/hooks/use-document-categories";
 import { DataTable, type DataTableColumn } from "@/app/(components)/ui/datatable";
 
+// Custom hook to detect mobile breakpoint (replaces MUI's useMediaQuery)
+function useIsMobile() {
+    const [isMobile, setIsMobile] = useState(false);
+
+    useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener("resize", checkMobile);
+        return () => window.removeEventListener("resize", checkMobile);
+    }, []);
+
+    return isMobile;
+}
+
+// Helper to determine if a color is a valid Badge variant name
+// These match both Badge component variants and FilterOption color types
+const badgeVariants = ["default", "secondary", "destructive", "success", "warning", "info"] as const;
+type BadgeVariant = typeof badgeVariants[number];
+const isBadgeVariant = (value: string): value is BadgeVariant =>
+    (badgeVariants as readonly string[]).includes(value);
+
+// Helper to get contrasting text color for custom hex colors
+function getContrastColor(hexColor: string): string {
+    const hex = hexColor.replace("#", "");
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.5 ? "#000000" : "#ffffff";
+}
 
 export function DocumentsTable() {
     const locale = useLocale();
-    const theme = useTheme();
-    const isMobile = useMediaQuery(theme.breakpoints.down("md"));
-
-    const muiChipColorValues = [
-        "default",
-        "primary",
-        "secondary",
-        "error",
-        "info",
-        "success",
-        "warning",
-    ] as const;
-    type MuiChipColor = (typeof muiChipColorValues)[number];
-    const isMuiChipColor = (value: string): value is MuiChipColor =>
-        (muiChipColorValues as readonly string[]).includes(value);
+    const isMobile = useIsMobile();
 
     const [filterCategory, setFilterCategory] = useState<string | null>(null);
     const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
@@ -69,17 +75,6 @@ export function DocumentsTable() {
     const [editDoc, setEditDoc] = useState<Document | null>(null);
     const [deleteDoc, setDeleteDoc] = useState<Document | null>(null);
     const [uploadProgress, setUploadProgress] = useState(0);
-
-    const [snackbar, setSnackbar] = useState<{
-        open: boolean;
-        message: string;
-        severity: "success" | "error";
-    }>({
-        open: false,
-        message: "",
-        severity: "success",
-    });
-
 
     const { data: documents = [], isLoading, error } = useDocuments(
         filterCategory ?? undefined
@@ -92,12 +87,12 @@ export function DocumentsTable() {
     const { data: categories = [] } = useDocumentCategories();
     const createCategoryMutation = useCreateDocumentCategory();
 
-    const handleCloseSnackbar = () => {
-        setSnackbar((prev) => ({ ...prev, open: false }));
-    };
-
-    const showSnackbar = (message: string, severity: "success" | "error") => {
-        setSnackbar({ open: true, message, severity });
+    const showToast = (message: string, variant: "default" | "destructive") => {
+        toast({
+            title: variant === "destructive" ? "오류" : "성공",
+            description: message,
+            variant,
+        });
     };
 
     const handleUpload = async (params: {
@@ -114,10 +109,10 @@ export function DocumentsTable() {
                 onProgress: (progress) => setUploadProgress(progress),
             });
             setIsUploadOpen(false);
-            showSnackbar(t(locale, "documents.upload-success"), "success");
+            showToast(t(locale, "documents.upload-success"), "default");
         } catch (err) {
             console.error(err);
-            showSnackbar("문서 업로드에 실패했습니다.", "error");
+            showToast("문서 업로드에 실패했습니다.", "destructive");
         }
     };
 
@@ -133,10 +128,10 @@ export function DocumentsTable() {
         try {
             await updateMutation.mutateAsync({ id, ...params });
             setEditDoc(null);
-            showSnackbar(t(locale, "documents.update-success"), "success");
+            showToast(t(locale, "documents.update-success"), "default");
         } catch (err) {
             console.error(err);
-            showSnackbar("문서 수정에 실패했습니다.", "error");
+            showToast("문서 수정에 실패했습니다.", "destructive");
         }
     };
 
@@ -145,10 +140,10 @@ export function DocumentsTable() {
         try {
             await deleteMutation.mutateAsync(deleteDoc.id);
             setDeleteDoc(null);
-            showSnackbar(t(locale, "documents.delete-success"), "success");
+            showToast(t(locale, "documents.delete-success"), "default");
         } catch (err) {
             console.error(err);
-            showSnackbar("문서 삭제에 실패했습니다.", "error");
+            showToast("문서 삭제에 실패했습니다.", "destructive");
         }
     };
 
@@ -156,14 +151,15 @@ export function DocumentsTable() {
         try {
             await createCategoryMutation.mutateAsync(category);
             setIsAddCategoryOpen(false);
-            showSnackbar("태그가 추가되었습니다.", "success");
+            showToast("태그가 추가되었습니다.", "default");
         } catch (err) {
             console.error(err);
-            showSnackbar("태그 추가에 실패했습니다.", "error");
+            showToast("태그 추가에 실패했습니다.", "destructive");
         }
     };
 
     const existingColors = categories.filter((c) => c.isCustom).map((c) => c.color);
+
     const tableData = useMemo(() => {
         return [...documents]
             .map((doc) => ({
@@ -180,16 +176,10 @@ export function DocumentsTable() {
             ...categories.map((category) => ({
                 label: category.label,
                 value: category.id,
-                color: isMuiChipColor(category.color) ? category.color : "default",
-                chipSx: isMuiChipColor(category.color)
-                    ? undefined
-                    : {
-                        bgcolor: category.color,
-                        color: theme.palette.getContrastText(category.color),
-                    },
+                color: isBadgeVariant(category.color) ? category.color : "default",
             })),
         ];
-    }, [categories, theme]);
+    }, [categories]);
 
     const getCategoryLabel = (categoryId: string, items: DocumentCategory[]): string => {
         const category = items.find((c) => c.id === categoryId);
@@ -198,15 +188,16 @@ export function DocumentsTable() {
 
     const getFileIcon = (mimeType: string) => {
         if (mimeType.includes("pdf")) {
-            return <PdfIcon className="text-red-500" />;
+            return <FileText className="h-5 w-5 text-destructive" />;
         }
         if (mimeType.includes("image")) {
-            return <ImageIcon className="text-blue-500" />;
+            return <Image className="h-5 w-5 text-info" />;
         }
-        return <FileIcon className="text-gray-500" />;
+        return <File className="h-5 w-5 text-muted-foreground" />;
     };
 
     type DocumentRow = Omit<Document, "tags"> & { tags: string; raw: Document };
+
     const columns = useMemo<DataTableColumn<DocumentRow>[]>(() => {
         const baseColumns: DataTableColumn<DocumentRow>[] = [
             {
@@ -214,12 +205,10 @@ export function DocumentsTable() {
                 header: "문서명",
                 align: "center",
                 render: (row: DocumentRow) => (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "left" }}>
+                    <div className="flex items-center gap-2 justify-start pl-4">
                         {getFileIcon(row.raw.mimeType)}
-                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                            {row.raw.name}
-                        </Typography>
-                    </Box>
+                        <span className="font-medium text-sm">{row.raw.name}</span>
+                    </div>
                 ),
             },
             {
@@ -227,7 +216,11 @@ export function DocumentsTable() {
                 header: "등록일",
                 align: "center",
                 width: "110px",
-                render: (row: DocumentRow) => formatDate(row.raw.createdAt),
+                render: (row: DocumentRow) => (
+                    <span className="text-sm text-muted-foreground">
+                        {formatDate(row.raw.createdAt)}
+                    </span>
+                ),
             },
         ];
 
@@ -243,34 +236,34 @@ export function DocumentsTable() {
 
                     if (!category) {
                         return (
-                            <Chip
-                                label={label}
-                                size="small"
-                                sx={{ bgcolor: "rgba(0, 0, 0, 0.08)", color: "rgba(0, 0, 0, 0.87)" }}
-                            />
+                            <Badge variant="secondary">{label}</Badge>
                         );
                     }
 
-                    if (isMuiChipColor(category.color)) {
-                        return <Chip label={label} size="small" color={category.color} />;
+                    // Use semantic variant if available, otherwise custom style
+                    if (isBadgeVariant(category.color)) {
+                        return <Badge variant={category.color}>{label}</Badge>;
                     }
 
+                    // Custom hex color
                     return (
-                        <Chip
-                            label={label}
-                            size="small"
-                            sx={{
-                                bgcolor: category.color,
-                                color: theme.palette.getContrastText(category.color),
+                        <Badge
+                            className="border-transparent"
+                            style={{
+                                backgroundColor: category.color,
+                                color: getContrastColor(category.color),
                             }}
-                        />
+                        >
+                            {label}
+                        </Badge>
                     );
                 },
             });
         }
 
         return baseColumns;
-    }, [categories, isMobile, theme]);
+    }, [categories, isMobile]);
+
     if (isLoading) {
         return (
             <ContentPaper
@@ -278,9 +271,9 @@ export function DocumentsTable() {
                 subtitle="문서 및 파일을 관리합니다"
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
-                <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-                    <CircularProgress />
-                </Box>
+                <div className="flex justify-center items-center min-h-[400px]">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
             </ContentPaper>
         );
     }
@@ -292,7 +285,7 @@ export function DocumentsTable() {
                 subtitle="문서 및 파일을 관리합니다"
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
-                <Alert severity="error">{t(locale, "common.error")}</Alert>
+                <Alert variant="destructive">{t(locale, "common.error")}</Alert>
             </ContentPaper>
         );
     }
@@ -303,7 +296,7 @@ export function DocumentsTable() {
             subtitle="문서 및 파일을 관리합니다"
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
-            <Box data-component="documents-table-container">
+            <div data-component="documents-table-container">
                 <DataTable
                     data={tableData}
                     columns={columns}
@@ -323,46 +316,52 @@ export function DocumentsTable() {
                     pagination="none"
                     emptyMessage="등록된 문서가 없습니다"
                     toolbarActions={(
-                        <IconButton
-                            size="medium"
-                            sx={{ color: "#1e88e5" }}
+                        <Button
+                            className="gap-2 w-[100px]"
                             onClick={() => setIsUploadOpen(true)}
                         >
-                            <Plus size={30} strokeWidth={2} />
-                        </IconButton>
+                            <Plus className="h-4 w-4" />
+                            업로드
+                        </Button>
                     )}
                 />
-            </Box>
+            </div>
 
+            {/* Upload Dialog */}
             <Dialog
                 open={isUploadOpen}
-                onClose={() => !uploadMutation.isPending && setIsUploadOpen(false)}
-                maxWidth="md"
-                fullWidth
+                onOpenChange={(open: boolean) => !uploadMutation.isPending && setIsUploadOpen(open)}
             >
-                <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <CloudUploadIcon color="primary" />
-                    {t(locale, "documents.upload-title")}
-                </DialogTitle>
-                <DialogContent>
-                    <Box sx={{ mt: 1 }}>
+                <DialogContent className="sm:max-w-[600px]">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Upload className="h-5 w-5 text-primary" />
+                            {t(locale, "documents.upload-title")}
+                        </DialogTitle>
+                        <DialogDescription className="sr-only">
+                            {t(locale, "documents.upload-description")}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="mt-2">
                         <DocumentDropzone
                             onUpload={handleUpload}
                             isLoading={uploadMutation.isPending}
                             uploadProgress={uploadProgress}
                         />
-                    </Box>
+                    </div>
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => setIsUploadOpen(false)}
+                            disabled={uploadMutation.isPending}
+                        >
+                            {t(locale, "common.cancel")}
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
-                <DialogActions>
-                    <Button
-                        onClick={() => setIsUploadOpen(false)}
-                        disabled={uploadMutation.isPending}
-                    >
-                        {t(locale, "common.cancel")}
-                    </Button>
-                </DialogActions>
             </Dialog>
 
+            {/* Preview Modal */}
             <DocumentPreviewModal
                 open={!!previewDoc}
                 onClose={() => setPreviewDoc(null)}
@@ -377,6 +376,7 @@ export function DocumentsTable() {
                 }}
             />
 
+            {/* Edit Modal */}
             <DocumentEditModal
                 open={!!editDoc}
                 onClose={() => setEditDoc(null)}
@@ -385,6 +385,7 @@ export function DocumentsTable() {
                 isLoading={updateMutation.isPending}
             />
 
+            {/* Add Category Modal */}
             <AddCategoryModal
                 open={isAddCategoryOpen}
                 onClose={() => setIsAddCategoryOpen(false)}
@@ -393,52 +394,40 @@ export function DocumentsTable() {
                 isLoading={createCategoryMutation.isPending}
             />
 
-            <Dialog
-                open={!!deleteDoc}
-                onClose={() => setDeleteDoc(null)}
-                maxWidth="xs"
-                fullWidth
-            >
-                <DialogTitle>{t(locale, "documents.delete-confirm-title")}</DialogTitle>
-                <DialogContent>
-                    <Typography>
-                        {t(locale, "documents.delete-confirm-message")}
-                    </Typography>
+            {/* Delete Confirmation Dialog */}
+            <Dialog open={!!deleteDoc} onOpenChange={(open: boolean) => !open && setDeleteDoc(null)}>
+                <DialogContent className="sm:max-w-[400px]">
+                    <DialogHeader>
+                        <DialogTitle>{t(locale, "documents.delete-confirm-title")}</DialogTitle>
+                        <DialogDescription>
+                            {t(locale, "documents.delete-confirm-message")}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <Button
+                            variant="outline"
+                            onClick={() => setDeleteDoc(null)}
+                            disabled={deleteMutation.isPending}
+                        >
+                            {t(locale, "common.cancel")}
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            onClick={handleDelete}
+                            disabled={deleteMutation.isPending}
+                        >
+                            {deleteMutation.isPending ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                    {t(locale, "common.deleting")}
+                                </>
+                            ) : (
+                                t(locale, "common.delete")
+                            )}
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
-                <DialogActions>
-                    <Button
-                        onClick={() => setDeleteDoc(null)}
-                        disabled={deleteMutation.isPending}
-                    >
-                        {t(locale, "common.cancel")}
-                    </Button>
-                    <Button
-                        onClick={handleDelete}
-                        color="error"
-                        variant="contained"
-                        disabled={deleteMutation.isPending}
-                        autoFocus
-                    >
-                        {deleteMutation.isPending ? t(locale, "common.deleting") : t(locale, "common.delete")}
-                    </Button>
-                </DialogActions>
             </Dialog>
-
-            <Snackbar
-                open={snackbar.open}
-                autoHideDuration={6000}
-                onClose={handleCloseSnackbar}
-                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-            >
-                <Alert
-                    onClose={handleCloseSnackbar}
-                    severity={snackbar.severity}
-                    sx={{ width: "100%" }}
-                    variant="filled"
-                >
-                    {snackbar.message}
-                </Alert>
-            </Snackbar>
         </ContentPaper>
     );
 }

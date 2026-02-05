@@ -1,42 +1,45 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
+import { X } from "lucide-react";
 import {
   Dialog,
-  DialogTitle,
   DialogContent,
-  DialogActions,
-  TextField,
-  Button,
-  Box,
-  IconButton,
-  Typography,
-  Stack,
-} from "@mui/material";
-import CloseIcon from "@mui/icons-material/Close";
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 interface AddCategoryModalProps {
   open: boolean;
   onClose: () => void;
-  onAdd: (category: { value: string; label: string; color: string }) => Promise<void>;
+  onAdd: (category: {
+    value: string;
+    label: string;
+    color: string;
+  }) => Promise<void>;
   existingColors: string[];
   isLoading?: boolean;
 }
 
-// MUI standard colors + 5 additional unique colors
+// Color options using design system CSS variables where possible
 const COLOR_OPTIONS = [
-  // Current filter colors (MUI standard)
-  { value: "default", label: "기본", hex: "#9e9e9e" },
-  { value: "primary", label: "파랑", hex: "#1976d2" },
-  { value: "secondary", label: "보라", hex: "#9c27b0" },
-  { value: "success", label: "초록", hex: "#2e7d32" },
-  { value: "warning", label: "주황", hex: "#ed6c02" },
-  { value: "error", label: "빨강", hex: "#d32f2f" },
-  { value: "info", label: "하늘", hex: "#0288d1" },
-  // 5 additional unique colors
+  // Design system semantic colors
+  { value: "default", label: "기본", hex: "hsl(var(--muted-foreground))" },
+  { value: "primary", label: "네이비", hex: "hsl(var(--primary))" },
+  { value: "accent", label: "파랑", hex: "hsl(var(--accent))" },
+  { value: "success", label: "초록", hex: "hsl(var(--success))" },
+  { value: "warning", label: "주황", hex: "hsl(var(--warning))" },
+  { value: "error", label: "빨강", hex: "hsl(var(--destructive))" },
+  { value: "info", label: "하늘", hex: "hsl(var(--info))" },
+  // Additional palette colors for variety
   { value: "#e91e63", label: "핑크", hex: "#e91e63" },
+  { value: "#9c27b0", label: "보라", hex: "#9c27b0" },
   { value: "#00bcd4", label: "청록", hex: "#00bcd4" },
-  { value: "#ff9800", label: "오렌지", hex: "#ff9800" },
   { value: "#795548", label: "갈색", hex: "#795548" },
   { value: "#607d8b", label: "회청", hex: "#607d8b" },
 ];
@@ -77,80 +80,73 @@ export function AddCategoryModal({
   );
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
-      <DialogTitle>
-        태그 추가
-        <IconButton
-          aria-label="close"
-          onClick={handleClose}
-          sx={{
-            position: "absolute",
-            right: 8,
-            top: 8,
-            color: (theme) => theme.palette.grey[500],
-          }}
-        >
-          <CloseIcon />
-        </IconButton>
-      </DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={3} sx={{ mt: 1 }}>
-          <TextField
-            label="태그 이름"
-            fullWidth
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-            placeholder="예: 중요문서"
-          />
+    <Dialog open={open} onOpenChange={(isOpen: boolean) => !isOpen && handleClose()}>
+      <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogHeader className="flex-row justify-between items-center">
+          <DialogTitle>태그 추가</DialogTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleClose}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </DialogHeader>
 
-          <Box>
-            <Typography variant="subtitle2" sx={{ mb: 1.5, color: "text.secondary" }}>
-              칩 색상 선택
-            </Typography>
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1.5 }}>
+        <div className="flex flex-col gap-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="category-name">태그 이름</Label>
+            <Input
+              id="category-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+              placeholder="예: 중요문서"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-muted-foreground">칩 색상 선택</Label>
+            <div className="flex flex-wrap gap-3">
               {availableColors.map((color) => (
-                <Box
+                <button
                   key={color.value}
+                  type="button"
                   onClick={() => setSelectedColor(color.value)}
-                  sx={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 2,
-                    bgcolor: color.hex,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    border: selectedColor === color.value ? "3px solid #000" : "2px solid transparent",
-                    transition: "all 0.2s",
-                    "&:hover": {
-                      transform: "scale(1.1)",
-                      boxShadow: 2,
-                    },
-                  }}
+                  className={cn(
+                    "w-12 h-12 rounded-lg cursor-pointer transition-all duration-200",
+                    "hover:scale-110 hover:shadow-md",
+                    selectedColor === color.value
+                      ? "ring-2 ring-offset-2 ring-foreground"
+                      : "border-2 border-transparent"
+                  )}
+                  style={{ backgroundColor: color.hex }}
                   title={color.label}
                 />
               ))}
-            </Box>
+            </div>
             {selectedColor && (
-              <Typography variant="caption" sx={{ mt: 1, display: "block", color: "text.secondary" }}>
-                선택됨: {COLOR_OPTIONS.find((c) => c.value === selectedColor)?.label}
-              </Typography>
+              <p className="text-xs text-muted-foreground mt-2">
+                선택됨:{" "}
+                {COLOR_OPTIONS.find((c) => c.value === selectedColor)?.label}
+              </p>
             )}
-          </Box>
-        </Stack>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose} disabled={isLoading}>
+            취소
+          </Button>
+          <Button
+            onClick={handleAdd}
+            disabled={!name.trim() || !selectedColor || isLoading}
+          >
+            {isLoading ? "추가 중..." : "추가"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={handleClose} disabled={isLoading}>취소</Button>
-        <Button
-          onClick={handleAdd}
-          variant="contained"
-          disabled={!name.trim() || !selectedColor || isLoading}
-        >
-          {isLoading ? "추가 중..." : "추가"}
-        </Button>
-      </DialogActions>
     </Dialog>
   );
 }

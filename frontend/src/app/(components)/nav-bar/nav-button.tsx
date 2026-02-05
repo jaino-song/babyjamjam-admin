@@ -1,7 +1,7 @@
 'use client';
 
-import { Button, Typography } from "@mui/material";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 interface NavButtonProps {
     href: string;
@@ -10,33 +10,43 @@ interface NavButtonProps {
     active?: boolean;
     onClick?: () => void;
     disabled?: boolean;
+    index?: number;
 }
 
-export const NavButton = ({ href, label, icon, active=false, onClick, disabled=false }: NavButtonProps) => {
+export const NavButton = ({
+    href,
+    label,
+    icon,
+    active = false,
+    onClick,
+    disabled = false,
+    index = 0
+}: NavButtonProps) => {
     return (
-        <Button 
-            component={Link} 
-            href={href} 
-            onClick={onClick} 
-            disabled={disabled}
-            sx={{ 
-                mt: 0, 
-                px: 1.5, 
-                py: 1.5, 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'flex-start', 
-                gap: 1,
-                backgroundColor: active ? 'rgba(25, 118, 210, 0.15)' : 'transparent',
-                color: active ? 'primary.main' : 'text.secondary',
-                '&:hover': {
-                    backgroundColor: active ? 'rgba(25, 118, 210, 0.12)' : 'action.hover',
-                    color: active ? 'primary.dark' : 'text.primary',
-                }
-            }}
+        <Link
+            href={href}
+            onClick={disabled ? (e) => e.preventDefault() : onClick}
+            className={cn(
+                "flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-all duration-200",
+                "opacity-0 animate-slide-in-left",
+                active
+                    ? "bg-sidebar-primary/20 text-sidebar-primary"
+                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-foreground",
+                disabled && "pointer-events-none opacity-50"
+            )}
+            style={{ animationDelay: `${100 + index * 50}ms` }}
+            aria-disabled={disabled}
         >
-            {icon}
-            <Typography variant="body1" fontWeight={500}>{label}</Typography>
-        </Button>
+            <span className={cn(
+                "flex items-center justify-center w-5 h-5",
+                active && "text-sidebar-primary"
+            )}>
+                {icon}
+            </span>
+            <span>{label}</span>
+            {active && (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-primary animate-pulse" />
+            )}
+        </Link>
     );
 };

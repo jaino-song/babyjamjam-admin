@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { IconButton, Chip, Box, Alert } from "@mui/material";
 import { Plus } from "lucide-react";
 import { useLocale } from "../LocaleProvider";
 import { t, Locale } from "@/app/lib/i18n/translations";
@@ -15,6 +14,9 @@ import {
 import { EmployeeFormDialog } from "./EmployeeFormDialog";
 import { EmployeeDetailModal } from "./EmployeeDetailModal";
 import { DataTable, type DataTableColumn, type FilterOption } from "@/app/(components)/ui/datatable";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const formatPhoneNumber = (phone: string | null | undefined): string => {
     if (!phone) return "-";
@@ -24,18 +26,27 @@ const formatPhoneNumber = (phone: string | null | undefined): string => {
     return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
 };
 
-const STATUS_CHIP_WIDTH = 65;
-
-const getStatusChip = (status: EmployeeStatus | undefined, locale: Locale) => {
-    const chipSx = { minWidth: STATUS_CHIP_WIDTH, justifyContent: "center" };
+const getStatusBadge = (status: EmployeeStatus | undefined, locale: Locale) => {
     switch (status) {
         case "available":
-            return <Chip label={t(locale, "employees.status.available")} color="success" size="small" sx={chipSx} />;
+            return (
+                <Badge variant="success" className="min-w-[65px] justify-center">
+                    {t(locale, "employees.status.available")}
+                </Badge>
+            );
         case "working":
-            return <Chip label={t(locale, "employees.status.working")} color="warning" size="small" sx={chipSx} />;
+            return (
+                <Badge variant="warning" className="min-w-[65px] justify-center">
+                    {t(locale, "employees.status.working")}
+                </Badge>
+            );
         case "unavailable":
         default:
-            return <Chip label={t(locale, "employees.status.unavailable")} color="default" size="small" sx={chipSx} />;
+            return (
+                <Badge variant="secondary" className="min-w-[65px] justify-center">
+                    {t(locale, "employees.status.unavailable")}
+                </Badge>
+            );
     }
 };
 
@@ -117,7 +128,7 @@ export function EmployeesTable() {
             header: t(locale, "employees.table.open-status"),
             width: "30%",
             align: "center",
-            render: (employee) => getStatusChip(employee.status as EmployeeStatus | undefined, locale),
+            render: (employee) => getStatusBadge(employee.status as EmployeeStatus | undefined, locale),
         },
         {
             key: "phone",
@@ -129,9 +140,13 @@ export function EmployeesTable() {
     ];
 
     const toolbarActions = (
-        <IconButton size="medium" sx={{ color: "#1e88e5" }} onClick={handleAddNew}>
-            <Plus size={30} strokeWidth={2} />
-        </IconButton>
+        <Button
+            className="gap-2 w-[100px]"
+            onClick={handleAddNew}
+        >
+            <Plus className="h-4 w-4" />
+            {t(locale, "employees.add")}
+        </Button>
     );
 
     if (error) {
@@ -140,11 +155,15 @@ export function EmployeesTable() {
             <ContentPaper
                 title={t(locale, "employees.title")}
                 subtitle={t(locale, "employees.subtitle")}
-                sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+                className="min-h-[70vh] flex-grow w-full"
             >
-                <Box p={3}>
-                    <Alert severity="error">직원 목록을 불러오는데 실패했습니다: {errorMessage}</Alert>
-                </Box>
+                <div className="p-3">
+                    <Alert variant="destructive">
+                        <AlertDescription>
+                            직원 목록을 불러오는데 실패했습니다: {errorMessage}
+                        </AlertDescription>
+                    </Alert>
+                </div>
             </ContentPaper>
         );
     }
@@ -153,9 +172,9 @@ export function EmployeesTable() {
         <ContentPaper
             title={t(locale, "employees.title")}
             subtitle={t(locale, "employees.subtitle")}
-            sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
+            className="min-h-[70vh] flex-grow w-full"
         >
-            <Box data-component="employees-table-container">
+            <div data-component="employees-table-container">
                 <DataTable<EmployeeRow>
                     data={tableData}
                     columns={columns}
@@ -188,7 +207,7 @@ export function EmployeesTable() {
                     onClose={handleFormDialogClose}
                     employee={editingEmployee}
                 />
-            </Box>
+            </div>
         </ContentPaper>
     );
 }

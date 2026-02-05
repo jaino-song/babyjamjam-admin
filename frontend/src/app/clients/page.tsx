@@ -1,4 +1,3 @@
-import { Box } from "@mui/material";
 import { redirect } from "next/navigation";
 import { ClientsTable } from "../(components)/clients/ClientsTable";
 
@@ -16,19 +15,13 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     }
 
     return (
-        <Box sx={{ bgcolor: "background.paper" }}>
-            <Box
-                component="section"
+        <div className="bg-background">
+            <section
                 data-component="clients"
-                sx={{
-                    px: { xs: 2, sm: 3, md: 6 },
-                    py: { xs: 3, sm: 4 },
-                    mx: "auto",
-                }}
+                className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto"
             >
                 <ClientsTable />
-            </Box>
-        </Box>
+            </section>
+        </div>
     );
 }
-

@@ -4,6 +4,10 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getFeedbackList, getFeedbackStats, FeedbackItem } from '@/lib/api/admin';
 import { useRouter } from 'next/navigation';
+import { cn } from '@/lib/utils';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { ChevronLeft, ChevronRight, ThumbsUp, ThumbsDown } from 'lucide-react';
 
 type FilterType = 'all' | 'positive' | 'negative';
 
@@ -53,81 +57,78 @@ export default function AdminFeedbackPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen bg-background p-4 sm:p-6 md:p-8">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold text-gray-900 mb-8">피드백 관리</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-6 sm:mb-8 opacity-0 animate-fade-in">
+          피드백 관리
+        </h1>
 
+        {/* Stats Cards */}
         {statsLoading ? (
-          <div className="grid grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="bg-white rounded-lg shadow p-6 animate-pulse">
-                <div className="h-4 bg-gray-200 rounded w-1/2 mb-4"></div>
-                <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-              </div>
+              <Card key={i} className="opacity-0 animate-fade-in" style={{ animationDelay: `${i * 100}ms` }}>
+                <CardContent className="p-6">
+                  <div className="h-4 bg-muted rounded w-1/2 mb-4 animate-pulse"></div>
+                  <div className="h-8 bg-muted rounded w-1/3 animate-pulse"></div>
+                </CardContent>
+              </Card>
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-6 mb-8">
-            <div className="bg-white rounded-lg shadow p-6">
-              <p className="text-sm text-gray-600 mb-2">전체</p>
-              <p className="text-3xl font-bold text-gray-900">{stats?.total || 0}</p>
-            </div>
-            <div className="bg-white rounded-lg shadow p-6">
-              <p className="text-sm text-gray-600 mb-2">긍정적</p>
-              <p className="text-3xl font-bold text-green-600">{stats?.positive || 0}</p>
-            </div>
-            <div className="bg-white rounded-lg shadow p-6">
-              <p className="text-sm text-gray-600 mb-2">부정적</p>
-              <p className="text-3xl font-bold text-red-600">{stats?.negative || 0}</p>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
+            <Card className="opacity-0 animate-fade-in hover:shadow-md transition-shadow" style={{ animationDelay: '100ms' }}>
+              <CardContent className="p-6">
+                <p className="text-sm text-muted-foreground mb-2">전체</p>
+                <p className="text-3xl font-bold text-foreground">{stats?.total || 0}</p>
+              </CardContent>
+            </Card>
+            <Card className="opacity-0 animate-fade-in hover:shadow-md transition-shadow" style={{ animationDelay: '200ms' }}>
+              <CardContent className="p-6">
+                <p className="text-sm text-muted-foreground mb-2">긍정적</p>
+                <p className="text-3xl font-bold text-success">{stats?.positive || 0}</p>
+              </CardContent>
+            </Card>
+            <Card className="opacity-0 animate-fade-in hover:shadow-md transition-shadow" style={{ animationDelay: '300ms' }}>
+              <CardContent className="p-6">
+                <p className="text-sm text-muted-foreground mb-2">부정적</p>
+                <p className="text-3xl font-bold text-destructive">{stats?.negative || 0}</p>
+              </CardContent>
+            </Card>
           </div>
         )}
 
-        <div className="bg-white rounded-lg shadow">
-          <div className="border-b border-gray-200">
+        {/* Feedback Table */}
+        <Card className="opacity-0 animate-fade-in" style={{ animationDelay: '400ms' }}>
+          {/* Filter Tabs */}
+          <div className="border-b border-border">
             <div className="flex space-x-8 px-6">
-              <button
-                onClick={() => handleFilterChange('all')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  filterType === 'all'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                전체
-              </button>
-              <button
-                onClick={() => handleFilterChange('positive')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  filterType === 'positive'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                긍정적
-              </button>
-              <button
-                onClick={() => handleFilterChange('negative')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  filterType === 'negative'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                부정적
-              </button>
+              {(['all', 'positive', 'negative'] as const).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => handleFilterChange(type)}
+                  className={cn(
+                    "py-4 px-1 border-b-2 font-medium text-sm transition-colors",
+                    filterType === type
+                      ? "border-primary text-primary"
+                      : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                  )}
+                >
+                  {type === 'all' ? '전체' : type === 'positive' ? '긍정적' : '부정적'}
+                </button>
+              ))}
             </div>
           </div>
 
           {feedbackLoading ? (
             <div className="p-6">
               {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="border-b border-gray-200 py-4 animate-pulse">
+                <div key={i} className="border-b border-border py-4">
                   <div className="grid grid-cols-4 gap-4">
-                    <div className="h-4 bg-gray-200 rounded"></div>
-                    <div className="h-4 bg-gray-200 rounded"></div>
-                    <div className="h-4 bg-gray-200 rounded"></div>
-                    <div className="h-4 bg-gray-200 rounded"></div>
+                    <div className="h-4 bg-muted rounded animate-pulse"></div>
+                    <div className="h-4 bg-muted rounded animate-pulse"></div>
+                    <div className="h-4 bg-muted rounded animate-pulse"></div>
+                    <div className="h-4 bg-muted rounded animate-pulse"></div>
                   </div>
                 </div>
               ))}
@@ -135,42 +136,48 @@ export default function AdminFeedbackPage() {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                <table className="min-w-full divide-y divide-border">
+                  <thead className="bg-muted/50">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         날짜
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         사용자
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         유형
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         코멘트
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {feedbackData?.data.map((feedback: FeedbackItem) => (
+                  <tbody className="bg-background divide-y divide-border">
+                    {feedbackData?.data.map((feedback: FeedbackItem, index: number) => (
                       <tr
                         key={feedback.id}
                         onClick={() => handleRowClick(feedback.id)}
-                        className="hover:bg-gray-50 cursor-pointer transition-colors"
+                        className={cn(
+                          "hover:bg-muted/50 cursor-pointer transition-colors",
+                          "opacity-0 animate-fade-in"
+                        )}
+                        style={{ animationDelay: `${500 + index * 50}ms` }}
                       >
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
                           {formatDate(feedback.createdAt)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
                           {feedback.user.name || feedback.user.email || '익명'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
-                          <span className="text-2xl">
-                            {feedback.type === 'positive' ? '👍' : '👎'}
-                          </span>
+                          {feedback.type === 'positive' ? (
+                            <ThumbsUp className="h-5 w-5 text-success" />
+                          ) : (
+                            <ThumbsDown className="h-5 w-5 text-destructive" />
+                          )}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
+                        <td className="px-6 py-4 text-sm text-foreground">
                           {truncateText(feedback.comment, 50)}
                         </td>
                       </tr>
@@ -181,34 +188,36 @@ export default function AdminFeedbackPage() {
 
               {feedbackData && feedbackData.data.length === 0 && (
                 <div className="text-center py-12">
-                  <p className="text-gray-500">피드백이 없습니다.</p>
+                  <p className="text-muted-foreground">피드백이 없습니다.</p>
                 </div>
               )}
 
               {feedbackData && feedbackData.totalPages > 1 && (
-                <div className="px-6 py-4 flex items-center justify-between border-t border-gray-200">
+                <div className="px-6 py-4 flex items-center justify-between border-t border-border">
                   <div className="flex-1 flex justify-between sm:hidden">
-                    <button
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
                       disabled={currentPage === 1}
-                      className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       이전
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => setCurrentPage((prev) => Math.min(feedbackData.totalPages, prev + 1))}
                       disabled={currentPage === feedbackData.totalPages}
-                      className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       다음
-                    </button>
+                    </Button>
                   </div>
                   <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
                     <div>
-                      <p className="text-sm text-gray-700">
-                        전체 <span className="font-medium">{feedbackData.total}</span>개 중{' '}
-                        <span className="font-medium">{(currentPage - 1) * limit + 1}</span>-
-                        <span className="font-medium">
+                      <p className="text-sm text-muted-foreground">
+                        전체 <span className="font-medium text-foreground">{feedbackData.total}</span>개 중{' '}
+                        <span className="font-medium text-foreground">{(currentPage - 1) * limit + 1}</span>-
+                        <span className="font-medium text-foreground">
                           {Math.min(currentPage * limit, feedbackData.total)}
                         </span>{' '}
                         표시
@@ -216,13 +225,16 @@ export default function AdminFeedbackPage() {
                     </div>
                     <div>
                       <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-                        <button
+                        <Button
+                          variant="outline"
+                          size="sm"
                           onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
                           disabled={currentPage === 1}
-                          className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="rounded-r-none"
                         >
-                          이전
-                        </button>
+                          <ChevronLeft className="h-4 w-4" />
+                          <span className="sr-only">이전</span>
+                        </Button>
                         {Array.from({ length: feedbackData.totalPages }, (_, i) => i + 1)
                           .filter((page) => {
                             return (
@@ -234,44 +246,43 @@ export default function AdminFeedbackPage() {
                           .map((page, index, array) => {
                             if (index > 0 && array[index - 1] !== page - 1) {
                               return (
-                                <span key={`ellipsis-${page}`}>
-                                  <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                                <span key={`ellipsis-${page}`} className="flex">
+                                  <span className="relative inline-flex items-center px-4 py-2 border border-border bg-background text-sm font-medium text-muted-foreground">
                                     ...
                                   </span>
-                                  <button
+                                  <Button
+                                    variant={currentPage === page ? "default" : "outline"}
+                                    size="sm"
                                     onClick={() => setCurrentPage(page)}
-                                    className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
-                                      currentPage === page
-                                        ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
-                                        : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
-                                    }`}
+                                    className="rounded-none"
                                   >
                                     {page}
-                                  </button>
+                                  </Button>
                                 </span>
                               );
                             }
                             return (
-                              <button
+                              <Button
                                 key={page}
+                                variant={currentPage === page ? "default" : "outline"}
+                                size="sm"
                                 onClick={() => setCurrentPage(page)}
-                                className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
-                                  currentPage === page
-                                    ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
-                                    : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
-                                }`}
+                                className="rounded-none"
                               >
                                 {page}
-                              </button>
+                              </Button>
                             );
                           })}
-                        <button
+                        <Button
+                          variant="outline"
+                          size="sm"
                           onClick={() => setCurrentPage((prev) => Math.min(feedbackData.totalPages, prev + 1))}
                           disabled={currentPage === feedbackData.totalPages}
-                          className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="rounded-l-none"
                         >
-                          다음
-                        </button>
+                          <ChevronRight className="h-4 w-4" />
+                          <span className="sr-only">다음</span>
+                        </Button>
                       </nav>
                     </div>
                   </div>
@@ -279,7 +290,7 @@ export default function AdminFeedbackPage() {
               )}
             </>
           )}
-        </div>
+        </Card>
       </div>
     </div>
   );

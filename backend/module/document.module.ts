@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { DOCUMENT_REPOSITORY } from "domain/repositories/document.repository.interface";
 import { FILE_STORAGE_PORT } from "domain/ports/file-storage.port";
-import { SbDocumentRepository } from "infrastructure/database/repositories/sb.document.repository";
+import { DocumentRepository } from "infrastructure/database/repositories/sb.document.repository";
 import { SupabaseStorageAdapter } from "infrastructure/adapters/supabase-storage.adapter";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { DocumentService } from "application/services/document.service";
@@ -14,7 +14,6 @@ import { DocumentCategoryService } from "application/services/document-category.
     imports: [ConfigModule],
     controllers: [DocumentController, DocumentCategoryController],
     providers: [
-        // Service
         DocumentService,
         DocumentCategoryService,
         // Infrastructure
@@ -23,7 +22,7 @@ import { DocumentCategoryService } from "application/services/document-category.
         // Repository binding
         {
             provide: DOCUMENT_REPOSITORY,
-            useClass: SbDocumentRepository,
+            useClass: DocumentRepository,
         },
         // File storage binding
         {

@@ -3,30 +3,30 @@ import { Prisma } from "@prisma/client";
 
 type NotificationRow = {
     id: number;
-    user_id: string;
+    userId: string;
     title: string;
     body: string;
     data: Prisma.JsonValue | null;
-    sent_at: Date;
-    read_at: Date | null;
+    sentAt: Date;
+    readAt: Date | null;
 };
 
 export class NotificationMapper {
     static toDomain(row: NotificationRow): NotificationEntity {
         return NotificationEntity.reconstitute(
             row.id,
-            row.user_id,
+            row.userId,
             row.title,
             row.body,
             row.data as Record<string, unknown> | null,
-            row.sent_at,
-            row.read_at,
+            row.sentAt,
+            row.readAt,
         );
     }
 
     static toPrismaCreate(entity: NotificationEntity) {
         return {
-            user_id: entity.userId,
+            userId: entity.userId,
             title: entity.title,
             body: entity.body,
             data: entity.data as Prisma.InputJsonValue | undefined,
@@ -35,7 +35,7 @@ export class NotificationMapper {
 
     static toPrismaUpdate(entity: NotificationEntity) {
         return {
-            read_at: entity.readAt,
+            readAt: entity.readAt,
         };
     }
 }

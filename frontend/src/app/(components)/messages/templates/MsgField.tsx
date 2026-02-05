@@ -1,4 +1,4 @@
-import { TextField } from "@mui/material"
+import { Textarea } from "@/components/ui/textarea";
 
 interface MsgFieldProps {
   value: string;
@@ -7,30 +7,12 @@ interface MsgFieldProps {
 
 export const MsgField = ({ value, onChange }: MsgFieldProps) => {
   return (
-    <TextField
+    <Textarea
       data-component="MsgField"
-      multiline
-      fullWidth
       value={value}
       onChange={(e) => onChange?.(e.target.value)}
       rows={12}
-      slotProps={{
-        input: {
-          sx: {
-            fontFamily: "inherit",
-            fontSize: "1rem",
-            lineHeight: 1.6,
-
-          },
-        },
-      }}
-      sx={{
-        "& .MuiOutlinedInput-root": {
-          maxHeight: "50vh",
-          overflowY: "auto",
-          alignItems: "flex-start",
-        },
-      }}
+      className="font-inherit text-base leading-relaxed max-h-[50vh] resize-none"
     />
-  )
-}
+  );
+};

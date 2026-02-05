@@ -1,14 +1,11 @@
-import { Avatar, Card, CardContent, Typography, Box, Stack } from "@mui/material";
-import { Grid } from "@mui/material";
-import { SvgIconComponent } from "@mui/icons-material";
+import { LucideIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export interface StatItem {
   title: string;
-  firstDataLabel?: string;
-  secondDataLabel?: string;
-  firstDataValue: string;
-  secondDataValue?: string;
-  icon?: SvgIconComponent;
+  value: string;
+  icon?: LucideIcon;
+  variant?: "default" | "primary" | "success" | "warning" | "destructive";
 }
 
 interface StatsGridProps {
@@ -16,76 +13,45 @@ interface StatsGridProps {
   disabled?: boolean;
 }
 
-export const StatsGrid = ({ stats, disabled=false }: StatsGridProps) => {
-  return (
-    /* Grid for Stats */
-    <Grid container spacing={2}>
-      {stats.map((item) => {
-        const Icon = item.icon;
-        return (
-          /* Grid Item */
-          <Grid key={item.title} data-component="stats-grid-item" size={{ xs: 6, sm: 6, lg: 3 }} sx={{ opacity: disabled ? 0.5 : 1 }}>
-            {/* Card */}
-            <Card elevation={2} data-component="stats-grid-card" sx={{ py: 2.5, px: 3, display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 2, bgcolor: "background.default" }}>
-              <Box sx={{ display: "flex", justifyContent: "center" }}>
-                <Typography variant="body1" fontWeight={600} color="text.secondary">
-                  {item.title}
-                </Typography>
-              </Box>
-              <CardContent sx={{ display: "flex", alignItems: "center", justifyContent: "center", '&:last-child': { p: 0 } }}>
-                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 1.5 }}>
-                <Stack direction="column" spacing={1}>
-                  <Box key={`${item.firstDataLabel}-${item.firstDataValue}`} sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1.5 }}>
-                    <Avatar
-                      sx={{
-                        bgcolor: disabled ? "text.secondary" : "primary.main",
-                        color: disabled ? "white" : "primary.contrastText",
-                        width: 44,
-                        height: 44,
-                      }}
-                    >
-                      {item.firstDataLabel && <Typography variant="body1" fontWeight={700} color="white">
-                        {item.firstDataLabel}
-                      </Typography>}
-                      {!item.firstDataLabel && item.icon && <item.icon fontSize="small" />}
-                    </Avatar>
-                    <Box sx={{ minWidth: 50 }}>
-                      <Typography variant="h6" fontWeight={700} sx={{ width: "100%" }}>
-                        {item.firstDataValue}
-                      </Typography>
-                    </Box>
-                  </Box>
-                  {item.secondDataValue && (
-                    <Box key={`${item.secondDataLabel}-${item.secondDataValue}`}>
-                    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1.5 }}>
-                      <Avatar
-                        sx={{
-                          bgcolor: disabled ? "text.secondary" : "primary.main",
-                          color: disabled ? "white" : "primary.contrastText",
-                          width: 44,
-                          height: 44,
-                        }}
-                      >
-                        {item.secondDataLabel && <Typography variant="body1" fontWeight={700} color="white">
-                          {item.secondDataLabel}
-                        </Typography>}
-                      </Avatar>
-                      <Box sx={{ minWidth: 50 }}>
-                        <Typography variant="h6" fontWeight={700} sx={{ width: "100%" }}>
-                          {item.secondDataValue}
-                        </Typography>
-                      </Box>
-                    </Box>
-                    </Box>
-                  )}
-                </Stack>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-        );
-      })}
-    </Grid>
-  );
+const variantStyles = {
+  default: "border-border",
+  primary: "border-primary/20 bg-primary/5",
+  success: "border-success/20 bg-success/5",
+  warning: "border-warning/20 bg-warning/5",
+  destructive: "border-destructive/20 bg-destructive/5",
 };
 
+export function StatsGrid({ stats, disabled = false }: StatsGridProps) {
+  return (
+    <div data-component="stats-grid" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {stats.map((item, index) => {
+        const Icon = item.icon;
+        const variant = item.variant || "default";
+
+        return (
+          <div
+            key={item.title}
+            data-component="stats-grid-card"
+            className={cn(
+              "rounded-xl border bg-card p-4 transition-all active:scale-[0.98]",
+              "opacity-0 animate-fade-in cursor-pointer hover:shadow-md",
+              variantStyles[variant],
+              disabled && "opacity-50 pointer-events-none"
+            )}
+            style={{ animationDelay: `${150 + index * 50}ms` }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-muted-foreground truncate">
+                {item.title}
+              </span>
+              {Icon && <Icon className="h-4 w-4 text-primary" />}
+            </div>
+            <span className="text-xl font-bold tracking-tight">
+              {item.value}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

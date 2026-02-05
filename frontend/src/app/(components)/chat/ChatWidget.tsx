@@ -1,7 +1,6 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Box } from "@mui/material";
 import { ChatInput } from "./ChatInput";
 
 export function ChatWidget() {
@@ -12,13 +11,13 @@ export function ChatWidget() {
     };
 
     return (
-        <Box sx={{ mt: 3 }}>
+        <div data-component="chat-widget" className="mt-6">
             <ChatInput
                 onSubmit={handleOpenChat}
-                onFocus={handleOpenChat}
+                onClick={handleOpenChat}
                 placeholder="무엇을 도와드릴까요?"
+                readOnly
             />
-        </Box>
+        </div>
     );
 }
-

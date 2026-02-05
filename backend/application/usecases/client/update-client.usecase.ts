@@ -29,13 +29,17 @@ export class UpdateClientUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    async execute(id: number, updates: UpdateClientParams): Promise<ClientEntity> {
-        const client = await this.clientRepository.findById(id);
+    async execute(
+        organizationid: string,
+        id: number,
+        updates: UpdateClientParams
+    ): Promise<ClientEntity> {
+        const client = await this.clientRepository.findById(organizationid, id);
         if (!client) {
             throw new NotFoundException(`Client with id ${id} not found`);
         }
 
         client.update(updates);
-        return this.clientRepository.update(client);
+        return this.clientRepository.update(organizationid, client);
     }
 }

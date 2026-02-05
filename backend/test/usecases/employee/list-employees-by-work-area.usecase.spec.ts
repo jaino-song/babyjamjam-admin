@@ -4,6 +4,7 @@ import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 describe("ListEmployeesByWorkAreaUsecase", () => {
     let usecase: ListEmployeesByWorkAreaUsecase;
     let mockRepository: MockEmployeeRepository;
+    const organizationId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -29,7 +30,7 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute("인천 연수구");
+                const result = await usecase.execute(organizationId, "인천 연수구");
 
                 // Assert
                 expect(result).toHaveLength(2);
@@ -46,7 +47,7 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute("인천");
+                const result = await usecase.execute(organizationId, "인천");
 
                 // Assert
                 expect(result).toEqual([]);
@@ -56,7 +57,7 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                 // Arrange - empty repository
 
                 // Act
-                const result = await usecase.execute("서울");
+                const result = await usecase.execute(organizationId, "서울");
 
                 // Assert
                 expect(result).toEqual([]);
@@ -79,9 +80,9 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result1 = await usecase.execute("인천 연수구");
-                const result2 = await usecase.execute("인천 남동구");
-                const result3 = await usecase.execute("인천 미추홀구");
+                const result1 = await usecase.execute(organizationId, "인천 연수구");
+                const result2 = await usecase.execute(organizationId, "인천 남동구");
+                const result3 = await usecase.execute(organizationId, "인천 미추홀구");
 
                 // Assert
                 expect(result1).toHaveLength(1);
@@ -100,9 +101,9 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const gangnam = await usecase.execute("서울 강남구");
-                const seocho = await usecase.execute("서울 서초구");
-                const busan = await usecase.execute("부산 해운대구");
+                const gangnam = await usecase.execute(organizationId, "서울 강남구");
+                const seocho = await usecase.execute(organizationId, "서울 서초구");
+                const busan = await usecase.execute(organizationId, "부산 해운대구");
 
                 // Assert
                 expect(gangnam).toHaveLength(2); // id 1, 3
@@ -124,7 +125,7 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute("인천광역시 연수구");
+                const result = await usecase.execute(organizationId, "인천광역시 연수구");
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -140,7 +141,7 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute("제주특별자치도");
+                const result = await usecase.execute(organizationId, "제주특별자치도");
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -165,7 +166,7 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                 mockRepository.setData([employee]);
 
                 // Act
-                const result = await usecase.execute("인천 연수구");
+                const result = await usecase.execute(organizationId, "인천 연수구");
 
                 // Assert
                 expect(result).toHaveLength(1);

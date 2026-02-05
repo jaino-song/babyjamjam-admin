@@ -21,8 +21,8 @@ export class SbChatSessionRepository implements IChatSessionRepository {
 
     async findByUserId(userId: string): Promise<ChatSessionEntity | null> {
         const session = await this.prismaService.chat_session.findFirst({
-            where: { user_id: userId },
-            orderBy: { created_at: 'desc' },
+            where: { userId: userId },
+            orderBy: { createdAt: 'desc' },
             include: { messages: { orderBy: { timestamp: 'asc' } } },
         });
         return session ? ChatSessionMapper.toDomain(session) : null;
@@ -32,10 +32,10 @@ export class SbChatSessionRepository implements IChatSessionRepository {
         const now = new Date();
         const session = await this.prismaService.chat_session.findFirst({
             where: {
-                user_id: userId,
-                expires_at: { gt: now },
+                userId: userId,
+                expiresAt: { gt: now },
             },
-            orderBy: { created_at: 'desc' },
+            orderBy: { createdAt: 'desc' },
             include: { messages: { orderBy: { timestamp: 'asc' } } },
         });
         return session ? ChatSessionMapper.toDomain(session) : null;
@@ -52,7 +52,7 @@ export class SbChatSessionRepository implements IChatSessionRepository {
     async update(session: ChatSessionEntity): Promise<ChatSessionEntity> {
         // Get existing messages count
         const existing = await this.prismaService.chat_message.count({
-            where: { session_id: session.id },
+            where: { sessionId: session.id },
         });
         
         // Create new messages (those beyond existing count)
@@ -67,7 +67,7 @@ export class SbChatSessionRepository implements IChatSessionRepository {
         // Update session expiry
         const updated = await this.prismaService.chat_session.update({
             where: { id: session.id },
-            data: { expires_at: session.expiresAt },
+            data: { expiresAt: session.expiresAt },
             include: { messages: { orderBy: { timestamp: 'asc' } } },
         });
         
@@ -83,14 +83,14 @@ export class SbChatSessionRepository implements IChatSessionRepository {
     async deleteExpired(): Promise<number> {
         const now = new Date();
         const result = await this.prismaService.chat_session.deleteMany({
-            where: { expires_at: { lt: now } },
+            where: { expiresAt: { lt: now } },
         });
         return result.count;
     }
 
     async deleteOlderThan(cutoffDate: Date): Promise<number> {
         const result = await this.prismaService.chat_session.deleteMany({
-            where: { created_at: { lt: cutoffDate } },
+            where: { createdAt: { lt: cutoffDate } },
         });
         return result.count;
     }

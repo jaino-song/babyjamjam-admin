@@ -1,18 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-    Box,
-    TextField,
-    Button,
-    Stack,
-    Typography,
-    Paper,
-    Divider,
-    Alert,
-    AlertTitle
-} from "@mui/material";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ContentPaper } from "../root/content-paper";
 import { useCreateMessageTemplate, useUpdateMessageTemplate } from "@/app/hooks/use-message-templates";
 import { useLocale } from "@/app/(components)/LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
@@ -81,44 +77,51 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     const isPending = isCreating || isUpdating;
 
     return (
-        <Stack spacing={4}>
-            <Box data-component="template-editor-main-paper" sx={{ p: 3 }}>
-                <Stack spacing={3}>
-                    <TextField
-                        fullWidth
-                        label={t(locale, "template-editor.name-label")}
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder={t(locale, "template-editor.name-placeholder")}
-                        required
-                    />
+        <div className="flex flex-col gap-6">
+            <ContentPaper data-component="template-editor-main-paper" className="p-6" disableAnimation>
+                <div className="flex flex-col gap-5">
+                    <div className="flex flex-col gap-2">
+                        <Label htmlFor="template-name">
+                            {t(locale, "template-editor.name-label")}
+                            <span className="text-destructive ml-1">*</span>
+                        </Label>
+                        <Input
+                            id="template-name"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder={t(locale, "template-editor.name-placeholder")}
+                        />
+                    </div>
 
-                    <Box>
-                        <Typography variant="subtitle2" gutterBottom>
+                    <div>
+                        <p className="text-sm font-medium mb-2">
                             {t(locale, "template-editor.quick-insert")}
-                        </Typography>
+                        </p>
                         <VariableInserter onInsert={insertVariable} />
-                    </Box>
+                    </div>
 
-                    <TextField
-                        fullWidth
-                        multiline
-                        rows={10}
-                        label={t(locale, "template-editor.content-label")}
-                        value={content}
-                        onChange={(e) => setContent(e.target.value)}
-                        placeholder={t(locale, "template-editor.content-placeholder")}
-                        required
-                    />
-                </Stack>
-            </Box>
+                    <div className="flex flex-col gap-2">
+                        <Label htmlFor="template-content">
+                            {t(locale, "template-editor.content-label")}
+                            <span className="text-destructive ml-1">*</span>
+                        </Label>
+                        <Textarea
+                            id="template-content"
+                            rows={10}
+                            value={content}
+                            onChange={(e) => setContent(e.target.value)}
+                            placeholder={t(locale, "template-editor.content-placeholder")}
+                        />
+                    </div>
+                </div>
+            </ContentPaper>
 
             {variables.length > 0 && (
-                <Box>
-                    <Typography variant="h6" gutterBottom sx={{ px: 1 }}>
+                <div>
+                    <h3 className="text-lg font-semibold mb-3 px-1">
                         {t(locale, "template-editor.variable-settings")}
-                    </Typography>
-                    <Stack spacing={2}>
+                    </h3>
+                    <div className="flex flex-col gap-3">
                         {variables.map((variable) => (
                             <VariableConfigurator
                                 key={variable.key}
@@ -126,37 +129,38 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                                 onChange={handleVariableChange}
                             />
                         ))}
-                    </Stack>
-                </Box>
+                    </div>
+                </div>
             )}
 
             {detectedKeys.length === 0 && content.length > 0 && (
-                <Alert severity="info">
+                <Alert>
                     <AlertTitle>Tip</AlertTitle>
-                    {t(locale, "template-editor.no-variables-hint")}
+                    <AlertDescription>
+                        {t(locale, "template-editor.no-variables-hint")}
+                    </AlertDescription>
                 </Alert>
             )}
 
-            <Box sx={{ p: 3, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                <Typography variant="h6" gutterBottom>
+            <div className="p-6 border rounded-lg">
+                <h3 className="text-lg font-semibold mb-2">
                     {t(locale, "template-editor.preview")}
-                </Typography>
-                <Divider sx={{ mb: 2 }} />
+                </h3>
+                <Separator className="mb-4" />
                 <TemplatePreview content={content} variables={variables} />
-            </Box>
+            </div>
 
-            <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 2, pb: 5 }}>
-                <Button variant="outlined" onClick={() => router.back()}>
+            <div className="flex justify-end gap-3 pb-6">
+                <Button variant="outline" onClick={() => router.back()}>
                     {t(locale, "common.cancel")}
                 </Button>
                 <Button
-                    variant="contained"
                     onClick={handleSave}
                     disabled={!name || !content || isPending}
                 >
                     {isPending ? t(locale, "common.saving") : t(locale, "common.save")}
                 </Button>
-            </Box>
-        </Stack>
+            </div>
+        </div>
     );
 };

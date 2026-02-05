@@ -1,20 +1,14 @@
-import { Box } from "@mui/material";
 import { DocumentsList } from "@/app/(components)/eformsign/DocumentsList";
 
 export default async function ContractsPage() {
     return (
-        <Box sx={{ bgcolor: "background.paper" }}>
-            <Box
-                component="section"
+        <div className="bg-background">
+            <section
                 data-component="contracts"
-                sx={{
-                    px: { xs: 2, sm: 3, md: 6 },
-                    py: { xs: 3, sm: 4 },
-                    mx: "auto",
-                }}
+                className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto"
             >
                 <DocumentsList />
-            </Box>
-        </Box>
+            </section>
+        </div>
     );
 }

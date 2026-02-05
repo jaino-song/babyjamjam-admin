@@ -1,14 +1,7 @@
 import { MessageTemplateEntity, TemplateVariable } from "domain/entities/message-template.entity";
-import { Prisma } from "@prisma/client";
+import { Prisma, message_template } from "@prisma/client";
 
-type MessageTemplateRow = {
-    id: string;
-    name: string;
-    content: string;
-    variables: Prisma.JsonValue;
-    created_at: Date;
-    updated_at: Date;
-};
+type MessageTemplateRow = message_template;
 
 export class MessageTemplateMapper {
     static toDomain(row: MessageTemplateRow): MessageTemplateEntity {
@@ -18,16 +11,18 @@ export class MessageTemplateMapper {
             row.name,
             row.content,
             variables,
-            row.created_at,
-            row.updated_at,
+            row.createdAt,
+            row.updatedAt,
         );
     }
 
     static toPrismaCreate(entity: MessageTemplateEntity): Prisma.message_templateCreateInput {
         return {
+            id: entity.id,
             name: entity.name,
             content: entity.content,
             variables: entity.variables as unknown as Prisma.InputJsonValue,
+            updatedAt: entity.updatedAt,
         };
     }
 

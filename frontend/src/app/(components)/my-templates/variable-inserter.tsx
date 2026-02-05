@@ -1,8 +1,7 @@
 "use client";
 
-import { Stack, Chip, Button, Box, Typography } from "@mui/material";
-import { Add as AddIcon } from "@mui/icons-material";
-import { useState } from "react";
+import { Plus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 interface VariableInserterProps {
     onInsert: (key: string) => void;
@@ -22,8 +21,6 @@ const PRESET_VARIABLES = [
 ];
 
 export const VariableInserter = ({ onInsert }: VariableInserterProps) => {
-    const [customKey, setCustomKey] = useState("");
-
     const handleAddCustom = () => {
         const key = prompt("변수 키를 입력하세요 (영문 권장):");
         if (key) {
@@ -32,27 +29,25 @@ export const VariableInserter = ({ onInsert }: VariableInserterProps) => {
     };
 
     return (
-        <Box>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                {PRESET_VARIABLES.map((v) => (
-                    <Chip 
-                        key={v.key} 
-                        label={v.label} 
-                        onClick={() => onInsert(v.key)}
-                        color="primary"
-                        variant="outlined"
-                        size="small"
-                    />
-                ))}
-                <Chip 
-                    label="커스텀 변수" 
-                    onClick={handleAddCustom}
-                    icon={<AddIcon />}
-                    color="secondary"
-                    variant="outlined"
-                    size="small"
-                />
-            </Stack>
-        </Box>
+        <div className="flex flex-row flex-wrap gap-2">
+            {PRESET_VARIABLES.map((v) => (
+                <Badge
+                    key={v.key}
+                    variant="outline"
+                    className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
+                    onClick={() => onInsert(v.key)}
+                >
+                    {v.label}
+                </Badge>
+            ))}
+            <Badge
+                variant="outline"
+                className="cursor-pointer hover:bg-secondary hover:text-secondary-foreground transition-colors"
+                onClick={handleAddCustom}
+            >
+                <Plus className="h-3 w-3 mr-1" />
+                커스텀 변수
+            </Badge>
+        </div>
     );
 };

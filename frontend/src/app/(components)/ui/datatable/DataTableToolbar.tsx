@@ -1,24 +1,21 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type MouseEvent } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
+import { Plus, Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
-  Box,
-  Chip,
-  Divider,
-  IconButton,
-  ListItemIcon,
-  ListItemText,
-  Menu,
-  MenuItem,
-  Radio,
-  TextField,
-} from "@mui/material";
-import { Filter, Plus, Search } from "lucide-react";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { DataTableToolbarProps } from "./types";
 
 export function DataTableToolbar({
   searchEnabled = true,
-  searchPlaceholder = "검색",
+  searchPlaceholder = "검색...",
   searchQuery,
   onSearchChange,
   filterOptions,
@@ -28,7 +25,6 @@ export function DataTableToolbar({
   actions,
 }: DataTableToolbarProps) {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const handleSearchIconClick = () => {
@@ -46,133 +42,83 @@ export function DataTableToolbar({
     onSearchChange(event.target.value);
   };
 
-  const handleFilterClick = (event: MouseEvent<HTMLElement>) => {
-    setFilterAnchorEl(event.currentTarget);
+  const handleFilterSelect = (value: string) => {
+    // Convert "all" back to null for the parent component
+    onFilterChange?.(value === "all" ? null : value);
   };
-
-  const handleFilterClose = () => {
-    setFilterAnchorEl(null);
-  };
-
-  const handleFilterSelect = (value: string | null) => {
-    onFilterChange?.(value);
-    handleFilterClose();
-  };
-
-  const currentFilterOption = filterOptions?.find((option) => option.value === filterValue);
-  const currentFilterLabel = currentFilterOption?.label ?? "전체";
-  const currentFilterColor = currentFilterOption?.color ?? "default";
-  const currentFilterChipSx = currentFilterOption?.chipSx;
 
   return (
-    <Box
+    <div
       data-component="data-table-toolbar"
-      sx={{ display: "flex", alignItems: "center", width: "100%" }}
+      className="flex items-center justify-end gap-2 py-2"
     >
-      {/* Left section: Search */}
-      <Box sx={{ flex: 1, display: "flex", justifyContent: "flex-start" }}>
-        {searchEnabled &&
-          (isSearchOpen ? (
-            <TextField
-              inputRef={searchInputRef}
-              size="small"
-              placeholder={searchPlaceholder}
-              value={searchQuery}
-              onChange={handleSearchChange}
-              onBlur={handleSearchBlur}
-              autoFocus
-              sx={{
-                width: 60,
-                "& .MuiOutlinedInput-root": {
-                  backgroundColor: "transparent",
-                },
-                "& .MuiOutlinedInput-notchedOutline": {
-                  border: "none",
-                },
-                "& .MuiInputBase-input": {
-                  padding: "8px 0",
-                },
-              }}
-            />
-          ) : (
-            <IconButton
-              size="medium"
-              sx={{ color: "grey.600", width: 60 }}
-              onClick={handleSearchIconClick}
-              aria-label="search"
-            >
-              <Search size={24} strokeWidth={2} />
-            </IconButton>
-          ))}
-      </Box>
-
-      {/* Center section: Filter */}
-      <Box sx={{ flex: 1, display: "flex", justifyContent: "center" }}>
-        {filterOptions && filterOptions.length > 0 && (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-            <IconButton
-              size="medium"
-              sx={{ color: "primary.main" }}
-              onClick={handleFilterClick}
-            >
-              <Filter size={24} strokeWidth={2} />
-            </IconButton>
-            <Chip
-              label={currentFilterLabel}
-              color={currentFilterColor}
-              size="small"
-              onClick={handleFilterClick}
-              sx={currentFilterChipSx ?? {}}
-            />
-          </Box>
-        )}
-      </Box>
-
-      <Menu
-        anchorEl={filterAnchorEl}
-        open={Boolean(filterAnchorEl)}
-        onClose={handleFilterClose}
-        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-      >
-        {filterOptions?.map((option) => (
-          <MenuItem
-            key={option.value ?? "all"}
-            onClick={() => handleFilterSelect(option.value)}
+      {/* Search */}
+      {searchEnabled && (
+        isSearchOpen ? (
+          <Input
+            ref={searchInputRef}
+            placeholder={searchPlaceholder}
+            value={searchQuery}
+            onChange={handleSearchChange}
+            onBlur={handleSearchBlur}
+            autoFocus
+            className="w-[100px] h-10 transition-all"
+          />
+        ) : (
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-10 w-[100px]"
+            onClick={handleSearchIconClick}
+            aria-label="search"
           >
-            <ListItemIcon>
-              <Radio checked={filterValue === option.value} size="small" />
-            </ListItemIcon>
-            <ListItemText>
-              <Chip
-                label={option.label}
-                color={option.color || "default"}
-                size="small"
-                sx={option.chipSx ?? {}}
-              />
-            </ListItemText>
-          </MenuItem>
-        ))}
-        {filterAddAction && <Divider />}
-        {filterAddAction && (
-          <MenuItem
-            onClick={() => {
-              handleFilterClose();
-              filterAddAction.onClick();
-            }}
-            sx={{ color: "primary.main" }}
-          >
-            <ListItemIcon>
-              <Plus size={20} color="currentColor" />
-            </ListItemIcon>
-            <ListItemText>{filterAddAction.label}</ListItemText>
-          </MenuItem>
-        )}
-      </Menu>
+            <Search className="h-4 w-4" />
+          </Button>
+        )
+      )}
 
-      {/* Right section: Actions */}
-      <Box sx={{ flex: 1, display: "flex", justifyContent: "flex-end" }}>
-        {actions}
-      </Box>
-    </Box>
+      {/* Filter */}
+      {filterOptions && filterOptions.length > 0 && (
+        <Select
+          value={filterValue ?? "all"}
+          onValueChange={handleFilterSelect}
+        >
+          <SelectTrigger className="w-[100px] [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:justify-end">
+            <SelectValue placeholder="상태" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end" className="min-w-[100px] w-[100px]">
+            {filterOptions.map((option) => (
+              <SelectItem
+                key={option.value ?? "all"}
+                value={option.value ?? "all"}
+                className="justify-center pr-2 [&_span[data-slot=select-item-indicator]]:hidden"
+              >
+                {option.label}
+              </SelectItem>
+            ))}
+            {filterAddAction && (
+              <>
+                <div className="h-px bg-border my-1" />
+                <Button
+                  variant="ghost"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    filterAddAction.onClick();
+                  }}
+                  className="w-full justify-center gap-1 h-8 text-sm font-medium"
+                >
+                  <Plus className="h-4 w-4" />
+                  추가
+                </Button>
+              </>
+            )}
+          </SelectContent>
+        </Select>
+      )}
+
+      {/* Custom actions */}
+      {actions}
+    </div>
   );
 }

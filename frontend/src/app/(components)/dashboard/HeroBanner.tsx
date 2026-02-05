@@ -1,6 +1,7 @@
-import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
-import { Button, Stack, Typography } from "@mui/material";
-import { ContentPaper } from "../root/content-paper";
+import Link from "next/link";
+import { FileSignature, MessageSquare } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 interface HeroBannerProps {
   title: string;
@@ -14,7 +15,7 @@ interface HeroBannerProps {
   secondaryActionHref?: string;
 }
 
-export const HeroBanner = ({
+export function HeroBanner({
   title,
   subtitle,
   description,
@@ -24,37 +25,102 @@ export const HeroBanner = ({
   secondaryActionDisabled = false,
   primaryActionHref,
   secondaryActionHref,
-}: HeroBannerProps) => {
+}: HeroBannerProps) {
   return (
-    <ContentPaper
-      elevation={0}
-      disableAnimation
-      sx={{
-        p: { xs: 2.5, sm: 3 },
-        bgcolor: "primary.main",
-        color: "primary.contrastText",
-        borderRadius: 3,
-        backgroundImage: "linear-gradient(135deg, rgba(30,136,229,0.9), rgba(21,101,192,0.85))",
-      }}
+    <div
+      data-component="hero-banner"
+      className={cn(
+        "relative overflow-hidden rounded-2xl p-6",
+        "bg-gradient-to-br from-primary via-primary to-accent",
+        "shadow-lg hover-lift opacity-0 animate-fade-in"
+      )}
     >
-      <Typography variant="subtitle2" sx={{ opacity: 0.9, fontSize: "1rem" }}>
-        {subtitle}
-      </Typography>
-      <Typography variant="h5" fontWeight={700} sx={{ mt: 0.5 }}>
-        {title}
-      </Typography>
-      <Typography variant="body2" sx={{ mt: 1.5, maxWidth: 420 }}>
-        {description}
-      </Typography>
-      <Stack direction="row" spacing={1.5} sx={{ mt: 1.5 }}>
-        <Button href={primaryActionHref} variant="outlined" color="inherit" size="small" disabled={primaryActionDisabled} sx={{ px: 3, width: "50%" }}>
-          {primaryActionLabel}
-        </Button>
-        <Button href={secondaryActionHref} variant="outlined" color="inherit" size="small" disabled={secondaryActionDisabled} sx={{ width: "50%" }}>
-          {secondaryActionLabel}
-        </Button>
-      </Stack>
-    </ContentPaper>
-  );
-};
+      {/* Background decoration - creates depth without images */}
+      <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
+      <div className="absolute -left-10 -bottom-10 h-32 w-32 rounded-full bg-white/5 blur-xl" />
 
+      <div data-component="hero-content" className="relative z-10 space-y-4">
+        <div data-component="hero-greeting" className="space-y-1">
+          <p
+            data-component="hero-subtitle"
+            className="text-sm font-medium text-primary-foreground/80 opacity-0 animate-fade-in"
+            style={{ animationDelay: "100ms" }}
+          >
+            {subtitle}
+          </p>
+          <h1
+            data-component="hero-title"
+            className="text-2xl font-bold text-primary-foreground flex items-center gap-2 opacity-0 animate-fade-in"
+            style={{ animationDelay: "150ms" }}
+          >
+            {title} <span className="text-2xl">😀</span>
+          </h1>
+          {description && (
+            <p
+              data-component="hero-description"
+              className="text-sm text-primary-foreground/70 max-w-md opacity-0 animate-fade-in"
+              style={{ animationDelay: "175ms" }}
+            >
+              {description}
+            </p>
+          )}
+        </div>
+
+        <div
+          data-component="hero-actions"
+          className="flex gap-3 opacity-0 animate-fade-in"
+          style={{ animationDelay: "200ms" }}
+        >
+          <Button
+            data-component="hero-primary-action"
+            variant="outline"
+            asChild={!primaryActionDisabled}
+            disabled={primaryActionDisabled}
+            className={cn(
+              "border-2 border-primary-foreground/30 bg-transparent text-primary-foreground",
+              "hover:bg-primary-foreground/10 hover:border-primary-foreground/50",
+              "transition-all duration-200 hover:scale-105 active:scale-95",
+              "flex-1 min-w-0 px-4"
+            )}
+          >
+            {primaryActionDisabled ? (
+              <span className="flex items-center">
+                <FileSignature className="mr-2 h-4 w-4 shrink-0" />
+                <span className="truncate">{primaryActionLabel}</span>
+              </span>
+            ) : (
+              <Link href={primaryActionHref || "#"}>
+                <FileSignature className="mr-2 h-4 w-4 shrink-0" />
+                <span className="truncate">{primaryActionLabel}</span>
+              </Link>
+            )}
+          </Button>
+          <Button
+            data-component="hero-secondary-action"
+            variant="outline"
+            asChild={!secondaryActionDisabled}
+            disabled={secondaryActionDisabled}
+            className={cn(
+              "border-2 border-primary-foreground/30 bg-transparent text-primary-foreground",
+              "hover:bg-primary-foreground/10 hover:border-primary-foreground/50",
+              "transition-all duration-200 hover:scale-105 active:scale-95",
+              "flex-1 min-w-0 px-4"
+            )}
+          >
+            {secondaryActionDisabled ? (
+              <span className="flex items-center">
+                <MessageSquare className="mr-2 h-4 w-4 shrink-0" />
+                <span className="truncate">{secondaryActionLabel}</span>
+              </span>
+            ) : (
+              <Link href={secondaryActionHref || "#"}>
+                <MessageSquare className="mr-2 h-4 w-4 shrink-0" />
+                <span className="truncate">{secondaryActionLabel}</span>
+              </Link>
+            )}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}

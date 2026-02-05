@@ -9,10 +9,9 @@ export class FindEformsignDocsByClientIdUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
     ) {}
 
-    execute(clientId: number): Promise<EformsignDocEntity[]> {
-        return this.eformsignDocRepository.findByClientId(clientId);
+    execute(organizationid: string, clientId: number): Promise<EformsignDocEntity[]> {
+        return this.eformsignDocRepository.findByClientId(organizationid, clientId);
     }
 }
-
 
 

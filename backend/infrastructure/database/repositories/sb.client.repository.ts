@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ClientEntity } from "domain/entities/client.entity";
-import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
+import { IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 
@@ -8,28 +8,40 @@ import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 export class SbClientRepository implements IClientRepository {
     constructor(private readonly prismaService: PrismaService) {}
 
-    async findById(id: number): Promise<ClientEntity | null> {
-        const client = await this.prismaService.client.findUnique({
-            where: { id },
+    async findById(organizationid: string, id: number): Promise<ClientEntity | null> {
+        const client = await this.prismaService.client.findFirst({
+            where: { id, organizationId: organizationid },
         });
         return client ? ClientMapper.toDomain(client) : null;
     }
 
-    async findAll(): Promise<ClientEntity[]> {
-        const clients = await this.prismaService.client.findMany();
+    async findAll(organizationid: string): Promise<ClientEntity[]> {
+        const clients = await this.prismaService.client.findMany({
+            where: { organizationId: organizationid },
+        });
         return clients.map(ClientMapper.toDomain);
     }
 
-    async findAllPaginated(page: number, limit: number, search?: string): Promise<PaginatedResult<ClientEntity>> {
+    async findAllPaginated(
+        organizationid: string,
+        page: number,
+        limit: number,
+        search?: string
+    ): Promise<PaginatedResult<ClientEntity>> {
         const skip = (page - 1) * limit;
-        
-        const where = search ? {
-            OR: [
-                { name: { contains: search, mode: 'insensitive' as const } },
-                { address: { contains: search, mode: 'insensitive' as const } },
-                { phone: { contains: search, mode: 'insensitive' as const } },
-            ],
-        } : {};
+
+        const where = {
+            organizationId: organizationid,
+            ...(search
+                ? {
+                      OR: [
+                          { name: { contains: search, mode: 'insensitive' as const } },
+                          { address: { contains: search, mode: 'insensitive' as const } },
+                          { phone: { contains: search, mode: 'insensitive' as const } },
+                      ],
+                  }
+                : {}),
+        };
 
         try {
             const [clients, total] = await Promise.all([
@@ -55,28 +67,31 @@ export class SbClientRepository implements IClientRepository {
         }
     }
 
-    async create(client: ClientEntity): Promise<ClientEntity> {
+    async create(organizationid: string, client: ClientEntity): Promise<ClientEntity> {
         const created = await this.prismaService.client.create({
-            data: ClientMapper.toPrismaCreate(client),
+            data: {
+                ...ClientMapper.toPrismaCreate(client),
+                organizationId: organizationid,
+            },
         });
         return ClientMapper.toDomain(created);
     }
 
-    async update(client: ClientEntity): Promise<ClientEntity> {
+    async update(organizationid: string, client: ClientEntity): Promise<ClientEntity> {
         const updated = await this.prismaService.client.update({
-            where: { id: client.id },
+            where: { id: client.id, organizationId: organizationid },
             data: ClientMapper.toPrismaUpdate(client),
         });
         return ClientMapper.toDomain(updated);
     }
 
-    async delete(id: number): Promise<void> {
+    async delete(organizationid: string, id: number): Promise<void> {
         await this.prismaService.client.delete({
-            where: { id },
+            where: { id, organizationId: organizationid },
         });
     }
 
-    async findByStartDate(date: Date): Promise<ClientEntity[]> {
+    async findByStartDate(organizationid: string, date: Date): Promise<ClientEntity[]> {
         // Normalize to start of day for date comparison
         const startOfDay = new Date(date);
         startOfDay.setHours(0, 0, 0, 0);
@@ -86,7 +101,8 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                start_date: {
+                organizationId: organizationid,
+                startDate: {
                     gte: startOfDay,
                     lte: endOfDay,
                 },
@@ -95,7 +111,7 @@ export class SbClientRepository implements IClientRepository {
         return clients.map(ClientMapper.toDomain);
     }
 
-    async findByEndDate(date: Date): Promise<ClientEntity[]> {
+    async findByEndDate(organizationid: string, date: Date): Promise<ClientEntity[]> {
         // Normalize to start of day for date comparison
         const startOfDay = new Date(date);
         startOfDay.setHours(0, 0, 0, 0);
@@ -105,7 +121,8 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                end_date: {
+                organizationId: organizationid,
+                endDate: {
                     gte: startOfDay,
                     lte: endOfDay,
                 },
@@ -114,15 +131,17 @@ export class SbClientRepository implements IClientRepository {
         return clients.map(ClientMapper.toDomain);
     }
 
-    async findByCreatedDate(date: Date): Promise<ClientEntity[]> {
-        // Note: Client model doesn't have created_at field in schema
+    async findByCreatedDate(organizationid: string, date: Date): Promise<ClientEntity[]> {
+        // Note: Client model doesn't have createdAt field in schema
         // For now, this returns empty array. To enable payment reminders,
-        // add created_at field to client model in schema.prisma
-        console.warn('[ClientRepository] findByCreatedDate: client model lacks created_at field');
+        // add createdAt field to client model in schema.prisma
+        void organizationid;
+        void date;
+        console.warn('[ClientRepository] findByCreatedDate: client model lacks createdAt field');
         return [];
     }
 
-    async findStartingWithinDays(days: number): Promise<ClientEntity[]> {
+    async findStartingWithinDays(organizationid: string, days: number): Promise<ClientEntity[]> {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
@@ -132,7 +151,8 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                start_date: {
+                organizationId: organizationid,
+                startDate: {
                     gt: today,
                     lte: endDate,
                 },
@@ -141,7 +161,7 @@ export class SbClientRepository implements IClientRepository {
         return clients.map(ClientMapper.toDomain);
     }
 
-    async findEndingWithinDays(days: number): Promise<ClientEntity[]> {
+    async findEndingWithinDays(organizationid: string, days: number): Promise<ClientEntity[]> {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
@@ -151,7 +171,8 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                end_date: {
+                organizationId: organizationid,
+                endDate: {
                     gte: today,
                     lte: endDate,
                 },
@@ -160,7 +181,10 @@ export class SbClientRepository implements IClientRepository {
         return clients.map(ClientMapper.toDomain);
     }
 
-    async findWithIncompleteContractsStartingWithinDays(days: number): Promise<ClientEntity[]> {
+    async findWithIncompleteContractsStartingWithinDays(
+        organizationid: string,
+        days: number
+    ): Promise<ClientEntity[]> {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
@@ -170,23 +194,27 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                start_date: {
+                organizationId: organizationid,
+                startDate: {
                     gt: today,
                     lte: endDate,
                 },
-                e_doc_id: { not: null },
-                eformsign_doc_client_e_doc_idToeformsign_doc: {
-                    status_type: { not: '050' },
+                eDocId: { not: null },
+                eformsignDocByEDocId: {
+                    statusType: { not: '050' },
                 },
             },
             include: {
-                eformsign_doc_client_e_doc_idToeformsign_doc: true,
+                eformsignDocByEDocId: true,
             },
         });
         return clients.map(ClientMapper.toDomain);
     }
 
-    async findWithoutContractSentStartingWithinDays(days: number): Promise<ClientEntity[]> {
+    async findWithoutContractSentStartingWithinDays(
+        organizationid: string,
+        days: number
+    ): Promise<ClientEntity[]> {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
@@ -196,11 +224,12 @@ export class SbClientRepository implements IClientRepository {
 
         const clients = await this.prismaService.client.findMany({
             where: {
-                start_date: {
+                organizationId: organizationid,
+                startDate: {
                     gt: today,
                     lte: endDate,
                 },
-                e_doc_id: null,
+                eDocId: null,
             },
         });
         return clients.map(ClientMapper.toDomain);
