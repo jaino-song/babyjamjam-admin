@@ -30,9 +30,10 @@ export function HeroBanner({
     <div
       data-component="hero-banner"
       className={cn(
-        "relative overflow-hidden rounded-2xl p-6",
+        "relative overflow-hidden rounded-[24px] p-8",
         "bg-gradient-to-br from-primary via-primary to-accent",
-        "shadow-lg hover-lift opacity-0 animate-fade-in"
+        "shadow-[var(--shadow-v3)] hover:shadow-[var(--shadow-v3-hover)] transition-all duration-300",
+        "opacity-0 animate-fade-in"
       )}
     >
       {/* Background decoration - creates depth without images */}

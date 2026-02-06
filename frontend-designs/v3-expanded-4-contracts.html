@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>케어허브 — 전자계약 관리</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: hsl(214, 100%, 34%);
+      --primary-light: hsl(214, 80%, 95%);
+      --primary-medium: hsl(214, 70%, 88%);
+      --primary-hover: hsl(214, 100%, 28%);
+      --green: hsl(137, 34%, 31%);
+      --green-light: hsl(137, 40%, 93%);
+      --burgundy: hsl(355, 36%, 45%);
+      --burgundy-light: hsl(355, 40%, 94%);
+      --gray: hsl(0, 0%, 47%);
+      --dim-white: hsl(220, 20%, 97%);
+      --orange: hsl(34, 100%, 55%);
+      --orange-light: hsl(34, 100%, 94%);
+      --purple: hsl(270, 60%, 55%);
+      --purple-light: hsl(270, 60%, 94%);
+      --teal: hsl(175, 60%, 40%);
+      --teal-light: hsl(175, 60%, 93%);
+      --white: #ffffff;
+      --dark: hsl(214, 40%, 18%);
+      --text: hsl(214, 25%, 28%);
+      --text-muted: hsl(214, 10%, 55%);
+      --border: hsl(214, 20%, 92%);
+      --shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+      --shadow-hover: 0 12px 48px hsla(214, 50%, 20%, 0.12);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Noto Sans KR', -apple-system, sans-serif;
+      font-weight: 400;
+      background: var(--dim-white);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.7;
+    }
+
+    @keyframes popIn {
+      0% { opacity: 0; transform: scale(0.9); }
+      70% { transform: scale(1.02); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes slideRight {
+      from { opacity: 0; transform: translateX(-20px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(30px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.1); opacity: 0.7; }
+    }
+
+    @keyframes checkmark {
+      0% { stroke-dashoffset: 50; }
+      100% { stroke-dashoffset: 0; }
+    }
+
+    .app {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      width: 280px;
+      background: var(--white);
+      padding: 2rem 1.25rem;
+      position: fixed;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+      border-radius: 0 32px 32px 0;
+      box-shadow: var(--shadow);
+      animation: slideRight 0.5s ease-out;
+    }
+
+    .logo {
+      padding: 0.5rem 1rem;
+      margin-bottom: 2.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.35rem;
+      box-shadow: 0 8px 24px hsla(214, 100%, 34%, 0.25);
+      animation: float 3s ease-in-out infinite;
+    }
+
+    .logo-text {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--dark);
+    }
+
+    .nav-section {
+      margin-bottom: 1.5rem;
+    }
+
+    .nav-title {
+      padding: 0 1rem;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      padding: 0.9rem 1rem;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      border-radius: 16px;
+      margin-bottom: 0.25rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .nav-item::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      background: var(--primary-light);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      transition: width 0.4s ease, height 0.4s ease;
+    }
+
+    .nav-item:hover::before {
+      width: 200%;
+      height: 200%;
+    }
+
+    .nav-item:hover {
+      color: var(--primary);
+    }
+
+    .nav-item.active {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .nav-item > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .nav-icon {
+      font-size: 1.1rem;
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      font-size: 0.65rem;
+      font-weight: 600;
+      padding: 0.2rem 0.6rem;
+      border-radius: 20px;
+    }
+
+    .nav-item.active .nav-badge {
+      background: hsla(0, 0%, 100%, 0.25);
+      color: var(--white);
+    }
+
+    .nav-item:not(.active) .nav-badge {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 0 0.5rem;
+    }
+
+    .user-profile {
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      padding: 1rem;
+      background: var(--dim-white);
+      border-radius: 20px;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .user-profile:hover {
+      background: var(--primary-light);
+      transform: translateY(-2px);
+    }
+
+    .user-avatar {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--white);
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .user-info h4 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--dark);
+    }
+
+    .user-info p {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .main {
+      flex: 1;
+      margin-left: 280px;
+      padding: 2rem 2.5rem;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      animation: slideUp 0.5s ease-out 0.1s backwards;
+    }
+
+    .page-title h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--dark);
+      margin-bottom: 0.25rem;
+    }
+
+    .page-title p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.875rem;
+      align-items: center;
+    }
+
+    .btn {
+      padding: 0.75rem 1.5rem;
+      border-radius: 50px;
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: none;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px hsla(214, 100%, 34%, 0.25);
+    }
+
+    .btn-soft {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .btn-soft:hover {
+      background: var(--primary-medium);
+    }
+
+    .btn-outline {
+      background: var(--white);
+      color: var(--text);
+      border: 2px solid var(--border);
+    }
+
+    .btn-outline:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .btn-success {
+      background: var(--green);
+      color: var(--white);
+    }
+
+    .btn-success:hover {
+      background: hsl(137, 34%, 25%);
+    }
+
+    .stats-summary {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      animation: slideUp 0.5s ease-out 0.15s backwards;
+    }
+
+    .stat-mini {
+      background: var(--white);
+      padding: 1.25rem;
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      transition: all 0.3s ease;
+    }
+
+    .stat-mini:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-hover);
+    }
+
+    .stat-mini-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+    }
+
+    .stat-mini:nth-child(1) .stat-mini-icon { background: var(--primary-light); }
+    .stat-mini:nth-child(2) .stat-mini-icon { background: var(--orange-light); }
+    .stat-mini:nth-child(3) .stat-mini-icon { background: var(--green-light); }
+    .stat-mini:nth-child(4) .stat-mini-icon { background: var(--burgundy-light); }
+
+    .stat-mini-info h3 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--dark);
+      line-height: 1;
+    }
+
+    .stat-mini-info p {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .content-layout {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 1.5rem;
+      animation: slideUp 0.5s ease-out 0.2s backwards;
+    }
+
+    .contract-list-panel {
+      background: var(--white);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100vh - 280px);
+    }
+
+    .list-header {
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .list-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--dark);
+    }
+
+    .list-tabs {
+      display: flex;
+      gap: 0.25rem;
+      padding: 0 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .list-tab {
+      padding: 0.875rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      border: none;
+      background: none;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.3s ease;
+    }
+
+    .list-tab::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--primary);
+      transform: scaleX(0);
+      transition: transform 0.3s ease;
+    }
+
+    .list-tab:hover {
+      color: var(--primary);
+    }
+
+    .list-tab.active {
+      color: var(--primary);
+    }
+
+    .list-tab.active::after {
+      transform: scaleX(1);
+    }
+
+    .tab-badge {
+      margin-left: 0.375rem;
+      padding: 0.125rem 0.5rem;
+      border-radius: 10px;
+      font-size: 0.6rem;
+      background: var(--dim-white);
+    }
+
+    .list-tab.active .tab-badge {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .contract-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.75rem;
+    }
+
+    .contract-item {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem 1.25rem;
+      border-radius: 18px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      margin-bottom: 0.5rem;
+    }
+
+    .contract-item:hover {
+      background: var(--dim-white);
+    }
+
+    .contract-item.active {
+      background: var(--primary-light);
+      border: 2px solid var(--primary);
+    }
+
+    .contract-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      flex-shrink: 0;
+    }
+
+    .contract-icon.pending { background: var(--orange-light); }
+    .contract-icon.signed { background: var(--green-light); }
+    .contract-icon.expired { background: var(--burgundy-light); }
+
+    .contract-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .contract-name {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--dark);
+      margin-bottom: 0.25rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .contract-client {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .contract-status {
+      padding: 0.3rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.6rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .contract-status.pending {
+      background: var(--orange-light);
+      color: var(--orange);
+    }
+
+    .contract-status.signed {
+      background: var(--green-light);
+      color: var(--green);
+    }
+
+    .contract-status.expired {
+      background: var(--burgundy-light);
+      color: var(--burgundy);
+    }
+
+    .detail-panel {
+      background: var(--white);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      animation: slideIn 0.5s ease-out 0.25s backwards;
+    }
+
+    .detail-header {
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .detail-title-area h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--dark);
+      margin-bottom: 0.25rem;
+    }
+
+    .detail-meta {
+      display: flex;
+      gap: 1rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .detail-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .status-banner {
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .status-banner.pending {
+      background: var(--orange-light);
+    }
+
+    .status-banner.signed {
+      background: var(--green-light);
+    }
+
+    .status-banner.expired {
+      background: var(--burgundy-light);
+    }
+
+    .status-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      background: var(--white);
+    }
+
+    .status-text h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--dark);
+      margin-bottom: 0.125rem;
+    }
+
+    .status-text p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .detail-content {
+      padding: 1.5rem;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .info-card {
+      background: var(--dim-white);
+      border-radius: 18px;
+      padding: 1.25rem;
+    }
+
+    .info-card-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.75rem;
+    }
+
+    .info-card-content {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+    }
+
+    .info-label {
+      color: var(--text-muted);
+    }
+
+    .info-value {
+      font-weight: 600;
+      color: var(--dark);
+    }
+
+    .signature-progress {
+      background: var(--dim-white);
+      border-radius: 18px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .progress-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--dark);
+      margin-bottom: 1.25rem;
+    }
+
+    .progress-steps {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+    }
+
+    .progress-steps::before {
+      content: '';
+      position: absolute;
+      top: 20px;
+      left: 40px;
+      right: 40px;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    .progress-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    .step-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      background: var(--white);
+      border: 3px solid var(--border);
+      transition: all 0.3s ease;
+    }
+
+    .progress-step.completed .step-icon {
+      background: var(--green);
+      border-color: var(--green);
+      color: var(--white);
+    }
+
+    .progress-step.current .step-icon {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: var(--white);
+      animation: pulse 2s infinite;
+    }
+
+    .progress-step.pending .step-icon {
+      background: var(--white);
+      border-color: var(--border);
+      color: var(--text-muted);
+    }
+
+    .step-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .progress-step.completed .step-label,
+    .progress-step.current .step-label {
+      color: var(--dark);
+    }
+
+    .step-time {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .document-preview {
+      background: var(--dim-white);
+      border-radius: 18px;
+      padding: 1.5rem;
+    }
+
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .preview-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--dark);
+    }
+
+    .preview-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .preview-btn {
+      padding: 0.5rem 1rem;
+      border-radius: 12px;
+      border: none;
+      background: var(--white);
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .preview-btn:hover {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .preview-document {
+      background: var(--white);
+      border-radius: 12px;
+      height: 280px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 2px dashed var(--border);
+      transition: all 0.3s ease;
+    }
+
+    .preview-document:hover {
+      border-color: var(--primary);
+      background: var(--primary-light);
+    }
+
+    .preview-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      opacity: 0.5;
+    }
+
+    .preview-text {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    .activity-section {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .activity-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--dark);
+      margin-bottom: 1rem;
+    }
+
+    .activity-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .activity-item {
+      display: flex;
+      gap: 1rem;
+      padding: 0.75rem;
+      border-radius: 14px;
+      transition: all 0.3s ease;
+    }
+
+    .activity-item:hover {
+      background: var(--dim-white);
+    }
+
+    .activity-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+    }
+
+    .activity-icon.success { background: var(--green-light); }
+    .activity-icon.info { background: var(--primary-light); }
+    .activity-icon.warning { background: var(--orange-light); }
+
+    .activity-content {
+      flex: 1;
+    }
+
+    .activity-text {
+      font-size: 0.8rem;
+      color: var(--dark);
+    }
+
+    .activity-time {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      margin-top: 0.125rem;
+    }
+
+    .mobile-header {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: var(--white);
+      padding: 1rem 1.5rem;
+      z-index: 1000;
+      justify-content: space-between;
+      align-items: center;
+      border-radius: 0 0 24px 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .mobile-nav {
+      display: none;
+      position: fixed;
+      bottom: 1rem;
+      left: 1rem;
+      right: 1rem;
+      background: var(--white);
+      padding: 0.75rem;
+      border-radius: 24px;
+      z-index: 1000;
+      box-shadow: var(--shadow-hover);
+    }
+
+    .mobile-nav-items {
+      display: flex;
+      justify-content: space-around;
+    }
+
+    .mobile-nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.625rem 1rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.6rem;
+      font-weight: 500;
+      border-radius: 16px;
+      transition: all 0.3s ease;
+    }
+
+    .mobile-nav-item.active {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    @media (max-width: 1280px) {
+      .stats-summary {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .info-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 1024px) {
+      .content-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .contract-list-panel {
+        max-height: 400px;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        display: none;
+      }
+
+      .main {
+        margin-left: 0;
+        padding: 5rem 1.25rem 6rem;
+      }
+
+      .mobile-header {
+        display: flex;
+      }
+
+      .mobile-nav {
+        display: block;
+      }
+
+      .header {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: flex-start;
+      }
+
+      .header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+      }
+
+      .stats-summary {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .progress-steps::before {
+        display: none;
+      }
+
+      .progress-steps {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: flex-start;
+      }
+
+      .progress-step {
+        flex-direction: row;
+        gap: 1rem;
+      }
+
+      .step-label {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="logo">
+        <div class="logo-icon">🏠</div>
+        <div class="logo-text">케어허브</div>
+      </div>
+
+      <nav>
+        <div class="nav-section">
+          <div class="nav-title">메인</div>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">📊</span>
+            <span>대시보드</span>
+          </a>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">📈</span>
+            <span>분석</span>
+          </a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-title">관리</div>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">👥</span>
+            <span>고객</span>
+            <span class="nav-badge">147</span>
+          </a>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">👤</span>
+            <span>직원</span>
+          </a>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">📅</span>
+            <span>일정</span>
+          </a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-title">문서</div>
+          <a href="#" class="nav-item active">
+            <span class="nav-icon">📝</span>
+            <span>계약서</span>
+            <span class="nav-badge">8</span>
+          </a>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">📁</span>
+            <span>파일</span>
+          </a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-title">시스템</div>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">🔔</span>
+            <span>알림</span>
+          </a>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">⚙️</span>
+            <span>설정</span>
+          </a>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-profile">
+          <div class="user-avatar">김</div>
+          <div class="user-info">
+            <h4>김지영</h4>
+            <p>관리자</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="mobile-header">
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <div class="logo-icon" style="width: 36px; height: 36px; border-radius: 10px; font-size: 1rem;">🏠</div>
+        <div class="logo-text" style="font-size: 1.1rem;">케어허브</div>
+      </div>
+      <button class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.75rem;">+ 서명요청</button>
+    </div>
+
+    <main class="main">
+      <header class="header">
+        <div class="page-title">
+          <h1>전자계약 관리 📝</h1>
+          <p>eFormSign 전자서명 계약서를 관리하세요</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-outline">📊 리포트</button>
+          <button class="btn btn-soft">📄 템플릿</button>
+          <button class="btn btn-primary">+ 서명 요청</button>
+        </div>
+      </header>
+
+      <div class="stats-summary">
+        <div class="stat-mini">
+          <div class="stat-mini-icon">📄</div>
+          <div class="stat-mini-info">
+            <h3>147</h3>
+            <p>전체 계약</p>
+          </div>
+        </div>
+        <div class="stat-mini">
+          <div class="stat-mini-icon">⏳</div>
+          <div class="stat-mini-info">
+            <h3>8</h3>
+            <p>대기중</p>
+          </div>
+        </div>
+        <div class="stat-mini">
+          <div class="stat-mini-icon">✅</div>
+          <div class="stat-mini-info">
+            <h3>127</h3>
+            <p>서명완료</p>
+          </div>
+        </div>
+        <div class="stat-mini">
+          <div class="stat-mini-icon">⚠️</div>
+          <div class="stat-mini-info">
+            <h3>12</h3>
+            <p>만료</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="content-layout">
+        <div class="contract-list-panel">
+          <div class="list-header">
+            <span class="list-title">계약서 목록</span>
+          </div>
+          <div class="list-tabs">
+            <button class="list-tab active">
+              전체
+              <span class="tab-badge">147</span>
+            </button>
+            <button class="list-tab">
+              대기
+              <span class="tab-badge">8</span>
+            </button>
+            <button class="list-tab">
+              완료
+              <span class="tab-badge">127</span>
+            </button>
+            <button class="list-tab">
+              만료
+              <span class="tab-badge">12</span>
+            </button>
+          </div>
+          <div class="contract-list">
+            <div class="contract-item active">
+              <div class="contract-icon pending">📄</div>
+              <div class="contract-info">
+                <div class="contract-name">서비스 계약서</div>
+                <div class="contract-client">김수연 고객</div>
+              </div>
+              <span class="contract-status pending">대기중</span>
+            </div>
+            
+            <div class="contract-item">
+              <div class="contract-icon signed">📄</div>
+              <div class="contract-info">
+                <div class="contract-name">서비스 계약서</div>
+                <div class="contract-client">이민정 고객</div>
+              </div>
+              <span class="contract-status signed">서명완료</span>
+            </div>
+
+            <div class="contract-item">
+              <div class="contract-icon expired">📄</div>
+              <div class="contract-info">
+                <div class="contract-name">서비스 계약서</div>
+                <div class="contract-client">윤지수 고객</div>
+              </div>
+              <span class="contract-status expired">만료</span>
+            </div>
+
+            <div class="contract-item">
+              <div class="contract-icon pending">📄</div>
+              <div class="contract-info">
+                <div class="contract-name">서비스 계약서</div>
+                <div class="contract-client">최해원 고객</div>
+              </div>
+              <span class="contract-status pending">대기중</span>
+            </div>
+
+            <div class="contract-item">
+              <div class="contract-icon signed">📄</div>
+              <div class="contract-info">
+                <div class="contract-name">서비스 계약서</div>
+                <div class="contract-client">박은비 고객</div>
+              </div>
+              <span class="contract-status signed">서명완료</span>
+            </div>
+
+            <div class="contract-item">
+              <div class="contract-icon signed">📄</div>
+              <div class="contract-info">
+                <div class="contract-name">프리미엄 계약서</div>
+                <div class="contract-client">강민아 고객</div>
+              </div>
+              <span class="contract-status signed">서명완료</span>
+            </div>
+
+            <div class="contract-item">
+              <div class="contract-icon pending">📄</div>
+              <div class="contract-info">
+                <div class="contract-name">바우처 계약서</div>
+                <div class="contract-client">정서윤 고객</div>
+              </div>
+              <span class="contract-status pending">대기중</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-panel">
+          <div class="detail-header">
+            <div class="detail-title-area">
+              <h2>서비스 계약서</h2>
+              <div class="detail-meta">
+                <span>📅 발송: 2025.02.03</span>
+                <span>⏰ 만료: 2025.02.10</span>
+              </div>
+            </div>
+            <div class="detail-actions">
+              <button class="btn btn-soft">알림 재발송</button>
+              <button class="btn btn-primary">다운로드</button>
+            </div>
+          </div>
+
+          <div class="status-banner pending">
+            <div class="status-icon">⏳</div>
+            <div class="status-text">
+              <h3>서명 대기중</h3>
+              <p>고객의 서명을 기다리고 있습니다 · 7일 남음</p>
+            </div>
+          </div>
+
+          <div class="detail-content">
+            <div class="info-grid">
+              <div class="info-card">
+                <div class="info-card-title">고객 정보</div>
+                <div class="info-card-content">
+                  <div class="info-row">
+                    <span class="info-label">이름</span>
+                    <span class="info-value">김수연</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">연락처</span>
+                    <span class="info-value">010-1234-5678</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">이메일</span>
+                    <span class="info-value">kim@example.com</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="info-card">
+                <div class="info-card-title">계약 정보</div>
+                <div class="info-card-content">
+                  <div class="info-row">
+                    <span class="info-label">서비스</span>
+                    <span class="info-value">프리미엄 4주</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">금액</span>
+                    <span class="info-value">₩4,800,000</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">유효기간</span>
+                    <span class="info-value">1년</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="signature-progress">
+              <div class="progress-title">서명 진행 상태</div>
+              <div class="progress-steps">
+                <div class="progress-step completed">
+                  <div class="step-icon">✓</div>
+                  <div>
+                    <div class="step-label">문서 생성</div>
+                    <div class="step-time">2/3 10:30</div>
+                  </div>
+                </div>
+                <div class="progress-step completed">
+                  <div class="step-icon">✓</div>
+                  <div>
+                    <div class="step-label">발송 완료</div>
+                    <div class="step-time">2/3 10:32</div>
+                  </div>
+                </div>
+                <div class="progress-step current">
+                  <div class="step-icon">📝</div>
+                  <div>
+                    <div class="step-label">서명 대기</div>
+                    <div class="step-time">진행중</div>
+                  </div>
+                </div>
+                <div class="progress-step pending">
+                  <div class="step-icon">✓</div>
+                  <div>
+                    <div class="step-label">계약 완료</div>
+                    <div class="step-time">-</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="document-preview">
+              <div class="preview-header">
+                <div class="preview-title">문서 미리보기</div>
+                <div class="preview-actions">
+                  <button class="preview-btn">🔍 확대</button>
+                  <button class="preview-btn">📥 다운로드</button>
+                  <button class="preview-btn">🖨️ 인쇄</button>
+                </div>
+              </div>
+              <div class="preview-document">
+                <div class="preview-icon">📄</div>
+                <div class="preview-text">서비스 계약서 미리보기</div>
+                <button class="btn btn-soft">문서 열기</button>
+              </div>
+            </div>
+
+            <div class="activity-section">
+              <div class="activity-title">활동 기록</div>
+              <div class="activity-list">
+                <div class="activity-item">
+                  <div class="activity-icon info">📧</div>
+                  <div class="activity-content">
+                    <div class="activity-text">서명 요청 이메일 발송</div>
+                    <div class="activity-time">2025.02.03 10:32</div>
+                  </div>
+                </div>
+                <div class="activity-item">
+                  <div class="activity-icon success">📄</div>
+                  <div class="activity-content">
+                    <div class="activity-text">문서 생성 완료</div>
+                    <div class="activity-time">2025.02.03 10:30</div>
+                  </div>
+                </div>
+                <div class="activity-item">
+                  <div class="activity-icon warning">👀</div>
+                  <div class="activity-content">
+                    <div class="activity-text">고객이 문서를 열람함</div>
+                    <div class="activity-time">2025.02.03 14:15</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <nav class="mobile-nav">
+      <div class="mobile-nav-items">
+        <a href="#" class="mobile-nav-item">
+          <span class="nav-icon">🏠</span>
+          <span>홈</span>
+        </a>
+        <a href="#" class="mobile-nav-item">
+          <span class="nav-icon">👥</span>
+          <span>고객</span>
+        </a>
+        <a href="#" class="mobile-nav-item active">
+          <span class="nav-icon">📝</span>
+          <span>계약</span>
+        </a>
+        <a href="#" class="mobile-nav-item">
+          <span class="nav-icon">📁</span>
+          <span>파일</span>
+        </a>
+        <a href="#" class="mobile-nav-item">
+          <span class="nav-icon">⚙️</span>
+          <span>설정</span>
+        </a>
+      </div>
+    </nav>
+  </div>
+
+  <script>
+    document.querySelectorAll('.contract-item').forEach(item => {
+      item.addEventListener('click', function() {
+        document.querySelectorAll('.contract-item').forEach(i => i.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+
+    document.querySelectorAll('.list-tab').forEach(tab => {
+      tab.addEventListener('click', function() {
+        document.querySelectorAll('.list-tab').forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

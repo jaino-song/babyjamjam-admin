@@ -115,7 +115,7 @@ export function ImageDropzone({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
-          "relative p-8 border-2 border-dashed rounded-lg transition-all duration-200",
+          "relative p-8 border-2 border-dashed rounded-[24px] transition-all duration-200",
           isDragOver
             ? "border-primary bg-primary/5"
             : validationError

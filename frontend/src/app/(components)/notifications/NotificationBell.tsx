@@ -25,6 +25,7 @@ import {
 import { format, isToday, isYesterday } from "date-fns";
 import { ko } from "date-fns/locale";
 import { FilteredClientsDialog } from "./FilteredClientsDialog";
+import { cn } from "@/lib/utils";
 
 type FilterType = "starting-soon" | "ending-soon" | "incomplete-contracts" | "no-contract";
 
@@ -67,6 +68,10 @@ function formatDateLabel(date: Date): string {
 }
 
 function groupNotificationsByDate(notifications: Notification[]): GroupedNotifications[] {
+    if (!Array.isArray(notifications)) {
+        return [];
+    }
+    
     const groups = new Map<string, Notification[]>();
 
     notifications.forEach((notification) => {
@@ -93,10 +98,11 @@ function groupNotificationsByDate(notifications: Notification[]): GroupedNotific
  * - Not subscribed: Click to enable notifications (dark gray icon)
  * - Subscribed: Click to view notifications (white icon with primary border)
  */
-export function NotificationBell() {
+export function NotificationBell({ className }: { className?: string }) {
     const router = useRouter();
     const [isOpen, setIsOpen] = useState(false);
     const [subscribeLoading, setSubscribeLoading] = useState(false);
+    const [mounted, setMounted] = useState(false);
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogFilterType, setDialogFilterType] = useState<FilterType | null>(null);
@@ -113,7 +119,13 @@ export function NotificationBell() {
 
     // Notification data (only fetch when subscribed)
     const { data: unreadCount = 0 } = useUnreadCount(isSubscribed);
-    const { data: notifications = [], isLoading: notificationsLoading } = useNotifications(10, 0, isSubscribed);
+    const { data: notificationsData, isLoading: notificationsLoading } = useNotifications(10, 0, isSubscribed);
+    const notifications = Array.isArray(notificationsData) ? notificationsData : [];
+
+    // Track client-side mount for hydration-safe rendering
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     // Lock body scroll when modal is open
     useEffect(() => {
@@ -321,16 +333,15 @@ export function NotificationBell() {
 
     const isLoading = subscribeLoading;
 
-    const backdrop = (
-        <div 
-            className={`fixed inset-0 top-16 bg-black/30 backdrop-blur-[4px] z-40 sm:hidden transition-all duration-300 ${isOpen ? 'opacity-100 visible' : 'opacity-0 invisible'}`}
-            onClick={() => setIsOpen(false)}
-        />
-    );
-
     return (
         <>
-            {typeof window !== 'undefined' && createPortal(backdrop, document.body)}
+            {mounted && createPortal(
+                <div 
+                    className={`fixed inset-0 top-16 bg-black/30 backdrop-blur-[4px] z-40 sm:hidden transition-all duration-300 ${isOpen ? 'opacity-100 visible' : 'opacity-0 invisible'}`}
+                    onClick={() => setIsOpen(false)}
+                />,
+                document.body
+            )}
             <Popover open={isOpen} onOpenChange={setIsOpen}>
                 <PopoverTrigger asChild>
                     <Button
@@ -339,7 +350,7 @@ export function NotificationBell() {
                         onClick={handleClick}
                         disabled={isLoading}
                         data-testid="notification-bell"
-                        className="relative transition-transform duration-200 hover:scale-110 active:scale-95"
+                        className={cn("relative transition-transform duration-200 hover:scale-110 active:scale-95", className)}
                     >
                         {isLoading ? (
                             <Spinner size="sm" />

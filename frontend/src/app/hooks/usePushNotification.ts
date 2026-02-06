@@ -41,15 +41,25 @@ const fetchVapidKey = async (): Promise<string> => {
 };
 
 const fetchNotifications = async (limit = 50, offset = 0): Promise<Notification[]> => {
-    const { data } = await api.get<Notification[]>('/notifications', {
-        params: { limit, offset },
-    });
-    return data;
+    try {
+        const { data } = await api.get<Notification[]>('/notifications', {
+            params: { limit, offset },
+        });
+        return Array.isArray(data) ? data : [];
+    } catch (error) {
+        console.error('[Notifications] Failed to fetch:', error);
+        return [];
+    }
 };
 
 const fetchUnreadCount = async (): Promise<number> => {
-    const { data } = await api.get<{ count: number }>('/notifications/unread/count');
-    return data.count;
+    try {
+        const { data } = await api.get<{ count: number }>('/notifications/unread/count');
+        return data?.count ?? 0;
+    } catch (error) {
+        console.error('[Notifications] Failed to fetch unread count:', error);
+        return 0;
+    }
 };
 
 const subscribePush = async (subscription: PushSubscription): Promise<void> => {

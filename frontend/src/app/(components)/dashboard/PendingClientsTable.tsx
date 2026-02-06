@@ -3,6 +3,7 @@
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { pendingClients } from "@/app/data/mockData";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const statusConfig = {
   waiting: {
@@ -24,54 +25,58 @@ const statusConfig = {
 
 export function PendingClientsTable() {
   return (
-    <div data-component="pending-clients-table" className="opacity-0 animate-fade-in" style={{ animationDelay: "300ms" }}>
-      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">List Item Cards</p>
-      <div className="rounded-xl border bg-card overflow-hidden">
-        {pendingClients.map((client, index) => {
-          const statusKey = index === 0 ? "inProgress" : index === 1 ? "waiting" : "completed";
-          const status = statusConfig[statusKey];
-          const initials = client.name.slice(0, 2);
+    <Card variant="v3" data-component="pending-clients-table" className="opacity-0 animate-pop-in h-full" style={{ animationDelay: "300ms" }}>
+      <CardHeader variant="v3">
+        <CardTitle className="text-lg">최근 고객 목록</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="flex flex-col">
+          {pendingClients.map((client, index) => {
+            const statusKey = index === 0 ? "inProgress" : index === 1 ? "waiting" : "completed";
+            const status = statusConfig[statusKey];
+            const initials = client.name.slice(0, 2);
 
-          return (
-            <div
-              key={client.id}
-              data-component="list-item-card"
-              className={cn(
-                "flex items-center gap-3 px-4 py-3",
-                "transition-colors cursor-pointer hover:bg-muted/50",
-                index !== pendingClients.length - 1 && "border-b"
-              )}
-            >
+            return (
               <div
+                key={client.id}
+                data-component="list-item-card"
                 className={cn(
-                  "h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0",
-                  status.avatarClass
+                  "flex items-center gap-3 px-6 py-4",
+                  "transition-colors cursor-pointer hover:bg-muted/50",
+                  index !== pendingClients.length - 1 && "border-b border-border/50"
                 )}
               >
-                {initials}
-              </div>
+                <div
+                  className={cn(
+                    "h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0",
+                    status.avatarClass
+                  )}
+                >
+                  {initials}
+                </div>
 
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-foreground truncate">{client.name}</p>
-                <p className="text-xs text-muted-foreground truncate">
-                  {client.type} · {client.startDate}
-                </p>
-              </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-foreground truncate">{client.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {client.type} · {client.startDate}
+                  </p>
+                </div>
 
-              <div
-                className={cn(
-                  "px-2.5 py-1 rounded-full border text-xs font-medium shrink-0",
-                  status.badgeClass
-                )}
-              >
-                {status.label}
-              </div>
+                <div
+                  className={cn(
+                    "px-2.5 py-1 rounded-full border text-xs font-medium shrink-0",
+                    status.badgeClass
+                  )}
+                >
+                  {status.label}
+                </div>
 
-              <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
-            </div>
-          );
-        })}
-      </div>
-    </div>
+                <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

@@ -122,10 +122,10 @@ export function VoucherPriceUploadForm() {
   }, [parseImageMutation]);
 
   return (
-    <ContentPaper data-component="VoucherPriceUploadForm" className="opacity-0 animate-fade-in">
+    <ContentPaper variant="v3" data-component="VoucherPriceUploadForm">
       {/* 헤더 */}
       <div className="mb-4">
-        <h2 className="text-lg font-semibold">바우처 요금표 업데이트</h2>
+        <h2 className="text-lg font-bold text-foreground">바우처 요금표 업데이트</h2>
         <p className="text-sm text-muted-foreground">
           정부지원 바우처 요금표 이미지를 업로드하면 AI가 자동으로 가격 정보를 추출합니다.
         </p>
@@ -172,7 +172,7 @@ export function VoucherPriceUploadForm() {
 
       {/* Step 1: 이미지 업로드 */}
       {currentStep === "upload" && (
-        <div className="opacity-0 animate-fade-in" style={{ animationDelay: "100ms" }}>
+        <div className="animate-fade-in" style={{ animationDelay: "100ms" }}>
           <ImageDropzone
             onFileSelect={handleFileSelect}
             isLoading={parseImageMutation.isPending}
@@ -188,7 +188,7 @@ export function VoucherPriceUploadForm() {
 
       {/* Step 2: 데이터 미리보기 */}
       {currentStep === "preview" && (
-        <div className="opacity-0 animate-fade-in" style={{ animationDelay: "100ms" }}>
+        <div className="animate-fade-in" style={{ animationDelay: "100ms" }}>
           {/* 연도 선택 */}
           <div className="mb-4 flex items-center gap-3">
             <Label htmlFor="year-select">적용 연도</Label>
@@ -196,10 +196,10 @@ export function VoucherPriceUploadForm() {
               value={String(selectedYear)}
               onValueChange={(value: string) => setSelectedYear(Number(value))}
             >
-              <SelectTrigger id="year-select" className="w-[120px]">
+              <SelectTrigger id="year-select" className="w-[120px] rounded-xl border-border/50">
                 <SelectValue placeholder="연도 선택" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-xl">
                 {yearOptions.map((year) => (
                   <SelectItem key={year} value={String(year)}>
                     {year}년
@@ -220,13 +220,13 @@ export function VoucherPriceUploadForm() {
 
           {/* 액션 버튼 */}
           <div className="mt-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-            <Button variant="outline" onClick={handleBackToUpload}>
+            <Button variant="outline" onClick={handleBackToUpload} className="rounded-full">
               다른 이미지 업로드
             </Button>
 
             <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
               {warnings.length > 0 && (
-                <Alert className="py-2 bg-warning/10 border-warning/30 text-warning">
+                <Alert className="py-2 bg-warning/10 border-warning/30 text-warning rounded-xl">
                   <AlertDescription className="text-sm">
                     경고가 있지만 업데이트를 진행할 수 있습니다
                   </AlertDescription>
@@ -235,7 +235,7 @@ export function VoucherPriceUploadForm() {
               <Button
                 onClick={handleConfirmUpdate}
                 disabled={bulkUpdateMutation.isPending || parsedData.length === 0}
-                className="gap-2"
+                className="gap-2 rounded-full"
               >
                 {bulkUpdateMutation.isPending ? (
                   <Spinner className="h-4 w-4" />
@@ -249,7 +249,7 @@ export function VoucherPriceUploadForm() {
 
           {/* 업데이트 에러 */}
           {bulkUpdateMutation.isError && (
-            <Alert variant="destructive" className="mt-4">
+            <Alert variant="destructive" className="mt-4 rounded-xl">
               <AlertDescription>
                 업데이트 실패: {bulkUpdateMutation.error?.message || "알 수 없는 오류"}
               </AlertDescription>
@@ -260,7 +260,7 @@ export function VoucherPriceUploadForm() {
 
       {/* Step 3: 완료 */}
       {currentStep === "success" && updateResult && (
-        <div className="text-center py-8 opacity-0 animate-fade-in" style={{ animationDelay: "100ms" }}>
+        <div className="text-center py-8 animate-fade-in" style={{ animationDelay: "100ms" }}>
           <div className="flex justify-center mb-4">
             <div className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center">
               <CheckCircle className="w-8 h-8 text-success" />
@@ -276,7 +276,7 @@ export function VoucherPriceUploadForm() {
           </div>
 
           {updateResult.errors.length > 0 && (
-            <Alert className="mb-4 text-left bg-warning/10 border-warning/30">
+            <Alert className="mb-4 text-left bg-warning/10 border-warning/30 rounded-xl">
               <AlertDescription>
                 <p className="font-semibold mb-2">일부 항목 처리 실패:</p>
                 <ul className="list-disc pl-4 space-y-1">
@@ -288,7 +288,7 @@ export function VoucherPriceUploadForm() {
             </Alert>
           )}
 
-          <Button variant="outline" onClick={handleReset} className="gap-2">
+          <Button variant="outline" onClick={handleReset} className="gap-2 rounded-full">
             <RotateCcw className="h-4 w-4" />
             새 요금표 업로드
           </Button>

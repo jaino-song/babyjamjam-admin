@@ -16,6 +16,7 @@ export interface ContentPaperProps extends React.HTMLAttributes<HTMLDivElement> 
     sx?: Record<string, unknown>;
     /** @deprecated Use standard HTML element types with className. */
     component?: string;
+    variant?: "default" | "v3";
 }
 
 export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
@@ -30,6 +31,7 @@ export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
             className,
             sx,
             component: _component, // Kept for backward compatibility, not used
+            variant = "default",
             ...props
         },
         ref
@@ -54,7 +56,7 @@ export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
 
             if (title || subtitle) {
                 return (
-                    <CardHeader>
+                    <CardHeader variant={variant}>
                         {title && (
                             <CardTitle className="text-xl font-bold text-primary">
                                 {title}
@@ -84,11 +86,12 @@ export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
         return (
             <Card
                 ref={ref}
+                variant={variant}
                 data-component="ContentPaper"
                 data-testid="ContentPaper"
                 className={cn(
-                    "flex flex-col rounded-lg", // 8px radius - reference design match
-                    !disableAnimation && "animate-fade-in",
+                    variant !== "v3" && "rounded-lg", // 8px radius - reference design match (only for default)
+                    !disableAnimation && (variant === "v3" ? "animate-pop-in" : "animate-fade-in"),
                     sxClasses,
                     className
                 )}

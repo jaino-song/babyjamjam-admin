@@ -22,8 +22,6 @@ const mockEmployees: Employee[] = [
     workArea: ['인천 남동구'],
     grade: '1급',
     openToNextWork: true,
-    createdAt: '2024-01-01T00:00:00.000Z',
-    updatedAt: '2024-01-01T00:00:00.000Z',
   },
   {
     id: 2,
@@ -33,8 +31,6 @@ const mockEmployees: Employee[] = [
     workArea: ['인천 연수구'],
     grade: '2급',
     openToNextWork: false,
-    createdAt: '2024-01-02T00:00:00.000Z',
-    updatedAt: '2024-01-02T00:00:00.000Z',
   },
   {
     id: 3,
@@ -44,8 +40,6 @@ const mockEmployees: Employee[] = [
     workArea: ['인천 부평구'],
     grade: '3급',
     openToNextWork: false,
-    createdAt: '2024-01-03T00:00:00.000Z',
-    updatedAt: '2024-01-03T00:00:00.000Z',
   },
 ];
 

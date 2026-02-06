@@ -1,117 +1,156 @@
-import { Users, TrendingUp, CalendarClock } from "lucide-react";
-import { HeroBanner } from "../(components)/dashboard/HeroBanner";
-import { StatsGrid, StatItem } from "../(components)/dashboard/StatsGrid";
-import { ChatWidget } from "../(components)/chat/ChatWidget";
-import { QuickActions } from "../(components)/dashboard/QuickActions";
-import { TodayScheduleList } from "../(components)/dashboard/TodayScheduleList";
-import { PendingClientsTable } from "../(components)/dashboard/PendingClientsTable";
+"use client";
 
-import { getCurrentUser } from "../lib/auth/cookies";
-import { t, Locale } from "../lib/i18n/translations";
-import { getLocale } from "../actions/locale";
-import { cookies } from "next/headers";
+import { useDashboardStats } from "@/app/hooks/useDashboardStats";
+import { useInitialUser } from "@/app/(components)/providers/UserProvider";
+import {
+  PageHeader,
+  StatMini,
+  SplitLayout,
+  ListPanel,
+  DetailPanel,
+  InfoCard,
+  InfoRow,
+} from "@/app/(components)/v3";
+import {
+  Users,
+  Calendar,
+  FileSignature,
+  Send,
+  MessageSquare,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { ChatWidget } from "@/app/(components)/chat/ChatWidget";
+import { useState } from "react";
 
-interface DashboardStats {
-  activeClients: number;
-  contractsNotSent: number;
-  contractsPendingSignature: number;
-  upcomingThisMonth: number;
-  upcomingNextMonth: number;
-}
-
-async function fetchDashboardStats(): Promise<DashboardStats | null> {
-  try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get("auth_token")?.value;
-    if (!token) return null;
-
-    const baseUrl = process.env.DEVELOPMENT_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL;
-    const response = await fetch(`${baseUrl}/clients/stats`, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    if (!response.ok) return null;
-    return response.json();
-  } catch (error) {
-    console.error("[Dashboard] Failed to fetch stats:", error);
-    return null;
-  }
-}
-
-const getStats = (locale: Locale, backendStats?: DashboardStats | null): StatItem[] => {
-  return [
-    {
-      title: t(locale, "dashboard.active_clients"),
-      value: backendStats?.activeClients?.toLocaleString() ?? "0",
-      unit: "명",
-      icon: Users,
-    },
-    {
-      title: t(locale, "dashboard.pending_clients.title"),
-      value: backendStats?.upcomingThisMonth?.toLocaleString() ?? "0",
-      unit: "명",
-      icon: CalendarClock,
-    },
-    {
-      title: t(locale, "dashboard.contracts.completion_pending"),
-      value: backendStats?.contractsPendingSignature?.toLocaleString() ?? "0",
-      unit: "건",
-      icon: TrendingUp,
-    },
-    {
-      title: t(locale, "dashboard.contracts.sending_pending"),
-      value: backendStats?.contractsNotSent?.toLocaleString() ?? "0",
-      unit: "건",
-      icon: TrendingUp,
-    },
-  ];
-};
-
-export default async function Dashboard() {
-  const locale = await getLocale();
-  const user = await getCurrentUser();
-  const backendStats = await fetchDashboardStats();
-  const stats = getStats(locale, backendStats);
+export default function DashboardPage() {
+  const { data: stats, isLoading } = useDashboardStats();
+  const user = useInitialUser();
+  const [activeTab, setActiveTab] = useState("all");
 
   return (
-    <div data-component="dashboard-page" className="bg-background">
-      <section
-        data-component="dashboard-content"
-        className="px-4 sm:px-6 md:px-8 lg:px-12 py-6 sm:py-8 mx-auto max-w-7xl w-full"
-      >
-        <div data-component="dashboard-layout" className="space-y-6 w-full">
-          <HeroBanner
-            data-component="hero-banner"
-            subtitle={t(locale, "dashboard.welcome_back")}
-            title={`${user?.name} ${t(locale, "dashboard.suffix")}`}
-            primaryActionLabel={t(locale, "actions.send_contract")}
-            secondaryActionLabel={t(locale, "actions.write_message")}
-            primaryActionHref="/contracts/creation"
-            secondaryActionHref="/messages"
-          />
+    <div className="space-y-6">
+      <PageHeader
+        title="대시보드"
+        subtitle="오늘의 업무 현황입니다"
+        actions={
+          <>
+            <Link href="/contracts/creation">
+              <Button className="bg-v3-primary hover:bg-v3-primary-hover text-white rounded-2xl px-4 py-2 text-sm">
+                <Send className="w-4 h-4 mr-2" /> 계약 발송
+              </Button>
+            </Link>
+            <Link href="/messages">
+              <Button
+                variant="outline"
+                className="rounded-2xl px-4 py-2 text-sm border-v3-border"
+              >
+                <MessageSquare className="w-4 h-4 mr-2" /> 메시지 작성
+              </Button>
+            </Link>
+          </>
+        }
+      />
 
-          <div data-component="chat-widget-container">
-            <ChatWidget />
-          </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatMini
+          icon={Users}
+          value={stats?.activeClients ?? 0}
+          label="활성 고객"
+          colorIndex={0}
+        />
+        <StatMini
+          icon={Calendar}
+          value={stats?.upcomingThisMonth ?? 0}
+          label="이번달 예정"
+          colorIndex={1}
+        />
+        <StatMini
+          icon={FileSignature}
+          value={stats?.contractsPendingSignature ?? 0}
+          label="서명 대기"
+          colorIndex={2}
+        />
+        <StatMini
+          icon={Send}
+          value={stats?.contractsNotSent ?? 0}
+          label="발송 대기"
+          colorIndex={3}
+        />
+      </div>
 
-          <div data-component="stats-grid-container">
-            <StatsGrid stats={stats} />
-          </div>
-
-          <div data-component="quick-actions-container">
-            <QuickActions />
-          </div>
-
-          <div data-component="dashboard-tables" className="grid gap-4 lg:grid-cols-3">
-            <div data-component="pending-clients-container" className="lg:col-span-2 min-w-0">
-              <PendingClientsTable />
+      <SplitLayout>
+        <ListPanel
+          title="최근 활동"
+          tabs={[
+            { label: "전체", value: "all" },
+            { label: "고객", value: "clients" },
+            { label: "계약", value: "contracts" },
+            { label: "직원", value: "employees" },
+          ]}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+        >
+          {isLoading ? (
+            <div className="p-8 text-center text-v3-text-muted">
+              로딩 중...
             </div>
-            <div data-component="today-schedule-container">
-              <TodayScheduleList />
+          ) : (
+            <div className="divide-y divide-v3-border">
+              <div className="p-4 hover:bg-v3-primary-light rounded-xl cursor-pointer transition-colors">
+                <p className="text-sm font-medium text-v3-dark">
+                  새 고객 등록
+                </p>
+                <p className="text-xs text-v3-text-muted mt-1">
+                  오늘 등록된 고객이 있습니다
+                </p>
+              </div>
+              <div className="p-4 hover:bg-v3-primary-light rounded-xl cursor-pointer transition-colors">
+                <p className="text-sm font-medium text-v3-dark">
+                  계약 서명 완료
+                </p>
+                <p className="text-xs text-v3-text-muted mt-1">
+                  서명이 완료된 계약이 있습니다
+                </p>
+              </div>
+              <div className="p-4 hover:bg-v3-primary-light rounded-xl cursor-pointer transition-colors">
+                <p className="text-sm font-medium text-v3-dark">일정 알림</p>
+                <p className="text-xs text-v3-text-muted mt-1">
+                  이번 주 예정된 일정이 있습니다
+                </p>
+              </div>
+            </div>
+          )}
+        </ListPanel>
+
+        <DetailPanel
+          header={
+            <h3 className="text-lg font-bold text-v3-dark">업무 요약</h3>
+          }
+        >
+          <div className="space-y-4">
+            <InfoCard title="이번 달 현황">
+              <InfoRow label="활성 고객" value={stats?.activeClients ?? "-"} />
+              <InfoRow
+                label="이번달 예정"
+                value={stats?.upcomingThisMonth ?? "-"}
+              />
+              <InfoRow
+                label="다음달 예정"
+                value={stats?.upcomingNextMonth ?? "-"}
+              />
+              <InfoRow
+                label="서명 대기"
+                value={stats?.contractsPendingSignature ?? "-"}
+              />
+            </InfoCard>
+
+            <div className="mt-4">
+              <ChatWidget />
             </div>
           </div>
-        </div>
-      </section>
+        </DetailPanel>
+      </SplitLayout>
     </div>
   );
 }

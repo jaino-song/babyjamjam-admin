@@ -35,22 +35,24 @@ export function NotificationTestSection() {
   return (
     <div
       data-component="NotificationTestSection"
-      className="p-4 border border-border rounded-lg opacity-0 animate-fade-in"
-      style={{ animationDelay: "100ms" }}
+      className="space-y-4"
     >
-      <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
-        <Bell size={20} className="text-primary" />
-        알림 테스트
-      </h3>
-
-      <p className="text-sm text-muted-foreground mb-4">
-        모든 구독된 디바이스에 테스트 알림을 전송합니다.
-      </p>
+      <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
+          <Bell size={18} className="text-primary" />
+        </div>
+        <div>
+           <h3 className="text-lg font-bold">알림 테스트</h3>
+           <p className="text-sm text-muted-foreground">
+             모든 구독된 디바이스에 테스트 알림을 전송합니다.
+           </p>
+        </div>
+      </div>
 
       <Button
         onClick={handleTestBroadcast}
         disabled={loading}
-        className="gap-2"
+        className="gap-2 rounded-full px-6"
       >
         {loading ? (
           <Spinner className="h-4 w-4" />
@@ -59,6 +61,7 @@ export function NotificationTestSection() {
         )}
         {loading ? '전송 중...' : '테스트 알림 보내기'}
       </Button>
+
 
       {result && (
         <Alert className="mt-4 bg-success/10 border-success/30 text-success">

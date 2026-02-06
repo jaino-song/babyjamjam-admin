@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>케어허브 — 직원 관리</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: hsl(214, 100%, 34%);
+      --primary-light: hsl(214, 80%, 95%);
+      --primary-medium: hsl(214, 70%, 88%);
+      --primary-hover: hsl(214, 100%, 28%);
+      --green: hsl(137, 34%, 31%);
+      --green-light: hsl(137, 40%, 93%);
+      --burgundy: hsl(355, 36%, 45%);
+      --burgundy-light: hsl(355, 40%, 94%);
+      --gray: hsl(0, 0%, 47%);
+      --dim-white: hsl(220, 20%, 97%);
+      --orange: hsl(34, 100%, 55%);
+      --orange-light: hsl(34, 100%, 94%);
+      --purple: hsl(270, 60%, 55%);
+      --purple-light: hsl(270, 60%, 94%);
+      --teal: hsl(175, 60%, 40%);
+      --teal-light: hsl(175, 60%, 93%);
+      --gold: hsl(45, 100%, 50%);
+      --gold-light: hsl(45, 100%, 94%);
+      --white: #ffffff;
+      --dark: hsl(214, 40%, 18%);
+      --text: hsl(214, 25%, 28%);
+      --text-muted: hsl(214, 10%, 55%);
+      --border: hsl(214, 20%, 92%);
+      --shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+      --shadow-hover: 0 12px 48px hsla(214, 50%, 20%, 0.12);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Noto Sans KR', -apple-system, sans-serif;
+      font-weight: 400;
+      background: var(--dim-white);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.7;
+    }
+
+    @keyframes popIn {
+      0% { opacity: 0; transform: scale(0.9); }
+      70% { transform: scale(1.02); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes slideRight {
+      from { opacity: 0; transform: translateX(-20px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .app {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      width: 280px;
+      background: var(--white);
+      padding: 2rem 1.25rem;
+      position: fixed;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+      border-radius: 0 32px 32px 0;
+      box-shadow: var(--shadow);
+      animation: slideRight 0.5s ease-out;
+    }
+
+    .logo {
+      padding: 0.5rem 1rem;
+      margin-bottom: 2.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.35rem;
+      box-shadow: 0 8px 24px hsla(214, 100%, 34%, 0.25);
+      animation: float 3s ease-in-out infinite;
+    }
+
+    .logo-text {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--dark);
+    }
+
+    .nav-section {
+      margin-bottom: 1.5rem;
+    }
+
+    .nav-title {
+      padding: 0 1rem;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      padding: 0.9rem 1rem;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      border-radius: 16px;
+      margin-bottom: 0.25rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .nav-item::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      background: var(--primary-light);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      transition: width 0.4s ease, height 0.4s ease;
+    }
+
+    .nav-item:hover::before {
+      width: 200%;
+      height: 200%;
+    }
+
+    .nav-item:hover {
+      color: var(--primary);
+    }
+
+    .nav-item.active {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .nav-item > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .nav-icon {
+      font-size: 1.1rem;
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      font-size: 0.65rem;
+      font-weight: 600;
+      padding: 0.2rem 0.6rem;
+      border-radius: 20px;
+    }
+
+    .nav-item.active .nav-badge {
+      background: hsla(0, 0%, 100%, 0.25);
+      color: var(--white);
+    }
+
+    .nav-item:not(.active) .nav-badge {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 0 0.5rem;
+    }
+
+    .user-profile {
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      padding: 1rem;
+      background: var(--dim-white);
+      border-radius: 20px;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .user-profile:hover {
+      background: var(--primary-light);
+      transform: translateY(-2px);
+    }
+
+    .user-avatar {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--white);
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .user-info h4 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--dark);
+    }
+
+    .user-info p {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .main {
+      flex: 1;
+      margin-left: 280px;
+      padding: 2rem 2.5rem;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      animation: slideUp 0.5s ease-out 0.1s backwards;
+    }
+
+    .page-title h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--dark);
+      margin-bottom: 0.25rem;
+    }
+
+    .page-title p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.875rem;
+      align-items: center;
+    }
+
+    .btn {
+      padding: 0.75rem 1.5rem;
+      border-radius: 50px;
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: none;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px hsla(214, 100%, 34%, 0.25);
+    }
+
+    .btn-soft {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .btn-soft:hover {
+      background: var(--primary-medium);
+    }
+
+    .btn-outline {
+      background: var(--white);
+      color: var(--text);
+      border: 2px solid var(--border);
+    }
+
+    .btn-outline:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .filters-bar {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+      animation: slideUp 0.5s ease-out 0.15s backwards;
+    }
+
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: var(--white);
+      padding: 0.875rem 1.5rem;
+      border-radius: 50px;
+      box-shadow: var(--shadow);
+      flex: 1;
+      max-width: 350px;
+      transition: all 0.3s ease;
+    }
+
+    .search-box:focus-within {
+      box-shadow: var(--shadow-hover);
+      transform: scale(1.01);
+    }
+
+    .search-box input {
+      border: none;
+      outline: none;
+      font-family: inherit;
+      font-size: 0.85rem;
+      width: 100%;
+      background: transparent;
+    }
+
+    .filter-chips {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .filter-chip {
+      padding: 0.625rem 1.25rem;
+      border-radius: 50px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      background: var(--white);
+      color: var(--text-muted);
+      box-shadow: var(--shadow);
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-2px);
+    }
+
+    .filter-chip.active {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .stats-summary {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      animation: slideUp 0.5s ease-out 0.2s backwards;
+    }
+
+    .stat-mini {
+      background: var(--white);
+      padding: 1.25rem;
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      transition: all 0.3s ease;
+    }
+
+    .stat-mini:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-hover);
+    }
+
+    .stat-mini-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+    }
+
+    .stat-mini:nth-child(1) .stat-mini-icon { background: var(--primary-light); }
+    .stat-mini:nth-child(2) .stat-mini-icon { background: var(--green-light); }
+    .stat-mini:nth-child(3) .stat-mini-icon { background: var(--orange-light); }
+    .stat-mini:nth-child(4) .stat-mini-icon { background: var(--gold-light); }
+
+    .stat-mini-info h3 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--dark);
+      line-height: 1;
+    }
+
+    .stat-mini-info p {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .employee-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 1.25rem;
+      animation: slideUp 0.5s ease-out 0.25s backwards;
+    }
+
+    .employee-card {
+      background: var(--white);
+      border-radius: 24px;
+      padding: 1.5rem;
+      box-shadow: var(--shadow);
+      transition: all 0.4s ease;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .employee-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: var(--primary);
+      transform: scaleX(0);
+      transition: transform 0.3s ease;
+    }
+
+    .employee-card:hover::before {
+      transform: scaleX(1);
+    }
+
+    .employee-card:hover {
+      transform: translateY(-6px);
+      box-shadow: var(--shadow-hover);
+    }
+
+    .employee-card.available::before {
+      background: var(--green);
+    }
+
+    .employee-card.busy::before {
+      background: var(--orange);
+    }
+
+    .employee-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .employee-avatar {
+      width: 64px;
+      height: 64px;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.25rem;
+      color: var(--white);
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .employee-avatar .status-dot {
+      position: absolute;
+      bottom: -2px;
+      right: -2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 3px solid var(--white);
+    }
+
+    .status-dot.available { background: var(--green); }
+    .status-dot.busy { background: var(--orange); }
+    .status-dot.offline { background: var(--gray); }
+
+    .employee-info {
+      flex: 1;
+    }
+
+    .employee-name {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--dark);
+      margin-bottom: 0.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .grade-badge {
+      font-size: 0.6rem;
+      font-weight: 700;
+      padding: 0.2rem 0.5rem;
+      border-radius: 6px;
+    }
+
+    .grade-badge.a {
+      background: linear-gradient(135deg, var(--gold), hsl(45, 100%, 40%));
+      color: var(--white);
+    }
+
+    .grade-badge.b {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .grade-badge.c {
+      background: var(--dim-white);
+      color: var(--text-muted);
+    }
+
+    .employee-phone {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .employee-availability {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.3rem 0.75rem;
+      border-radius: 20px;
+      display: inline-block;
+      margin-top: 0.5rem;
+    }
+
+    .employee-availability.available {
+      background: var(--green-light);
+      color: var(--green);
+    }
+
+    .employee-availability.busy {
+      background: var(--orange-light);
+      color: var(--orange);
+    }
+
+    .work-areas {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.375rem;
+      margin-bottom: 1rem;
+    }
+
+    .area-tag {
+      padding: 0.35rem 0.75rem;
+      background: var(--dim-white);
+      border-radius: 20px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      transition: all 0.3s ease;
+    }
+
+    .employee-card:hover .area-tag {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .employee-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .emp-stat {
+      text-align: center;
+    }
+
+    .emp-stat-value {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--dark);
+    }
+
+    .emp-stat-label {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      margin-top: 0.125rem;
+    }
+
+    .employee-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .emp-action-btn {
+      flex: 1;
+      padding: 0.625rem;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.7rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      transition: all 0.3s ease;
+      background: var(--dim-white);
+      color: var(--text);
+    }
+
+    .emp-action-btn:hover {
+      background: var(--primary-light);
+      color: var(--primary);
+      transform: translateY(-2px);
+    }
+
+    .schedule-widget {
+      background: var(--white);
+      border-radius: 28px;
+      padding: 1.5rem;
+      box-shadow: var(--shadow);
+      margin-top: 2rem;
+      animation: slideUp 0.5s ease-out 0.35s backwards;
+    }
+
+    .schedule-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.25rem;
+    }
+
+    .schedule-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--dark);
+    }
+
+    .schedule-days {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 0.75rem;
+    }
+
+    .schedule-day {
+      text-align: center;
+      padding: 1rem 0.5rem;
+      border-radius: 16px;
+      background: var(--dim-white);
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .schedule-day:hover {
+      background: var(--primary-light);
+    }
+
+    .schedule-day.today {
+      background: var(--primary);
+    }
+
+    .schedule-day.today * {
+      color: var(--white) !important;
+    }
+
+    .day-name {
+      font-size: 0.65rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 0.25rem;
+    }
+
+    .day-date {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--dark);
+      margin-bottom: 0.5rem;
+    }
+
+    .day-count {
+      font-size: 0.6rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 10px;
+      background: var(--white);
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .schedule-day.today .day-count {
+      background: hsla(0, 0%, 100%, 0.2);
+      color: var(--white);
+    }
+
+    .mobile-header {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: var(--white);
+      padding: 1rem 1.5rem;
+      z-index: 1000;
+      justify-content: space-between;
+      align-items: center;
+      border-radius: 0 0 24px 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .mobile-nav {
+      display: none;
+      position: fixed;
+      bottom: 1rem;
+      left: 1rem;
+      right: 1rem;
+      background: var(--white);
+      padding: 0.75rem;
+      border-radius: 24px;
+      z-index: 1000;
+      box-shadow: var(--shadow-hover);
+    }
+
+    .mobile-nav-items {
+      display: flex;
+      justify-content: space-around;
+    }
+
+    .mobile-nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.625rem 1rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.6rem;
+      font-weight: 500;
+      border-radius: 16px;
+      transition: all 0.3s ease;
+    }
+
+    .mobile-nav-item.active {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    @media (max-width: 1280px) {
+      .stats-summary {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .employee-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .schedule-days {
+        gap: 0.5rem;
+      }
+    }
+
+    @media (max-width: 1024px) {
+      .employee-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        display: none;
+      }
+
+      .main {
+        margin-left: 0;
+        padding: 5rem 1.25rem 6rem;
+      }
+
+      .mobile-header {
+        display: flex;
+      }
+
+      .mobile-nav {
+        display: block;
+      }
+
+      .header {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: flex-start;
+      }
+
+      .header-actions {
+        width: 100%;
+      }
+
+      .filters-bar {
+        flex-direction: column;
+      }
+
+      .search-box {
+        max-width: 100%;
+      }
+
+      .filter-chips {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 0.5rem;
+      }
+
+      .stats-summary {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .employee-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .schedule-days {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.5rem;
+      }
+
+      .schedule-day:nth-child(n+5) {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="logo">
+        <div class="logo-icon">🏠</div>
+        <div class="logo-text">케어허브</div>
+      </div>
+
+      <nav>
+        <div class="nav-section">
+          <div class="nav-title">메인</div>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">📊</span>
+            <span>대시보드</span>
+          </a>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">📈</span>
+            <span>분석</span>
+          </a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-title">관리</div>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">👥</span>
+            <span>고객</span>
+            <span class="nav-badge">147</span>
+          </a>
+          <a href="#" class="nav-item active">
+            <span class="nav-icon">👤</span>
+            <span>직원</span>
+          </a>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">📅</span>
+            <span>일정</span>
+          </a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-title">문서</div>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">📝</span>
+            <span>계약서</span>
+            <span class="nav-badge">8</span>
+          </a>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">📁</span>
+            <span>파일</span>
+          </a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-title">시스템</div>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">🔔</span>
+            <span>알림</span>
+          </a>
+          <a href="#" class="nav-item">
+            <span class="nav-icon">⚙️</span>
+            <span>설정</span>
+          </a>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-profile">
+          <div class="user-avatar">김</div>
+          <div class="user-info">
+            <h4>김지영</h4>
+            <p>관리자</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="mobile-header">
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <div class="logo-icon" style="width: 36px; height: 36px; border-radius: 10px; font-size: 1rem;">🏠</div>
+        <div class="logo-text" style="font-size: 1.1rem;">케어허브</div>
+      </div>
+      <button class="btn btn-soft" style="padding: 0.5rem 1rem; font-size: 0.75rem;">+ 신규</button>
+    </div>
+
+    <main class="main">
+      <header class="header">
+        <div class="page-title">
+          <h1>직원 관리 👤</h1>
+          <p>직원 현황을 확인하고 배정을 관리하세요</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-outline">📅 일정 관리</button>
+          <button class="btn btn-primary">+ 신규 직원</button>
+        </div>
+      </header>
+
+      <div class="filters-bar">
+        <div class="search-box">
+          <span>🔍</span>
+          <input type="text" placeholder="이름, 연락처, 지역으로 검색...">
+        </div>
+        <div class="filter-chips">
+          <button class="filter-chip active">전체</button>
+          <button class="filter-chip">가용</button>
+          <button class="filter-chip">배정됨</button>
+          <button class="filter-chip">A등급</button>
+          <button class="filter-chip">B등급</button>
+        </div>
+      </div>
+
+      <div class="stats-summary">
+        <div class="stat-mini">
+          <div class="stat-mini-icon">👤</div>
+          <div class="stat-mini-info">
+            <h3>32</h3>
+            <p>전체 직원</p>
+          </div>
+        </div>
+        <div class="stat-mini">
+          <div class="stat-mini-icon">✅</div>
+          <div class="stat-mini-info">
+            <h3>4</h3>
+            <p>가용 인원</p>
+          </div>
+        </div>
+        <div class="stat-mini">
+          <div class="stat-mini-icon">📋</div>
+          <div class="stat-mini-info">
+            <h3>28</h3>
+            <p>배정됨</p>
+          </div>
+        </div>
+        <div class="stat-mini">
+          <div class="stat-mini-icon">⭐</div>
+          <div class="stat-mini-info">
+            <h3>18</h3>
+            <p>A등급</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="employee-grid">
+        <div class="employee-card available">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: linear-gradient(135deg, var(--primary), var(--primary-hover));">
+              박
+              <span class="status-dot available"></span>
+            </div>
+            <div class="employee-info">
+              <div class="employee-name">
+                박지혜
+                <span class="grade-badge a">A</span>
+              </div>
+              <div class="employee-phone">010-1111-2222</div>
+              <span class="employee-availability available">배정 가능</span>
+            </div>
+          </div>
+          <div class="work-areas">
+            <span class="area-tag">강남구</span>
+            <span class="area-tag">서초구</span>
+            <span class="area-tag">송파구</span>
+          </div>
+          <div class="employee-stats">
+            <div class="emp-stat">
+              <div class="emp-stat-value">127</div>
+              <div class="emp-stat-label">총 케이스</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">4.9</div>
+              <div class="emp-stat-label">평점</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">98%</div>
+              <div class="emp-stat-label">완료율</div>
+            </div>
+          </div>
+          <div class="employee-actions">
+            <button class="emp-action-btn">📞 전화</button>
+            <button class="emp-action-btn">📅 일정</button>
+            <button class="emp-action-btn">🔗 배정</button>
+          </div>
+        </div>
+
+        <div class="employee-card busy">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: linear-gradient(135deg, var(--green), hsl(137, 34%, 25%));">
+              김
+              <span class="status-dot busy"></span>
+            </div>
+            <div class="employee-info">
+              <div class="employee-name">
+                김하나
+                <span class="grade-badge a">A</span>
+              </div>
+              <div class="employee-phone">010-2222-3333</div>
+              <span class="employee-availability busy">배정됨 (3/5)</span>
+            </div>
+          </div>
+          <div class="work-areas">
+            <span class="area-tag">송파구</span>
+            <span class="area-tag">강동구</span>
+          </div>
+          <div class="employee-stats">
+            <div class="emp-stat">
+              <div class="emp-stat-value">98</div>
+              <div class="emp-stat-label">총 케이스</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">4.8</div>
+              <div class="emp-stat-label">평점</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">96%</div>
+              <div class="emp-stat-label">완료율</div>
+            </div>
+          </div>
+          <div class="employee-actions">
+            <button class="emp-action-btn">📞 전화</button>
+            <button class="emp-action-btn">📅 일정</button>
+            <button class="emp-action-btn">🔗 배정</button>
+          </div>
+        </div>
+
+        <div class="employee-card available">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: linear-gradient(135deg, var(--burgundy), hsl(355, 36%, 38%));">
+              이
+              <span class="status-dot available"></span>
+            </div>
+            <div class="employee-info">
+              <div class="employee-name">
+                이수진
+                <span class="grade-badge b">B</span>
+              </div>
+              <div class="employee-phone">010-3333-4444</div>
+              <span class="employee-availability available">배정 가능</span>
+            </div>
+          </div>
+          <div class="work-areas">
+            <span class="area-tag">마포구</span>
+            <span class="area-tag">용산구</span>
+            <span class="area-tag">서대문구</span>
+          </div>
+          <div class="employee-stats">
+            <div class="emp-stat">
+              <div class="emp-stat-value">76</div>
+              <div class="emp-stat-label">총 케이스</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">4.6</div>
+              <div class="emp-stat-label">평점</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">94%</div>
+              <div class="emp-stat-label">완료율</div>
+            </div>
+          </div>
+          <div class="employee-actions">
+            <button class="emp-action-btn">📞 전화</button>
+            <button class="emp-action-btn">📅 일정</button>
+            <button class="emp-action-btn">🔗 배정</button>
+          </div>
+        </div>
+
+        <div class="employee-card busy">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: linear-gradient(135deg, var(--orange), hsl(34, 100%, 45%));">
+              최
+              <span class="status-dot busy"></span>
+            </div>
+            <div class="employee-info">
+              <div class="employee-name">
+                최유나
+                <span class="grade-badge a">A</span>
+              </div>
+              <div class="employee-phone">010-4444-5555</div>
+              <span class="employee-availability busy">배정됨 (2/5)</span>
+            </div>
+          </div>
+          <div class="work-areas">
+            <span class="area-tag">강남구</span>
+            <span class="area-tag">분당구</span>
+          </div>
+          <div class="employee-stats">
+            <div class="emp-stat">
+              <div class="emp-stat-value">156</div>
+              <div class="emp-stat-label">총 케이스</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">4.9</div>
+              <div class="emp-stat-label">평점</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">99%</div>
+              <div class="emp-stat-label">완료율</div>
+            </div>
+          </div>
+          <div class="employee-actions">
+            <button class="emp-action-btn">📞 전화</button>
+            <button class="emp-action-btn">📅 일정</button>
+            <button class="emp-action-btn">🔗 배정</button>
+          </div>
+        </div>
+
+        <div class="employee-card available">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: linear-gradient(135deg, var(--purple), hsl(270, 60%, 45%));">
+              정
+              <span class="status-dot available"></span>
+            </div>
+            <div class="employee-info">
+              <div class="employee-name">
+                정민지
+                <span class="grade-badge a">A</span>
+              </div>
+              <div class="employee-phone">010-5555-6666</div>
+              <span class="employee-availability available">배정 가능</span>
+            </div>
+          </div>
+          <div class="work-areas">
+            <span class="area-tag">강서구</span>
+            <span class="area-tag">양천구</span>
+            <span class="area-tag">영등포구</span>
+          </div>
+          <div class="employee-stats">
+            <div class="emp-stat">
+              <div class="emp-stat-value">89</div>
+              <div class="emp-stat-label">총 케이스</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">4.7</div>
+              <div class="emp-stat-label">평점</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">95%</div>
+              <div class="emp-stat-label">완료율</div>
+            </div>
+          </div>
+          <div class="employee-actions">
+            <button class="emp-action-btn">📞 전화</button>
+            <button class="emp-action-btn">📅 일정</button>
+            <button class="emp-action-btn">🔗 배정</button>
+          </div>
+        </div>
+
+        <div class="employee-card busy">
+          <div class="employee-header">
+            <div class="employee-avatar" style="background: linear-gradient(135deg, var(--teal), hsl(175, 60%, 30%));">
+              한
+              <span class="status-dot busy"></span>
+            </div>
+            <div class="employee-info">
+              <div class="employee-name">
+                한서연
+                <span class="grade-badge b">B</span>
+              </div>
+              <div class="employee-phone">010-6666-7777</div>
+              <span class="employee-availability busy">배정됨 (4/5)</span>
+            </div>
+          </div>
+          <div class="work-areas">
+            <span class="area-tag">성북구</span>
+            <span class="area-tag">동대문구</span>
+          </div>
+          <div class="employee-stats">
+            <div class="emp-stat">
+              <div class="emp-stat-value">64</div>
+              <div class="emp-stat-label">총 케이스</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">4.5</div>
+              <div class="emp-stat-label">평점</div>
+            </div>
+            <div class="emp-stat">
+              <div class="emp-stat-value">92%</div>
+              <div class="emp-stat-label">완료율</div>
+            </div>
+          </div>
+          <div class="employee-actions">
+            <button class="emp-action-btn">📞 전화</button>
+            <button class="emp-action-btn">📅 일정</button>
+            <button class="emp-action-btn">🔗 배정</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="schedule-widget">
+        <div class="schedule-header">
+          <div class="schedule-title">이번 주 배정 현황</div>
+          <button class="btn btn-soft">전체 일정</button>
+        </div>
+        <div class="schedule-days">
+          <div class="schedule-day">
+            <div class="day-name">월</div>
+            <div class="day-date">3</div>
+            <span class="day-count">28명</span>
+          </div>
+          <div class="schedule-day">
+            <div class="day-name">화</div>
+            <div class="day-date">4</div>
+            <span class="day-count">26명</span>
+          </div>
+          <div class="schedule-day today">
+            <div class="day-name">수</div>
+            <div class="day-date">5</div>
+            <span class="day-count">28명</span>
+          </div>
+          <div class="schedule-day">
+            <div class="day-name">목</div>
+            <div class="day-date">6</div>
+            <span class="day-count">25명</span>
+          </div>
+          <div class="schedule-day">
+            <div class="day-name">금</div>
+            <div class="day-date">7</div>
+            <span class="day-count">27명</span>
+          </div>
+          <div class="schedule-day">
+            <div class="day-name">토</div>
+            <div class="day-date">8</div>
+            <span class="day-count">12명</span>
+          </div>
+          <div class="schedule-day">
+            <div class="day-name">일</div>
+            <div class="day-date">9</div>
+            <span class="day-count">8명</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <nav class="mobile-nav">
+      <div class="mobile-nav-items">
+        <a href="#" class="mobile-nav-item">
+          <span class="nav-icon">🏠</span>
+          <span>홈</span>
+        </a>
+        <a href="#" class="mobile-nav-item">
+          <span class="nav-icon">👥</span>
+          <span>고객</span>
+        </a>
+        <a href="#" class="mobile-nav-item active">
+          <span class="nav-icon">👤</span>
+          <span>직원</span>
+        </a>
+        <a href="#" class="mobile-nav-item">
+          <span class="nav-icon">📁</span>
+          <span>파일</span>
+        </a>
+        <a href="#" class="mobile-nav-item">
+          <span class="nav-icon">⚙️</span>
+          <span>설정</span>
+        </a>
+      </div>
+    </nav>
+  </div>
+
+  <script>
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', function() {
+        document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+
+    document.querySelectorAll('.employee-card').forEach(card => {
+      card.addEventListener('click', function() {
+        document.querySelectorAll('.employee-card').forEach(c => c.style.borderColor = 'transparent');
+        this.style.borderColor = 'var(--primary)';
+      });
+    });
+
+    document.querySelectorAll('.schedule-day').forEach(day => {
+      day.addEventListener('click', function() {
+        document.querySelectorAll('.schedule-day').forEach(d => d.classList.remove('today'));
+        this.classList.add('today');
+      });
+    });
+  </script>
+</body>
+</html>

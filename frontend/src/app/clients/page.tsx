@@ -1,27 +1,525 @@
-import { redirect } from "next/navigation";
-import { ClientsTable } from "../(components)/clients/ClientsTable";
+"use client";
 
-interface ClientsPageProps {
-    searchParams: Promise<{ filter?: string; id?: string }>;
-}
+import { useState, useMemo, useEffect } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { Users, Plus, Phone, MessageSquare, FileText, ClipboardList, Clock, UserCheck, AlertTriangle } from "lucide-react";
+import { useClients, useDeleteClient, useClient } from "@/app/hooks/useClients";
+import { Client, SERVICE_STATUS_OPTIONS } from "@/app/lib/client/types";
+import { ClientFormDialog } from "../(components)/clients/ClientFormDialog";
+import { ClientDetailModal } from "../(components)/clients/ClientDetailModal";
+import { useLocale } from "../(components)/LocaleProvider";
+import { t } from "@/app/lib/i18n/translations";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import {
+    PageHeader,
+    StatMini,
+    SearchBox,
+    FilterChips,
+    SplitLayout,
+    ListPanel,
+    DetailPanel,
+    InfoCard,
+    InfoRow,
+    StatusBadge,
+} from "@/app/(components)/v3";
+import type { StatusType } from "@/app/(components)/v3";
 
-export default async function ClientsPage({ searchParams }: ClientsPageProps) {
-    const params = await searchParams;
+const FILTER_CHIPS = [
+    { label: "전체", value: "all" },
+    { label: "진행중", value: "active" },
+    { label: "대기", value: "pending" },
+    { label: "완료", value: "completed" },
+    { label: "만료", value: "expired" },
+];
 
-    // Redirect old notification URLs to new filtered page
-    // Old: /clients?filter=xxx → New: /clients/filtered?filter=xxx
-    if (params.filter) {
-        redirect(`/clients/filtered?filter=${params.filter}`);
+const getAvatarGradient = (name: string) => {
+    const charCode = name.charCodeAt(0);
+    const gradients = [
+        "bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]",
+        "bg-gradient-to-br from-[hsl(137,34%,31%)] to-[hsl(137,34%,25%)]",
+        "bg-gradient-to-br from-[hsl(355,36%,45%)] to-[hsl(355,36%,38%)]",
+        "bg-gradient-to-br from-[hsl(34,100%,55%)] to-[hsl(34,100%,45%)]",
+        "bg-gradient-to-br from-[hsl(175,60%,40%)] to-[hsl(175,60%,30%)]",
+        "bg-gradient-to-br from-[hsl(270,60%,55%)] to-[hsl(270,60%,45%)]",
+    ];
+    return gradients[charCode % gradients.length];
+};
+
+const getStatusLabel = (status: string | null) => {
+    const option = SERVICE_STATUS_OPTIONS.find((o) => o.value === status);
+    return option ? option.label : "-";
+};
+
+const mapServiceStatusToV3 = (status: string | null): StatusType => {
+    switch (status) {
+        case "active":
+            return "active";
+        case "waiting":
+        case "pending":
+        case "replacement_requested":
+            return "pending";
+        case "terminated":
+        case "cancelled":
+            return "expired";
+        case "completed":
+            return "completed";
+        default:
+            return "pending";
     }
+};
+
+const formatDate = (dateStr: string | null): string => {
+    if (!dateStr) return "-";
+    return new Date(dateStr).toLocaleDateString("ko-KR");
+};
+
+const formatPrice = (price: string | null): string => {
+    if (!price) return "-";
+    const cleaned = price.replace(/,/g, "");
+    const num = parseInt(cleaned, 10);
+    if (isNaN(num)) return "-";
+    return `${num.toLocaleString("ko-KR")}원`;
+};
+
+const filterValueToStatus = (filter: string): string | null => {
+    switch (filter) {
+        case "active":
+            return "active";
+        case "pending":
+            return "waiting";
+        case "completed":
+            return "completed";
+        case "expired":
+            return "terminated";
+        default:
+            return null;
+    }
+};
+
+export default function ClientsPage() {
+    const locale = useLocale();
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const clientIdParam = searchParams.get("id");
+
+    const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+    const [formDialogOpen, setFormDialogOpen] = useState(false);
+    const [editingClient, setEditingClient] = useState<Client | null>(null);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [activeFilter, setActiveFilter] = useState("all");
+    const [detailModalOpen, setDetailModalOpen] = useState(false);
+
+    const { data, isLoading } = useClients(
+        1,
+        50,
+        searchQuery.trim() ? searchQuery.trim() : undefined
+    );
+    const deleteClient = useDeleteClient();
+
+    const { data: clientFromParam } = useClient(
+        clientIdParam ? Number(clientIdParam) : 0
+    );
+
+    useEffect(() => {
+        if (clientIdParam && clientFromParam) {
+            setSelectedClient(clientFromParam);
+        }
+    }, [clientIdParam, clientFromParam]);
+
+    const clients = data?.data || [];
+    const total = data?.total || 0;
+
+    const filteredClients = useMemo(() => {
+        const statusValue = filterValueToStatus(activeFilter);
+        if (!statusValue) return clients;
+        return clients.filter((c) => c.serviceStatus === statusValue);
+    }, [clients, activeFilter]);
+
+    const stats = useMemo(() => {
+        const activeCount = clients.filter((c) => c.serviceStatus === "active").length;
+        const pendingCount = clients.filter(
+            (c) => c.serviceStatus === "waiting" || c.serviceStatus === "pending"
+        ).length;
+        const expiredCount = clients.filter(
+            (c) => c.serviceStatus === "terminated" || c.serviceStatus === "cancelled"
+        ).length;
+        return { activeCount, pendingCount, expiredCount };
+    }, [clients]);
+
+    const handleAddNew = () => {
+        setEditingClient(null);
+        setFormDialogOpen(true);
+    };
+
+    const handleSelectClient = (client: Client) => {
+        setSelectedClient(client);
+    };
+
+    const handleEdit = (client: Client) => {
+        setEditingClient(client);
+        setFormDialogOpen(true);
+    };
+
+    const handleDelete = async (id: number) => {
+        if (window.confirm(t(locale, "clients.delete-confirm"))) {
+            try {
+                await deleteClient.mutateAsync(id);
+                if (selectedClient?.id === id) {
+                    setSelectedClient(null);
+                }
+            } catch (err) {
+                console.error("Failed to delete client:", err);
+            }
+        }
+    };
+
+    const handleFormDialogClose = () => {
+        setFormDialogOpen(false);
+        setEditingClient(null);
+    };
+
+    const handleDetailModalClose = () => {
+        setDetailModalOpen(false);
+        if (clientIdParam) {
+            router.replace("/clients");
+        }
+    };
 
     return (
-        <div className="bg-background">
-            <section
-                data-component="clients"
-                className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto"
-            >
-                <ClientsTable />
-            </section>
+        <div className="space-y-6 animate-v3-slide-up pb-10">
+            <PageHeader
+                title="고객 관리"
+                subtitle="전체 고객 정보를 확인하고 관리하세요"
+                icon={Users}
+                actions={
+                    <Button
+                        variant="v3"
+                        onClick={handleAddNew}
+                        data-testid="add-client-button"
+                    >
+                        <Plus className="h-4 w-4 mr-1" />
+                        {t(locale, "clients.add")}
+                    </Button>
+                }
+            />
+
+            <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
+                <div className="w-full lg:max-w-md">
+                    <SearchBox
+                        placeholder={t(locale, "clients.search-placeholder")}
+                        value={searchQuery}
+                        onChange={setSearchQuery}
+                    />
+                </div>
+                <FilterChips
+                    items={FILTER_CHIPS}
+                    activeValue={activeFilter}
+                    onChange={setActiveFilter}
+                />
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <StatMini
+                    icon={Users}
+                    value={total}
+                    label="전체 고객"
+                    colorIndex={0}
+                />
+                <StatMini
+                    icon={UserCheck}
+                    value={stats.activeCount}
+                    label="진행중"
+                    colorIndex={2}
+                />
+                <StatMini
+                    icon={Clock}
+                    value={stats.pendingCount}
+                    label="대기중"
+                    colorIndex={1}
+                />
+                <StatMini
+                    icon={AlertTriangle}
+                    value={stats.expiredCount}
+                    label="만료임박"
+                    colorIndex={3}
+                />
+            </div>
+
+            <SplitLayout>
+                <ListPanel title="고객 목록">
+                    <div className="space-y-2">
+                        {isLoading ? (
+                            <div className="p-8 text-center text-v3-text-muted">
+                                Loading...
+                            </div>
+                        ) : filteredClients.length === 0 ? (
+                            <div className="p-8 text-center text-v3-text-muted">
+                                {t(locale, "clients.no-data")}
+                            </div>
+                        ) : (
+                            filteredClients.map((client, idx) => (
+                                <div
+                                    key={client.id}
+                                    onClick={() => handleSelectClient(client)}
+                                    className={cn(
+                                        "flex items-center gap-3 p-4 rounded-[18px] cursor-pointer transition-all duration-200 animate-v3-pop-in",
+                                        selectedClient?.id === client.id
+                                            ? "bg-v3-primary-light border-2 border-v3-primary"
+                                            : "bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+                                    )}
+                                    style={{ animationDelay: `${idx * 0.04}s` }}
+                                >
+                                    <div
+                                        className={cn(
+                                            "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
+                                            getAvatarGradient(client.name)
+                                        )}
+                                    >
+                                        {client.name.charAt(0)}
+                                    </div>
+
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-0.5">
+                                            <span className="font-bold text-[0.85rem] text-v3-dark truncate">
+                                                {client.name}
+                                            </span>
+                                            <Badge
+                                                variant="secondary"
+                                                className="bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)] border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
+                                            >
+                                                {client.type || "일반"}
+                                            </Badge>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
+                                            {client.phone && <span>{client.phone}</span>}
+                                            {client.address && (
+                                                <span className="truncate">
+                                                    {client.address.split(" ")[1] || client.address}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="shrink-0">
+                                        <StatusBadge
+                                            status={mapServiceStatusToV3(client.serviceStatus)}
+                                            label={getStatusLabel(client.serviceStatus)}
+                                        />
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </ListPanel>
+
+                {selectedClient ? (
+                    <DetailPanel
+                        header={
+                            <div className="text-center">
+                                <div
+                                    className={cn(
+                                        "mx-auto w-20 h-20 rounded-[24px] flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-lg",
+                                        getAvatarGradient(selectedClient.name)
+                                    )}
+                                >
+                                    {selectedClient.name.charAt(0)}
+                                </div>
+                                <h2 className="text-xl font-bold text-v3-dark">
+                                    {selectedClient.name}
+                                </h2>
+                                <p className="text-[0.8rem] text-v3-text-muted mt-1">
+                                    {selectedClient.type || "일반"} ·{" "}
+                                    {selectedClient.duration
+                                        ? `${selectedClient.duration}일`
+                                        : "-"}
+                                </p>
+                                <div className="mt-3">
+                                    <StatusBadge
+                                        status={mapServiceStatusToV3(
+                                            selectedClient.serviceStatus
+                                        )}
+                                        label={getStatusLabel(
+                                            selectedClient.serviceStatus
+                                        )}
+                                    />
+                                </div>
+
+                                <div className="flex gap-2 justify-center mt-5">
+                                    {selectedClient.phone && (
+                                        <a
+                                            href={`tel:${selectedClient.phone}`}
+                                            className="flex-1"
+                                        >
+                                            <Button
+                                                variant="ghost"
+                                                className="w-full flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                                            >
+                                                <Phone className="w-4 h-4" />
+                                                <span className="text-[10px] font-semibold">
+                                                    전화
+                                                </span>
+                                            </Button>
+                                        </a>
+                                    )}
+                                    <Button
+                                        variant="ghost"
+                                        className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                                    >
+                                        <MessageSquare className="w-4 h-4" />
+                                        <span className="text-[10px] font-semibold">
+                                            메시지
+                                        </span>
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                                    >
+                                        <FileText className="w-4 h-4" />
+                                        <span className="text-[10px] font-semibold">
+                                            계약
+                                        </span>
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                                    >
+                                        <ClipboardList className="w-4 h-4" />
+                                        <span className="text-[10px] font-semibold">
+                                            서류
+                                        </span>
+                                    </Button>
+                                </div>
+                            </div>
+                        }
+                    >
+                        <div className="space-y-4">
+                            <InfoCard title="기본 정보">
+                                <InfoRow
+                                    label={t(locale, "clients.form.name")}
+                                    value={selectedClient.name}
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.birthday")}
+                                    value={selectedClient.birthday || "-"}
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.due-date")}
+                                    value={formatDate(selectedClient.dueDate)}
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.phone")}
+                                    value={selectedClient.phone || "-"}
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.address")}
+                                    value={selectedClient.address || "-"}
+                                />
+                            </InfoCard>
+
+                            <InfoCard title="담당 관리사">
+                                <InfoRow
+                                    label={t(locale, "clients.form.primary-employee")}
+                                    value={
+                                        selectedClient.primaryEmployee?.name ??
+                                        "-"
+                                    }
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.secondary-employee")}
+                                    value={
+                                        selectedClient.secondaryEmployee
+                                            ?.name ?? "-"
+                                    }
+                                />
+                            </InfoCard>
+
+                            <InfoCard title="서비스 정보">
+                                <InfoRow
+                                    label={t(locale, "clients.form.voucher-type")}
+                                    value={selectedClient.type || "-"}
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.duration")}
+                                    value={
+                                        selectedClient.duration
+                                            ? `${selectedClient.duration}일`
+                                            : "-"
+                                    }
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.start-date")}
+                                    value={formatDate(selectedClient.startDate)}
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.end-date")}
+                                    value={formatDate(selectedClient.endDate)}
+                                />
+                            </InfoCard>
+
+                            <InfoCard title="요금 정보">
+                                <InfoRow
+                                    label={t(locale, "clients.form.full-price")}
+                                    value={formatPrice(
+                                        selectedClient.fullPrice
+                                    )}
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.grant")}
+                                    value={formatPrice(selectedClient.grant)}
+                                />
+                                <InfoRow
+                                    label={t(locale, "clients.form.actual-price")}
+                                    value={formatPrice(
+                                        selectedClient.actualPrice
+                                    )}
+                                />
+                            </InfoCard>
+
+                            <div className="flex gap-3 pt-2">
+                                <Button
+                                    variant="outline"
+                                    className="flex-1 rounded-full"
+                                    onClick={() => handleDelete(selectedClient.id)}
+                                >
+                                    {t(locale, "common.delete")}
+                                </Button>
+                                <Button
+                                    variant="v3"
+                                    className="flex-1 rounded-full"
+                                    onClick={() => handleEdit(selectedClient)}
+                                >
+                                    {t(locale, "common.edit")}
+                                </Button>
+                            </div>
+                        </div>
+                    </DetailPanel>
+                ) : (
+                    <div className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
+                        <div className="text-center text-v3-text-muted">
+                            <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                            <p className="text-[0.85rem]">
+                                고객을 선택하면 상세 정보가 표시됩니다
+                            </p>
+                        </div>
+                    </div>
+                )}
+            </SplitLayout>
+
+            <ClientDetailModal
+                open={detailModalOpen}
+                onClose={handleDetailModalClose}
+                client={selectedClient}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+            />
+
+            <ClientFormDialog
+                open={formDialogOpen}
+                onClose={handleFormDialogClose}
+                client={editingClient}
+            />
         </div>
     );
 }
