@@ -19,5 +19,9 @@ export const ConditionalHeader = () => {
     return null;
   }
 
-  return <Header initialUser={initialUser} />;
+  return (
+    <div data-component="conditional-header">
+      <Header initialUser={initialUser} />
+    </div>
+  );
 };

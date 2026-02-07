@@ -542,7 +542,7 @@ export const ContractCreationForm = () => {
   return (
     <>
       <ContentPaper
-        data-component="contract-creation-form"
+        data-component="messages-contract-form"
         className="flex flex-col justify-start grow w-full bg-background"
       >
         <div className="flex flex-col h-full animate-fade-in">
@@ -565,7 +565,7 @@ export const ContractCreationForm = () => {
           </Stepper>
 
           {/* form */}
-          <Card data-component="contract-creation-form-card" className="grow overflow-auto border-0 shadow-none">
+          <Card data-component="messages-contract-form-card" className="grow overflow-auto border-0 shadow-none">
             <CardContent className="bg-background p-0">
                 {/* Step 0: User Info */}
                 {activeStep === 0 && (
@@ -1079,7 +1079,7 @@ export const ContractCreationForm = () => {
                 variant="outline"
                 onClick={handleStepBack}
                 disabled={activeStep === 0 || isSubmitting}
-                data-component="contract-creation-form-back-button"
+                data-component="messages-contract-form-back"
               >
                 {t(locale, "common.back")}
               </Button>
@@ -1096,7 +1096,7 @@ export const ContractCreationForm = () => {
                 <Button
                   onClick={handleStepNext}
                   disabled={isNextDisabled()}
-                  data-component="contract-creation-form-next-button"
+                  data-component="messages-contract-form-next"
                 >
                   {t(locale, "common.next")}
                 </Button>
@@ -1108,7 +1108,7 @@ export const ContractCreationForm = () => {
       {/* eformsign Document Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={(open: boolean) => !open && handleDialogClose()}>
         <DialogContent
-          data-component="contract-creation-form-dialog"
+          data-component="messages-contract-form-dialog"
           className="max-w-full w-screen h-screen p-0 gap-0"
         >
           <DialogHeader className="px-4 py-2 flex flex-row items-center justify-between border-b">

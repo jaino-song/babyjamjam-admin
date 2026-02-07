@@ -42,7 +42,7 @@ export function UserTemplateForm({ template }: UserTemplateFormProps) {
     };
 
     return (
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-5" data-component="messages-user-template-form">
             <div className="flex flex-col gap-4">
                 {template.variables.map((variable) => (
                     <div key={variable.key} className="flex flex-col gap-2">

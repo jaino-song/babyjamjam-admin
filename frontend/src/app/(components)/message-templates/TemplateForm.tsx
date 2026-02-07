@@ -209,7 +209,7 @@ export function TemplateForm({ mode, initialData, onSubmit, isPending }: Templat
                         </div>
 
                         <Card
-                            data-component="template-variable-list-paper"
+                            data-component="messages-template-form-variables"
                             className="flex-1 p-4 max-h-[500px] overflow-y-auto bg-muted/50"
                         >
                             <p className="text-sm font-semibold mb-4">

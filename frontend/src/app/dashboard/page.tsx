@@ -29,30 +29,32 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState("all");
 
   return (
-    <section className="space-y-6">
-      <PageHeader
-        title="대시보드"
-        subtitle="오늘의 업무 현황입니다"
-        actions={
-          <>
-            <Link href="/contracts/creation">
-              <Button className="bg-v3-primary hover:bg-v3-primary-hover text-white rounded-2xl px-4 py-2 text-sm">
-                <Send className="w-4 h-4 mr-2" /> 계약 발송
-              </Button>
-            </Link>
-            <Link href="/messages">
-              <Button
-                variant="outline"
-                className="rounded-2xl px-4 py-2 text-sm border-v3-border"
-              >
-                <MessageSquare className="w-4 h-4 mr-2" /> 메시지 작성
-              </Button>
-            </Link>
-          </>
-        }
-      />
+    <section data-component="dashboard" className="space-y-6">
+      <div data-component="dashboard-header">
+        <PageHeader
+          title="대시보드"
+          subtitle="오늘의 업무 현황입니다"
+          actions={
+            <div data-component="dashboard-header-actions">
+              <Link href="/contracts/creation">
+                <Button className="bg-v3-primary hover:bg-v3-primary-hover text-white rounded-2xl px-4 py-2 text-sm">
+                  <Send className="w-4 h-4 mr-2" /> 계약 발송
+                </Button>
+              </Link>
+              <Link href="/messages">
+                <Button
+                  variant="outline"
+                  className="rounded-2xl px-4 py-2 text-sm border-v3-border"
+                >
+                  <MessageSquare className="w-4 h-4 mr-2" /> 메시지 작성
+                </Button>
+              </Link>
+            </div>
+          }
+        />
+      </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div data-component="dashboard-stats" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatMini
           icon={Users}
           value={stats?.activeClients ?? 0}
@@ -79,6 +81,7 @@ export default function DashboardPage() {
         />
       </div>
 
+      <div data-component="dashboard-split">
       <SplitLayout>
         <ListPanel
           title="최근 활동"
@@ -96,8 +99,8 @@ export default function DashboardPage() {
               로딩 중...
             </div>
           ) : (
-            <div className="divide-y divide-v3-border">
-              <div className="p-4 hover:bg-v3-primary-light rounded-xl cursor-pointer transition-colors">
+            <div data-component="dashboard-split-list" className="divide-y divide-v3-border">
+              <div data-component="dashboard-split-list-item" className="p-4 hover:bg-v3-primary-light rounded-xl cursor-pointer transition-colors">
                 <p className="text-sm font-medium text-v3-dark">
                   새 고객 등록
                 </p>
@@ -105,7 +108,7 @@ export default function DashboardPage() {
                   오늘 등록된 고객이 있습니다
                 </p>
               </div>
-              <div className="p-4 hover:bg-v3-primary-light rounded-xl cursor-pointer transition-colors">
+              <div data-component="dashboard-split-list-item" className="p-4 hover:bg-v3-primary-light rounded-xl cursor-pointer transition-colors">
                 <p className="text-sm font-medium text-v3-dark">
                   계약 서명 완료
                 </p>
@@ -113,7 +116,7 @@ export default function DashboardPage() {
                   서명이 완료된 계약이 있습니다
                 </p>
               </div>
-              <div className="p-4 hover:bg-v3-primary-light rounded-xl cursor-pointer transition-colors">
+              <div data-component="dashboard-split-list-item" className="p-4 hover:bg-v3-primary-light rounded-xl cursor-pointer transition-colors">
                 <p className="text-sm font-medium text-v3-dark">일정 알림</p>
                 <p className="text-xs text-v3-text-muted mt-1">
                   이번 주 예정된 일정이 있습니다
@@ -128,7 +131,7 @@ export default function DashboardPage() {
             <h3 className="text-lg font-bold text-v3-dark">업무 요약</h3>
           }
         >
-          <div className="space-y-4">
+          <div data-component="dashboard-split-detail" className="space-y-4">
             <InfoCard title="이번 달 현황">
               <InfoRow label="활성 고객" value={stats?.activeClients ?? "-"} />
               <InfoRow
@@ -151,6 +154,7 @@ export default function DashboardPage() {
           </div>
         </DetailPanel>
       </SplitLayout>
+      </div>
     </section>
   );
 }

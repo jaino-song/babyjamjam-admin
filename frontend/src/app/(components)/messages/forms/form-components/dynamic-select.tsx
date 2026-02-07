@@ -70,7 +70,7 @@ export const DynamicSelect = ({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-component="messages-form-dynamic-select">
       <Label>
         {label}
         {required && <span className="text-destructive ml-1">*</span>}

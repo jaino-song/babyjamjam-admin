@@ -74,10 +74,10 @@ export default function VerifyEmailPage() {
     // Loading State
     if (status === "loading") {
         return (
-            <div className="flex min-h-screen items-center justify-center px-4 py-8">
+            <div data-component="auth-verify-email" className="flex min-h-screen items-center justify-center px-4 py-8">
                 <Card className="w-full max-w-[400px]">
                     <CardContent className="pt-6">
-                        <div className="flex flex-col items-center space-y-4 text-center">
+                        <div data-component="auth-verify-email-loading" className="flex flex-col items-center space-y-4 text-center">
                             <Loader2 className="h-12 w-12 text-primary animate-spin" />
                             <p className="text-muted-foreground">이메일 인증 중...</p>
                         </div>
@@ -90,16 +90,17 @@ export default function VerifyEmailPage() {
     // Success State
     if (status === "success") {
         return (
-            <div className="flex min-h-screen items-center justify-center px-4 py-8">
+            <div data-component="auth-verify-email" className="flex min-h-screen items-center justify-center px-4 py-8">
                 <Card className="w-full max-w-[400px] animate-scale-in">
                     <CardContent className="pt-6">
-                        <div className="flex flex-col items-center space-y-4 text-center">
-                            <div className="rounded-full bg-success/10 p-3">
+                        <div data-component="auth-verify-email-success" className="flex flex-col items-center space-y-4 text-center">
+                            <div data-component="auth-verify-email-success-icon" className="rounded-full bg-success/10 p-3">
                                 <CheckCircle className="h-12 w-12 text-success" />
                             </div>
                             <h2 className="text-2xl font-bold">인증 완료!</h2>
                             <p className="text-muted-foreground">{message}</p>
                             <Button
+                                data-component="auth-verify-email-login-btn"
                                 size="lg"
                                 className="w-full mt-4"
                                 onClick={() => router.push("/login")}
@@ -116,11 +117,11 @@ export default function VerifyEmailPage() {
     // Error State
     if (status === "error") {
         return (
-            <div className="flex min-h-screen items-center justify-center px-4 py-8">
+            <div data-component="auth-verify-email" className="flex min-h-screen items-center justify-center px-4 py-8">
                 <Card className="w-full max-w-[400px] animate-scale-in">
                     <CardContent className="pt-6">
-                        <div className="flex flex-col items-center space-y-4 text-center">
-                            <div className="rounded-full bg-destructive/10 p-3">
+                        <div data-component="auth-verify-email-error" className="flex flex-col items-center space-y-4 text-center">
+                            <div data-component="auth-verify-email-error-icon" className="rounded-full bg-destructive/10 p-3">
                                 <AlertTriangle className="h-12 w-12 text-destructive" />
                             </div>
                             <h2 className="text-2xl font-bold">인증 실패</h2>
@@ -129,13 +130,14 @@ export default function VerifyEmailPage() {
                                 인증 링크가 만료되었거나 이미 사용된 경우, 아래에서 재발송을 요청할 수 있습니다.
                             </Alert>
 
-                            <form onSubmit={handleResend} className="w-full space-y-3">
+                            <form onSubmit={handleResend} data-component="auth-verify-email-resend-form" className="w-full space-y-3">
                                 <FormField
                                     label="이메일 주소"
                                     type="email"
                                     value={resendEmail}
                                     onChange={(e) => setResendEmail(e.target.value)}
                                     disabled={resendLoading}
+                                    data-component="auth-verify-email-resend-field"
                                 />
                                 {resendMessage && (
                                     <Alert
@@ -145,6 +147,7 @@ export default function VerifyEmailPage() {
                                     </Alert>
                                 )}
                                 <Button
+                                    data-component="auth-verify-email-resend-btn"
                                     type="submit"
                                     variant="outline"
                                     size="lg"
@@ -156,6 +159,7 @@ export default function VerifyEmailPage() {
                             </form>
 
                             <Button
+                                data-component="auth-verify-email-login-btn"
                                 variant="ghost"
                                 onClick={() => router.push("/login")}
                             >
@@ -170,11 +174,11 @@ export default function VerifyEmailPage() {
 
     // No Token State
     return (
-        <div className="flex min-h-screen items-center justify-center px-4 py-8">
+        <div data-component="auth-verify-email" className="flex min-h-screen items-center justify-center px-4 py-8">
             <Card className="w-full max-w-[400px] animate-scale-in">
                 <CardContent className="pt-6">
-                    <div className="flex flex-col items-center space-y-4 text-center">
-                        <div className="rounded-full bg-warning/10 p-3">
+                    <div data-component="auth-verify-email-no-token" className="flex flex-col items-center space-y-4 text-center">
+                        <div data-component="auth-verify-email-no-token-icon" className="rounded-full bg-warning/10 p-3">
                             <AlertTriangle className="h-12 w-12 text-warning" />
                         </div>
                         <h2 className="text-2xl font-bold">인증 토큰 없음</h2>
@@ -185,13 +189,14 @@ export default function VerifyEmailPage() {
                             인증 이메일을 받지 못하셨나요? 아래에서 재발송을 요청할 수 있습니다.
                         </Alert>
 
-                        <form onSubmit={handleResend} className="w-full space-y-3">
+                        <form onSubmit={handleResend} data-component="auth-verify-email-resend-form" className="w-full space-y-3">
                             <FormField
                                 label="이메일 주소"
                                 type="email"
                                 value={resendEmail}
                                 onChange={(e) => setResendEmail(e.target.value)}
                                 disabled={resendLoading}
+                                data-component="auth-verify-email-resend-field"
                             />
                             {resendMessage && (
                                 <Alert
@@ -201,6 +206,7 @@ export default function VerifyEmailPage() {
                                 </Alert>
                             )}
                             <Button
+                                data-component="auth-verify-email-resend-btn"
                                 type="submit"
                                 variant="outline"
                                 size="lg"
@@ -212,6 +218,7 @@ export default function VerifyEmailPage() {
                         </form>
 
                         <Button
+                            data-component="auth-verify-email-login-btn"
                             variant="ghost"
                             onClick={() => router.push("/login")}
                         >

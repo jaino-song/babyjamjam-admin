@@ -87,7 +87,7 @@ export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
             <Card
                 ref={ref}
                 variant={variant}
-                data-component="ContentPaper"
+                data-component="content-paper"
                 data-testid="ContentPaper"
                 className={cn(
                     variant !== "v3" && "rounded-lg", // 8px radius - reference design match (only for default)

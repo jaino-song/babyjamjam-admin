@@ -79,7 +79,7 @@ export default function SelectOrganizationPage() {
 
     if (loading) {
         return (
-            <div className="flex flex-col items-center justify-center h-screen gap-4">
+            <div data-component="select-org" className="flex flex-col items-center justify-center h-screen gap-4">
                 <Spinner size="lg" />
                 <p className="text-foreground">조직 목록을 불러오는 중...</p>
             </div>
@@ -88,8 +88,10 @@ export default function SelectOrganizationPage() {
 
     if (error) {
         return (
-            <div className="flex flex-col items-center justify-center h-screen gap-4 px-4">
-                <p className="text-destructive">{error}</p>
+            <div data-component="select-org" className="flex flex-col items-center justify-center h-screen gap-4 px-4">
+                <div data-component="select-org-error">
+                    <p className="text-destructive">{error}</p>
+                </div>
                 <Button variant="outline" onClick={() => router.push("/login")}>
                     로그인 페이지로 돌아가기
                 </Button>
@@ -99,9 +101,9 @@ export default function SelectOrganizationPage() {
 
     if (organizations.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center h-screen gap-6 px-4 text-center">
+            <div data-component="select-org" className="flex flex-col items-center justify-center h-screen gap-6 px-4 text-center">
                 <Building2 className="w-16 h-16 text-muted-foreground/50" />
-                <div>
+                <div data-component="select-org-empty">
                     <h2 className="text-xl font-bold text-foreground mb-2">
                         접근 가능한 조직이 없습니다
                     </h2>
@@ -112,7 +114,7 @@ export default function SelectOrganizationPage() {
                         권한이 부여되면 이 페이지를 새로고침하세요.
                     </p>
                 </div>
-                <div className="flex gap-3">
+                <div data-component="select-org-empty-actions" className="flex gap-3">
                     <Button onClick={() => window.location.reload()}>
                         새로고침
                     </Button>
@@ -156,7 +158,7 @@ export default function SelectOrganizationPage() {
     };
 
     return (
-        <div className="flex flex-col items-center justify-center min-h-screen gap-6 px-4 py-8">
+        <div data-component="select-org" className="flex flex-col items-center justify-center min-h-screen gap-6 px-4 py-8">
             <h1 className="text-2xl font-bold text-foreground">
                 조직 선택
             </h1>
@@ -164,7 +166,7 @@ export default function SelectOrganizationPage() {
                 작업할 조직을 선택해주세요
             </p>
 
-            <div className="flex flex-col gap-3 w-full max-w-md">
+            <div data-component="select-org-list" className="flex flex-col gap-3 w-full max-w-md">
                 {organizations.map((org) => (
                     <Card
                         key={org.id}
@@ -202,7 +204,7 @@ export default function SelectOrganizationPage() {
             </div>
 
             {selecting && (
-                <div className="flex items-center gap-2 mt-4">
+                <div data-component="select-org-loading" className="flex items-center gap-2 mt-4">
                     <Spinner size="sm" />
                     <p className="text-sm text-muted-foreground">
                         조직 설정 중...

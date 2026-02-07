@@ -145,11 +145,11 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <section className="space-y-6">
+    <section data-component="settings" className="space-y-6">
       <PageHeader title="설정" subtitle="서비스 환경을 관리합니다" icon={Settings} />
 
-      <div className="flex flex-col lg:flex-row gap-8">
-        <nav className="lg:w-[220px] shrink-0">
+      <div data-component="settings-content" className="flex flex-col lg:flex-row gap-8">
+        <nav data-component="settings-nav" className="lg:w-[220px] shrink-0">
           <div className="hidden lg:block sticky top-24">
             <div className="flex flex-col gap-1">
               {NAV_SECTIONS.map((section) => {
@@ -197,8 +197,9 @@ export default function SettingsPage() {
           </div>
         </nav>
 
-        <div className="flex-1 flex flex-col gap-8 min-w-0">
+        <div data-component="settings-sections" className="flex-1 flex flex-col gap-8 min-w-0">
           <section
+            data-component="settings-profile"
             ref={(el) => { sectionRefs.current.profile = el; }}
             id="section-profile"
           >
@@ -267,6 +268,7 @@ export default function SettingsPage() {
           </section>
 
           <section
+            data-component="settings-notifications"
             ref={(el) => { sectionRefs.current.notifications = el; }}
             id="section-notifications"
           >
@@ -369,6 +371,7 @@ export default function SettingsPage() {
           </section>
 
           <section
+            data-component="settings-theme"
             ref={(el) => { sectionRefs.current.theme = el; }}
             id="section-theme"
           >
@@ -434,6 +437,7 @@ export default function SettingsPage() {
           </section>
 
           <section
+            data-component="settings-security"
             ref={(el) => { sectionRefs.current.security = el; }}
             id="section-security"
           >
@@ -502,6 +506,7 @@ export default function SettingsPage() {
           </section>
 
           <section
+            data-component="settings-pricing"
             ref={(el) => { sectionRefs.current.pricing = el; }}
             id="section-pricing"
           >

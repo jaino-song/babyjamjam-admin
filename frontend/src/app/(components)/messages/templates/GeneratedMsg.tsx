@@ -32,7 +32,7 @@ export const GeneratedMsg = memo(function GeneratedMsg({
           size="default"
           className="w-20 gap-2"
           onClick={handleCopy}
-          data-component="generated-msg-copy-button"
+          data-component="messages-generated-msg-copy"
         >
           <Copy className="h-4 w-4" />
           {copyButtonText}

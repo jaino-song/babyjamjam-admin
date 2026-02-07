@@ -124,7 +124,7 @@ export function ClientAutocomplete({
     };
 
     return (
-        <div className="space-y-2">
+        <div data-component="clients-autocomplete" className="space-y-2">
             <Label className={cn(error && "text-destructive")}>
                 {label}
                 {required && <span className="text-destructive ml-1">*</span>}
@@ -136,6 +136,7 @@ export function ClientAutocomplete({
                         variant="outline"
                         role="combobox"
                         aria-expanded={isOpen}
+                        data-component="clients-autocomplete-input"
                         className={cn(
                             "w-full justify-between font-normal",
                             !selectedClient && "text-muted-foreground",
@@ -161,7 +162,7 @@ export function ClientAutocomplete({
                         </div>
                     </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                <PopoverContent data-component="clients-autocomplete-dropdown" className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
                     <Command shouldFilter={false}>
                         <CommandInput
                             placeholder={t(locale, "contract-msg.client-search-placeholder")}

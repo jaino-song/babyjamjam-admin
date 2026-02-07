@@ -20,7 +20,7 @@ export function StatMini({ icon: Icon, value, label, colorIndex = 0 }: StatMiniP
   const variant = colorVariants[colorIndex % colorVariants.length];
 
   return (
-    <div className="bg-white rounded-[20px] shadow-v3 hover:shadow-v3-hover hover:-translate-y-1 transition-all duration-300 p-4">
+    <div data-component="stat-mini" className="bg-white rounded-[20px] shadow-v3 hover:shadow-v3-hover hover:-translate-y-1 transition-all duration-300 p-4">
       <div
         className={`w-12 h-12 rounded-[14px] ${variant.bg} flex items-center justify-center mb-3`}
       >

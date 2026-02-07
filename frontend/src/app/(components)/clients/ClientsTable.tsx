@@ -147,8 +147,8 @@ export function ClientsTable() {
     const total = data?.total || 0;
 
     return (
-        <div className="space-y-6 animate-slide-up pb-10">
-            <div className="flex justify-between items-center">
+        <div data-component="clients-table" className="space-y-6 animate-slide-up pb-10">
+            <div data-component="clients-table-header" className="flex justify-between items-center">
                  <div className="space-y-1">
                     <h1 className="text-2xl font-bold text-[hsl(214,40%,18%)]">고객 관리 👥</h1>
                     <p className="text-sm text-muted-foreground">전체 고객 정보를 확인하고 관리하세요</p>
@@ -162,7 +162,7 @@ export function ClientsTable() {
                  </div>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
+            <div data-component="clients-table-filters" className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
                 <div className="relative w-full lg:max-w-md shadow-sm rounded-full transition-transform focus-within:scale-[1.01]">
                     <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
                     <Input 
@@ -190,7 +190,7 @@ export function ClientsTable() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div data-component="clients-table-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-white p-5 rounded-[20px] shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
                     <div className="w-12 h-12 rounded-[14px] bg-[hsl(214,80%,95%)] flex items-center justify-center text-xl">👥</div>
                     <div>
@@ -230,7 +230,7 @@ export function ClientsTable() {
                     </div>
                 </div>
                 
-                <div className="p-3 bg-[hsl(220,20%,99%)] flex-1 overflow-y-auto">
+                <div data-component="clients-table-body" className="p-3 bg-[hsl(220,20%,99%)] flex-1 overflow-y-auto">
                     <div className="space-y-2">
                         {isLoading ? (
                              <div className="p-8 text-center text-muted-foreground">Loading...</div>
@@ -241,6 +241,7 @@ export function ClientsTable() {
                                 <Card 
                                     key={client.id} 
                                     variant="v3" 
+                                    data-component="clients-table-row"
                                     className="flex items-center gap-4 p-5 cursor-pointer animate-pop-in border-2 border-transparent hover:border-[hsl(214,100%,34%)] hover:bg-[hsl(214,80%,98%)] group" 
                                     style={{ animationDelay: `${idx * 0.05}s` }} 
                                     onClick={() => handleRowClick(client)}

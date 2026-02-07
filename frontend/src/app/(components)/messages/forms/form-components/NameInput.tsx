@@ -44,7 +44,7 @@ export const NameInput = ({
   };
 
   return (
-    <div className="space-y-2" data-component="name-input">
+    <div className="space-y-2" data-component="messages-form-name-input">
       <Label>{label}</Label>
       <Input
         value={name}

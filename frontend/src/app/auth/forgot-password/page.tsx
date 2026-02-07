@@ -55,11 +55,11 @@ export default function ForgotPasswordPage() {
     // Success State
     if (isSuccess) {
         return (
-            <div className="flex min-h-screen items-center justify-center px-4 py-8">
+            <div data-component="auth-forgot-password" className="flex min-h-screen items-center justify-center px-4 py-8">
                 <Card className="w-full max-w-[400px] animate-scale-in">
                     <CardContent className="pt-6">
-                        <div className="flex flex-col items-center space-y-4 text-center">
-                            <div className="rounded-full bg-success/10 p-3">
+                        <div data-component="auth-forgot-password-success" className="flex flex-col items-center space-y-4 text-center">
+                            <div data-component="auth-forgot-password-success-icon" className="rounded-full bg-success/10 p-3">
                                 <CheckCircle className="h-12 w-12 text-success" />
                             </div>
                             <h2 className="text-2xl font-bold">이메일 전송 완료</h2>
@@ -72,6 +72,7 @@ export default function ForgotPasswordPage() {
                                 이메일이 도착하지 않았다면 스팸 폴더를 확인해 주세요.
                             </Alert>
                             <Button
+                                data-component="auth-forgot-password-login-btn"
                                 size="lg"
                                 className="w-full mt-4"
                                 onClick={() => router.push("/login")}
@@ -89,15 +90,16 @@ export default function ForgotPasswordPage() {
         <AuthCard
             title="비밀번호 찾기"
             description="가입하신 이메일 주소를 입력하시면 비밀번호 재설정 링크를 보내드립니다."
+            data-component="auth-forgot-password"
         >
-            <div className="space-y-6">
+            <div data-component="auth-forgot-password-content" className="space-y-6">
                 {error && (
                     <Alert variant="destructive" onClose={() => setError(null)}>
                         {error}
                     </Alert>
                 )}
 
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form onSubmit={handleSubmit} data-component="auth-forgot-password-form" className="space-y-4">
                     <FormField
                         label="이메일"
                         type="email"
@@ -106,9 +108,11 @@ export default function ForgotPasswordPage() {
                         disabled={isLoading}
                         autoComplete="email"
                         autoFocus
+                        data-component="auth-forgot-password-email-field"
                     />
 
                     <Button
+                        data-component="auth-forgot-password-submit-btn"
                         type="submit"
                         size="lg"
                         className="w-full mt-2"
@@ -123,6 +127,7 @@ export default function ForgotPasswordPage() {
                     <Link
                         href="/login"
                         className="text-primary font-medium hover:underline"
+                        data-component="auth-forgot-password-login-link"
                     >
                         로그인
                     </Link>

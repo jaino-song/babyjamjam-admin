@@ -8,7 +8,7 @@ interface MsgFieldProps {
 export const MsgField = ({ value, onChange }: MsgFieldProps) => {
   return (
     <Textarea
-      data-component="MsgField"
+      data-component="messages-msg-field"
       value={value}
       onChange={(e) => onChange?.(e.target.value)}
       rows={12}

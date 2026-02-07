@@ -34,7 +34,7 @@ export const ContactInput = ({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-component="messages-form-contact-input">
       <Label>{label}</Label>
       <Input
         value={phone}

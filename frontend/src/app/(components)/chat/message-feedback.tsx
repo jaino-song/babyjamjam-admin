@@ -56,6 +56,7 @@ export function MessageFeedback({
     return (
         <>
             <div
+                data-component="chat-message-feedback"
                 data-testid="message-feedback"
                 className={cn(
                     "flex gap-1 mt-2",

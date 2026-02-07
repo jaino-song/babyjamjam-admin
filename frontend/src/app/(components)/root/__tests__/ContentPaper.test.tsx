@@ -19,7 +19,7 @@ describe('ContentPaper', () => {
 
       expect(screen.getByTestId('ContentPaper')).toHaveAttribute(
         'data-component',
-        'ContentPaper'
+        'content-paper'
       );
     });
 

@@ -29,7 +29,7 @@ export function ActivityTimeline({
   maxHeight = "400px",
 }: ActivityTimelineProps) {
   return (
-    <div className="overflow-y-auto" style={{ maxHeight }}>
+    <div data-component="activity-timeline" className="overflow-y-auto" style={{ maxHeight }}>
       {items.map((item, index) => {
         const isLast = index === items.length - 1;
         const Icon = item.icon;

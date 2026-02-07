@@ -33,7 +33,7 @@ export const ReminderMessageForm = () => {
 
   return (
     <div
-      data-component="reminder-message-form"
+      data-component="messages-reminder-form"
       className="flex flex-col grow h-full bg-background animate-fade-in"
     >
       <div className="flex flex-col grow">
@@ -49,7 +49,7 @@ export const ReminderMessageForm = () => {
             size="lg"
             onClick={handleGenerate}
             disabled={!name}
-            data-component="reminder-message-form-generate-button"
+            data-component="messages-reminder-form-generate"
           >
             {t(locale, "common.generate-button")}
           </Button>

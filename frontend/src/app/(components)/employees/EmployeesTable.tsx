@@ -141,6 +141,7 @@ export function EmployeesTable() {
 
     const toolbarActions = (
         <Button
+            data-component="employees-table-add"
             className="gap-2 w-[100px]"
             onClick={handleAddNew}
         >
@@ -157,7 +158,7 @@ export function EmployeesTable() {
                 subtitle={t(locale, "employees.subtitle")}
                 className="min-h-[70vh] flex-grow w-full"
             >
-                <div className="p-3">
+                <div data-component="employees-table-error" className="p-3">
                     <Alert variant="destructive">
                         <AlertDescription>
                             직원 목록을 불러오는데 실패했습니다: {errorMessage}
@@ -174,7 +175,7 @@ export function EmployeesTable() {
             subtitle={t(locale, "employees.subtitle")}
             className="min-h-[70vh] flex-grow w-full"
         >
-            <div data-component="employees-table-container">
+            <div data-component="employees-table">
                 <DataTable<EmployeeRow>
                     data={tableData}
                     columns={columns}

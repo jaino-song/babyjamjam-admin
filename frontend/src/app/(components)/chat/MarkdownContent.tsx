@@ -8,7 +8,7 @@ interface MarkdownContentProps {
 
 export function MarkdownContent({ children }: MarkdownContentProps) {
     return (
-        <div className="markdown-content select-text">
+        <div data-component="chat-markdown" className="markdown-content select-text">
             {children}
         </div>
     );

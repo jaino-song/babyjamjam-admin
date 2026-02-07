@@ -17,11 +17,14 @@ interface DynamicInputProps {
 export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) => {
     const { type, label, placeholder, required, optionType, options, dataSource } = variable;
 
+    let content;
+
     switch (type) {
         case "date":
-            return <DateInput value={value} onChange={onChange} label={label} required={required} />;
+            content = <DateInput value={value} onChange={onChange} label={label} required={required} />;
+            break;
         case "number":
-            return (
+            content = (
                 <NumberInput 
                     value={value} 
                     onChange={onChange} 
@@ -32,10 +35,12 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
                     max={variable.max} 
                 />
             );
+            break;
         case "textarea":
-            return <TextareaInput value={value} onChange={onChange} label={label} placeholder={placeholder} required={required} />;
+            content = <TextareaInput value={value} onChange={onChange} label={label} placeholder={placeholder} required={required} />;
+            break;
         case "select":
-            return (
+            content = (
                 <DynamicSelect 
                     value={value} 
                     onChange={onChange} 
@@ -46,28 +51,32 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
                     dataSourceId={dataSource} 
                 />
             );
+            break;
         case "phone":
-            return <ContactInput phone={value} setPhone={onChange} label={label} placeholder={placeholder || ""} />;
+            content = <ContactInput phone={value} setPhone={onChange} label={label} placeholder={placeholder || ""} />;
+            break;
         case "text":
             if (variable.key === "name") {
-                return <NameInput name={value} setName={onChange} label={label} placeholder={placeholder || ""} />;
+                content = <NameInput name={value} setName={onChange} label={label} placeholder={placeholder || ""} />;
+            } else {
+                content = (
+                    <div className="space-y-2">
+                        <Label>
+                            {label}
+                            {required && <span className="text-destructive ml-1">*</span>}
+                        </Label>
+                        <Input
+                            value={value}
+                            onChange={(e) => onChange(e.target.value)}
+                            placeholder={placeholder}
+                            className="bg-background"
+                        />
+                    </div>
+                );
             }
-            return (
-                <div className="space-y-2">
-                    <Label>
-                        {label}
-                        {required && <span className="text-destructive ml-1">*</span>}
-                    </Label>
-                    <Input
-                        value={value}
-                        onChange={(e) => onChange(e.target.value)}
-                        placeholder={placeholder}
-                        className="bg-background"
-                    />
-                </div>
-            );
+            break;
         default:
-            return (
+            content = (
                 <div className="space-y-2">
                     <Label>
                         {label}
@@ -82,4 +91,10 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
                 </div>
             );
     }
+
+    return (
+        <div data-component="messages-form-dynamic-input">
+            {content}
+        </div>
+    );
 };

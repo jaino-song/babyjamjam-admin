@@ -228,7 +228,7 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
             onOpenChange={(isOpen) => !isOpen && handleClose()}
         >
             <DialogContent
-                data-component="EmployeeFormDialog"
+                data-component="employees-form-dialog"
                 className="max-w-lg max-h-[90vh] overflow-y-auto rounded-lg shadow-xl"
             >
                 <DialogHeader>
@@ -244,12 +244,12 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-6 py-4" data-component="EmployeeFormDialog-Content">
+                <div className="space-y-6 py-4" data-component="employees-form-dialog-content">
                     {/* Error Alert */}
                     {error && (
                         <Alert
                             variant="destructive"
-                            data-component="EmployeeFormDialog-ErrorAlert"
+                            data-component="employees-form-dialog-error"
                         >
                             <AlertDescription>{error}</AlertDescription>
                         </Alert>
@@ -393,19 +393,19 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                     </div>
                 </div>
 
-                <DialogFooter data-component="EmployeeFormDialog-Actions">
+                <DialogFooter data-component="employees-form-dialog-actions">
                     <Button
                         variant="outline"
                         onClick={handleClose}
                         disabled={isLoading}
-                        data-component="EmployeeFormDialog-CancelButton"
+                        data-component="employees-form-dialog-cancel"
                     >
                         {t(locale, "common.cancel")}
                     </Button>
                     <Button
                         onClick={handleSubmit}
                         disabled={isLoading || !isFormValid}
-                        data-component="EmployeeFormDialog-SubmitButton"
+                        data-component="employees-form-dialog-submit"
                     >
                         {isLoading ? (
                             <Spinner className="h-4 w-4" />

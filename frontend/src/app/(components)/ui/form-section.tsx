@@ -21,7 +21,7 @@ function FormSection({
   return (
     <>
       {showSeparator && <Separator className="my-4" />}
-      <div className={cn("space-y-3", className)} {...props}>
+      <div data-component="form-section" className={cn("space-y-3", className)} {...props}>
         <div className="flex items-center gap-2">
           <h4 className="text-sm font-medium text-primary">{title}</h4>
           {badge}

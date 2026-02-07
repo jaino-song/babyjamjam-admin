@@ -25,14 +25,14 @@ export function ListPanel({
   headerActions,
 }: ListPanelProps) {
   return (
-    <div className="bg-white rounded-[28px] shadow-v3">
+    <div data-component="list-panel" className="bg-white rounded-[28px] shadow-v3">
       <div className="flex items-center justify-between p-6 pb-0">
         <h2 className="text-lg font-bold text-v3-dark">{title}</h2>
         {headerActions && <div>{headerActions}</div>}
       </div>
 
       {tabs && tabs.length > 0 && (
-        <div className="flex gap-1 px-6 pt-4">
+        <div data-component="list-panel-tabs" className="flex gap-1 px-6 pt-4">
           {tabs.map((tab) => (
             <button
               key={tab.value}
@@ -49,7 +49,7 @@ export function ListPanel({
         </div>
       )}
 
-      <div className="overflow-y-auto max-h-[calc(100vh-300px)] p-6">
+      <div data-component="list-panel-content" className="overflow-y-auto max-h-[calc(100vh-300px)] p-6">
         {children}
       </div>
     </div>

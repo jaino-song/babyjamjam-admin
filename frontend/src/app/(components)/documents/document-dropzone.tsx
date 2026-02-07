@@ -204,7 +204,7 @@ export function DocumentDropzone({
   };
 
   return (
-    <div data-component="DocumentDropzone" className="w-full">
+    <div data-component="contracts-document-dropzone" className="w-full">
       {validationError && (
         <Alert variant="destructive" className="mb-4">
           <AlertDescription>{validationError}</AlertDescription>

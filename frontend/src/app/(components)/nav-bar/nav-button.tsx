@@ -24,6 +24,7 @@ export const NavButton = ({
 }: NavButtonProps) => {
     return (
         <Link
+            data-component="nav-bar-button"
             href={href}
             onClick={disabled ? (e) => e.preventDefault() : onClick}
             className={cn(

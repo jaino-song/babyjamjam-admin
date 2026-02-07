@@ -87,7 +87,7 @@ export function ParsedDataPreview({
 
   return (
     <TooltipProvider>
-      <div data-component="ParsedDataPreview">
+      <div data-component="settings-parsed-data-preview">
         {/* 경고 메시지 */}
         {warnings.length > 0 && (
           <Alert className="mb-4 bg-warning/10 border-warning/30 text-warning">
@@ -123,7 +123,7 @@ export function ParsedDataPreview({
         </div>
 
         {/* 데이터 테이블 */}
-        <div className="border rounded-lg overflow-hidden" data-component="parsed-data-table-container">
+        <div className="border rounded-lg overflow-hidden" data-component="settings-parsed-data-table">
           <Table>
             <TableHeader>
               <TableRow>

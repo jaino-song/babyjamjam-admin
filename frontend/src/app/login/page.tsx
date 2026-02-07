@@ -90,7 +90,7 @@ const LoginPage = () => {
             title={t(locale, "login.title")}
             description={t(locale, "login.subtitle")}
         >
-            <div className="space-y-6">
+            <div data-component="login" className="space-y-6">
                 {/* Error Alert */}
                 {serverError && (
                     <Alert
@@ -117,7 +117,7 @@ const LoginPage = () => {
                 )}
 
                 {/* Login Form */}
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form data-component="login-form" onSubmit={handleSubmit} className="space-y-4">
                     <FormField
                         label="이메일"
                         type="email"
@@ -138,7 +138,7 @@ const LoginPage = () => {
                         autoComplete="current-password"
                     />
 
-                    <div className="flex justify-end">
+                    <div data-component="login-form-forgot" className="flex justify-end">
                         <Link
                             href="/auth/forgot-password"
                             className="text-sm text-muted-foreground hover:text-primary transition-colors"
@@ -158,7 +158,7 @@ const LoginPage = () => {
                 </form>
 
                 {/* Divider */}
-                <div className="relative">
+                <div data-component="login-divider" className="relative">
                     <div className="absolute inset-0 flex items-center">
                         <span className="w-full border-t border-border" />
                     </div>

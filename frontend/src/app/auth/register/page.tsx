@@ -100,13 +100,13 @@ export default function RegisterPage() {
     // Success State
     if (isSuccess) {
         return (
-            <div className="flex min-h-screen items-center justify-center px-4 py-8">
+            <div data-component="auth-register" className="flex min-h-screen items-center justify-center px-4 py-8">
                 <Card className="w-full max-w-[400px] animate-scale-in">
                     <CardContent className="pt-6">
-                        <div className="flex flex-col items-center space-y-4 text-center">
+                        <div data-component="auth-register-success" className="flex flex-col items-center space-y-4 text-center">
                             {accountsLinked ? (
                                 <>
-                                    <div className="rounded-full bg-primary/10 p-3">
+                                    <div data-component="auth-register-success-icon" className="rounded-full bg-primary/10 p-3">
                                         <Link2 className="h-12 w-12 text-primary" />
                                     </div>
                                     <h2 className="text-2xl font-bold">계정이 연결되었습니다!</h2>
@@ -120,7 +120,7 @@ export default function RegisterPage() {
                                 </>
                             ) : (
                                 <>
-                                    <div className="rounded-full bg-success/10 p-3">
+                                    <div data-component="auth-register-success-icon" className="rounded-full bg-success/10 p-3">
                                         <CheckCircle className="h-12 w-12 text-success" />
                                     </div>
                                     <h2 className="text-2xl font-bold">회원가입 완료!</h2>
@@ -132,6 +132,7 @@ export default function RegisterPage() {
                                 </>
                             )}
                             <Button
+                                data-component="auth-register-success-login-btn"
                                 size="lg"
                                 className="w-full mt-4"
                                 onClick={() => router.push("/login")}
@@ -146,15 +147,15 @@ export default function RegisterPage() {
     }
 
     return (
-        <AuthCard title="회원가입">
-            <div className="space-y-6">
+        <AuthCard title="회원가입" data-component="auth-register">
+            <div data-component="auth-register-content" className="space-y-6">
                 {serverError && (
                     <Alert variant="destructive" onClose={() => setServerError(null)}>
                         {serverError}
                     </Alert>
                 )}
 
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form onSubmit={handleSubmit} data-component="auth-register-form" className="space-y-4">
                     <FormField
                         label="이메일"
                         type="email"
@@ -163,6 +164,7 @@ export default function RegisterPage() {
                         error={errors.email}
                         disabled={isLoading}
                         autoComplete="email"
+                        data-component="auth-register-email-field"
                     />
 
                     <FormField
@@ -173,6 +175,7 @@ export default function RegisterPage() {
                         error={errors.name}
                         disabled={isLoading}
                         autoComplete="name"
+                        data-component="auth-register-name-field"
                     />
 
                     <FormField
@@ -183,6 +186,7 @@ export default function RegisterPage() {
                         error={errors.password}
                         disabled={isLoading}
                         autoComplete="new-password"
+                        data-component="auth-register-password-field"
                     />
 
                     {/* Password Requirements */}
@@ -201,9 +205,11 @@ export default function RegisterPage() {
                         error={errors.confirmPassword}
                         disabled={isLoading}
                         autoComplete="new-password"
+                        data-component="auth-register-confirm-field"
                     />
 
                     <Button
+                        data-component="auth-register-submit-btn"
                         type="submit"
                         size="lg"
                         className="w-full mt-2"
@@ -218,6 +224,7 @@ export default function RegisterPage() {
                     <Link
                         href="/login"
                         className="text-primary font-medium hover:underline"
+                        data-component="auth-register-login-link"
                     >
                         로그인
                     </Link>

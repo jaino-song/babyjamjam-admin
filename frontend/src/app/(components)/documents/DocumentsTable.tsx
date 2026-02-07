@@ -296,7 +296,7 @@ export function DocumentsTable() {
             subtitle="문서 및 파일을 관리합니다"
             sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
         >
-            <div data-component="documents-table-container">
+            <div data-component="contracts-documents-table">
                 <DataTable
                     data={tableData}
                     columns={columns}

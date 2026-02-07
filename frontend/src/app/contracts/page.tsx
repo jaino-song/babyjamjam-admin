@@ -180,7 +180,7 @@ export default function ContractsPage() {
   }
 
   return (
-    <section className="space-y-6">
+    <section data-component="contracts" className="space-y-6">
         <PageHeader
           title="전자계약 관리"
           subtitle="eformsign 전자계약 문서를 관리합니다"
@@ -188,6 +188,7 @@ export default function ContractsPage() {
           actions={
             <Link
               href="/contracts/creation"
+              data-component="contracts-header-send-contract"
               className="inline-flex items-center gap-2 rounded-[14px] bg-v3-primary px-5 py-2.5 text-[0.85rem] font-semibold text-white shadow-v3 hover:shadow-v3-hover hover:-translate-y-0.5 transition-all duration-300"
             >
               <Plus className="h-4 w-4" />
@@ -196,7 +197,7 @@ export default function ContractsPage() {
           }
         />
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div data-component="contracts-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatMini
             icon={FileText}
             value={isInitialLoading ? "–" : stats.total}
@@ -244,7 +245,7 @@ export default function ContractsPage() {
                 계약 문서가 없습니다
               </div>
             ) : (
-              <div className="space-y-1">
+              <div data-component="contracts-list-items" className="space-y-1">
                 {documents.map((doc) => {
                   const customerName = getCustomerName(doc);
                   const category = getStatusCategory(doc.current_status?.status_type);
@@ -255,6 +256,7 @@ export default function ContractsPage() {
                   return (
                     <button
                       key={doc.id}
+                      data-component="contracts-list-item"
                       onClick={() => setSelectedDocId(doc.id)}
                       className={`w-full flex items-center gap-3 p-3 rounded-[14px] text-left transition-all duration-200 ${
                         isActive
@@ -404,7 +406,7 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
 
   return (
     <DetailPanel header={header}>
-      <div className="space-y-5">
+      <div data-component="contracts-detail" className="space-y-5">
         <InfoCard title="고객 정보">
           <InfoRow
             label="고객명"

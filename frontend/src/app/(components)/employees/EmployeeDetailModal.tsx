@@ -79,11 +79,11 @@ export function EmployeeDetailModal({
 
     return (
         <Dialog
-            data-component="EmployeeDetailModal"
+            data-component="employees-detail-modal"
             open={open}
             onOpenChange={(isOpen) => !isOpen && onClose()}
         >
-            <DialogContent className="max-w-lg rounded-lg shadow-xl">
+            <DialogContent data-component="employees-detail-modal-content" className="max-w-lg rounded-lg shadow-xl">
                 <DialogHeader className="flex flex-row items-center justify-between pr-8">
                     <DialogTitle className="text-xl font-semibold">
                         {employee.name}
@@ -102,9 +102,9 @@ export function EmployeeDetailModal({
                     </Button>
                 </DialogHeader>
 
-                <div className="space-y-4 py-2">
+                <div data-component="employees-detail-modal-body" className="space-y-4 py-2">
                     {/* Basic Info */}
-                    <div>
+                    <div data-component="employees-detail-modal-basic">
                         <h4 className="text-sm font-medium text-primary mb-2">
                             {t(locale, "employees.form.section-basic")}
                         </h4>
@@ -115,7 +115,7 @@ export function EmployeeDetailModal({
                     <Separator />
 
                     {/* Work Info */}
-                    <div>
+                    <div data-component="employees-detail-modal-work">
                         <h4 className="text-sm font-medium text-primary mb-2">
                             {t(locale, "employees.form.section-work")}
                         </h4>
@@ -141,7 +141,7 @@ export function EmployeeDetailModal({
                     <Separator />
 
                     {/* Registration Info */}
-                    <div>
+                    <div data-component="employees-detail-modal-reg">
                         <h4 className="text-sm font-medium text-primary mb-2">
                             {t(locale, "employees.form.section-registration")}
                         </h4>
@@ -149,8 +149,9 @@ export function EmployeeDetailModal({
                     </div>
                 </div>
 
-                <DialogFooter className="gap-2 sm:gap-0">
+                <DialogFooter data-component="employees-detail-modal-actions" className="gap-2 sm:gap-0">
                     <Button
+                        data-component="employees-detail-modal-delete"
                         variant="destructive"
                         onClick={handleDelete}
                         className="gap-2"
@@ -159,6 +160,7 @@ export function EmployeeDetailModal({
                         {t(locale, "common.delete")}
                     </Button>
                     <Button
+                        data-component="employees-detail-modal-edit"
                         onClick={handleEdit}
                         className="gap-2"
                     >

@@ -343,7 +343,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     const isSubmitting = createClient.isPending || updateClient.isPending;
 
     return (
-        <Dialog data-component="ClientFormDialog" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+        <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-xl" data-testid="client-form-dialog">
                 <DialogHeader>
                     <DialogTitle>
@@ -360,7 +360,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-6 py-4">
+                <div data-component="clients-form-dialog-content" className="space-y-6 py-4">
                     {error && (
                         <Alert variant="destructive">
                             <AlertDescription>{error}</AlertDescription>
@@ -682,7 +682,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     </div>
                 </div>
 
-                <DialogFooter>
+                <DialogFooter data-component="clients-form-dialog-actions">
                     <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
                         {t(locale, "common.cancel")}
                     </Button>

@@ -156,7 +156,7 @@ export function DocumentsList() {
       subtitle={t(locale, "documents-list.subtitle")}
       className="min-h-[70vh] flex-grow w-full"
     >
-      <div data-component="documents-list-container">
+      <div data-component="contracts-eformsign-list">
         <DataTable
           data={documents}
           columns={columns}

@@ -187,7 +187,7 @@ export default function ClientsPage() {
     };
 
     return (
-        <section className="space-y-6 animate-v3-slide-up pb-10">
+        <section data-component="clients" className="space-y-6 animate-v3-slide-up pb-10">
             <PageHeader
                 title="고객 관리"
                 subtitle="전체 고객 정보를 확인하고 관리하세요"
@@ -214,7 +214,7 @@ export default function ClientsPage() {
                 filterLabel="상태"
             />
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div data-component="clients-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatMini
                     icon={Users}
                     value={total}
@@ -388,7 +388,7 @@ export default function ClientsPage() {
                             </div>
                         }
                     >
-                        <div className="space-y-4">
+                        <div data-component="clients-detail-content" className="space-y-4">
                             <InfoCard title="기본 정보">
                                 <InfoRow
                                     label={t(locale, "clients.form.name")}
@@ -471,7 +471,7 @@ export default function ClientsPage() {
                                 />
                             </InfoCard>
 
-                            <div className="flex gap-3 pt-2">
+                            <div data-component="clients-detail-actions" className="flex gap-3 pt-2">
                                 <Button
                                     variant="outline"
                                     className="flex-1 rounded-full"
@@ -490,7 +490,7 @@ export default function ClientsPage() {
                         </div>
                     </DetailPanel>
                 ) : (
-                    <div className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
+                    <div data-component="clients-empty-state" className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
                         <div className="text-center text-v3-text-muted">
                             <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
                             <p className="text-[0.85rem]">

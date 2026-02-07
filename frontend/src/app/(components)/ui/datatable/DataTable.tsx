@@ -155,7 +155,7 @@ export function DataTable<T extends Record<string, unknown>>({
   }
 
   return (
-    <div className={className}>
+    <div data-component="data-table" className={className}>
       {!hideToolbar && (
         <>
           <DataTableToolbar
@@ -177,7 +177,7 @@ export function DataTable<T extends Record<string, unknown>>({
         {paginatedData.length > 0 || isLoading ? (
           <>
             <Table className="table-fixed w-full">
-              <TableHeader>
+              <TableHeader data-component="data-table-header">
                 <TableRow>
                   {columns.map((column, index) => (
                     <TableHead
@@ -193,7 +193,7 @@ export function DataTable<T extends Record<string, unknown>>({
                   ))}
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody data-component="data-table-body">
                 {isLoading &&
                   Array.from({ length: skeletonRowCount }).map((_, rowIndex) => (
                     <TableRow key={`skeleton-${rowIndex}`}>
@@ -211,6 +211,7 @@ export function DataTable<T extends Record<string, unknown>>({
                 {!isLoading &&
                   paginatedData.map((row, rowIndex) => (
                     <TableRow
+                      data-component="data-table-row"
                       key={getRowKey(row, rowIndex)}
                       onClick={() => onRowClick?.(row, rowIndex)}
                       className={cn(

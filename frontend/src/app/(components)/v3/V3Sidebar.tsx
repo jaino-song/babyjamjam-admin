@@ -66,6 +66,11 @@ export const V3Sidebar = () => {
   const pathname = usePathname();
   const user = useInitialUser();
 
+  const getNavItemName = (href: string) => {
+    const segment = href.split("/").filter(Boolean).pop() || "";
+    return segment.toLowerCase();
+  };
+
   const isActive = (href: string) => {
     if (href === "/dashboard" && pathname === "/dashboard/analytics") return false;
     if (href === "/employees" && pathname === "/employees/schedule") return false;
@@ -84,8 +89,9 @@ export const V3Sidebar = () => {
     <aside 
       className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[280px] bg-white z-40 rounded-tr-[32px] rounded-br-[32px] shadow-v3 animate-v3-slide-right overflow-hidden"
       aria-label="Sidebar Navigation"
+      data-component="sidebar"
     >
-      <div className="flex items-center gap-3 px-6 pt-8 pb-6">
+      <div className="flex items-center gap-3 px-6 pt-8 pb-6" data-component="sidebar-brand">
         <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-v3-primary shrink-0 shadow-sm">
           <LayoutDashboard className="w-6 h-6 text-white" strokeWidth={2} />
         </div>
@@ -94,7 +100,7 @@ export const V3Sidebar = () => {
         </span>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-4 py-2 space-y-6 custom-scrollbar">
+      <nav className="flex-1 overflow-y-auto px-4 py-2 space-y-6 custom-scrollbar" data-component="sidebar-nav">
         {NAV_SECTIONS.map((section, idx) => (
           <div key={section.title + idx}>
             <h3 className="px-4 mb-2 text-[0.65rem] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">
@@ -107,6 +113,7 @@ export const V3Sidebar = () => {
                   <li key={item.href}>
                     <Link
                       href={item.href}
+                      data-component={`sidebar-nav-${getNavItemName(item.href)}`}
                       className={`
                         relative group flex items-center gap-3 px-4 py-2.5 rounded-2xl transition-all duration-200 overflow-hidden
                         ${active 
@@ -137,7 +144,7 @@ export const V3Sidebar = () => {
         ))}
       </nav>
 
-      <div className="p-4 mt-auto">
+      <div className="p-4 mt-auto" data-component="sidebar-profile">
         <div className="flex items-center gap-3 p-3 rounded-2xl bg-v3-dim-white/50 border border-v3-border/50 hover:bg-white hover:shadow-v3-hover transition-all cursor-pointer group">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-v3-primary to-blue-600 flex items-center justify-center shadow-inner shrink-0 text-white font-bold text-sm">
             {initials}

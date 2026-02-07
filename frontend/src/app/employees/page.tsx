@@ -131,13 +131,14 @@ export default function EmployeesPage() {
     };
 
     return (
-        <section className="space-y-6 animate-v3-slide-up">
+        <section data-component="employees" className="space-y-6 animate-v3-slide-up">
             <PageHeader
                 title="직원 관리"
                 subtitle="직원 정보를 관리하고 현황을 확인하세요"
                 icon={UserCheck}
                 actions={
                     <button
+                        data-component="employees-header-add"
                         onClick={handleAddNew}
                         className="flex items-center gap-2 rounded-[14px] bg-v3-primary px-5 py-2.5 text-[0.85rem] font-semibold text-white shadow-v3 transition-all duration-200 hover:shadow-v3-hover hover:-translate-y-0.5 active:scale-95"
                     >
@@ -157,7 +158,7 @@ export default function EmployeesPage() {
                 filterLabel="상태"
             />
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div data-component="employees-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatMini icon={Users} value={stats.total} label="전체 직원" colorIndex={0} />
                 <StatMini icon={CheckCircle} value={stats.active} label="활성" colorIndex={2} />
                 <StatMini icon={Clock} value={stats.available} label="가용" colorIndex={1} />
@@ -165,7 +166,7 @@ export default function EmployeesPage() {
             </div>
 
             {isLoading ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div data-component="employees-list" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {Array.from({ length: 6 }).map((_, i) => (
                         <div
                             key={i}
@@ -186,7 +187,7 @@ export default function EmployeesPage() {
                     ))}
                 </div>
             ) : filteredEmployees.length === 0 ? (
-                <div className="bg-white rounded-[20px] shadow-v3 p-12 text-center">
+                <div data-component="employees-empty" className="bg-white rounded-[20px] shadow-v3 p-12 text-center">
                     <Users className="w-12 h-12 text-v3-text-muted mx-auto mb-3" />
                     <p className="text-v3-text-muted text-[0.9rem]">
                         {search || filter !== "all"
@@ -195,7 +196,7 @@ export default function EmployeesPage() {
                     </p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div data-component="employees-list" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {filteredEmployees.map((employee) => (
                         <EmployeeCard
                             key={employee.id}
@@ -239,6 +240,7 @@ function EmployeeCard({ employee, onClick, onEdit }: EmployeeCardProps) {
 
     return (
         <div
+            data-component="employees-card"
             className="bg-white rounded-[20px] shadow-v3 hover:shadow-v3-hover hover:-translate-y-1 transition-all duration-300 p-5 cursor-pointer group"
             onClick={onClick}
         >
@@ -300,7 +302,7 @@ function EmployeeCard({ employee, onClick, onEdit }: EmployeeCardProps) {
                 )}
             </div>
 
-            <div className="flex items-center gap-2 pt-3 border-t border-v3-border">
+            <div data-component="employees-card-actions" className="flex items-center gap-2 pt-3 border-t border-v3-border">
                 <button
                     onClick={(e) => {
                         e.stopPropagation();

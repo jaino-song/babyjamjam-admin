@@ -7,11 +7,12 @@ interface AuthCardProps {
   title: string;
   description?: string;
   className?: string;
+  "data-component"?: string;
 }
 
-export function AuthCard({ children, title, description, className }: AuthCardProps) {
+export function AuthCard({ children, title, description, className, "data-component": dataComponent }: AuthCardProps) {
   return (
-    <div className="flex min-h-screen items-center justify-center px-4 py-8">
+    <div data-component={dataComponent} className="flex min-h-screen items-center justify-center px-4 py-8">
       <Card
         className={cn(
           "w-full max-w-[400px] animate-scale-in shadow-lg",

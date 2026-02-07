@@ -17,7 +17,7 @@ export const LanguageSwitcher = () => {
   };
 
   return (
-    <div className="flex border border-sidebar-border rounded-lg overflow-hidden">
+    <div data-component="nav-bar-language-switcher" className="flex border border-sidebar-border rounded-lg overflow-hidden">
       <Button
         variant="ghost"
         size="sm"

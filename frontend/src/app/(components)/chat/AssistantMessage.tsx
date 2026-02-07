@@ -27,7 +27,7 @@ export function AssistantMessage({
     onSubmitFeedback
 }: AssistantMessageProps) {
     return (
-        <div className="flex gap-4 mb-6 w-full">
+        <div data-component="chat-message-assistant" className="flex gap-4 mb-6 w-full">
             <Avatar className="w-8 h-8 shrink-0 mt-1">
                 <AvatarImage src="/assets/icon-72.png" alt="AI" />
                 <AvatarFallback>AI</AvatarFallback>

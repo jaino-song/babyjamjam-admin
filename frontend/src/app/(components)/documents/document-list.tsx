@@ -125,9 +125,9 @@ export default function DocumentList({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full table-fixed">
-        <thead>
+    <div data-component="contracts-document-list" className="overflow-x-auto">
+      <table data-component="contracts-document-list-table" className="w-full table-fixed">
+        <thead data-component="contracts-document-list-header">
           <tr className="border-b border-border">
             <th className="text-center font-medium text-muted-foreground text-sm py-3">
               문서명
@@ -142,10 +142,11 @@ export default function DocumentList({
             )}
           </tr>
         </thead>
-        <tbody>
+        <tbody data-component="contracts-document-list-body">
           {documents.map((doc) => (
             <tr
               key={doc.id}
+              data-component="contracts-document-list-row"
               className="border-b border-border cursor-pointer hover:bg-muted/50 transition-colors"
               onClick={() => onPreview(doc)}
             >

@@ -96,9 +96,9 @@ export default function FilteredClientsPage() {
     }
 
     return (
-        <section className="bg-card min-h-screen">
+        <section data-component="clients-filtered" className="bg-card min-h-screen">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <div data-component="clients-filtered-header" className="flex items-center justify-between px-4 py-3 border-b border-border">
                 <h1 className="text-lg font-semibold text-foreground">
                     {filterConfig.title}
                 </h1>
@@ -108,7 +108,7 @@ export default function FilteredClientsPage() {
             </div>
 
             {/* Content */}
-            <div className="px-4 sm:px-6 py-4">
+            <div data-component="clients-filtered-content" className="px-4 sm:px-6 py-4">
                 {isLoading ? (
                     <div className="flex justify-center py-16">
                         <Spinner size="lg" />

@@ -31,7 +31,7 @@ export const InfoMessageForm = () => {
 
   return (
     <div
-      data-component="info-message-form"
+      data-component="messages-info-form"
       className="flex flex-col grow h-full bg-background animate-fade-in"
     >
       <div className="flex flex-col h-full">

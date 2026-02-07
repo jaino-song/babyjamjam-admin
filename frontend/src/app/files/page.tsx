@@ -121,7 +121,7 @@ export default function FilesPage() {
   if (error) {
     return (
       <div className="p-6">
-        <div className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
+        <div data-component="files-error" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
           문서를 불러오는데 실패했습니다.
         </div>
       </div>
@@ -129,13 +129,14 @@ export default function FilesPage() {
   }
 
   return (
-    <section className="space-y-6">
+    <section data-component="files" className="space-y-6">
       <PageHeader
         title="파일 관리"
         subtitle="문서 및 파일을 관리합니다"
         icon={FolderOpen}
         actions={
           <button
+            data-component="files-upload-btn"
             onClick={() => setIsUploadOpen(true)}
             className="inline-flex items-center gap-2 rounded-[14px] bg-v3-primary px-5 py-2.5 text-[0.85rem] font-semibold text-white shadow-v3 hover:shadow-v3-hover hover:-translate-y-0.5 transition-all duration-300"
           >
@@ -155,7 +156,7 @@ export default function FilesPage() {
         filterLabel="카테고리"
       />
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div data-component="files-stats" className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatMini icon={FolderOpen} value={isLoading ? "–" : stats.total} label="전체 파일" colorIndex={0} />
         <StatMini icon={Tag} value={isLoading ? "–" : stats.categoryCount} label="카테고리" colorIndex={1} />
         <StatMini icon={Calendar} value={isLoading ? "–" : stats.recentCount} label="최근 7일" colorIndex={2} />
@@ -179,6 +180,7 @@ export default function FilesPage() {
                 const isActive = selectedDocument?.id === doc.id;
                 return (
                   <button
+                    data-component="files-list-item"
                     key={doc.id}
                     onClick={() => setSelectedDocId(doc.id)}
                     className={`w-full flex items-center gap-3 p-3 rounded-[14px] text-left transition-all duration-200 ${
@@ -210,7 +212,7 @@ export default function FilesPage() {
             onDelete={() => setDeleteDoc(selectedDocument)}
           />
         ) : (
-          <div className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
+          <div data-component="files-empty" className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
             <div className="text-center text-v3-text-muted">
               <FolderOpen className="w-12 h-12 mx-auto mb-3 opacity-30" />
               <p className="text-[0.85rem]">파일을 선택해주세요</p>
@@ -283,7 +285,7 @@ function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, on
   onDelete: () => void;
 }) {
   const header = (
-    <div className="space-y-3">
+    <div data-component="files-detail-header" className="space-y-3">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="text-lg font-bold text-v3-dark truncate">{doc.name}</h2>
@@ -295,10 +297,10 @@ function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, on
           {getCategoryLabel(doc.categoryId)}
         </span>
       </div>
-      <div className="flex gap-2">
-        <button onClick={onPreview} className="rounded-[10px] bg-v3-primary px-3 py-1.5 text-[0.75rem] font-semibold text-white hover:bg-v3-primary-hover transition-colors">미리보기</button>
-        <button onClick={onEdit} className="rounded-[10px] bg-v3-dim-white px-3 py-1.5 text-[0.75rem] font-semibold text-v3-text hover:bg-v3-border transition-colors">수정</button>
-        <button onClick={onDelete} className="rounded-[10px] bg-v3-burgundy-light px-3 py-1.5 text-[0.75rem] font-semibold text-v3-burgundy hover:bg-v3-burgundy/10 transition-colors">삭제</button>
+      <div data-component="files-detail-actions" className="flex gap-2">
+        <button data-component="files-detail-preview-btn" onClick={onPreview} className="rounded-[10px] bg-v3-primary px-3 py-1.5 text-[0.75rem] font-semibold text-white hover:bg-v3-primary-hover transition-colors">미리보기</button>
+        <button data-component="files-detail-edit-btn" onClick={onEdit} className="rounded-[10px] bg-v3-dim-white px-3 py-1.5 text-[0.75rem] font-semibold text-v3-text hover:bg-v3-border transition-colors">수정</button>
+        <button data-component="files-detail-delete-btn" onClick={onDelete} className="rounded-[10px] bg-v3-burgundy-light px-3 py-1.5 text-[0.75rem] font-semibold text-v3-burgundy hover:bg-v3-burgundy/10 transition-colors">삭제</button>
       </div>
     </div>
   );

@@ -20,6 +20,7 @@ function InfoRow({
 }: InfoRowProps) {
   return (
     <div
+      data-component="info-row"
       className={cn("flex items-center py-2", className)}
       {...props}
     >

@@ -31,7 +31,7 @@ export const GreetingMessageForm = () => {
 
   return (
     <div
-      data-component="greeting-message-form"
+      data-component="messages-greeting-form"
       className="flex flex-col justify-center grow w-full h-full animate-fade-in"
     >
       <div className="flex flex-col h-full">

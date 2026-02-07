@@ -20,8 +20,8 @@ interface RecentActivityProps {
 
 export const RecentActivity = ({ items, title, actionLabel }: RecentActivityProps) => {
   return (
-    <ContentPaper className="p-5 sm:p-6" disableAnimation>
-      <div className="flex flex-row justify-between items-center">
+    <ContentPaper data-component="dashboard-recent-activity" className="p-5 sm:p-6" disableAnimation>
+      <div data-component="dashboard-recent-activity-header" className="flex flex-row justify-between items-center">
         <p className="text-base font-semibold">{title}</p>
         <Button variant="ghost" size="sm">
           {actionLabel}
@@ -31,7 +31,7 @@ export const RecentActivity = ({ items, title, actionLabel }: RecentActivityProp
       <div className="mt-4 space-y-0">
         {items.map((item, index) => (
           <Fragment key={item.primary}>
-            <div className="flex items-center gap-4 py-3">
+            <div data-component="dashboard-recent-activity-item" className="flex items-center gap-4 py-3">
               <Avatar className="bg-primary text-primary-foreground">
                 <AvatarFallback className="bg-primary text-primary-foreground">
                   {item.primary.charAt(0)}

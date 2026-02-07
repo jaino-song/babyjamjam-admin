@@ -33,7 +33,7 @@ export const SurveyMessageForm = () => {
 
   return (
     <div
-      data-component="survey-message-form"
+      data-component="messages-survey-form"
       className="flex flex-col grow h-full bg-background animate-fade-in"
     >
       <div className="flex flex-col grow">
@@ -49,7 +49,7 @@ export const SurveyMessageForm = () => {
             size="lg"
             onClick={handleGenerate}
             disabled={!name}
-            data-component="survey-message-form-generate-button"
+            data-component="messages-survey-form-generate"
           >
             {t(locale, "common.generate-button")}
           </Button>

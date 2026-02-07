@@ -127,7 +127,7 @@ export function EmployeeAutocomplete({
     };
 
     return (
-        <div className="space-y-2" data-testid={dataTestId ?? "employee-autocomplete"}>
+        <div data-component="employee-autocomplete" className="space-y-2" data-testid={dataTestId ?? "employee-autocomplete"}>
             <Label className={cn(error && "text-destructive")}>
                 {label}
                 {required && <span className="text-destructive ml-1">*</span>}
@@ -138,6 +138,7 @@ export function EmployeeAutocomplete({
                         variant="outline"
                         role="combobox"
                         aria-expanded={isOpen}
+                        data-component="employee-autocomplete-input"
                         className={cn(
                             "w-full justify-between font-normal",
                             !selectedEmployee && "text-muted-foreground",
@@ -148,7 +149,7 @@ export function EmployeeAutocomplete({
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                <PopoverContent data-component="employee-autocomplete-dropdown" className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
                     <Command shouldFilter={false}>
                         <CommandInput
                             placeholder={t(locale, "clients.form.employee-search-placeholder")}

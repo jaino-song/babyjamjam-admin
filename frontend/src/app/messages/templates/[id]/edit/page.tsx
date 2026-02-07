@@ -19,7 +19,7 @@ export default function EditTemplatePage() {
     const { data: template, isLoading, error } = useMessageTemplate(id);
 
     const BackButton = () => (
-        <div className="mb-4">
+        <div data-component="messages-template-edit-nav" className="mb-4">
             <Button variant="ghost" size="icon" asChild>
                 <Link href="/messages/templates">
                     <ArrowLeft className="h-6 w-6" />
@@ -30,8 +30,8 @@ export default function EditTemplatePage() {
 
     if (isLoading) {
         return (
-            <div className="bg-background">
-                <div className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
+            <div data-component="messages-template-edit" className="bg-background">
+                <div data-component="messages-template-edit-content" className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
                     <BackButton />
                     <ContentPaper
                         title={t(locale, "template-editor.edit-title")}
@@ -46,8 +46,8 @@ export default function EditTemplatePage() {
 
     if (error || !template) {
         return (
-            <div className="bg-background">
-                <div className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
+            <div data-component="messages-template-edit" className="bg-background">
+                <div data-component="messages-template-edit-content" className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
                     <BackButton />
                     <ContentPaper
                         title={t(locale, "template-editor.edit-title")}
@@ -63,8 +63,8 @@ export default function EditTemplatePage() {
     }
 
     return (
-        <div className="bg-background">
-            <section className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
+        <div data-component="messages-template-edit" className="bg-background">
+            <section data-component="messages-template-edit-content" className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
                 <BackButton />
                 <ContentPaper
                     title={t(locale, "template-editor.edit-title")}

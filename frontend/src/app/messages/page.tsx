@@ -74,9 +74,9 @@ export default function MessagesPage() {
   const SelectedBuiltinForm = builtinType ? FormComponents[builtinType] : null;
 
   return (
-    <section className="bg-background">
+    <section data-component="messages" className="bg-background">
       <section
-        data-component="messages"
+        data-component="messages-content"
         className="px-2 sm:px-3 md:px-6 py-3 sm:py-4 mx-auto"
       >
         <ContentPaper
@@ -84,7 +84,7 @@ export default function MessagesPage() {
           subtitle={t(locale, "msg-form.select-msg-type")}
           className="flex flex-col"
         >
-          <div className="flex items-center justify-end gap-2 pb-6">
+          <div data-component="messages-header" className="flex items-center justify-end gap-2 pb-6">
             <Select value={selectedValue} onValueChange={handleChange}>
               <SelectTrigger className="flex-1">
                 <SelectValue placeholder="템플릿 선택" />
@@ -123,7 +123,7 @@ export default function MessagesPage() {
           </div>
 
           {isLoadingUserTemplates && (
-            <div className="flex justify-center py-2">
+            <div data-component="messages-loading" className="flex justify-center py-2">
               <Spinner className="h-6 w-6" />
             </div>
           )}

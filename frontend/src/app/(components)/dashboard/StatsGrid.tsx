@@ -19,7 +19,7 @@ const iconColors = ["text-primary", "text-burgundy", "text-orange", "text-gray"]
 
 export function StatsGrid({ stats, disabled = false }: StatsGridProps) {
   return (
-    <div data-component="stats-grid" className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:max-w-3xl">
+    <div data-component="dashboard-stats" className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:max-w-3xl">
       {stats.map((item, index) => {
         const Icon = item.icon;
 
@@ -27,7 +27,7 @@ export function StatsGrid({ stats, disabled = false }: StatsGridProps) {
           <Card
             key={item.title}
             variant="v3"
-            data-component="stats-grid-card"
+            data-component="dashboard-stats-card"
             className={cn(
               "animate-pop-in cursor-pointer transition-all hover:scale-105",
               disabled && "opacity-50 pointer-events-none"

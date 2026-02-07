@@ -121,11 +121,12 @@ export default function DocumentPreviewModal({
   return (
     <Dialog open={open} onOpenChange={(isOpen: boolean) => !isOpen && onClose()}>
       <DialogContent
+        data-component="contracts-document-preview"
         className="max-w-4xl h-[90vh] flex flex-col p-0"
         showCloseButton={false}
       >
         {/* Header */}
-        <DialogHeader className="px-6 py-4 border-b border-border flex-row justify-between items-start">
+        <DialogHeader data-component="contracts-document-preview-header" className="px-6 py-4 border-b border-border flex-row justify-between items-start">
           <div>
             <DialogTitle className="text-lg font-semibold">
               {doc.name}
@@ -147,7 +148,7 @@ export default function DocumentPreviewModal({
         {/* Content */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Metadata Section */}
-          <div className="px-6 py-4 bg-muted/30 border-b border-border">
+          <div data-component="contracts-document-preview-meta" className="px-6 py-4 bg-muted/30 border-b border-border">
             <div className="flex gap-6 flex-wrap mb-2">
               <div>
                 <p className="text-xs text-muted-foreground">파일 크기</p>
@@ -273,7 +274,7 @@ export default function DocumentPreviewModal({
         </div>
 
         {/* Footer */}
-        <DialogFooter className="px-6 py-4 border-t border-border justify-end">
+        <DialogFooter data-component="contracts-document-preview-footer" className="px-6 py-4 border-t border-border justify-end">
           <Button variant="ghost" onClick={handlePrint}>
             <Printer className="h-4 w-4 mr-2" />
             인쇄

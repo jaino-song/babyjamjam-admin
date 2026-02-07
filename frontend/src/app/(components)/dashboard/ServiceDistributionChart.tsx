@@ -14,12 +14,12 @@ import { monthlyClientComparisonData } from "@/app/data/mockData";
 
 export function ServiceDistributionChart() {
   return (
-    <Card data-component="service-distribution-chart" className="min-w-0 overflow-hidden opacity-0 animate-fade-in hover-lift" style={{ animationDelay: "250ms" }}>
-      <CardHeader data-component="chart-header">
+    <Card data-component="dashboard-service-chart" className="min-w-0 overflow-hidden opacity-0 animate-fade-in hover-lift" style={{ animationDelay: "250ms" }}>
+      <CardHeader data-component="dashboard-service-chart-header">
         <CardTitle className="text-lg font-semibold">월별 고객 수 비교</CardTitle>
       </CardHeader>
-      <CardContent data-component="chart-content" className="p-2 sm:p-6">
-        <div data-component="chart-container" className="h-[300px] w-full">
+      <CardContent data-component="dashboard-service-chart-content" className="p-2 sm:p-6">
+        <div data-component="dashboard-service-chart-container" className="h-[300px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart 
               data={monthlyClientComparisonData} 

@@ -17,7 +17,7 @@ export default async function Home() {
 
     return (
         <section
-            data-component="home-page"
+            data-component="home"
             className="flex flex-col items-center justify-center h-screen"
         >
             <h1 className="mb-2 text-3xl font-bold text-foreground">

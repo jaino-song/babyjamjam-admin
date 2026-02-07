@@ -8,7 +8,7 @@ interface FilterChipsProps {
 
 export function FilterChips({ items, activeValue, onChange }: FilterChipsProps) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div data-component="filter-chips" className="flex flex-wrap gap-2">
       {items.map((item) => (
         <button
           key={item.value}

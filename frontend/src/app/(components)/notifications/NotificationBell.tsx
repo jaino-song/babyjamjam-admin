@@ -349,6 +349,7 @@ export function NotificationBell({ className }: { className?: string }) {
                         size="icon"
                         onClick={handleClick}
                         disabled={isLoading}
+                        data-component="notification-bell"
                         data-testid="notification-bell"
                         className={cn("relative transition-transform duration-200 hover:scale-110 active:scale-95", className)}
                     >
@@ -377,6 +378,7 @@ export function NotificationBell({ className }: { className?: string }) {
                     avoidCollisions={true}
                     collisionPadding={16}
                     className="!w-[80vw] sm:!w-[360px] max-h-[480px] p-0 overflow-hidden"
+                    data-component="notification-bell-popover"
                     data-testid="notification-popover"
                 >
                     {renderPopoverContent()}

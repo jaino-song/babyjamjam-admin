@@ -185,7 +185,7 @@ export const PriceInfoMessageForm = () => {
 
   return (
     <div
-      data-component="price-info-message-form"
+      data-component="messages-price-info-form"
       className="flex flex-col gap-4 animate-fade-in border-t pt-4"
     >
           <div className="grid grid-cols-16 gap-4">
@@ -328,7 +328,7 @@ export const PriceInfoMessageForm = () => {
               isVoucherPriceInfosLoading ||
               isBankAccountInfosLoading
             }
-            data-component="price-info-message-form-generate-button"
+            data-component="messages-price-info-form-generate"
           >
             {isVoucherPriceInfosLoading || isBankAccountInfosLoading
               ? t(locale, "common.generate-button-loading")

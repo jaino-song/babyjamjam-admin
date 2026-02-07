@@ -33,7 +33,7 @@ export const ThanksMessageForm = () => {
 
   return (
     <div
-      data-component="thanks-message-form"
+      data-component="messages-thanks-form"
       className="flex flex-col grow h-full bg-background animate-fade-in"
     >
       <div className="flex flex-col grow">
@@ -49,7 +49,7 @@ export const ThanksMessageForm = () => {
             size="lg"
             onClick={handleGenerate}
             disabled={!name}
-            data-component="thanks-message-form-generate-button"
+            data-component="messages-thanks-form-generate"
           >
             {t(locale, "common.generate-button")}
           </Button>

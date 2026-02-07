@@ -98,8 +98,8 @@ export function DocumentEditModal({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen: boolean) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-md" showCloseButton={false}>
-        <DialogHeader className="flex-row justify-between items-center">
+        <DialogContent data-component="contracts-document-edit" className="sm:max-w-md" showCloseButton={false}>
+        <DialogHeader data-component="contracts-document-edit-header" className="flex-row justify-between items-center">
           <DialogTitle>문서 정보 수정</DialogTitle>
           <Button
             variant="ghost"
@@ -112,7 +112,7 @@ export function DocumentEditModal({
           </Button>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4 py-4">
+        <div data-component="contracts-document-edit-form" className="flex flex-col gap-4 py-4">
           <div className="space-y-2">
             <Label htmlFor="doc-name">문서명</Label>
             <Input
@@ -186,7 +186,7 @@ export function DocumentEditModal({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter data-component="contracts-document-edit-footer">
           <Button variant="outline" onClick={onClose} disabled={isLoading}>
             취소
           </Button>

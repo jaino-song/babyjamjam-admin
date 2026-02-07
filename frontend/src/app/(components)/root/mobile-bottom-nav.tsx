@@ -43,6 +43,7 @@ export function MobileBottomNav() {
 
   return (
     <nav
+      data-component="mobile-bottom-nav"
       className={cn(
         "fixed bottom-4 left-4 right-4 z-[1000]",
         "flex items-center justify-between p-2",
@@ -59,6 +60,7 @@ export function MobileBottomNav() {
           <Link
             key={item.href}
             href={item.href}
+            data-component={`mobile-bottom-nav-${item.href.replace("/", "")}`}
             className={cn(
               "flex flex-1 flex-col items-center gap-1 p-2 rounded-2xl transition-all duration-200",
               isActive

@@ -20,7 +20,7 @@ export function DataTablePagination({
   const canGoNext = page < totalPages - 1;
 
   return (
-    <div className="flex items-center justify-end gap-4 py-2 px-2">
+    <div data-component="data-table-pagination" className="flex items-center justify-end gap-4 py-2 px-2">
       <span className="text-sm text-muted-foreground">
         {count > 0 ? `${startItem}-${endItem} / ${count}` : "0개"}
       </span>

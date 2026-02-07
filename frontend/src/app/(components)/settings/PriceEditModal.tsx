@@ -89,7 +89,7 @@ export function PriceEditModal({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen: boolean) => !isOpen && onClose()}>
-      <DialogContent data-component="PriceEditModal" className="sm:max-w-md rounded-[24px]">
+      <DialogContent data-component="settings-price-edit-modal" className="sm:max-w-md rounded-[24px]">
         <DialogHeader>
           <DialogTitle>가격 수정</DialogTitle>
           <DialogDescription>

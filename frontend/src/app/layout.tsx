@@ -52,20 +52,24 @@ export default async function RootLayout({
   return (
     <html lang={locale}>
       <body className={`${Pretendard.variable} antialiased min-h-screen`}>
-        <QueryProvider>
-          <LocaleProvider locale={locale}>
-            <UserProvider user={user}>
-              <NotificationPermissionPrompt />
-              <V3Sidebar />
-              <V3MobileHeader />
-              <V3MainContent>
-                {children}
-              </V3MainContent>
-              <Toaster />
-              <MobileBottomNav />
-            </UserProvider>
-          </LocaleProvider>
-        </QueryProvider>
+        <div data-component="app-root">
+          <div data-component="app-providers">
+            <QueryProvider>
+              <LocaleProvider locale={locale}>
+                <UserProvider user={user}>
+                  <NotificationPermissionPrompt />
+                  <V3Sidebar />
+                  <V3MobileHeader />
+                  <V3MainContent>
+                    {children}
+                  </V3MainContent>
+                  <Toaster />
+                  <MobileBottomNav />
+                </UserProvider>
+              </LocaleProvider>
+            </QueryProvider>
+          </div>
+        </div>
       </body>
     </html>
   );

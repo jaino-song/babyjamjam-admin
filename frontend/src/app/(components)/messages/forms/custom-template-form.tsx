@@ -78,7 +78,7 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
 
     return (
         <div
-            data-component="custom-template-form"
+            data-component="messages-custom-template-form"
             className="flex flex-col grow h-full bg-background animate-fade-in"
         >
             <div className="flex flex-col grow">

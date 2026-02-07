@@ -24,7 +24,7 @@ export const TemplatePreview = ({ content, variables }: TemplatePreviewProps) =>
     };
 
     return (
-        <div className="p-4 bg-card rounded-md border min-h-[100px] whitespace-pre-wrap break-words">
+        <div data-component="my-templates-preview" className="p-4 bg-card rounded-md border min-h-[100px] whitespace-pre-wrap break-words">
             <p className="font-mono text-sm">
                 {renderPreview()}
             </p>

@@ -58,6 +58,7 @@ function StatusBadge({
 }: StatusBadgeProps) {
   return (
     <span
+      data-component="status-badge"
       className={cn(statusBadgeVariants({ variant, size }), className)}
       {...props}
     >

@@ -66,9 +66,9 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     ];
 
     return (
-        <div data-component="NavBar" className="w-full h-full p-4 flex flex-col justify-between">
+        <div data-component="nav-bar" className="w-full h-full p-4 flex flex-col justify-between">
             {/* Main navigation section */}
-            <div className="flex-1">
+            <div data-component="nav-bar-content" className="flex-1">
                 {/* Close button */}
                 <div className="flex justify-end mb-4">
                     <SheetClose asChild>
@@ -84,7 +84,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                 </div>
 
                 {/* Navigation items */}
-                <nav className="flex flex-col gap-1">
+                <nav data-component="nav-bar-nav" className="flex flex-col gap-1">
                     {navItems.map((item, index) => (
                         <NavButton
                             key={item.href}
@@ -115,7 +115,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
             </div>
 
             {/* Footer with language switcher */}
-            <div className="opacity-0 animate-fade-in" style={{ animationDelay: '500ms' }}>
+            <div data-component="nav-bar-footer" className="opacity-0 animate-fade-in" style={{ animationDelay: '500ms' }}>
                 <LanguageSwitcher />
             </div>
         </div>

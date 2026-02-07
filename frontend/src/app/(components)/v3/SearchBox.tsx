@@ -10,7 +10,7 @@ interface SearchBoxProps {
 
 export function SearchBox({ placeholder, value, onChange }: SearchBoxProps) {
   return (
-    <div className="group flex items-center gap-3 rounded-[50px] bg-white px-5 py-3 shadow-v3 border border-v3-border transition-all duration-200 focus-within:shadow-v3-hover focus-within:scale-[1.01]">
+    <div data-component="search-box" className="group flex items-center gap-3 rounded-[50px] bg-white px-5 py-3 shadow-v3 border border-v3-border transition-all duration-200 focus-within:shadow-v3-hover focus-within:scale-[1.01]">
       <Search size={18} className="text-v3-text-muted shrink-0" />
       <input
         type="text"

@@ -30,7 +30,7 @@ export const ServiceInfoMessageForm = () => {
 
   return (
     <div
-      data-component="service-info-message-form"
+      data-component="messages-service-info-form"
       className="flex flex-col grow h-full animate-fade-in"
     >
       <div className="flex flex-col h-full gap-4">

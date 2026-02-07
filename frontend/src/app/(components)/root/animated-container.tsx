@@ -28,7 +28,7 @@ export default function AnimatedContainer({
     if (skipAnimation) {
         return (
             <article
-                data-component="AnimatedContainer"
+                data-component="animated-container"
                 className="flex flex-col justify-start items-center flex-grow bg-background"
                 style={containerStyle}
             >
@@ -39,7 +39,7 @@ export default function AnimatedContainer({
 
     return (
         <motion.article
-            data-component="AnimatedContainer"
+            data-component="animated-container"
             key={pathname}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
