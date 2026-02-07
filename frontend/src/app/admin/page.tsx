@@ -57,7 +57,7 @@ export default function AdminFeedbackPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background p-4 sm:p-6 md:p-8">
+    <section className="min-h-screen bg-background p-4 sm:p-6 md:p-8">
       <div className="max-w-7xl mx-auto">
         <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-6 sm:mb-8 opacity-0 animate-fade-in">
           피드백 관리
@@ -292,6 +292,6 @@ export default function AdminFeedbackPage() {
           )}
         </Card>
       </div>
-    </div>
+    </section>
   );
 }

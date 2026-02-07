@@ -74,7 +74,7 @@ export default function MessagesPage() {
   const SelectedBuiltinForm = builtinType ? FormComponents[builtinType] : null;
 
   return (
-    <div className="bg-background">
+    <section className="bg-background">
       <section
         data-component="messages"
         className="px-2 sm:px-3 md:px-6 py-3 sm:py-4 mx-auto"
@@ -133,6 +133,6 @@ export default function MessagesPage() {
           {selectedUserTemplate && <CustomTemplateForm template={selectedUserTemplate as never} />}
         </ContentPaper>
       </section>
-    </div>
+    </section>
   );
 }

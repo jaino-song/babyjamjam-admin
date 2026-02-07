@@ -15,8 +15,7 @@ import { cn } from "@/lib/utils";
 import {
     PageHeader,
     StatMini,
-    SearchBox,
-    FilterChips,
+    SearchFilterBar,
     SplitLayout,
     ListPanel,
     DetailPanel,
@@ -188,7 +187,7 @@ export default function ClientsPage() {
     };
 
     return (
-        <div className="space-y-6 animate-v3-slide-up pb-10">
+        <section className="space-y-6 animate-v3-slide-up pb-10">
             <PageHeader
                 title="고객 관리"
                 subtitle="전체 고객 정보를 확인하고 관리하세요"
@@ -205,20 +204,15 @@ export default function ClientsPage() {
                 }
             />
 
-            <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
-                <div className="w-full lg:max-w-md">
-                    <SearchBox
-                        placeholder={t(locale, "clients.search-placeholder")}
-                        value={searchQuery}
-                        onChange={setSearchQuery}
-                    />
-                </div>
-                <FilterChips
-                    items={FILTER_CHIPS}
-                    activeValue={activeFilter}
-                    onChange={setActiveFilter}
-                />
-            </div>
+            <SearchFilterBar
+                searchPlaceholder={t(locale, "clients.search-placeholder")}
+                searchValue={searchQuery}
+                onSearchChange={setSearchQuery}
+                filterOptions={FILTER_CHIPS}
+                filterValue={activeFilter}
+                onFilterChange={setActiveFilter}
+                filterLabel="상태"
+            />
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatMini
@@ -520,6 +514,6 @@ export default function ClientsPage() {
                 onClose={handleFormDialogClose}
                 client={editingClient}
             />
-        </div>
+        </section>
     );
 }

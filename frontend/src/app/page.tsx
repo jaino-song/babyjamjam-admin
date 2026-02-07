@@ -16,7 +16,7 @@ export default async function Home() {
     const locale = await getLocale();
 
     return (
-        <div
+        <section
             data-component="home-page"
             className="flex flex-col items-center justify-center h-screen"
         >
@@ -29,6 +29,6 @@ export default async function Home() {
             <Button asChild>
                 <Link href="/login">{t(locale, "common.start")}</Link>
             </Button>
-        </div>
+        </section>
     );
 }

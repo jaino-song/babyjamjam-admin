@@ -7,6 +7,7 @@ export { StatMini } from './StatMini';
 export { PageHeader } from './PageHeader';
 export { SearchBox } from './SearchBox';
 export { FilterChips } from './FilterChips';
+export { SearchFilterBar } from './SearchFilterBar';
 export { InfoCard } from './InfoCard';
 export { InfoRow } from './InfoRow';
 export { ActivityTimeline } from './ActivityTimeline';

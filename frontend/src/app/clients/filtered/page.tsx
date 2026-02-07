@@ -96,7 +96,7 @@ export default function FilteredClientsPage() {
     }
 
     return (
-        <div className="bg-card min-h-screen">
+        <section className="bg-card min-h-screen">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
                 <h1 className="text-lg font-semibold text-foreground">
@@ -166,6 +166,6 @@ export default function FilteredClientsPage() {
                 }}
                 client={editingClient}
             />
-        </div>
+        </section>
     );
 }

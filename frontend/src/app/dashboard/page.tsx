@@ -29,7 +29,7 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState("all");
 
   return (
-    <div className="space-y-6">
+    <section className="space-y-6">
       <PageHeader
         title="대시보드"
         subtitle="오늘의 업무 현황입니다"
@@ -151,6 +151,6 @@ export default function DashboardPage() {
           </div>
         </DetailPanel>
       </SplitLayout>
-    </div>
+    </section>
   );
 }

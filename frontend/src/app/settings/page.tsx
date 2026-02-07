@@ -145,7 +145,7 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="space-y-6">
+    <section className="space-y-6">
       <PageHeader title="설정" subtitle="서비스 환경을 관리합니다" icon={Settings} />
 
       <div className="flex flex-col lg:flex-row gap-8">
@@ -511,6 +511,6 @@ export default function SettingsPage() {
       </div>
 
       <Toaster />
-    </div>
+    </section>
   );
 }

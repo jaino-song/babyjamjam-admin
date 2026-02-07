@@ -10,7 +10,7 @@ import {
 } from "@/app/hooks/useEmployees";
 import { EmployeeFormDialog } from "@/app/(components)/employees/EmployeeFormDialog";
 import { EmployeeDetailModal } from "@/app/(components)/employees/EmployeeDetailModal";
-import { PageHeader, StatMini, SearchBox, FilterChips } from "@/app/(components)/v3";
+import { PageHeader, StatMini, SearchFilterBar } from "@/app/(components)/v3";
 
 const filterItems = [
     { label: "전체", value: "all" },
@@ -131,7 +131,7 @@ export default function EmployeesPage() {
     };
 
     return (
-        <div className="space-y-6 animate-v3-slide-up">
+        <section className="space-y-6 animate-v3-slide-up">
             <PageHeader
                 title="직원 관리"
                 subtitle="직원 정보를 관리하고 현황을 확인하세요"
@@ -147,20 +147,15 @@ export default function EmployeesPage() {
                 }
             />
 
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                <div className="w-full sm:w-72">
-                    <SearchBox
-                        placeholder="이름, 연락처, 지역으로 검색..."
-                        value={search}
-                        onChange={setSearch}
-                    />
-                </div>
-                <FilterChips
-                    items={filterItems}
-                    activeValue={filter}
-                    onChange={setFilter}
-                />
-            </div>
+            <SearchFilterBar
+                searchPlaceholder="이름, 연락처, 지역으로 검색..."
+                searchValue={search}
+                onSearchChange={setSearch}
+                filterOptions={filterItems}
+                filterValue={filter}
+                onFilterChange={setFilter}
+                filterLabel="상태"
+            />
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatMini icon={Users} value={stats.total} label="전체 직원" colorIndex={0} />
@@ -225,7 +220,7 @@ export default function EmployeesPage() {
                 onClose={handleFormDialogClose}
                 employee={editingEmployee}
             />
-        </div>
+        </section>
     );
 }
 

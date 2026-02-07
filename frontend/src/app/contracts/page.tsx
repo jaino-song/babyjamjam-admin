@@ -180,7 +180,7 @@ export default function ContractsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <section className="space-y-6">
         <PageHeader
           title="전자계약 관리"
           subtitle="eformsign 전자계약 문서를 관리합니다"
@@ -310,7 +310,7 @@ export default function ContractsPage() {
             </div>
           )}
         </SplitLayout>
-    </div>
+    </section>
   );
 }
 

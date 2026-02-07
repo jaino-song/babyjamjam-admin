@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { FolderOpen, FileText, Image, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
-import { PageHeader, StatMini, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, SearchBox, FilterChips } from "@/app/(components)/v3";
+import { PageHeader, StatMini, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, SearchFilterBar } from "@/app/(components)/v3";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useDocuments, useUploadDocument, useUpdateDocument, useDeleteDocument, Document } from "@/app/hooks/use-documents";
@@ -129,7 +129,7 @@ export default function FilesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <section className="space-y-6">
       <PageHeader
         title="파일 관리"
         subtitle="문서 및 파일을 관리합니다"
@@ -145,12 +145,15 @@ export default function FilesPage() {
         }
       />
 
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="flex-1">
-          <SearchBox placeholder="문서명, 설명, 태그로 검색..." value={searchQuery} onChange={setSearchQuery} />
-        </div>
-        <FilterChips items={filterItems} activeValue={activeFilter} onChange={setActiveFilter} />
-      </div>
+      <SearchFilterBar
+        searchPlaceholder="문서명, 설명, 태그로 검색..."
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        filterOptions={filterItems}
+        filterValue={activeFilter}
+        onFilterChange={setActiveFilter}
+        filterLabel="카테고리"
+      />
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatMini icon={FolderOpen} value={isLoading ? "–" : stats.total} label="전체 파일" colorIndex={0} />
@@ -267,7 +270,7 @@ export default function FilesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </section>
   );
 }
 
