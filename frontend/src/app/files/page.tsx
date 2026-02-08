@@ -157,9 +157,9 @@ export default function FilesPage() {
       />
 
       <div data-component="files-stats" className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <StatMini icon={FolderOpen} value={isLoading ? "–" : stats.total} label="전체 파일" colorIndex={0} />
-        <StatMini icon={Tag} value={isLoading ? "–" : stats.categoryCount} label="카테고리" colorIndex={1} />
-        <StatMini icon={Calendar} value={isLoading ? "–" : stats.recentCount} label="최근 7일" colorIndex={2} />
+        <StatMini icon={FolderOpen} value={isLoading ? "–" : stats.total} label="전체 파일" colorIndex={0} animationDelay="0s" />
+        <StatMini icon={Tag} value={isLoading ? "–" : stats.categoryCount} label="카테고리" colorIndex={1} animationDelay="0.08s" />
+        <StatMini icon={Calendar} value={isLoading ? "–" : stats.recentCount} label="최근 7일" colorIndex={2} animationDelay="0.16s" />
       </div>
 
       <SplitLayout>

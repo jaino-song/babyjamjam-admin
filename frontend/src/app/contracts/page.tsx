@@ -203,24 +203,28 @@ export default function ContractsPage() {
             value={isInitialLoading ? "–" : stats.total}
             label="전체 계약"
             colorIndex={0}
+            animationDelay="0s"
           />
           <StatMini
             icon={Clock}
             value={isInitialLoading ? "–" : stats.pending}
             label="대기중"
             colorIndex={1}
+            animationDelay="0.08s"
           />
           <StatMini
             icon={CheckCircle2}
             value={isInitialLoading ? "–" : stats.completed}
             label="서명완료"
             colorIndex={2}
+            animationDelay="0.16s"
           />
           <StatMini
             icon={AlertTriangle}
             value={isInitialLoading ? "–" : stats.expired}
             label="만료"
             colorIndex={3}
+            animationDelay="0.24s"
           />
         </div>
 

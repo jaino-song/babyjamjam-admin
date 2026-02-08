@@ -159,10 +159,10 @@ export default function EmployeesPage() {
             />
 
             <div data-component="employees-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatMini icon={Users} value={stats.total} label="전체 직원" colorIndex={0} />
-                <StatMini icon={CheckCircle} value={stats.active} label="활성" colorIndex={2} />
-                <StatMini icon={Clock} value={stats.available} label="가용" colorIndex={1} />
-                <StatMini icon={Briefcase} value={stats.working} label="배정됨" colorIndex={3} />
+                <StatMini icon={Users} value={stats.total} label="전체 직원" colorIndex={0} animationDelay="0s" />
+                <StatMini icon={CheckCircle} value={stats.active} label="활성" colorIndex={2} animationDelay="0.08s" />
+                <StatMini icon={Clock} value={stats.available} label="가용" colorIndex={1} animationDelay="0.16s" />
+                <StatMini icon={Briefcase} value={stats.working} label="배정됨" colorIndex={3} animationDelay="0.24s" />
             </div>
 
             {isLoading ? (

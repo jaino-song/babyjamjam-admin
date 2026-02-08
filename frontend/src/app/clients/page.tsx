@@ -220,24 +220,28 @@ export default function ClientsPage() {
                     value={total}
                     label="전체 고객"
                     colorIndex={0}
+                    animationDelay="0s"
                 />
                 <StatMini
                     icon={UserCheck}
                     value={stats.activeCount}
                     label="진행중"
                     colorIndex={2}
+                    animationDelay="0.08s"
                 />
                 <StatMini
                     icon={Clock}
                     value={stats.pendingCount}
                     label="대기중"
                     colorIndex={1}
+                    animationDelay="0.16s"
                 />
                 <StatMini
                     icon={AlertTriangle}
                     value={stats.expiredCount}
                     label="만료임박"
                     colorIndex={3}
+                    animationDelay="0.24s"
                 />
             </div>
 

@@ -115,21 +115,19 @@ export default function DashboardPage() {
 
       <div
         data-component="dashboard-stats"
-        className="grid grid-cols-2 lg:grid-cols-4 gap-4 animate-v3-pop-in"
-        style={{ animationDelay: "0.08s" }}
+        className="grid grid-cols-2 lg:grid-cols-4 gap-4"
       >
         {DASHBOARD_STATS.map((stat, idx) => (
           <div
             key={stat.valueKey}
             data-component="dashboard-stats-item"
-            className="animate-v3-pop-in"
-            style={{ animationDelay: `${idx * 0.05}s` }}
           >
             <StatMini
               icon={stat.icon}
               value={stats?.[stat.valueKey] ?? 0}
               label={stat.label}
               colorIndex={stat.colorIndex}
+              animationDelay={`${idx * 0.08}s`}
             />
           </div>
         ))}
@@ -140,132 +138,132 @@ export default function DashboardPage() {
         className="animate-v3-pop-in"
         style={{ animationDelay: "0.16s" }}
       >
-      <SplitLayout>
-        <div
-          data-component="dashboard-activities-panel"
-          className="animate-v3-slide-up"
-          style={{ animationDelay: "0.18s" }}
-        >
-          <ListPanel
-            title="최근 활동"
-            tabs={[
-              { label: "전체", value: "all" },
-              { label: "고객", value: "clients" },
-              { label: "계약", value: "contracts" },
-              { label: "직원", value: "employees" },
-            ]}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
+        <SplitLayout>
+          <div
+            data-component="dashboard-activities-panel"
+            className="animate-v3-slide-up"
+            style={{ animationDelay: "0.18s" }}
           >
-            {isLoading ? (
-              <div
-                data-component="dashboard-split-list-loading"
-                className="p-8 text-center text-v3-text-muted animate-v3-pop-in"
-              >
-                로딩 중...
-              </div>
-            ) : (
-              <div
-                data-component="dashboard-split-list"
-                className="space-y-2 animate-v3-pop-in"
-              >
-                {filteredActivities.length === 0 ? (
-                  <div
-                    data-component="dashboard-split-list-empty"
-                    className="p-8 text-center text-v3-text-muted animate-v3-pop-in"
-                  >
-                    표시할 활동이 없습니다
-                  </div>
-                ) : (
-                  filteredActivities.map((activity, idx) => {
-                    const Icon = activity.icon;
-                    const iconBackgroundColor =
-                      iconBackgroundColors[idx % iconBackgroundColors.length];
-                    return (
-                      <div
-                        key={activity.id}
-                        data-component="dashboard-split-list-item"
-                        className="flex items-center gap-3 p-4 rounded-[18px] cursor-pointer transition-all duration-200 animate-v3-pop-in bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                        style={{ animationDelay: `${idx * 0.04}s` }}
-                      >
+            <ListPanel
+              title="최근 활동"
+              tabs={[
+                { label: "전체", value: "all" },
+                { label: "고객", value: "clients" },
+                { label: "계약", value: "contracts" },
+                { label: "직원", value: "employees" },
+              ]}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+            >
+              {isLoading ? (
+                <div
+                  data-component="dashboard-split-list-loading"
+                  className="p-8 text-center text-v3-text-muted animate-v3-pop-in"
+                >
+                  로딩 중...
+                </div>
+              ) : (
+                <div
+                  data-component="dashboard-split-list"
+                  className="space-y-2 animate-v3-pop-in"
+                >
+                  {filteredActivities.length === 0 ? (
+                    <div
+                      data-component="dashboard-split-list-empty"
+                      className="p-8 text-center text-v3-text-muted animate-v3-pop-in"
+                    >
+                      표시할 활동이 없습니다
+                    </div>
+                  ) : (
+                    filteredActivities.map((activity, idx) => {
+                      const Icon = activity.icon;
+                      const iconBackgroundColor =
+                        iconBackgroundColors[idx % iconBackgroundColors.length];
+                      return (
                         <div
-                          data-component="dashboard-split-list-item-icon"
-                          className={cn(
-                            "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0 shadow-md",
-                            iconBackgroundColor
-                          )}
-                        >
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        <div
-                          data-component="dashboard-split-list-item-content"
-                          className="flex-1 min-w-0"
+                          key={activity.id}
+                          data-component="dashboard-split-list-item"
+                          className="flex items-center gap-3 p-4 rounded-[18px] cursor-pointer transition-all duration-200 animate-v3-pop-in bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+                          style={{ animationDelay: `${idx * 0.04}s` }}
                         >
                           <div
-                            data-component="dashboard-split-list-item-header"
-                            className="flex items-center gap-2 mb-0.5"
+                            data-component="dashboard-split-list-item-icon"
+                            className={cn(
+                              "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0 shadow-md",
+                              iconBackgroundColor
+                            )}
                           >
-                            <span className="font-bold text-[0.85rem] text-v3-dark truncate">
-                              {activity.title}
-                            </span>
-                            <Badge
-                              variant="secondary"
-                              className="bg-[hsl(214,100%,95%)] text-v3-primary border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
-                            >
-                              {activity.badge}
-                            </Badge>
+                            <Icon className="w-4 h-4" />
                           </div>
-                          <p className="text-[0.7rem] text-v3-text-muted truncate">
-                            {activity.description}
-                          </p>
+                          <div
+                            data-component="dashboard-split-list-item-content"
+                            className="flex-1 min-w-0"
+                          >
+                            <div
+                              data-component="dashboard-split-list-item-header"
+                              className="flex items-center gap-2 mb-0.5"
+                            >
+                              <span className="font-bold text-[0.85rem] text-v3-dark truncate">
+                                {activity.title}
+                              </span>
+                              <Badge
+                                variant="secondary"
+                                className="bg-[hsl(214,100%,95%)] text-v3-primary border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
+                              >
+                                {activity.badge}
+                              </Badge>
+                            </div>
+                            <p className="text-[0.7rem] text-v3-text-muted truncate">
+                              {activity.description}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </ListPanel>
-        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </ListPanel>
+          </div>
 
-        <div
-          data-component="dashboard-summary-panel"
-          className="animate-v3-slide-right"
-          style={{ animationDelay: "0.22s" }}
-        >
-          <DetailPanel
-            header={
-              <h3 className="text-lg font-bold text-v3-dark">업무 요약</h3>
-            }
+          <div
+            data-component="dashboard-summary-panel"
+            className="animate-v3-slide-right"
+            style={{ animationDelay: "0.22s" }}
           >
-            <div data-component="dashboard-split-detail" className="space-y-4">
-              <InfoCard title="이번 달 현황">
-                <InfoRow label="활성 고객" value={stats?.activeClients ?? "-"} />
-                <InfoRow
-                  label="이번달 예정"
-                  value={stats?.upcomingThisMonth ?? "-"}
-                />
-                <InfoRow
-                  label="다음달 예정"
-                  value={stats?.upcomingNextMonth ?? "-"}
-                />
-                <InfoRow
-                  label="서명 대기"
-                  value={stats?.contractsPendingSignature ?? "-"}
-                />
-              </InfoCard>
+            <DetailPanel
+              header={
+                <h3 className="text-lg font-bold text-v3-dark">업무 요약</h3>
+              }
+            >
+              <div data-component="dashboard-split-detail" className="space-y-4">
+                <InfoCard title="이번 달 현황">
+                  <InfoRow label="활성 고객" value={stats?.activeClients ?? "-"} />
+                  <InfoRow
+                    label="이번달 예정"
+                    value={stats?.upcomingThisMonth ?? "-"}
+                  />
+                  <InfoRow
+                    label="다음달 예정"
+                    value={stats?.upcomingNextMonth ?? "-"}
+                  />
+                  <InfoRow
+                    label="서명 대기"
+                    value={stats?.contractsPendingSignature ?? "-"}
+                  />
+                </InfoCard>
 
-              <div
-                data-component="dashboard-chat-widget"
-                className="mt-4 animate-v3-pop-in"
-                style={{ animationDelay: "0.28s" }}
-              >
-                <ChatWidget />
+                <div
+                  data-component="dashboard-chat-widget"
+                  className="mt-4 animate-v3-pop-in"
+                  style={{ animationDelay: "0.28s" }}
+                >
+                  <ChatWidget />
+                </div>
               </div>
-            </div>
-          </DetailPanel>
-        </div>
-      </SplitLayout>
+            </DetailPanel>
+          </div>
+        </SplitLayout>
       </div>
     </section>
   );
