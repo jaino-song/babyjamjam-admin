@@ -37,9 +37,15 @@ export class GeminiChatGateway {
     private readonly logger = new Logger(GeminiChatGateway.name);
     private readonly baseUrl = "https://generativelanguage.googleapis.com/v1beta";
     private readonly model: string;
+    private readonly temperature: number;
+    private readonly maxOutputTokens: number;
+    private readonly requestTimeoutMs: number;
 
     constructor(private readonly configService: ConfigService) {
         this.model = this.configService.get<string>("GEMINI_CHAT_MODEL") || "gemini-2.0-flash-lite";
+        this.temperature = this.configService.get<number>("GEMINI_CHAT_TEMPERATURE") ?? 0.1;
+        this.maxOutputTokens = this.configService.get<number>("GEMINI_CHAT_MAX_OUTPUT_TOKENS") ?? 4096;
+        this.requestTimeoutMs = this.configService.get<number>("GEMINI_CHAT_TIMEOUT_MS") ?? 25000;
     }
 
     private getApiKey(): string {
@@ -64,6 +70,19 @@ export class GeminiChatGateway {
         return systemMessage?.content;
     }
 
+    private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+        try {
+            return await fetch(url, {
+                ...init,
+                signal: controller.signal,
+            });
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
     async chat(
         messages: ChatMessage[],
         tools?: FunctionDeclaration[],
@@ -75,8 +94,8 @@ export class GeminiChatGateway {
         const requestBody: Record<string, unknown> = {
             contents: formattedMessages,
             generationConfig: {
-                temperature: 0.7,
-                maxOutputTokens: 8192,
+                temperature: this.temperature,
+                maxOutputTokens: this.maxOutputTokens,
             },
         };
 
@@ -88,9 +107,14 @@ export class GeminiChatGateway {
             requestBody['tools'] = [{
                 functionDeclarations: tools,
             }];
+            requestBody['toolConfig'] = {
+                functionCallingConfig: {
+                    mode: "AUTO",
+                },
+            };
         }
 
-        const response = await fetch(
+        const response = await this.fetchWithTimeout(
             `${this.baseUrl}/models/${this.model}:generateContent?key=${apiKey}`,
             {
                 method: "POST",
@@ -139,8 +163,8 @@ export class GeminiChatGateway {
         const requestBody: Record<string, unknown> = {
             contents: formattedMessages,
             generationConfig: {
-                temperature: 0.7,
-                maxOutputTokens: 8192,
+                temperature: this.temperature,
+                maxOutputTokens: this.maxOutputTokens,
             },
         };
 
@@ -152,9 +176,14 @@ export class GeminiChatGateway {
             requestBody['tools'] = [{
                 functionDeclarations: tools,
             }];
+            requestBody['toolConfig'] = {
+                functionCallingConfig: {
+                    mode: "AUTO",
+                },
+            };
         }
 
-        const response = await fetch(
+        const response = await this.fetchWithTimeout(
             `${this.baseUrl}/models/${this.model}:streamGenerateContent?alt=sse&key=${apiKey}`,
             {
                 method: "POST",

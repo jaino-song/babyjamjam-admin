@@ -131,7 +131,7 @@ export default function EmployeesPage() {
     };
 
     return (
-        <section data-component="employees" className="space-y-6 animate-v3-slide-up">
+        <section data-component="employees" className="space-y-6">
             <PageHeader
                 title="직원 관리"
                 subtitle="직원 정보를 관리하고 현황을 확인하세요"

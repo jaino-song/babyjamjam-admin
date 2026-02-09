@@ -282,20 +282,20 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
 
                         {voucherClient && (
                             <>
-                                <div className="flex gap-4 items-center flex-wrap">
-                                    <div className="space-y-2 min-w-[140px]">
-                                        <Label>바우처 연도</Label>
-                                        <Select
-                                            value={resolvedVoucherYear?.toString() ?? ""}
-                                            onValueChange={handleVoucherYearChange}
-                                            disabled={isVoucherYearsLoading}
-                                        >
-                                            <SelectTrigger className="w-[140px]">
-                                                <SelectValue placeholder="연도 선택" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {voucherYears.map((year) => (
-                                                    <SelectItem key={year} value={year.toString()}>
+	                                <div className="flex gap-4 items-center flex-wrap">
+	                                    <div className="space-y-2 min-w-[140px]">
+	                                        <Label>바우처 연도</Label>
+	                                        <Select
+	                                            value={resolvedVoucherYear?.toString() ?? ""}
+	                                            onValueChange={handleVoucherYearChange}
+	                                            disabled={isVoucherYearsLoading}
+	                                        >
+	                                            <SelectTrigger className="w-[140px]" aria-label="바우처 연도">
+	                                                <SelectValue placeholder="연도 선택" />
+	                                            </SelectTrigger>
+	                                            <SelectContent>
+	                                                {voucherYears.map((year) => (
+	                                                    <SelectItem key={year} value={year.toString()}>
                                                         {year}년
                                                     </SelectItem>
                                                 ))}
@@ -304,19 +304,19 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                                     </div>
                                 </div>
 
-                                <div className="space-y-2">
-                                    <Label>바우처 유형</Label>
-                                    <Select
-                                        value={voucherType}
-                                        onValueChange={handleVoucherTypeChange}
-                                        disabled={resolvedVoucherYear === null}
-                                    >
-                                        <SelectTrigger className="w-full">
-                                            <SelectValue placeholder="유형 선택" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-                                                <SelectGroup key={groupName}>
+	                                <div className="space-y-2">
+	                                    <Label>바우처 유형</Label>
+	                                    <Select
+	                                        value={voucherType}
+	                                        onValueChange={handleVoucherTypeChange}
+	                                        disabled={resolvedVoucherYear === null}
+	                                    >
+	                                        <SelectTrigger className="w-full" aria-label="바우처 유형">
+	                                            <SelectValue placeholder="유형 선택" />
+	                                        </SelectTrigger>
+	                                        <SelectContent>
+	                                            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+	                                                <SelectGroup key={groupName}>
                                                     <SelectGroupLabel>{groupName}</SelectGroupLabel>
                                                     {Object.entries(types).map(([typeValue, typeData]) => (
                                                         <SelectItem key={typeValue} value={typeValue}>
@@ -330,19 +330,19 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                                 </div>
 
                                 {voucherType && (
-                                    <div className="space-y-2">
-                                        <Label>기간</Label>
-                                        <Select
-                                            value={voucherDuration}
-                                            onValueChange={handleVoucherDurationChange}
-                                            disabled={isVoucherPriceInfosLoading || voucherPriceInfos.length === 0}
-                                        >
-                                            <SelectTrigger className="w-full">
-                                                <SelectValue placeholder="기간 선택" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {voucherPriceInfos.map((v) => (
-                                                    <SelectItem key={v.duration} value={v.duration}>
+	                                    <div className="space-y-2">
+	                                        <Label>기간</Label>
+	                                        <Select
+	                                            value={voucherDuration}
+	                                            onValueChange={handleVoucherDurationChange}
+	                                            disabled={isVoucherPriceInfosLoading || voucherPriceInfos.length === 0}
+	                                        >
+	                                            <SelectTrigger className="w-full" aria-label="기간">
+	                                                <SelectValue placeholder="기간 선택" />
+	                                            </SelectTrigger>
+	                                            <SelectContent>
+	                                                {voucherPriceInfos.map((v) => (
+	                                                    <SelectItem key={v.duration} value={v.duration}>
                                                         {v.duration}일
                                                     </SelectItem>
                                                 ))}

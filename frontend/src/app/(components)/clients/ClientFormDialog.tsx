@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useCreateClient, useUpdateClient } from "@/app/hooks/useClients";
 import { useVoucherPriceInfos } from "@/app/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
@@ -125,6 +125,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     });
 
     const [error, setError] = useState<string | null>(null);
+    const contentRef = useRef<HTMLDivElement>(null);
 
     // State for EmployeeFormDialog
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
@@ -248,51 +249,62 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         handleChange(field, value);
     };
 
+    const scrollToTop = () => {
+        // Scroll the DialogContent (parent of our content div) to top
+        contentRef.current?.parentElement?.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    const setErrorAndScroll = (errorMessage: string) => {
+        setError(errorMessage);
+        // Use setTimeout to ensure the Alert is rendered before scrolling
+        setTimeout(scrollToTop, 0);
+    };
+
     const handleSubmit = async () => {
         setError(null);
 
         // Validation - All fields required except secondary employee
         if (!formData.name.trim()) {
-            setError(t(locale, "clients.form.error-name-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-name-required"));
             return;
         }
         if (!formData.birthday?.trim()) {
-            setError(t(locale, "clients.form.error-birthday-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-birthday-required"));
             return;
         }
         if (!formData.dueDate?.trim()) {
-            setError(t(locale, "clients.form.error-due-date-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-due-date-required"));
             return;
         }
         if (!formData.address?.trim()) {
-            setError(t(locale, "clients.form.error-address-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-address-required"));
             return;
         }
         if (!formData.phone?.trim()) {
-            setError(t(locale, "clients.form.error-phone-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-phone-required"));
             return;
         }
         // Check for null/undefined specifically, as 0 can be a valid ID
         // In edit mode, skip this validation if employee hasn't been selected
         // (the backend will preserve the existing schedule)
         if (!formData.type?.trim()) {
-            setError(t(locale, "clients.form.error-type-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-type-required"));
             return;
         }
         if (!formData.duration) {
-            setError(t(locale, "clients.form.error-duration-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-duration-required"));
             return;
         }
         if (!formData.fullPrice?.trim()) {
-            setError(t(locale, "clients.form.error-price-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-price-required"));
             return;
         }
         if (!formData.startDate?.trim()) {
-            setError(t(locale, "clients.form.error-start-date-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
             return;
         }
         if (!formData.endDate?.trim()) {
-            setError(t(locale, "clients.form.error-end-date-required"));
+            setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
             return;
         }
 
@@ -336,7 +348,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             onClose();
         } catch (error: unknown) {
             console.error("Failed to save client:", error);
-            setError(getErrorMessage(error, locale, "clients.form.error-save-failed"));
+            setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
         }
     };
 
@@ -360,7 +372,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     </DialogDescription>
                 </DialogHeader>
 
-                <div data-component="clients-form-dialog-content" className="space-y-6 py-4">
+                <div ref={contentRef} data-component="clients-form-dialog-content" className="space-y-6 py-4">
                     {error && (
                         <Alert variant="destructive">
                             <AlertDescription>{error}</AlertDescription>

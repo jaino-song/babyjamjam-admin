@@ -11,6 +11,7 @@ import { useLocale } from "../(components)/LocaleProvider";
 import { t } from "@/app/lib/i18n/translations";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
     PageHeader,
@@ -22,6 +23,7 @@ import {
     InfoCard,
     InfoRow,
     StatusBadge,
+    AnimatedSlotList,
 } from "@/app/(components)/v3";
 import type { StatusType } from "@/app/(components)/v3";
 
@@ -109,6 +111,7 @@ export default function ClientsPage() {
     const [searchQuery, setSearchQuery] = useState("");
     const [activeFilter, setActiveFilter] = useState("all");
     const [detailModalOpen, setDetailModalOpen] = useState(false);
+    const [activeSection, setActiveSection] = useState<string>("basic");
 
     const { data, isLoading } = useClients(
         1,
@@ -187,7 +190,7 @@ export default function ClientsPage() {
     };
 
     return (
-        <section data-component="clients" className="space-y-6 animate-v3-slide-up pb-10">
+        <section data-component="clients" className="space-y-6 pb-10">
             <PageHeader
                 title="고객 관리"
                 subtitle="전체 고객 정보를 확인하고 관리하세요"
@@ -245,72 +248,164 @@ export default function ClientsPage() {
                 />
             </div>
 
-            <SplitLayout>
-                <ListPanel title="고객 목록">
-                    <div className="space-y-2">
-                        {isLoading ? (
-                            <div className="p-8 text-center text-v3-text-muted">
-                                Loading...
-                            </div>
-                        ) : filteredClients.length === 0 ? (
-                            <div className="p-8 text-center text-v3-text-muted">
-                                {t(locale, "clients.no-data")}
-                            </div>
-                        ) : (
-                            filteredClients.map((client, idx) => (
-                                <div
-                                    key={client.id}
-                                    onClick={() => handleSelectClient(client)}
-                                    className={cn(
-                                        "flex items-center gap-3 p-4 rounded-[18px] cursor-pointer transition-all duration-200 animate-v3-pop-in",
-                                        selectedClient?.id === client.id
-                                            ? "bg-v3-primary-light border-2 border-v3-primary"
-                                            : "bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                                    )}
-                                    style={{ animationDelay: `${idx * 0.04}s` }}
-                                >
-                                    <div
-                                        className={cn(
-                                            "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
-                                            getAvatarGradient(client.name)
-                                        )}
-                                    >
-                                        {client.name.charAt(0)}
-                                    </div>
+	            <SplitLayout>
+	                <ListPanel
+	                    title="고객 목록"
+	                    isLoading={isLoading}
+	                >
+	                    <div className="space-y-2">
+	                        {!isLoading && filteredClients.length === 0 ? (
+	                            <div className="p-8 text-center text-v3-text-muted">
+	                                {t(locale, "clients.no-data")}
+	                            </div>
+	                        ) : (
+	                            <>
+	                                <AnimatedSlotList<Client>
+	                                    count={4}
+	                                    items={filteredClients}
+	                                    isLoading={isLoading}
+	                                    className="space-y-2"
+	                                    slotClassName={({ item, isLoading }) =>
+	                                        cn(
+	                                            "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
+	                                            !isLoading &&
+	                                                item &&
+	                                                (selectedClient?.id === item.id
+	                                                    ? "bg-v3-primary-light border-2 border-v3-primary"
+	                                                    : "bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30")
+	                                        )
+	                                    }
+	                                    onSlotClick={(client) => handleSelectClient(client)}
+	                                    render={({ item, isLoading }) => {
+	                                        const client = item;
+	                                        return (
+	                                            <>
+	                                                {isLoading ? (
+	                                                    <div className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
+	                                                        <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
+	                                                    </div>
+	                                                ) : (
+	                                                    client && (
+	                                                        <div
+	                                                            className={cn(
+	                                                                "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
+	                                                                getAvatarGradient(client.name)
+	                                                            )}
+	                                                        >
+	                                                            {client.name.charAt(0)}
+	                                                        </div>
+	                                                    )
+	                                                )}
 
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-0.5">
-                                            <span className="font-bold text-[0.85rem] text-v3-dark truncate">
-                                                {client.name}
-                                            </span>
-                                            <Badge
-                                                variant="secondary"
-                                                className="bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)] border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
-                                            >
-                                                {client.type || "일반"}
-                                            </Badge>
-                                        </div>
-                                        <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
-                                            {client.phone && <span>{client.phone}</span>}
-                                            {client.address && (
-                                                <span className="truncate">
-                                                    {client.address.split(" ")[1] || client.address}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
+	                                                <div className="flex-1 min-w-0">
+	                                                    <div className="flex items-center gap-2 mb-0.5">
+	                                                        {isLoading ? (
+	                                                            <>
+	                                                                <Skeleton className="h-4 w-28 bg-v3-dim-white" />
+	                                                                <Skeleton className="h-4 w-10 rounded-full bg-v3-dim-white" />
+	                                                            </>
+	                                                        ) : (
+	                                                            <>
+	                                                                <span className="font-bold text-[0.85rem] text-v3-dark truncate">
+	                                                                    {client?.name}
+	                                                                </span>
+	                                                                <Badge
+	                                                                    variant="secondary"
+	                                                                    className="bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)] border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
+	                                                                >
+	                                                                    {client?.type || "일반"}
+	                                                                </Badge>
+	                                                            </>
+	                                                        )}
+	                                                    </div>
 
-                                    <div className="shrink-0">
-                                        <StatusBadge
-                                            status={mapServiceStatusToV3(client.serviceStatus)}
-                                            label={getStatusLabel(client.serviceStatus)}
-                                        />
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </ListPanel>
+	                                                    {isLoading ? (
+	                                                        <Skeleton className="h-3 w-52 bg-v3-dim-white" />
+	                                                    ) : (
+	                                                        <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
+	                                                            {client?.phone && <span>{client.phone}</span>}
+	                                                            {client?.address && (
+	                                                                <span className="truncate">
+	                                                                    {client.address.split(" ")[1] || client.address}
+	                                                                </span>
+	                                                            )}
+	                                                        </div>
+	                                                    )}
+	                                                </div>
+
+	                                                <div className="shrink-0">
+	                                                    {isLoading ? (
+	                                                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
+	                                                    ) : (
+	                                                        client && (
+	                                                            <StatusBadge
+	                                                                status={mapServiceStatusToV3(client.serviceStatus)}
+	                                                                label={getStatusLabel(client.serviceStatus)}
+	                                                            />
+	                                                        )
+	                                                    )}
+	                                                </div>
+	                                            </>
+	                                        );
+	                                    }}
+	                                />
+
+	                                {!isLoading &&
+	                                    filteredClients.length > 4 &&
+	                                    filteredClients.slice(4).map((client) => (
+	                                        <div
+	                                            key={client.id}
+	                                            onClick={() => handleSelectClient(client)}
+	                                            className={cn(
+	                                                "flex items-center gap-3 p-4 rounded-[18px] cursor-pointer transition-all duration-200",
+	                                                selectedClient?.id === client.id
+	                                                    ? "bg-v3-primary-light border-2 border-v3-primary"
+	                                                    : "bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+	                                            )}
+	                                        >
+	                                            <div
+	                                                className={cn(
+	                                                    "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
+	                                                    getAvatarGradient(client.name)
+	                                                )}
+	                                            >
+	                                                {client.name.charAt(0)}
+	                                            </div>
+
+	                                            <div className="flex-1 min-w-0">
+	                                                <div className="flex items-center gap-2 mb-0.5">
+	                                                    <span className="font-bold text-[0.85rem] text-v3-dark truncate">
+	                                                        {client.name}
+	                                                    </span>
+	                                                    <Badge
+	                                                        variant="secondary"
+	                                                        className="bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)] border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
+	                                                    >
+	                                                        {client.type || "일반"}
+	                                                    </Badge>
+	                                                </div>
+	                                                <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
+	                                                    {client.phone && <span>{client.phone}</span>}
+	                                                    {client.address && (
+	                                                        <span className="truncate">
+	                                                            {client.address.split(" ")[1] || client.address}
+	                                                        </span>
+	                                                    )}
+	                                                </div>
+	                                            </div>
+
+	                                            <div className="shrink-0">
+	                                                <StatusBadge
+	                                                    status={mapServiceStatusToV3(client.serviceStatus)}
+	                                                    label={getStatusLabel(client.serviceStatus)}
+	                                                />
+	                                            </div>
+	                                        </div>
+	                                    ))}
+	                            </>
+	                        )}
+	                    </div>
+	                </ListPanel>
 
                 {selectedClient ? (
                     <DetailPanel
@@ -393,6 +488,29 @@ export default function ClientsPage() {
                         }
                     >
                         <div data-component="clients-detail-content" className="space-y-4">
+                            {/* Section Toggle Pills */}
+                            <div className="flex flex-wrap gap-2 pb-2">
+                                {[
+                                    { key: "basic", label: "기본 정보" },
+                                    { key: "caregiver", label: "담당 관리사" },
+                                    { key: "service", label: "서비스 정보" },
+                                ].map((section) => (
+                                    <button
+                                        key={section.key}
+                                        onClick={() => setActiveSection(section.key)}
+                                        className={cn(
+                                            "px-3 py-1.5 rounded-full text-xs font-semibold transition-all duration-200",
+                                            activeSection === section.key
+                                                ? "bg-v3-primary text-white shadow-sm"
+                                                : "bg-v3-dim-white text-v3-text-muted hover:bg-v3-primary-light hover:text-v3-primary"
+                                        )}
+                                    >
+                                        {section.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {activeSection === "basic" && (
                             <InfoCard title="기본 정보">
                                 <InfoRow
                                     label={t(locale, "clients.form.name")}
@@ -415,7 +533,9 @@ export default function ClientsPage() {
                                     value={selectedClient.address || "-"}
                                 />
                             </InfoCard>
+                            )}
 
+                            {activeSection === "caregiver" && (
                             <InfoCard title="담당 관리사">
                                 <InfoRow
                                     label={t(locale, "clients.form.primary-employee")}
@@ -432,7 +552,10 @@ export default function ClientsPage() {
                                     }
                                 />
                             </InfoCard>
+                            )}
 
+                            {activeSection === "service" && (
+                            <>
                             <InfoCard title="서비스 정보">
                                 <InfoRow
                                     label={t(locale, "clients.form.voucher-type")}
@@ -474,6 +597,8 @@ export default function ClientsPage() {
                                     )}
                                 />
                             </InfoCard>
+                            </>
+                            )}
 
                             <div data-component="clients-detail-actions" className="flex gap-3 pt-2">
                                 <Button

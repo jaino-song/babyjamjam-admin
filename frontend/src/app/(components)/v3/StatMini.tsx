@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 interface StatMiniProps {
   icon: React.ComponentType<{ className?: string }>;
@@ -8,6 +10,8 @@ interface StatMiniProps {
   label: string;
   colorIndex?: number;
   animationDelay?: React.CSSProperties["animationDelay"];
+  isLoading?: boolean;
+  counter?: string;
 }
 
 const colorVariants = [
@@ -23,32 +27,49 @@ export function StatMini({
   label,
   colorIndex = 0,
   animationDelay,
+  isLoading = false,
+  counter = "",
 }: StatMiniProps) {
-  const [isMounted, setIsMounted] = React.useState(false);
   const variant = colorVariants[colorIndex % colorVariants.length];
   const animationStyle = animationDelay ? { animationDelay } : undefined;
-
-  React.useEffect(() => {
-    const frame = requestAnimationFrame(() => setIsMounted(true));
-    return () => cancelAnimationFrame(frame);
-  }, []);
 
   return (
     <div
       data-component="stat-mini"
-      className={isMounted
-        ? "animate-[v3-pop-in_0.4s_cubic-bezier(0.34,1.56,0.64,1)_both] bg-white rounded-[20px] shadow-v3 hover:shadow-v3-hover hover:-translate-y-1 transition-[transform,box-shadow] duration-[500ms] p-4 will-change-transform"
-        : "opacity-0 scale-[0.8] bg-white rounded-[20px] shadow-v3 hover:shadow-v3-hover hover:-translate-y-1 transition-[transform,box-shadow] duration-[500ms] p-4 will-change-transform"}
+      className={cn(
+        "bg-white rounded-[20px] shadow-v3 hover:shadow-v3-hover hover:-translate-y-1 transition-[transform,box-shadow] duration-[500ms] p-4 will-change-transform flex gap-4 items-center",
+        // Component-level animation so stats behave identically across pages.
+        "animate-v3-pop-up"
+      )}
       style={animationStyle}
     >
       <div
         data-component="stat-mini-icon"
-        className={`w-12 h-12 rounded-[14px] ${variant.bg} flex items-center justify-center mb-3`}
+        className={cn(
+          "w-12 h-12 rounded-[14px] flex items-center justify-center",
+          isLoading ? "bg-v3-dim-white" : variant.bg
+        )}
       >
-        <Icon className={`w-6 h-6 ${variant.text}`} />
+        {isLoading ? (
+          <Skeleton className="w-6 h-6 rounded-md bg-white/70" />
+        ) : (
+          <Icon className={`w-6 h-6 ${variant.text}`} />
+        )}
       </div>
-      <p className="text-2xl font-bold text-v3-dark">{value}</p>
-      <p className="text-[0.7rem] text-v3-text-muted">{label}</p>
+      {isLoading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-16 bg-v3-dim-white" />
+          <Skeleton className="h-3 w-20 bg-v3-dim-white" />
+        </div>
+      ) : (
+        <div>
+          <span className="flex items-center gap-2">
+            <p className="text-2xl font-bold text-v3-dark">{value}</p>
+            <p className="text-[0.7rem] text-v3-text-muted self-end mb-1">{counter}</p>
+          </span>
+          <p className="text-[0.7rem] text-v3-text-muted">{label}</p>
+        </div>
+      )}
     </div>
   );
 }

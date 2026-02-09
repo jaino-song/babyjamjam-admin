@@ -14,6 +14,7 @@ import { useLocale } from "@/app/(components)/LocaleProvider";
 import { eformsignQueryKeys } from "@/app/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
 import { useGetAuthUser } from "@/app/hooks/useGetAuthUser";
+import { safeStorageGetItem } from "@/lib/safe-storage";
 
 interface NavBarProps {
     onClose: () => void;
@@ -21,7 +22,7 @@ interface NavBarProps {
 
 function isEformsignAuthenticated(): boolean {
     if (typeof window === "undefined") return false;
-    const authTimeStr = sessionStorage.getItem("eformsign_auth_time");
+    const authTimeStr = safeStorageGetItem("session", "eformsign_auth_time");
     if (!authTimeStr) return false;
     const authTime = parseInt(authTimeStr, 10);
     const tokenExpiryMs = 60 * 60 * 1000;
@@ -70,7 +71,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
             {/* Main navigation section */}
             <div data-component="nav-bar-content" className="flex-1">
                 {/* Close button */}
-                <div className="flex justify-end mb-4">
+                <div data-component="nav-bar-close" className="flex justify-end mb-4">
                     <SheetClose asChild>
                         <Button
                             variant="ghost"

@@ -63,6 +63,7 @@ export async function setCurrentOrganization(organizationId: string): Promise<{
 }> {
   try {
     const cookieStore = await cookies();
+    const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
     const token = cookieStore.get("auth_token")?.value || null;
 
     const { data } = await serverAPIClient.post("/auth/select-organization", {
@@ -74,7 +75,7 @@ export async function setCurrentOrganization(organizationId: string): Promise<{
     // Update auth token with new organization context
     cookieStore.set("auth_token", data.accessToken, {
       httpOnly: true,
-      secure: true,
+      secure: isSecureCookie,
       sameSite: "lax",
       path: "/",
       maxAge: data.role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
@@ -83,7 +84,7 @@ export async function setCurrentOrganization(organizationId: string): Promise<{
     // Store selected organization ID in a separate cookie for client-side access
     cookieStore.set("selected_organization_id", organizationId, {
       httpOnly: false,
-      secure: true,
+      secure: isSecureCookie,
       sameSite: "lax",
       path: "/",
       maxAge: 30 * 24 * 60 * 60,

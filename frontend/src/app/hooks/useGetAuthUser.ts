@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/axios/client";
 import { usePathname } from "next/navigation";
+import { isPublicAuthPath } from "@/app/lib/auth/routes";
 
 // User 타입 정의 (백엔드 응답 기반)
 export interface AuthUser {
@@ -35,7 +36,7 @@ const E2E_USER: AuthUser = {
 export const useGetAuthUser = (options?: UseGetAuthUserOptions) => {
     const pathname = usePathname();
     // Disable auth query on public auth pages (login, register, forgot-password, etc.)
-    const isAuthPage = pathname?.includes('/login') || pathname?.startsWith('/auth/');
+    const isAuthPage = isPublicAuthPath(pathname);
     const isE2E = process.env.NEXT_PUBLIC_E2E_TEST === 'true'
         || (typeof window !== 'undefined' && (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__);
 

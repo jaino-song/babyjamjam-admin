@@ -43,7 +43,7 @@ export function SearchFilterBar({
   }, []);
 
   return (
-    <div data-component="search-filter-bar" className="flex items-center gap-3 rounded-[50px] bg-white px-5 py-3 shadow-v3 border border-v3-border transition-all duration-200 focus-within:shadow-v3-hover">
+    <div data-component="search-filter-bar" className="flex items-center gap-3 rounded-[50px] bg-white px-5 py-3 shadow-v3 border border-v3-border transition-all duration-200 focus-within:shadow-v3-hover animate-v3-slide-up">
       <Search size={18} className="text-v3-text-muted shrink-0" />
       <input
         type="text"

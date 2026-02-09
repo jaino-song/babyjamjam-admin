@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { eformsignApi } from "@/services/api";
+import { safeStorageGetItem, safeStorageSetItem } from "@/lib/safe-storage";
 
 interface UseEformsignAuthReturn {
   isAuthenticated: boolean;
@@ -34,7 +35,7 @@ export function useEformsignAuth(): UseEformsignAuthReturn {
       await eformsignApi.authenticate(executionTime);
       
       // Store auth timestamp in sessionStorage
-      sessionStorage.setItem("eformsign_auth_time", executionTime.toString());
+      safeStorageSetItem("session", "eformsign_auth_time", executionTime.toString());
       
       setIsAuthenticated(true);
     } catch (err) {
@@ -49,7 +50,7 @@ export function useEformsignAuth(): UseEformsignAuthReturn {
   useEffect(() => {
     const checkAndAuthenticate = async () => {
       // Check if we have a recent auth timestamp
-      const authTimeStr = sessionStorage.getItem("eformsign_auth_time");
+      const authTimeStr = safeStorageGetItem("session", "eformsign_auth_time");
       const authTime = authTimeStr ? parseInt(authTimeStr, 10) : 0;
       const now = Date.now();
       
@@ -73,4 +74,3 @@ export function useEformsignAuth(): UseEformsignAuthReturn {
 
   return { isAuthenticated, isLoading, error, authenticate };
 }
-

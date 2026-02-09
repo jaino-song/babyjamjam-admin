@@ -9,6 +9,11 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 export class MessageController {
     constructor(private readonly messageService: MessageService) {}
 
+    @Get()
+    findAll(@CurrentTenant() tenant: { organizationId?: string }) {
+        return this.messageService.findAll(tenant.organizationId ?? "");
+    }
+
     @Post()
     create(@CurrentTenant() tenant: { organizationId?: string }, @Body() dto: CreateMessageDto) {
         return this.messageService.create(tenant.organizationId ?? "", dto.title, dto.text);

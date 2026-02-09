@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
+import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 
 export interface ChatMessage {
     role: "user" | "assistant";
@@ -65,36 +66,48 @@ function restoreMessageUI(msg: ChatMessage): ChatMessage {
     return msg;
 }
 
-function parseSSEChunk(chunk: string): ChatStreamEvent[] {
+function parseSSEBuffer(buffer: string): { events: ChatStreamEvent[]; remaining: string } {
     const events: ChatStreamEvent[] = [];
-    const lines = chunk.split("\n");
-    
-    let currentData = "";
-    
-    for (const line of lines) {
-        if (line.startsWith("data: ")) {
-            currentData = line.slice(6);
-        } else if (line === "" && currentData) {
-            try {
-                const parsed = JSON.parse(currentData);
-                events.push(parsed);
-            } catch {
-            }
-            currentData = "";
+    const normalized = buffer.replace(/\r/g, "");
+    let cursor = 0;
+
+    while (true) {
+        const boundary = normalized.indexOf("\n\n", cursor);
+        if (boundary === -1) break;
+
+        const block = normalized.slice(cursor, boundary).trim();
+        cursor = boundary + 2;
+
+        if (!block) continue;
+
+        const data = block
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart())
+            .join("\n")
+            .trim();
+
+        if (!data || data === "[DONE]") continue;
+
+        try {
+            const parsed = JSON.parse(data) as ChatStreamEvent;
+            events.push(parsed);
+        } catch {
+            // Ignore malformed partial chunks and keep streaming.
         }
     }
-    
-    return events;
+
+    return {
+        events,
+        remaining: normalized.slice(cursor),
+    };
 }
 
 export function useChatStream(): UseChatStreamReturn {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [state, setState] = useState<ChatState>("idle");
     const [sessionId, setSessionId] = useState<string | null>(() => {
-        if (typeof window !== "undefined") {
-            return localStorage.getItem(SESSION_STORAGE_KEY);
-        }
-        return null;
+        return safeStorageGetItem("local", SESSION_STORAGE_KEY);
     });
     const [error, setError] = useState<string | null>(null);
     const [isToolExecuting, setIsToolExecuting] = useState(false);
@@ -107,8 +120,57 @@ export function useChatStream(): UseChatStreamReturn {
     
     const abortControllerRef = useRef<AbortController | null>(null);
 
+    // Streaming perf: batch many tiny SSE "chunk" events into at most ~1 UI update per frame.
+    const pendingAssistantAppendRef = useRef("");
+    const flushScheduleRef = useRef<{ kind: "raf" | "timeout"; id: number } | null>(null);
+
     const [retryCount, setRetryCount] = useState(0);
     const [lastMessage, setLastMessage] = useState<string | null>(null);
+
+    const clearScheduledFlush = useCallback(() => {
+        const scheduled = flushScheduleRef.current;
+        if (!scheduled) return;
+        if (scheduled.kind === "raf") {
+            cancelAnimationFrame(scheduled.id);
+        } else {
+            clearTimeout(scheduled.id);
+        }
+        flushScheduleRef.current = null;
+    }, []);
+
+    const flushPendingAssistant = useCallback(() => {
+        const delta = pendingAssistantAppendRef.current;
+        if (!delta) return;
+        pendingAssistantAppendRef.current = "";
+        setMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+                updated[lastIdx] = {
+                    ...updated[lastIdx],
+                    content: updated[lastIdx].content + delta,
+                };
+            }
+            return updated;
+        });
+    }, []);
+
+    const scheduleFlushPendingAssistant = useCallback(() => {
+        if (flushScheduleRef.current) return;
+
+        const run = () => {
+            flushScheduleRef.current = null;
+            flushPendingAssistant();
+        };
+
+        if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            flushScheduleRef.current = { kind: "raf", id: window.requestAnimationFrame(run) };
+            return;
+        }
+
+        // Fallback for non-browser/test environments.
+        flushScheduleRef.current = { kind: "timeout", id: setTimeout(run, 0) as unknown as number };
+    }, [flushPendingAssistant]);
 
     const appendMessage = useCallback((message: ChatMessage) => {
         setMessages((prev) => [...prev, message]);
@@ -147,7 +209,7 @@ export function useChatStream(): UseChatStreamReturn {
                 setMessages(restoredMessages);
                 if (data.sessionId) {
                     setSessionId(data.sessionId);
-                    localStorage.setItem(SESSION_STORAGE_KEY, data.sessionId);
+                    safeStorageSetItem("local", SESSION_STORAGE_KEY, data.sessionId);
                 }
             } else {
                 setMessages((prev) => [...restoredMessages, ...prev]);
@@ -260,7 +322,6 @@ export function useChatStream(): UseChatStreamReturn {
             content: trimmed,
             timestamp: new Date().toISOString(),
         };
-        setMessages((prev) => [...prev, userMessage]);
 
         const assistantMessage: ChatMessage = {
             role: "assistant",
@@ -268,7 +329,7 @@ export function useChatStream(): UseChatStreamReturn {
             timestamp: new Date().toISOString(),
             isStreaming: true,
         };
-        setMessages((prev) => [...prev, assistantMessage]);
+        setMessages((prev) => [...prev, userMessage, assistantMessage]);
 
         abortControllerRef.current = new AbortController();
 
@@ -305,24 +366,15 @@ export function useChatStream(): UseChatStreamReturn {
                 if (done) break;
 
                 buffer += decoder.decode(value, { stream: true });
-                const events = parseSSEChunk(buffer);
-                buffer = "";
+                const { events, remaining } = parseSSEBuffer(buffer);
+                buffer = remaining;
 
                 for (const event of events) {
                     switch (event.type) {
                         case "chunk":
                             if (event.content) {
-                                setMessages((prev) => {
-                                    const updated = [...prev];
-                                    const lastIdx = updated.length - 1;
-                                    if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
-                                        updated[lastIdx] = {
-                                            ...updated[lastIdx],
-                                            content: updated[lastIdx].content + event.content,
-                                        };
-                                    }
-                                    return updated;
-                                });
+                                pendingAssistantAppendRef.current += event.content;
+                                scheduleFlushPendingAssistant();
                             }
                             break;
 
@@ -334,6 +386,8 @@ export function useChatStream(): UseChatStreamReturn {
                         case "confirmation":
                             setIsToolExecuting(false);
                             setCurrentTool(null);
+                            clearScheduledFlush();
+                            flushPendingAssistant();
                             if (event.confirmationMessage) {
                                 setMessages((prev) => {
                                     const updated = [...prev];
@@ -353,9 +407,11 @@ export function useChatStream(): UseChatStreamReturn {
                         case "done":
                             setIsToolExecuting(false);
                             setCurrentTool(null);
+                            clearScheduledFlush();
+                            flushPendingAssistant();
                             if (event.sessionId) {
                                 setSessionId(event.sessionId);
-                                localStorage.setItem(SESSION_STORAGE_KEY, event.sessionId);
+                                safeStorageSetItem("local", SESSION_STORAGE_KEY, event.sessionId);
                             }
                             setMessages((prev) => {
                                 const updated = [...prev];
@@ -376,6 +432,8 @@ export function useChatStream(): UseChatStreamReturn {
                             setCurrentTool(null);
                             setError(event.error || "Unknown error");
                             setState("error");
+                            clearScheduledFlush();
+                            flushPendingAssistant();
                             setMessages((prev) => {
                                 const updated = [...prev];
                                 const lastIdx = updated.length - 1;
@@ -393,16 +451,103 @@ export function useChatStream(): UseChatStreamReturn {
                 }
             }
 
+            // Flush any remaining buffered event data after stream end.
+            if (buffer.trim()) {
+                const { events } = parseSSEBuffer(`${buffer}\n\n`);
+                for (const event of events) {
+                    switch (event.type) {
+                        case "chunk":
+                            if (event.content) {
+                                pendingAssistantAppendRef.current += event.content;
+                                scheduleFlushPendingAssistant();
+                            }
+                            break;
+                        case "tool_call":
+                            setIsToolExecuting(true);
+                            setCurrentTool(event.toolName || null);
+                            break;
+                        case "confirmation":
+                            setIsToolExecuting(false);
+                            setCurrentTool(null);
+                            clearScheduledFlush();
+                            flushPendingAssistant();
+                            if (event.confirmationMessage) {
+                                setMessages((prev) => {
+                                    const updated = [...prev];
+                                    const lastIdx = updated.length - 1;
+                                    if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+                                        updated[lastIdx] = {
+                                            ...updated[lastIdx],
+                                            content: event.confirmationMessage || "",
+                                            isStreaming: false,
+                                        };
+                                    }
+                                    return updated;
+                                });
+                            }
+                            break;
+                        case "done":
+                            setIsToolExecuting(false);
+                            setCurrentTool(null);
+                            clearScheduledFlush();
+                            flushPendingAssistant();
+                            if (event.sessionId) {
+                                setSessionId(event.sessionId);
+                                safeStorageSetItem("local", SESSION_STORAGE_KEY, event.sessionId);
+                            }
+                            setMessages((prev) => {
+                                const updated = [...prev];
+                                const lastIdx = updated.length - 1;
+                                if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+                                    updated[lastIdx] = {
+                                        ...updated[lastIdx],
+                                        isStreaming: false,
+                                    };
+                                }
+                                return updated;
+                            });
+                            setState("complete");
+                            break;
+                        case "error":
+                            setIsToolExecuting(false);
+                            setCurrentTool(null);
+                            setError(event.error || "Unknown error");
+                            setState("error");
+                            clearScheduledFlush();
+                            flushPendingAssistant();
+                            setMessages((prev) => {
+                                const updated = [...prev];
+                                const lastIdx = updated.length - 1;
+                                if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+                                    updated[lastIdx] = {
+                                        ...updated[lastIdx],
+                                        content: `Error: ${event.error}`,
+                                        isStreaming: false,
+                                    };
+                                }
+                                return updated;
+                            });
+                            break;
+                    }
+                }
+            }
+
+            clearScheduledFlush();
+            flushPendingAssistant();
             setState("complete");
             // Reset retry count on success
             setRetryCount(0);
         } catch (err) {
             if (err instanceof Error && err.name === "AbortError") {
+                clearScheduledFlush();
+                pendingAssistantAppendRef.current = "";
                 setState("idle");
                 return;
             }
             
             const errorMessage = err instanceof Error ? err.message : "Unknown error";
+            clearScheduledFlush();
+            flushPendingAssistant();
             
             // Auto-retry logic: retry once automatically after 1 second
             if (retryCount < 1) {
@@ -441,7 +586,6 @@ export function useChatStream(): UseChatStreamReturn {
                         content: trimmed,
                         timestamp: new Date().toISOString(),
                     };
-                    setMessages((prev) => [...prev, userMessage]);
 
                     const assistantMessage: ChatMessage = {
                         role: "assistant",
@@ -449,7 +593,7 @@ export function useChatStream(): UseChatStreamReturn {
                         timestamp: new Date().toISOString(),
                         isStreaming: true,
                     };
-                    setMessages((prev) => [...prev, assistantMessage]);
+                    setMessages((prev) => [...prev, userMessage, assistantMessage]);
 
                     abortControllerRef.current = new AbortController();
 
@@ -484,40 +628,33 @@ export function useChatStream(): UseChatStreamReturn {
                             if (done) break;
 
                             buffer += decoder.decode(value, { stream: true });
-                            const events = parseSSEChunk(buffer);
-                            buffer = "";
+                            const { events, remaining } = parseSSEBuffer(buffer);
+                            buffer = remaining;
 
                             for (const event of events) {
                                 switch (event.type) {
-                                    case "chunk":
-                                        if (event.content) {
-                                            setMessages((prev) => {
-                                                const updated = [...prev];
-                                                const lastIdx = updated.length - 1;
-                                                if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
-                                                    updated[lastIdx] = {
-                                                        ...updated[lastIdx],
-                                                        content: updated[lastIdx].content + event.content,
-                                                    };
-                                                }
-                                                return updated;
-                                            });
-                                        }
-                                        break;
+	                                    case "chunk":
+	                                        if (event.content) {
+	                                            pendingAssistantAppendRef.current += event.content;
+	                                            scheduleFlushPendingAssistant();
+	                                        }
+	                                        break;
 
                                     case "tool_call":
                                         setIsToolExecuting(true);
                                         setCurrentTool(event.toolName || null);
                                         break;
 
-                                    case "confirmation":
-                                        setIsToolExecuting(false);
-                                        setCurrentTool(null);
-                                        if (event.confirmationMessage) {
-                                            setMessages((prev) => {
-                                                const updated = [...prev];
-                                                const lastIdx = updated.length - 1;
-                                                if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+	                                    case "confirmation":
+	                                        setIsToolExecuting(false);
+	                                        setCurrentTool(null);
+	                                        clearScheduledFlush();
+	                                        flushPendingAssistant();
+	                                        if (event.confirmationMessage) {
+	                                            setMessages((prev) => {
+	                                                const updated = [...prev];
+	                                                const lastIdx = updated.length - 1;
+	                                                if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                                     updated[lastIdx] = {
                                                         ...updated[lastIdx],
                                                         content: event.confirmationMessage || "",
@@ -529,13 +666,15 @@ export function useChatStream(): UseChatStreamReturn {
                                         }
                                         break;
 
-                                    case "done":
-                                        setIsToolExecuting(false);
-                                        setCurrentTool(null);
-                                        if (event.sessionId) {
-                                            setSessionId(event.sessionId);
-                                            localStorage.setItem(SESSION_STORAGE_KEY, event.sessionId);
-                                        }
+	                                    case "done":
+	                                        setIsToolExecuting(false);
+	                                        setCurrentTool(null);
+	                                        clearScheduledFlush();
+	                                        flushPendingAssistant();
+	                                        if (event.sessionId) {
+	                                            setSessionId(event.sessionId);
+	                                            safeStorageSetItem("local", SESSION_STORAGE_KEY, event.sessionId);
+	                                        }
                                         setMessages((prev) => {
                                             const updated = [...prev];
                                             const lastIdx = updated.length - 1;
@@ -550,15 +689,17 @@ export function useChatStream(): UseChatStreamReturn {
                                         setState("complete");
                                         break;
 
-                                    case "error":
-                                        setIsToolExecuting(false);
-                                        setCurrentTool(null);
-                                        setError(event.error || "Unknown error");
-                                        setState("error");
-                                        setMessages((prev) => {
-                                            const updated = [...prev];
-                                            const lastIdx = updated.length - 1;
-                                            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+	                                    case "error":
+	                                        setIsToolExecuting(false);
+	                                        setCurrentTool(null);
+	                                        setError(event.error || "Unknown error");
+	                                        setState("error");
+	                                        clearScheduledFlush();
+	                                        flushPendingAssistant();
+	                                        setMessages((prev) => {
+	                                            const updated = [...prev];
+	                                            const lastIdx = updated.length - 1;
+	                                            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                                 updated[lastIdx] = {
                                                     ...updated[lastIdx],
                                                     content: `Error: ${event.error}`,
@@ -572,9 +713,93 @@ export function useChatStream(): UseChatStreamReturn {
                             }
                         }
 
+                        if (buffer.trim()) {
+                            const { events } = parseSSEBuffer(`${buffer}\n\n`);
+                            for (const event of events) {
+                                switch (event.type) {
+	                                    case "chunk":
+	                                        if (event.content) {
+	                                            pendingAssistantAppendRef.current += event.content;
+	                                            scheduleFlushPendingAssistant();
+	                                        }
+	                                        break;
+                                    case "tool_call":
+                                        setIsToolExecuting(true);
+                                        setCurrentTool(event.toolName || null);
+                                        break;
+	                                    case "confirmation":
+	                                        setIsToolExecuting(false);
+	                                        setCurrentTool(null);
+	                                        clearScheduledFlush();
+	                                        flushPendingAssistant();
+	                                        if (event.confirmationMessage) {
+	                                            setMessages((prev) => {
+	                                                const updated = [...prev];
+	                                                const lastIdx = updated.length - 1;
+	                                                if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+                                                    updated[lastIdx] = {
+                                                        ...updated[lastIdx],
+                                                        content: event.confirmationMessage || "",
+                                                        isStreaming: false,
+                                                    };
+                                                }
+                                                return updated;
+                                            });
+                                        }
+                                        break;
+	                                    case "done":
+	                                        setIsToolExecuting(false);
+	                                        setCurrentTool(null);
+	                                        clearScheduledFlush();
+	                                        flushPendingAssistant();
+	                                        if (event.sessionId) {
+	                                            setSessionId(event.sessionId);
+	                                            safeStorageSetItem("local", SESSION_STORAGE_KEY, event.sessionId);
+	                                        }
+                                        setMessages((prev) => {
+                                            const updated = [...prev];
+                                            const lastIdx = updated.length - 1;
+                                            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+                                                updated[lastIdx] = {
+                                                    ...updated[lastIdx],
+                                                    isStreaming: false,
+                                                };
+                                            }
+                                            return updated;
+                                        });
+                                        setState("complete");
+                                        break;
+	                                    case "error":
+	                                        setIsToolExecuting(false);
+	                                        setCurrentTool(null);
+	                                        setError(event.error || "Unknown error");
+	                                        setState("error");
+	                                        clearScheduledFlush();
+	                                        flushPendingAssistant();
+	                                        setMessages((prev) => {
+	                                            const updated = [...prev];
+	                                            const lastIdx = updated.length - 1;
+	                                            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+                                                updated[lastIdx] = {
+                                                    ...updated[lastIdx],
+                                                    content: `Error: ${event.error}`,
+                                                    isStreaming: false,
+                                                };
+                                            }
+                                            return updated;
+                                        });
+                                        break;
+                                }
+                            }
+                        }
+
+                        clearScheduledFlush();
+                        flushPendingAssistant();
                         setState("complete");
                         setRetryCount(0);
                     }).catch((retryErr) => {
+                        clearScheduledFlush();
+                        flushPendingAssistant();
                         if (retryErr instanceof Error && retryErr.name === "AbortError") {
                             setState("idle");
                             return;
@@ -618,7 +843,7 @@ export function useChatStream(): UseChatStreamReturn {
                 return updated;
             });
         }
-    }, [sessionId, state, retryCount, persistMessage]);
+    }, [sessionId, state, retryCount, persistMessage, clearScheduledFlush, flushPendingAssistant, scheduleFlushPendingAssistant]);
 
     const clearSession = useCallback(async () => {
         if (abortControllerRef.current) {
@@ -633,7 +858,7 @@ export function useChatStream(): UseChatStreamReturn {
         setError(null);
         setIsToolExecuting(false);
         setCurrentTool(null);
-        localStorage.removeItem(SESSION_STORAGE_KEY);
+        safeStorageRemoveItem("local", SESSION_STORAGE_KEY);
 
         if (currentSessionId) {
             try {

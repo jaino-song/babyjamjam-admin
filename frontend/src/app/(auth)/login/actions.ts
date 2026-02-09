@@ -41,6 +41,7 @@ export async function loginWithEmail(email: string, password: string): Promise<L
 
         // Store tokens in httpOnly cookies
         const cookieStore = await cookies();
+        const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 
         let role = "user";
         try {
@@ -52,7 +53,7 @@ export async function loginWithEmail(email: string, password: string): Promise<L
 
         cookieStore.set("auth_token", data.accessToken, {
             httpOnly: true,
-            secure: true,
+            secure: isSecureCookie,
             sameSite: "lax",
             path: "/",
             maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
@@ -60,7 +61,7 @@ export async function loginWithEmail(email: string, password: string): Promise<L
 
         cookieStore.set("refresh_token", data.refreshToken, {
             httpOnly: true,
-            secure: true,
+            secure: isSecureCookie,
             sameSite: "lax",
             path: "/",
             maxAge: 7 * 24 * 60 * 60,

@@ -72,7 +72,7 @@ export function ChatInput({
                     "flex-1 border-0 bg-transparent",
                     "text-foreground placeholder:text-muted-foreground",
                     "focus-visible:ring-0 focus-visible:ring-offset-0",
-                    readOnly && "pointer-events-none caret-transparent"
+                    readOnly && "caret-transparent"
                 )}
             />
             <Button

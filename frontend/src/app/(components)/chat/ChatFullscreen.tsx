@@ -182,6 +182,8 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
         sendMessage("취소");
     };
 
+    const quickActions = ["산모 등록", "계약서 전송", "계약서 상태 조회"] as const;
+
     const lastMessage = messages[messages.length - 1];
     const showConfirmButtons =
         lastMessage?.role === "assistant" &&
@@ -222,6 +224,8 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                             size="icon"
                             onClick={clearSession}
                             className="h-8 w-8"
+                            aria-label="대화 삭제"
+                            data-testid="chat-fullscreen-clear"
                         >
                             <Trash2 className="w-4 h-4" />
                         </Button>
@@ -230,6 +234,8 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                             size="icon"
                             onClick={onClose}
                             className="h-8 w-8"
+                            aria-label="닫기"
+                            data-testid="chat-fullscreen-close"
                         >
                             <X className="w-4 h-4" />
                         </Button>
@@ -302,6 +308,21 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
 
                 {/* Input area */}
                 <div data-component="chat-fullscreen-input-area" className="px-4 sm:px-8 py-4 border-t border-border bg-card">
+                    <div className="mb-3 flex flex-wrap gap-2">
+                        {quickActions.map((label) => (
+                            <Button
+                                key={label}
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => sendMessage(label)}
+                                disabled={state === "streaming" || state === "connecting"}
+                                className="rounded-full"
+                            >
+                                {label}
+                            </Button>
+                        ))}
+                    </div>
                     <ChatInput
                         onSubmit={sendMessage}
                         disabled={state === "streaming" || state === "connecting"}

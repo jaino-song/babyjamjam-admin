@@ -16,3 +16,4 @@ export type { StatusType } from './StatusBadge';
 export { ListPanel } from './ListPanel';
 export { DetailPanel } from './DetailPanel';
 export { SplitLayout } from './SplitLayout';
+export { AnimatedSlotList } from './AnimatedSlotList';

@@ -1,6 +1,7 @@
 import { MessageEntity } from "../entities/message.entity";
 
 export interface IMessageRepository {
+    findAll(organizationid: string): Promise<MessageEntity[]>;
     findById(organizationid: string, id: number): Promise<MessageEntity | null>;
     create(organizationid: string, message: MessageEntity): Promise<MessageEntity>;
     update(organizationid: string, message: MessageEntity): Promise<MessageEntity>;

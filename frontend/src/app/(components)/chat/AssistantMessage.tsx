@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -8,6 +9,9 @@ import { MarkdownContent } from "./MarkdownContent";
 import { ToolIndicator } from "./tool-indicator";
 import { MessageFeedback } from "./message-feedback";
 import type { ChatMessage } from "@/app/hooks/useChatStream";
+import ClientRegistrationWizard, { type CreatedClient } from "./ClientRegistrationWizard";
+import ContractSendWizard from "./ContractSendWizard";
+import ContractStatusWizard, { type ContractStatusResult } from "./ContractStatusWizard";
 
 interface AssistantMessageProps {
     message: ChatMessage;
@@ -26,6 +30,72 @@ export function AssistantMessage({
     currentTool,
     onSubmitFeedback
 }: AssistantMessageProps) {
+    const wizardType = message.ui?.type;
+    const [createdClient, setCreatedClient] = useState<CreatedClient | null>(null);
+    const [contractStatus, setContractStatus] = useState<ContractStatusResult | null>(null);
+    const [contractSendDone, setContractSendDone] = useState(false);
+
+    const wizardContent = useMemo(() => {
+        if (!wizardType) return null;
+
+        switch (wizardType) {
+            case "clientRegistrationWizard":
+                if (createdClient) {
+                    return (
+                        <div data-component="chat-wizard-registration-success" className="py-1">
+                            산모 등록 완료: {createdClient.name} (ID: {createdClient.id})
+                        </div>
+                    );
+                }
+                return (
+                    <ClientRegistrationWizard
+                        onCreated={(client) => setCreatedClient(client)}
+                    />
+                );
+
+            case "contractSendWizard":
+                if (contractSendDone) {
+                    return (
+                        <div data-component="chat-wizard-contract-send-success" className="py-1">
+                            계약서 전송 화면으로 이동했습니다.
+                        </div>
+                    );
+                }
+                return (
+                    <ContractSendWizard
+                        onComplete={() => setContractSendDone(true)}
+                    />
+                );
+
+            case "contractStatusWizard":
+                if (contractStatus) {
+                    return (
+                        <div data-component="chat-wizard-contract-status-result" className="space-y-1 py-1">
+                            <div>
+                                계약서 상태: <strong>{String(contractStatus.documentStatus)}</strong>
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                                산모: {contractStatus.clientName} (ID: {contractStatus.clientId})
+                            </div>
+                            {contractStatus.serviceStatus && (
+                                <div className="text-sm text-muted-foreground">
+                                    서비스 상태: {contractStatus.serviceStatus}
+                                </div>
+                            )}
+                        </div>
+                    );
+                }
+                return (
+                    <ContractStatusWizard
+                        onCheck={(result) => setContractStatus(result)}
+                    />
+                );
+
+            default:
+                return null;
+        }
+    }, [wizardType, createdClient, contractSendDone, contractStatus]);
+
     return (
         <div data-component="chat-message-assistant" className="flex gap-4 mb-6 w-full">
             <Avatar className="w-8 h-8 shrink-0 mt-1">
@@ -38,40 +108,46 @@ export function AssistantMessage({
                     <ToolIndicator toolName={currentTool || null} isExecuting={true} />
                 )}
                 <MarkdownContent>
-                    <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                            code: ({ className, children, ref: _ref, ...props }) => {
-                                const match = /language-(\w+)/.exec(className || "");
-                                const language = match ? match[1] : "";
-                                const codeString = String(children).replace(/\n$/, "");
-                                const isCodeBlock = Boolean(language);
+                    {wizardContent ? (
+                        wizardContent
+                    ) : (
+                        <>
+                            <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                    code: ({ className, children, ref: _ref, ...props }) => {
+                                        const match = /language-(\w+)/.exec(className || "");
+                                        const language = match ? match[1] : "";
+                                        const codeString = String(children).replace(/\n$/, "");
+                                        const isCodeBlock = Boolean(language);
 
-                                if (isCodeBlock) {
-                                    return <CodeBlock language={language}>{codeString}</CodeBlock>;
-                                }
+                                        if (isCodeBlock) {
+                                            return <CodeBlock language={language}>{codeString}</CodeBlock>;
+                                        }
 
-                                return (
-                                    <code className={className} {...props}>
-                                        {children}
-                                    </code>
-                                );
-                            },
-                            table: ({ children }) => (
-                                <div className="table-wrapper">
-                                    <table>{children}</table>
-                                </div>
-                            ),
-                        }}
-                    >
-                        {message.content}
-                    </ReactMarkdown>
+                                        return (
+                                            <code className={className} {...props}>
+                                                {children}
+                                            </code>
+                                        );
+                                    },
+                                    table: ({ children }) => (
+                                        <div className="table-wrapper">
+                                            <table>{children}</table>
+                                        </div>
+                                    ),
+                                }}
+                            >
+                                {message.content}
+                            </ReactMarkdown>
 
-                    {message.isStreaming && (
-                        <span className="inline-block w-2 h-4 bg-foreground ml-1 animate-blink" />
+                            {message.isStreaming && (
+                                <span className="inline-block w-2 h-4 bg-foreground ml-1 animate-blink" />
+                            )}
+                        </>
                     )}
                 </MarkdownContent>
-                {!message.isStreaming && (
+                {!wizardContent && !message.isStreaming && (
                     <MessageFeedback
                         messageId={String(messageIndex)}
                         sessionId={sessionId}

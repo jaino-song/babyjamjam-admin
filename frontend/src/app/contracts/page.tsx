@@ -35,6 +35,7 @@ import {
   ActivityTimeline,
 } from "@/app/(components)/v3";
 import type { StatusType } from "@/app/(components)/v3";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
 
@@ -200,31 +201,35 @@ export default function ContractsPage() {
         <div data-component="contracts-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatMini
             icon={FileText}
-            value={isInitialLoading ? "–" : stats.total}
+            value={stats.total}
             label="전체 계약"
             colorIndex={0}
             animationDelay="0s"
+            isLoading={isInitialLoading}
           />
           <StatMini
             icon={Clock}
-            value={isInitialLoading ? "–" : stats.pending}
+            value={stats.pending}
             label="대기중"
             colorIndex={1}
             animationDelay="0.08s"
+            isLoading={isInitialLoading}
           />
           <StatMini
             icon={CheckCircle2}
-            value={isInitialLoading ? "–" : stats.completed}
+            value={stats.completed}
             label="서명완료"
             colorIndex={2}
             animationDelay="0.16s"
+            isLoading={isInitialLoading}
           />
           <StatMini
             icon={AlertTriangle}
-            value={isInitialLoading ? "–" : stats.expired}
+            value={stats.expired}
             label="만료"
             colorIndex={3}
             animationDelay="0.24s"
+            isLoading={isInitialLoading}
           />
         </div>
 
@@ -234,17 +239,10 @@ export default function ContractsPage() {
             tabs={TAB_ITEMS}
             activeTab={activeTab}
             onTabChange={handleTabChange}
+            isLoading={isInitialLoading}
+            contentSkeleton={<ContractListSkeleton />}
           >
-            {isInitialLoading ? (
-              <div className="space-y-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div
-                    key={i}
-                    className="h-16 rounded-[14px] bg-v3-dim-white animate-pulse"
-                  />
-                ))}
-              </div>
-            ) : documents.length === 0 ? (
+            {documents.length === 0 ? (
               <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
                 계약 문서가 없습니다
               </div>
@@ -305,7 +303,9 @@ export default function ContractsPage() {
             )}
           </ListPanel>
 
-          {selectedDocument ? (
+          {isInitialLoading ? (
+            <ContractDetailSkeleton />
+          ) : selectedDocument ? (
             <ContractDetail document={selectedDocument} />
           ) : (
             <div className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
@@ -317,6 +317,81 @@ export default function ContractsPage() {
           )}
         </SplitLayout>
     </section>
+  );
+}
+
+function ContractListSkeleton() {
+  return (
+    <div className="space-y-1">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <div
+          key={i}
+          className="flex items-center gap-3 p-3 rounded-[14px]"
+          style={{ opacity: 1 - i * 0.12 }}
+        >
+          <Skeleton className="w-9 h-9 rounded-[10px] bg-v3-dim-white shrink-0" />
+          <div className="flex-1 min-w-0 space-y-2">
+            <Skeleton className="h-3.5 w-3/4 bg-v3-dim-white" />
+            <Skeleton className="h-3 w-1/2 bg-v3-dim-white" />
+          </div>
+          <Skeleton className="h-5 w-14 rounded-full bg-v3-dim-white shrink-0" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContractDetailSkeleton() {
+  return (
+    <div className="bg-white rounded-[28px] shadow-v3">
+      {/* Header skeleton */}
+      <div className="p-6 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-6 w-2/3 bg-v3-dim-white" />
+            <div className="flex items-center gap-4">
+              <Skeleton className="h-3 w-24 bg-v3-dim-white" />
+              <Skeleton className="h-3 w-24 bg-v3-dim-white" />
+            </div>
+          </div>
+          <Skeleton className="h-5 w-16 rounded-full bg-v3-dim-white shrink-0" />
+        </div>
+        <Skeleton className="h-10 w-full rounded-[14px] bg-v3-dim-white" />
+      </div>
+
+      {/* Content skeleton */}
+      <div className="p-6 pt-0 space-y-5">
+        {/* 고객 정보 card */}
+        <div className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
+          <Skeleton className="h-3 w-16 bg-white/70" />
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-1/2 bg-white/70" />
+            <Skeleton className="h-4 w-2/3 bg-white/70" />
+          </div>
+        </div>
+        {/* 계약 정보 card */}
+        <div className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
+          <Skeleton className="h-3 w-16 bg-white/70" />
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-3/4 bg-white/70" />
+            <Skeleton className="h-4 w-1/2 bg-white/70" />
+            <Skeleton className="h-4 w-2/3 bg-white/70" />
+          </div>
+        </div>
+        {/* 서명 진행 card */}
+        <div className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
+          <Skeleton className="h-3 w-20 bg-white/70" />
+          <div className="flex items-center gap-3 py-2">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Skeleton className="w-8 h-8 rounded-full bg-white/70" />
+                {i < 3 && <Skeleton className="w-8 h-0.5 bg-white/70" />}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

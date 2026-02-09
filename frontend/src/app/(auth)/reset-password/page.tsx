@@ -100,14 +100,14 @@ export default function ResetPasswordPage() {
                                 <br />
                                 이메일의 링크를 다시 확인해 주세요.
                             </p>
-                            <Button
-                                data-component="auth-reset-password-retry-btn"
-                                size="lg"
-                                className="w-full"
-                                onClick={() => router.push("/auth/forgot-password")}
-                            >
-                                비밀번호 재설정 다시 요청
-                            </Button>
+	                            <Button
+	                                data-component="auth-reset-password-retry-btn"
+	                                size="lg"
+	                                className="w-full"
+	                                onClick={() => router.push("/forgot-password")}
+	                            >
+	                                비밀번호 재설정 다시 요청
+	                            </Button>
                             <Link
                                 href="/login"
                                 className="text-sm text-muted-foreground hover:text-primary"

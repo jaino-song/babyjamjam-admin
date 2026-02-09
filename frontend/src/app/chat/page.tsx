@@ -149,6 +149,8 @@ export default function ChatPage() {
         sendMessage("취소");
     };
 
+    const quickActions = ["산모 등록", "계약서 전송", "계약서 상태 조회"] as const;
+
     const lastMessage = messages[messages.length - 1];
     const showConfirmButtons =
         lastMessage?.role === "assistant" &&
@@ -168,7 +170,13 @@ export default function ChatPage() {
             {/* Header */}
             <div data-component="chat-header" className="flex items-center justify-between px-4 py-3 border-b border-border bg-card shrink-0">
                 <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="icon" onClick={handleBack}>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleBack}
+                        aria-label="뒤로가기"
+                        data-testid="chat-back"
+                    >
                         <ArrowLeft className="w-5 h-5" />
                     </Button>
                     <Sparkles className="w-5 h-5 text-primary" />
@@ -176,7 +184,13 @@ export default function ChatPage() {
                         AI 어시스턴트
                     </h1>
                 </div>
-                <Button variant="ghost" size="icon" onClick={clearSession}>
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={clearSession}
+                    aria-label="대화 삭제"
+                    data-testid="chat-clear"
+                >
                     <Trash2 className="w-5 h-5" />
                 </Button>
             </div>
@@ -247,6 +261,21 @@ export default function ChatPage() {
 
             {/* Input Area */}
             <div data-component="chat-input-area" className="px-4 sm:px-8 py-4 border-t border-border bg-card shrink-0">
+                <div className="mb-3 flex flex-wrap gap-2">
+                    {quickActions.map((label) => (
+                        <Button
+                            key={label}
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => sendMessage(label)}
+                            disabled={state === "streaming" || state === "connecting"}
+                            className="rounded-full"
+                        >
+                            {label}
+                        </Button>
+                    ))}
+                </div>
                 <ChatInput
                     onSubmit={sendMessage}
                     disabled={state === "streaming" || state === "connecting"}

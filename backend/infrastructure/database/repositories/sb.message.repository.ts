@@ -8,6 +8,14 @@ import { MessageMapper } from "../mapper/message.mapper";
 export class SbMessageRepository implements IMessageRepository {
     constructor(private prismaService: PrismaService) {}
 
+    async findAll(organizationid: string): Promise<MessageEntity[]> {
+        const messages = await this.prismaService.message.findMany({
+            where: { organizationId: organizationid },
+            orderBy: { createdAt: "desc" },
+        });
+        return messages.map(MessageMapper.toDomain);
+    }
+
     async findById(organizationid: string, id: number): Promise<MessageEntity | null> {
         const message = await this.prismaService.message.findFirst({
             where: { id, organizationId: organizationid },

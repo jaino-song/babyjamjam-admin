@@ -10,6 +10,7 @@ import {
   DetailPanel,
   InfoCard,
   InfoRow,
+  AnimatedSlotList,
 } from "@/app/(components)/v3";
 import {
   Users,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { ChatWidget } from "@/app/(components)/chat/ChatWidget";
@@ -68,10 +70,10 @@ const DASHBOARD_ACTIVITIES = [
 ] as const;
 
 const DASHBOARD_STATS = [
-  { icon: Users, valueKey: "activeClients", label: "활성 고객", colorIndex: 0 },
-  { icon: Calendar, valueKey: "upcomingThisMonth", label: "이번달 예정", colorIndex: 1 },
-  { icon: FileSignature, valueKey: "contractsPendingSignature", label: "서명 대기", colorIndex: 2 },
-  { icon: Send, valueKey: "contractsNotSent", label: "발송 대기", colorIndex: 3 },
+  { icon: Users, valueKey: "activeClients", label: "활성 고객", colorIndex: 0, counter: "명" },
+  { icon: Calendar, valueKey: "upcomingThisMonth", label: "이번달 예정", colorIndex: 1, counter: "건" },
+  { icon: FileSignature, valueKey: "contractsPendingSignature", label: "서명 대기", colorIndex: 2, counter: "건" },
+  { icon: Send, valueKey: "contractsNotSent", label: "발송 대기", colorIndex: 3, counter: "건" },
 ] as const;
 
 export default function DashboardPage() {
@@ -84,12 +86,11 @@ export default function DashboardPage() {
       : DASHBOARD_ACTIVITIES.filter((activity) => activity.tab === activeTab);
 
   return (
-    <section data-component="dashboard" className="space-y-6 animate-v3-slide-up">
-      <div
-        data-component="dashboard-header"
-        className="animate-v3-slide-up"
-        style={{ animationDelay: "0.02s" }}
-      >
+    <section
+      data-component="dashboard"
+      className="space-y-6"
+    >
+      <div data-component="dashboard-header">
         <PageHeader
           title="대시보드"
           subtitle="오늘의 업무 현황입니다"
@@ -115,6 +116,7 @@ export default function DashboardPage() {
 
       <div
         data-component="dashboard-stats"
+        // Don't animate the whole grid as one "page child"; animate each card with staggering instead.
         className="grid grid-cols-2 lg:grid-cols-4 gap-4"
       >
         {DASHBOARD_STATS.map((stat, idx) => (
@@ -128,6 +130,8 @@ export default function DashboardPage() {
               label={stat.label}
               colorIndex={stat.colorIndex}
               animationDelay={`${idx * 0.08}s`}
+              isLoading={isLoading}
+              counter={stat.counter}
             />
           </div>
         ))}
@@ -135,15 +139,9 @@ export default function DashboardPage() {
 
       <div
         data-component="dashboard-split"
-        className="animate-v3-pop-in"
-        style={{ animationDelay: "0.16s" }}
       >
         <SplitLayout>
-          <div
-            data-component="dashboard-activities-panel"
-            className="animate-v3-slide-up"
-            style={{ animationDelay: "0.18s" }}
-          >
+          <div data-component="dashboard-activities-panel">
             <ListPanel
               title="최근 활동"
               tabs={[
@@ -154,47 +152,56 @@ export default function DashboardPage() {
               ]}
               activeTab={activeTab}
               onTabChange={setActiveTab}
+              isLoading={isLoading}
             >
-              {isLoading ? (
-                <div
-                  data-component="dashboard-split-list-loading"
-                  className="p-8 text-center text-v3-text-muted animate-v3-pop-in"
-                >
-                  로딩 중...
-                </div>
-              ) : (
-                <div
-                  data-component="dashboard-split-list"
-                  className="space-y-2 animate-v3-pop-in"
-                >
-                  {filteredActivities.length === 0 ? (
-                    <div
-                      data-component="dashboard-split-list-empty"
-                      className="p-8 text-center text-v3-text-muted animate-v3-pop-in"
-                    >
-                      표시할 활동이 없습니다
-                    </div>
-                  ) : (
-                    filteredActivities.map((activity, idx) => {
-                      const Icon = activity.icon;
+              <div
+                data-component="dashboard-split-list"
+                className="space-y-2"
+              >
+                {!isLoading && filteredActivities.length === 0 ? (
+                  <div
+                    data-component="dashboard-split-list-empty"
+                    className="p-8 text-center text-v3-text-muted"
+                  >
+                    표시할 활동이 없습니다
+                  </div>
+                ) : (
+                  <AnimatedSlotList
+                    count={4}
+                    items={filteredActivities}
+                    isLoading={isLoading}
+                    itemDataComponent="dashboard-split-list-item"
+                    className="space-y-2"
+                    slotClassName={({ item, isLoading }) =>
+                      cn(
+                        "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
+                        !isLoading &&
+                          item &&
+                          "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+                      )
+                    }
+                    render={({ index, item, isLoading }) => {
+                      const activity = item;
+                      const Icon = activity?.icon;
                       const iconBackgroundColor =
-                        iconBackgroundColors[idx % iconBackgroundColors.length];
+                        iconBackgroundColors[index % iconBackgroundColors.length];
+
                       return (
-                        <div
-                          key={activity.id}
-                          data-component="dashboard-split-list-item"
-                          className="flex items-center gap-3 p-4 rounded-[18px] cursor-pointer transition-all duration-200 animate-v3-pop-in bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                          style={{ animationDelay: `${idx * 0.04}s` }}
-                        >
+                        <>
                           <div
                             data-component="dashboard-split-list-item-icon"
                             className={cn(
                               "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0 shadow-md",
-                              iconBackgroundColor
+                              isLoading ? "bg-v3-dim-white" : iconBackgroundColor
                             )}
                           >
-                            <Icon className="w-4 h-4" />
+                            {isLoading ? (
+                              <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
+                            ) : (
+                              Icon && <Icon className="w-4 h-4" />
+                            )}
                           </div>
+
                           <div
                             data-component="dashboard-split-list-item-content"
                             className="flex-1 min-w-0"
@@ -203,33 +210,45 @@ export default function DashboardPage() {
                               data-component="dashboard-split-list-item-header"
                               className="flex items-center gap-2 mb-0.5"
                             >
-                              <span className="font-bold text-[0.85rem] text-v3-dark truncate">
-                                {activity.title}
-                              </span>
-                              <Badge
-                                variant="secondary"
-                                className="bg-[hsl(214,100%,95%)] text-v3-primary border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
-                              >
-                                {activity.badge}
-                              </Badge>
+                              {isLoading ? (
+                                <>
+                                  <Skeleton className="h-4 w-40 bg-v3-dim-white" />
+                                  <Skeleton className="h-4 w-12 rounded-full bg-v3-dim-white" />
+                                </>
+                              ) : (
+                                <>
+                                  <span className="font-bold text-[0.85rem] text-v3-dark truncate">
+                                    {activity?.title}
+                                  </span>
+                                  <Badge
+                                    variant="secondary"
+                                    className="bg-[hsl(214,100%,95%)] text-v3-primary border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
+                                  >
+                                    {activity?.badge}
+                                  </Badge>
+                                </>
+                              )}
                             </div>
-                            <p className="text-[0.7rem] text-v3-text-muted truncate">
-                              {activity.description}
-                            </p>
+
+                            {isLoading ? (
+                              <Skeleton className="h-3 w-56 bg-v3-dim-white" />
+                            ) : (
+                              <p className="text-[0.7rem] text-v3-text-muted truncate">
+                                {activity?.description}
+                              </p>
+                            )}
                           </div>
-                        </div>
+                        </>
                       );
-                    })
-                  )}
-                </div>
-              )}
+                    }}
+                  />
+                )}
+              </div>
             </ListPanel>
           </div>
 
           <div
             data-component="dashboard-summary-panel"
-            className="animate-v3-slide-right"
-            style={{ animationDelay: "0.22s" }}
           >
             <DetailPanel
               header={
@@ -255,7 +274,11 @@ export default function DashboardPage() {
 
                 <div
                   data-component="dashboard-chat-widget"
-                  className="mt-4 animate-v3-pop-in"
+                  className={cn(
+                    // Mobile: chat entry is in the bottom nav (center button), so hide this bar.
+                    "mt-4 hidden md:block",
+                    "animate-v3-pop-in"
+                  )}
                   style={{ animationDelay: "0.28s" }}
                 >
                   <ChatWidget />

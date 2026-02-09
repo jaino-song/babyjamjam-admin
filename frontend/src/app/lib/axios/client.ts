@@ -1,5 +1,7 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
 import { parse } from "cookie";
+import { isPublicAuthPath } from "@/app/lib/auth/routes";
+import { safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 
 const API_BASE_URL = typeof window === 'undefined'
     ? (process.env.NEXT_PUBLIC_API_BASE_URL || process.env.DEVELOPMENT_API_BASE_URL)
@@ -89,7 +91,7 @@ api.interceptors.response.use(
                     await api.post('/refresh-access-token', { executionTime });
                     
                     if (typeof window !== 'undefined') {
-                        sessionStorage.setItem("eformsign_auth_time", executionTime.toString());
+                        safeStorageSetItem("session", "eformsign_auth_time", executionTime.toString());
                     }
 
                     processQueue();
@@ -97,7 +99,7 @@ api.interceptors.response.use(
                 } catch (refreshError) {
                     processQueue(refreshError as AxiosError);
                     if (typeof window !== 'undefined') {
-                        sessionStorage.removeItem("eformsign_auth_time");
+                        safeStorageRemoveItem("session", "eformsign_auth_time");
                     }
                     // Don't redirect to login for eformsign auth failures
                     return Promise.reject(refreshError);
@@ -110,7 +112,7 @@ api.interceptors.response.use(
             // But don't redirect if already on an auth page (login, register, etc.)
             if (typeof window !== 'undefined' && !isRedirectingToLogin) {
                 const currentPath = window.location.pathname;
-                const isAuthPage = currentPath === '/login' || currentPath.startsWith('/auth/');
+                const isAuthPage = isPublicAuthPath(currentPath);
                 if (!isAuthPage) {
                     isRedirectingToLogin = true;
                     window.location.href = '/login';

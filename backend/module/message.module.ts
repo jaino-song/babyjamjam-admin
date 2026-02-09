@@ -3,6 +3,7 @@ import {
     CreateMessageUsecase,
     DeleteMessageUsecase,
     FindMessageByIdUsecase,
+    ListMessagesUsecase,
     UpdateMessageUsecase,
 } from "application/usecases/message";
 import { MessageService } from "application/services/message.service";
@@ -15,6 +16,7 @@ import { MessageController } from "interface/controllers/message.controller";
     controllers: [MessageController],
     providers: [
         CreateMessageUsecase,
+        ListMessagesUsecase,
         FindMessageByIdUsecase,
         UpdateMessageUsecase,
         DeleteMessageUsecase,
@@ -28,4 +30,3 @@ import { MessageController } from "interface/controllers/message.controller";
     exports: [MessageService],
 })
 export class MessageModule {}
-

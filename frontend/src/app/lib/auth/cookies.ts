@@ -2,6 +2,7 @@ import { serverAPIClient } from "@/app/lib/axios/server";
 import { cookies } from "next/headers";
 import { cache } from "react";
 import { jwtDecode } from "jwt-decode";
+import axios from "axios";
 
 interface TokenPayload {
   sub: string;
@@ -27,18 +28,33 @@ export const getCurrentUser = cache(async () => {
     }
 
     // Send token as Bearer token in Authorization header
-    const { data } = await serverAPIClient.get(`/auth/me`, {
+    const res = await serverAPIClient.get(`/auth/me`, {
       headers: {
         Authorization: `Bearer ${authToken.value}`,
       },
     });
 
-    console.log("[getCurrentUser] User fetched successfully:", data?.name);
-    return data;
-  } catch (error: any) {
-    console.error('[getCurrentUser] Failed to fetch user:', error.message);
-    console.error('[getCurrentUser] Error status:', error.response?.status);
-    console.error('[getCurrentUser] Error data:', error.response?.data);
+    if (res.status !== 200) {
+      console.error("[getCurrentUser] Failed to fetch user: non-200 response", res.status);
+      return null;
+    }
+
+    console.log("[getCurrentUser] User fetched successfully:", res.data?.name);
+    return res.data;
+  } catch (error: unknown) {
+    if (axios.isAxiosError(error)) {
+      console.error("[getCurrentUser] Failed to fetch user:", error.message);
+      console.error("[getCurrentUser] Error code:", error.code);
+      console.error("[getCurrentUser] Error status:", error.response?.status);
+      console.error("[getCurrentUser] Request:", {
+        baseURL: error.config?.baseURL,
+        url: error.config?.url,
+      });
+    } else if (error instanceof Error) {
+      console.error("[getCurrentUser] Failed to fetch user:", error.message);
+    } else {
+      console.error("[getCurrentUser] Failed to fetch user:", String(error));
+    }
     return null;
   }
 });

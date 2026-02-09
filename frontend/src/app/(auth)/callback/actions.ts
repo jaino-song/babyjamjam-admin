@@ -28,6 +28,7 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
         const { data } = await serverAPIClient.post("/auth/token", { code });
 
         const cookieStore = await cookies();
+        const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 
         let role = "user";
         try {
@@ -39,7 +40,7 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
 
         cookieStore.set("auth_token", data.accessToken, {
             httpOnly: true,
-            secure: true,
+            secure: isSecureCookie,
             sameSite: "lax", // Changed to lax for same-origin navigation
             path: "/",
             maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
@@ -47,7 +48,7 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
 
         cookieStore.set("refresh_token", data.refreshToken, {
             httpOnly: true,
-            secure: true,
+            secure: isSecureCookie,
             sameSite: "lax", // Changed to lax for same-origin navigation
             path: "/",
             maxAge: 7 * 24 * 60 * 60,
@@ -84,4 +85,3 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
         };
     }
 }
-

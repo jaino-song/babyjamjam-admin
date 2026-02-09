@@ -20,7 +20,8 @@ describe("useChatStream command intercept", () => {
             await result.current.sendMessage("산모 등록");
         });
 
-        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        expect((globalThis.fetch as jest.Mock).mock.calls[0]?.[0]).toBe("/api/ai/chat/persist");
         expect(result.current.messages.some((m: ChatMessage) => m.ui?.type === "clientRegistrationWizard")).toBe(true);
     });
 });
