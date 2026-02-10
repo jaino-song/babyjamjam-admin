@@ -248,7 +248,7 @@ export default function ClientsPage() {
                 />
             </div>
 
-	            <SplitLayout>
+	            <SplitLayout hasSelection={!!selectedClient} onBack={() => setSelectedClient(null)}>
 	                <ListPanel
 	                    title="고객 목록"
 	                    isLoading={isLoading}
@@ -261,9 +261,9 @@ export default function ClientsPage() {
 	                        ) : (
 	                            <>
 	                                <AnimatedSlotList<Client>
-	                                    count={4}
 	                                    items={filteredClients}
 	                                    isLoading={isLoading}
+	                                    loadingCount={10}
 	                                    className="space-y-2"
 	                                    slotClassName={({ item, isLoading }) =>
 	                                        cn(
@@ -349,59 +349,6 @@ export default function ClientsPage() {
 	                                        );
 	                                    }}
 	                                />
-
-	                                {!isLoading &&
-	                                    filteredClients.length > 4 &&
-	                                    filteredClients.slice(4).map((client) => (
-	                                        <div
-	                                            key={client.id}
-	                                            onClick={() => handleSelectClient(client)}
-	                                            className={cn(
-	                                                "flex items-center gap-3 p-4 rounded-[18px] cursor-pointer transition-all duration-200",
-	                                                selectedClient?.id === client.id
-	                                                    ? "bg-v3-primary-light border-2 border-v3-primary"
-	                                                    : "bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-	                                            )}
-	                                        >
-	                                            <div
-	                                                className={cn(
-	                                                    "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
-	                                                    getAvatarGradient(client.name)
-	                                                )}
-	                                            >
-	                                                {client.name.charAt(0)}
-	                                            </div>
-
-	                                            <div className="flex-1 min-w-0">
-	                                                <div className="flex items-center gap-2 mb-0.5">
-	                                                    <span className="font-bold text-[0.85rem] text-v3-dark truncate">
-	                                                        {client.name}
-	                                                    </span>
-	                                                    <Badge
-	                                                        variant="secondary"
-	                                                        className="bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)] border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
-	                                                    >
-	                                                        {client.type || "일반"}
-	                                                    </Badge>
-	                                                </div>
-	                                                <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
-	                                                    {client.phone && <span>{client.phone}</span>}
-	                                                    {client.address && (
-	                                                        <span className="truncate">
-	                                                            {client.address.split(" ")[1] || client.address}
-	                                                        </span>
-	                                                    )}
-	                                                </div>
-	                                            </div>
-
-	                                            <div className="shrink-0">
-	                                                <StatusBadge
-	                                                    status={mapServiceStatusToV3(client.serviceStatus)}
-	                                                    label={getStatusLabel(client.serviceStatus)}
-	                                                />
-	                                            </div>
-	                                        </div>
-	                                    ))}
 	                            </>
 	                        )}
 	                    </div>

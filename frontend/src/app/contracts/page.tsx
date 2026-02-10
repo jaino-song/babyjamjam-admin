@@ -33,9 +33,11 @@ import {
   InfoCard,
   InfoRow,
   ActivityTimeline,
+  AnimatedSlotList,
 } from "@/app/(components)/v3";
 import type { StatusType } from "@/app/(components)/v3";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
 
@@ -123,9 +125,16 @@ export default function ContractsPage() {
 
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth();
   const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);
-  const { data, isLoading, error } = useEformsignDocumentsByType(isAuthenticated, filterType);
 
-  const isInitialLoading = isLoadingAuth || isLoading;
+  // Fetch all docs first (for stats) - this determines if initial load is complete
+  const { data: allData, isLoading: isLoadingAll } = useEformsignDocumentsByType(isAuthenticated, null);
+  // Fetch filtered docs for the current tab
+  const { data, isFetching, error } = useEformsignDocumentsByType(isAuthenticated, filterType);
+
+  // Initial loading: auth or first "all" data fetch
+  const isInitialLoading = isLoadingAuth || isLoadingAll;
+  // Content loading: fetching filtered data after initial load is complete
+  const isContentLoading = !isInitialLoading && isFetching;
 
   const documents = useMemo(() => {
     return (data?.documents || []).filter((doc) => {
@@ -135,8 +144,6 @@ export default function ContractsPage() {
       return true;
     });
   }, [data?.documents]);
-
-  const { data: allData } = useEformsignDocumentsByType(isAuthenticated, null);
 
   const stats = useMemo(() => {
     const allDocs = (allData?.documents || []).filter((doc) => {
@@ -233,73 +240,84 @@ export default function ContractsPage() {
           />
         </div>
 
-        <SplitLayout>
+        <SplitLayout hasSelection={!!selectedDocId} onBack={() => setSelectedDocId(null)}>
           <ListPanel
             title="계약 목록"
             tabs={TAB_ITEMS}
             activeTab={activeTab}
             onTabChange={handleTabChange}
             isLoading={isInitialLoading}
+            isContentLoading={isContentLoading}
             contentSkeleton={<ContractListSkeleton />}
           >
-            {documents.length === 0 ? (
+            {documents.length === 0 && !isContentLoading ? (
               <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
                 계약 문서가 없습니다
               </div>
             ) : (
-              <div data-component="contracts-list-items" className="space-y-1">
-                {documents.map((doc) => {
+              <AnimatedSlotList<EformsignDocument>
+                items={documents}
+                isLoading={false}
+                className="space-y-2"
+                slotClassName={({ item }) => {
+                  const isActive = item && selectedDocument?.id === item.id;
+                  return cn(
+                    "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent cursor-pointer",
+                    isActive
+                      ? "bg-v3-primary-light border-2 border-v3-primary"
+                      : "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+                  );
+                }}
+                onSlotClick={(doc) => setSelectedDocId(doc.id)}
+                render={({ item: doc }) => {
+                  if (!doc) return null;
                   const customerName = getCustomerName(doc);
                   const category = getStatusCategory(doc.current_status?.status_type);
                   const statusType = mapCategoryToStatusType(category);
                   const statusLabel = mapStatusToLabel(doc.current_status?.status_type);
-                  const isActive = selectedDocument?.id === doc.id;
 
                   return (
-                    <button
-                      key={doc.id}
-                      data-component="contracts-list-item"
-                      onClick={() => setSelectedDocId(doc.id)}
-                      className={`w-full flex items-center gap-3 p-3 rounded-[14px] text-left transition-all duration-200 ${
-                        isActive
-                          ? "bg-v3-primary-light border-l-2 border-v3-primary"
-                          : "hover:bg-v3-dim-white"
-                      }`}
-                    >
+                    <>
                       <div
-                        className={`w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0 ${
+                        className={cn(
+                          "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0 shadow-md",
                           category === "completed"
                             ? "bg-v3-green-light"
                             : category === "rejected"
                               ? "bg-v3-burgundy-light"
                               : "bg-v3-orange-light"
-                        }`}
+                        )}
                       >
                         <FileSignature
-                          className={`w-4 h-4 ${
+                          className={cn(
+                            "w-5 h-5",
                             category === "completed"
                               ? "text-v3-green"
                               : category === "rejected"
                                 ? "text-v3-burgundy"
                                 : "text-v3-orange"
-                          }`}
+                          )}
                         />
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <p className="text-[0.8rem] font-semibold text-v3-dark truncate">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="font-bold text-[0.85rem] text-v3-dark truncate">
+                            {customerName}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
                           {doc.document_name}
-                        </p>
-                        <p className="text-[0.7rem] text-v3-text-muted truncate">
-                          {customerName}
-                        </p>
+                        </div>
                       </div>
 
-                      <StatusBadge status={statusType} label={statusLabel} />
-                    </button>
+                      <div className="shrink-0">
+                        <StatusBadge status={statusType} label={statusLabel} />
+                      </div>
+                    </>
                   );
-                })}
-              </div>
+                }}
+              />
             )}
           </ListPanel>
 

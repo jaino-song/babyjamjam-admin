@@ -6,9 +6,12 @@ import { cn } from "@/lib/utils";
 type SlotClassNameArgs<T> = { index: number; item: T | null; isLoading: boolean };
 
 export interface AnimatedSlotListProps<T> {
-  count: number;
+  /** Number of slots to render. If not provided, shows all items (unlimited). */
+  count?: number;
   items?: readonly T[] | null;
   isLoading: boolean;
+  /** Number of skeleton slots to show while loading (only used when count is not provided). Default: 4 */
+  loadingCount?: number;
   className?: string;
   itemDataComponent?: string;
   /** Delay step in seconds (e.g. 0.04) */
@@ -23,6 +26,7 @@ export function AnimatedSlotList<T>({
   count,
   items,
   isLoading,
+  loadingCount = 4,
   className,
   itemDataComponent = "animated-slot-list-item",
   delayStepSeconds = 0.04,
@@ -31,9 +35,13 @@ export function AnimatedSlotList<T>({
   onSlotClick,
   render,
 }: AnimatedSlotListProps<T>) {
+  // If count is provided, use it. Otherwise, show all items (or loadingCount while loading)
+  const itemsLength = items?.length ?? 0;
+  const slotCount: number = count !== undefined ? count : (isLoading ? loadingCount : itemsLength);
+
   return (
     <div data-component="animated-slot-list" className={className}>
-      {Array.from({ length: count }, (_, index) => {
+      {Array.from({ length: slotCount }, (_, index) => {
         const item = !isLoading ? (items?.[index] ?? null) : null;
 
         const computedSlotClassName =
