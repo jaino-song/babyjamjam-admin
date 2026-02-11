@@ -36,28 +36,43 @@ export class WebPushAdapter implements IWebPushPort {
         subscription: PushSubscriptionEntity,
         payload: string,
     ): Promise<boolean> {
-        try {
-            await webpush.sendNotification(
-                subscription.toWebPushSubscription(),
-                payload,
-                {
-                    TTL: 60 * 60 * 24, // 24 hours
-                    urgency: 'normal',
-                },
-            );
-            this.logger.debug(`Push notification sent to endpoint: ${subscription.endpoint.substring(0, 50)}...`);
-            return true;
-        } catch (error: unknown) {
-            const webPushError = error as { statusCode?: number; body?: string };
-            // 410 Gone = subscription expired/invalid, should be removed
-            // 404 Not Found = subscription no longer valid
-            if (webPushError.statusCode === 410 || webPushError.statusCode === 404) {
-                this.logger.warn(`Subscription expired or invalid: ${subscription.endpoint.substring(0, 50)}...`);
+        const maxRetries = 2;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                await webpush.sendNotification(
+                    subscription.toWebPushSubscription(),
+                    payload,
+                    {
+                        TTL: 60 * 60 * 24,
+                        urgency: 'normal',
+                    },
+                );
+                this.logger.debug(`Push notification sent to endpoint: ${subscription.endpoint.substring(0, 50)}...`);
+                return true;
+            } catch (error: unknown) {
+                const webPushError = error as { statusCode?: number; body?: string };
+
+                // Permanent failures - don't retry
+                if (webPushError.statusCode === 410 || webPushError.statusCode === 404) {
+                    this.logger.warn(`Subscription expired or invalid: ${subscription.endpoint.substring(0, 50)}...`);
+                    return false;
+                }
+
+                // Retryable error
+                if (attempt < maxRetries) {
+                    const delay = (attempt + 1) * 1000; // 1s, 2s linear backoff
+                    this.logger.warn(`Push failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue;
+                }
+
+                this.logger.error(`Failed to send push notification after ${maxRetries + 1} attempts: ${webPushError.body || webPushError}`);
                 return false;
             }
-            this.logger.error(`Failed to send push notification: ${webPushError.body || webPushError}`);
-            return false;
         }
+
+        return false;
     }
 
     async sendNotificationToMany(

@@ -82,7 +82,17 @@ export class AuthController {
                 role: true,
             },
         });
-        return user;
+
+        let organizationName: string | null = null;
+        if (req.user.organizationId) {
+            const org = await this.prisma.organization.findUnique({
+                where: { id: req.user.organizationId },
+                select: { name: true },
+            });
+            organizationName = org?.name ?? null;
+        }
+
+        return { ...user, organizationName };
     }
 
     @Post("token")

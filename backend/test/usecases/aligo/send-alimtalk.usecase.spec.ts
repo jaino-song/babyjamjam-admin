@@ -1,17 +1,47 @@
 import { SendAligoAlimtalkUsecase } from "application/usecases/aligo/send-alimtalk.usecase";
 import { IAligoApiPort } from "domain/ports/aligo-api.port";
+import { IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
+import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
 
 describe("SendAligoAlimtalkUsecase", () => {
     const createMockAligoApi = (): jest.Mocked<IAligoApiPort> => ({
         sendAlimtalk: jest.fn(),
     });
 
+    const createMockLogRepository = (): jest.Mocked<IAlimtalkLogRepository> => ({
+        save: jest.fn().mockImplementation((log: AlimtalkLogEntity) => {
+            // Return a real entity instance so methods like markSent/markFailed work
+            return Promise.resolve(AlimtalkLogEntity.reconstitute(
+                1,
+                log.organizationId,
+                log.provider,
+                log.templateKey,
+                log.receiver,
+                log.clientId,
+                log.messageBody,
+                log.variables,
+                log.status,
+                log.aligoMid,
+                log.errorMessage,
+                log.attempts,
+                log.lastAttemptAt,
+                log.nextRetryAt,
+                log.createdAt,
+                log.updatedAt,
+            ));
+        }),
+        update: jest.fn().mockResolvedValue(undefined),
+        findPendingRetries: jest.fn().mockResolvedValue([]),
+    });
+
     let usecase: SendAligoAlimtalkUsecase;
     let aligoApi: jest.Mocked<IAligoApiPort>;
+    let logRepository: jest.Mocked<IAlimtalkLogRepository>;
 
     beforeEach(() => {
         aligoApi = createMockAligoApi();
-        usecase = new SendAligoAlimtalkUsecase(aligoApi);
+        logRepository = createMockLogRepository();
+        usecase = new SendAligoAlimtalkUsecase(aligoApi, logRepository);
     });
 
     afterEach(() => {
@@ -43,6 +73,8 @@ describe("SendAligoAlimtalkUsecase", () => {
                     })
                 );
                 expect(result.code).toBe(0);
+                expect(logRepository.save).toHaveBeenCalledTimes(1);
+                expect(logRepository.update).toHaveBeenCalledTimes(1);
             });
 
             it("should include button when buttonUrl is provided", async () => {
@@ -85,6 +117,22 @@ describe("SendAligoAlimtalkUsecase", () => {
                 });
 
                 expect(result.code).toBe(-101);
+            });
+        });
+
+        describe("given API throws", () => {
+            it("should log failure and rethrow", async () => {
+                aligoApi.sendAlimtalk.mockRejectedValue(new Error("Network error"));
+
+                await expect(
+                    usecase.execute({
+                        templateKey: "CLIENT_CREATED",
+                        receiver: "01012345678",
+                        variables: { 고객명: "test", 등록일: "2025-01-14", 서비스타입: "test" },
+                    })
+                ).rejects.toThrow("Network error");
+
+                expect(logRepository.update).toHaveBeenCalledTimes(1);
             });
         });
     });

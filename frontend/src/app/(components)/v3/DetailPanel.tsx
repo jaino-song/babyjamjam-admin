@@ -14,7 +14,7 @@ export function DetailPanel({ header, children }: DetailPanelProps) {
   const showBackButton = nav?.isMobile;
 
   return (
-    <div data-component="detail-panel" className="bg-white rounded-[28px] shadow-v3 animate-v3-slide-up flex flex-col overflow-hidden">
+    <div data-component="detail-panel" className={`bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden ${nav?.isMobile ? "" : "animate-v3-slide-up"}`}>
       {/* Back button - mobile only */}
       {showBackButton && (
         <button

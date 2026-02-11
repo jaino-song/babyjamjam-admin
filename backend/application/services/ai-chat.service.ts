@@ -1,9 +1,33 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
-import { GeminiChatGateway, ChatMessage, GeminiStreamChunk } from "infrastructure/api/gemini-chat.gateway";
-import { ToolExecutorService, ToolExecutionResult } from "application/ai-chat/tool-executor.service";
+import { ChatMessage, GeminiStreamChunk, FunctionDeclaration, FunctionCall } from "infrastructure/api/gemini-chat.gateway";
+import { ToolExecutorService } from "application/ai-chat/tool-executor.service";
 import { CHAT_SESSION_REPOSITORY, IChatSessionRepository } from "domain/repositories/chat-session.repository.interface";
 import { ChatSessionEntity, ChatMessage as SessionMessage } from "domain/entities/chat-session.entity";
 import { allTools } from "application/ai-chat/tools";
+import { GEMINI_GATEWAY } from "module/ai-chat.tokens";
+
+/**
+ * Interface for Gemini gateway implementations.
+ * Both GeminiChatGateway and VercelGeminiGateway implement this interface.
+ */
+export interface IGeminiGateway {
+    chat(
+        messages: ChatMessage[],
+        tools?: FunctionDeclaration[],
+    ): Promise<{ text?: string; functionCall?: FunctionCall }>;
+
+    chatStream(
+        messages: ChatMessage[],
+        tools?: FunctionDeclaration[],
+    ): AsyncGenerator<GeminiStreamChunk>;
+
+    sendFunctionResult(
+        messages: ChatMessage[],
+        functionName: string,
+        result: unknown,
+        tools?: FunctionDeclaration[],
+    ): Promise<{ text?: string; functionCall?: FunctionCall }>;
+}
 
 const SYSTEM_PROMPT = `
 <role>
@@ -323,7 +347,8 @@ export class AIChatService {
     private readonly logger = new Logger(AIChatService.name);
 
     constructor(
-        private readonly geminiGateway: GeminiChatGateway,
+        @Inject(GEMINI_GATEWAY)
+        private readonly geminiGateway: IGeminiGateway,
         private readonly toolExecutor: ToolExecutorService,
         @Inject(CHAT_SESSION_REPOSITORY)
         private readonly sessionRepository: IChatSessionRepository,

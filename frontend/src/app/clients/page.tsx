@@ -16,7 +16,6 @@ import { cn } from "@/lib/utils";
 import {
     PageHeader,
     StatMini,
-    SearchFilterBar,
     SplitLayout,
     ListPanel,
     DetailPanel,
@@ -24,7 +23,9 @@ import {
     InfoRow,
     StatusBadge,
     AnimatedSlotList,
+    HeaderActionButton,
 } from "@/app/(components)/v3";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 import type { StatusType } from "@/app/(components)/v3";
 
 const FILTER_CHIPS = [
@@ -113,11 +114,7 @@ export default function ClientsPage() {
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [activeSection, setActiveSection] = useState<string>("basic");
 
-    const { data, isLoading } = useClients(
-        1,
-        50,
-        searchQuery.trim() ? searchQuery.trim() : undefined
-    );
+    const { data, isLoading } = useClients(1, 50);
     const deleteClient = useDeleteClient();
 
     const { data: clientFromParam } = useClient(
@@ -134,10 +131,14 @@ export default function ClientsPage() {
     const total = data?.total || 0;
 
     const filteredClients = useMemo(() => {
+        let result = clients;
         const statusValue = filterValueToStatus(activeFilter);
-        if (!statusValue) return clients;
-        return clients.filter((c) => c.serviceStatus === statusValue);
-    }, [clients, activeFilter]);
+        if (statusValue) result = result.filter((c) => c.serviceStatus === statusValue);
+        if (searchQuery.trim()) {
+            result = result.filter((c) => matchesKoreanSearch(c.name, searchQuery.trim()));
+        }
+        return result;
+    }, [clients, activeFilter, searchQuery]);
 
     const stats = useMemo(() => {
         const activeCount = clients.filter((c) => c.serviceStatus === "active").length;
@@ -193,28 +194,16 @@ export default function ClientsPage() {
         <section data-component="clients" className="space-y-6 pb-10">
             <PageHeader
                 title="고객 관리"
-                subtitle="전체 고객 정보를 확인하고 관리하세요"
                 icon={Users}
                 actions={
-                    <Button
-                        variant="v3"
+                    <HeaderActionButton
+                        icon={Plus}
+                        label={t(locale, "clients.add")}
                         onClick={handleAddNew}
                         data-testid="add-client-button"
-                    >
-                        <Plus className="h-4 w-4 mr-1" />
-                        {t(locale, "clients.add")}
-                    </Button>
+                        data-component="clients-header-add"
+                    />
                 }
-            />
-
-            <SearchFilterBar
-                searchPlaceholder={t(locale, "clients.search-placeholder")}
-                searchValue={searchQuery}
-                onSearchChange={setSearchQuery}
-                filterOptions={FILTER_CHIPS}
-                filterValue={activeFilter}
-                onFilterChange={setActiveFilter}
-                filterLabel="상태"
             />
 
             <div data-component="clients-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -251,6 +240,12 @@ export default function ClientsPage() {
 	            <SplitLayout hasSelection={!!selectedClient} onBack={() => setSelectedClient(null)}>
 	                <ListPanel
 	                    title="고객 목록"
+	                    tabs={FILTER_CHIPS}
+	                    activeTab={activeFilter}
+	                    onTabChange={setActiveFilter}
+	                    searchValue={searchQuery}
+	                    onSearchChange={setSearchQuery}
+	                    searchPlaceholder={t(locale, "clients.search-placeholder")}
 	                    isLoading={isLoading}
 	                >
 	                    <div className="space-y-2">

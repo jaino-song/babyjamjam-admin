@@ -311,6 +311,9 @@
   --animate-v3-slide-up: v3-slide-up 0.5s ease-out forwards;
   --animate-v3-slide-right: v3-slide-right 0.4s ease-out forwards;
   --animate-v3-float: v3-float 3s ease-in-out infinite;
+
+  /* Load More Animation - plays bounce then waits until 3s total cycle */
+  --animate-ball-bounce: ball-bounce 3s ease-out infinite;
 }
 
 /* ========================================
@@ -645,6 +648,33 @@
 
   50% {
     transform: translateY(-6px);
+  }
+}
+
+/* Ball bounce - dampened bouncing effect for load more chevron
+   Animation plays in first ~1s (33% of 3s), then stays idle for remaining ~2s
+   Bounce heights: 12px -> 6px -> 3px (1.5x increased) */
+@keyframes ball-bounce {
+  0%, 33%, 100% {
+    transform: translateY(0);
+  }
+  7% {
+    transform: translateY(12px);
+  }
+  12% {
+    transform: translateY(0);
+  }
+  17% {
+    transform: translateY(6px);
+  }
+  22% {
+    transform: translateY(0);
+  }
+  26% {
+    transform: translateY(3px);
+  }
+  30% {
+    transform: translateY(0);
   }
 }
 

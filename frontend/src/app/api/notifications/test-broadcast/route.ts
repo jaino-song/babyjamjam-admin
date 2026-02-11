@@ -3,6 +3,13 @@ import { NextResponse } from "next/server";
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.DEVELOPMENT_API_BASE_URL;
 
 export async function POST() {
+    if (process.env.NODE_ENV === 'production') {
+        return NextResponse.json(
+            { error: "Test endpoint disabled in production" },
+            { status: 403 }
+        );
+    }
+
     if (!BACKEND_URL) {
         return NextResponse.json(
             { error: "Backend URL not configured" },

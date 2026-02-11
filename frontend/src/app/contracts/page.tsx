@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 import {
   FileText,
   Clock,
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useEformsignDocumentsByType } from "@/app/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/app/hooks/useEformsignAuth";
+import { useInfiniteContracts } from "@/app/hooks/useInfiniteContracts";
 import { EformsignDocument } from "@/app/lib/eformsign/types";
 import {
   DocumentFilterType,
@@ -34,6 +35,7 @@ import {
   InfoRow,
   ActivityTimeline,
   AnimatedSlotList,
+  HeaderActionButton,
 } from "@/app/(components)/v3";
 import type { StatusType } from "@/app/(components)/v3";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -122,28 +124,45 @@ function getSignatureProgress(category: "completed" | "rejected" | "in-progress"
 export default function ContractsPage() {
   const [activeTab, setActiveTab] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth();
   const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);
 
-  // Fetch all docs first (for stats) - this determines if initial load is complete
+  // Fetch all docs (for stats) - single request for total counts
   const { data: allData, isLoading: isLoadingAll } = useEformsignDocumentsByType(isAuthenticated, null);
-  // Fetch filtered docs for the current tab
-  const { data, isFetching, error } = useEformsignDocumentsByType(isAuthenticated, filterType);
+
+  // Fetch filtered docs with infinite scroll for the current tab
+  const {
+    documents: infiniteDocuments,
+    isLoading: isLoadingInfinite,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    isInitialLoad,
+    error,
+  } = useInfiniteContracts({
+    enabled: isAuthenticated,
+    filterType,
+    excludedNames: EXCLUDED_CUSTOMER_NAMES,
+  });
 
   // Initial loading: auth or first "all" data fetch
   const isInitialLoading = isLoadingAuth || isLoadingAll;
   // Content loading: fetching filtered data after initial load is complete
-  const isContentLoading = !isInitialLoading && isFetching;
+  const isContentLoading = !isInitialLoading && isLoadingInfinite;
 
+  // Use infinite scroll documents, with optional local search filter
   const documents = useMemo(() => {
-    return (data?.documents || []).filter((doc) => {
-      const name = getCustomerName(doc);
-      if (!name) return false;
-      if (EXCLUDED_CUSTOMER_NAMES.includes(name)) return false;
-      return true;
+    if (!searchQuery.trim()) return infiniteDocuments;
+    return infiniteDocuments.filter((doc) => {
+      const customerName = getCustomerName(doc);
+      const q = searchQuery.trim();
+      if (customerName && matchesKoreanSearch(customerName, q)) return true;
+      if (doc.document_name?.toLowerCase().includes(q.toLowerCase())) return true;
+      return false;
     });
-  }, [data?.documents]);
+  }, [infiniteDocuments, searchQuery]);
 
   const stats = useMemo(() => {
     const allDocs = (allData?.documents || []).filter((doc) => {
@@ -191,17 +210,14 @@ export default function ContractsPage() {
     <section data-component="contracts" className="space-y-6">
         <PageHeader
           title="전자계약 관리"
-          subtitle="eformsign 전자계약 문서를 관리합니다"
           icon={FileText}
           actions={
-            <Link
+            <HeaderActionButton
               href="/contracts/creation"
+              icon={Plus}
+              label="서명 요청"
               data-component="contracts-header-send-contract"
-              className="inline-flex items-center gap-2 rounded-[14px] bg-v3-primary px-5 py-2.5 text-[0.85rem] font-semibold text-white shadow-v3 hover:shadow-v3-hover hover:-translate-y-0.5 transition-all duration-300"
-            >
-              <Plus className="h-4 w-4" />
-              서명 요청
-            </Link>
+            />
           }
         />
 
@@ -246,30 +262,54 @@ export default function ContractsPage() {
             tabs={TAB_ITEMS}
             activeTab={activeTab}
             onTabChange={handleTabChange}
-            isLoading={isInitialLoading}
-            isContentLoading={isContentLoading}
-            contentSkeleton={<ContractListSkeleton />}
+            searchValue={searchQuery}
+            onSearchChange={setSearchQuery}
+            searchPlaceholder="고객명, 문서명 검색..."
+            isLoading={isInitialLoading || isContentLoading}
           >
-            {documents.length === 0 && !isContentLoading ? (
+            {documents.length === 0 && !isInitialLoading && !isContentLoading ? (
               <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
                 계약 문서가 없습니다
               </div>
             ) : (
               <AnimatedSlotList<EformsignDocument>
                 items={documents}
-                isLoading={false}
+                isLoading={isInitialLoading || isContentLoading}
+                loadingCount={6}
                 className="space-y-2"
-                slotClassName={({ item }) => {
-                  const isActive = item && selectedDocument?.id === item.id;
+                slotClassName={({ item, isLoading }) => {
+                  const isActive = !isLoading && item && selectedDocument?.id === item.id;
                   return cn(
-                    "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent cursor-pointer",
+                    "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
+                    !isLoading && "cursor-pointer",
                     isActive
                       ? "bg-v3-primary-light border-2 border-v3-primary"
-                      : "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+                      : !isLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
                   );
                 }}
                 onSlotClick={(doc) => setSelectedDocId(doc.id)}
-                render={({ item: doc }) => {
+                // Load more props
+                hasMore={hasNextPage}
+                onLoadMore={() => fetchNextPage()}
+                isFetchingMore={isFetchingNextPage}
+                isInitialLoad={isInitialLoad}
+                render={({ item: doc, isLoading }) => {
+                  // Skeleton state
+                  if (isLoading) {
+                    return (
+                      <>
+                        <div className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
+                          <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
+                          <Skeleton className="h-3 w-40 bg-v3-dim-white" />
+                        </div>
+                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white shrink-0" />
+                      </>
+                    );
+                  }
+
                   if (!doc) return null;
                   const customerName = getCustomerName(doc);
                   const category = getStatusCategory(doc.current_status?.status_type);
@@ -335,27 +375,6 @@ export default function ContractsPage() {
           )}
         </SplitLayout>
     </section>
-  );
-}
-
-function ContractListSkeleton() {
-  return (
-    <div className="space-y-1">
-      {[0, 1, 2, 3, 4].map((i) => (
-        <div
-          key={i}
-          className="flex items-center gap-3 p-3 rounded-[14px]"
-          style={{ opacity: 1 - i * 0.12 }}
-        >
-          <Skeleton className="w-9 h-9 rounded-[10px] bg-v3-dim-white shrink-0" />
-          <div className="flex-1 min-w-0 space-y-2">
-            <Skeleton className="h-3.5 w-3/4 bg-v3-dim-white" />
-            <Skeleton className="h-3 w-1/2 bg-v3-dim-white" />
-          </div>
-          <Skeleton className="h-5 w-14 rounded-full bg-v3-dim-white shrink-0" />
-        </div>
-      ))}
-    </div>
   );
 }
 

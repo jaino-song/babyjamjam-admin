@@ -5,6 +5,8 @@ export interface SendAligoAlimtalkDto {
     receiver: string;
     variables: Record<string, string>;
     buttonUrl?: string;
+    organizationId?: string;
+    clientId?: number;
 }
 
 export class AligoMessageBuilder {

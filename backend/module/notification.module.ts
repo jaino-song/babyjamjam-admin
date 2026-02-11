@@ -23,6 +23,8 @@ import { PUSH_SUBSCRIPTION_REPOSITORY } from "domain/repositories/push-subscript
 import { NOTIFICATION_REPOSITORY } from "domain/repositories/notification.repository.interface";
 import { USER_REPOSITORY } from "domain/repositories/user.repository.interface";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
+import { ORGANIZATION_REPOSITORY } from "domain/repositories/organization.repository.interface";
+import { SbOrganizationRepository } from "infrastructure/database/repositories/sb.organization.repository";
 import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
 
 @Module({
@@ -59,6 +61,10 @@ import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
         {
             provide: CLIENT_REPOSITORY,
             useClass: SbClientRepository,
+        },
+        {
+            provide: ORGANIZATION_REPOSITORY,
+            useClass: SbOrganizationRepository,
         },
         // External service binding (Port -> Adapter)
         {

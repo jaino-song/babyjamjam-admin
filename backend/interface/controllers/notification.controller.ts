@@ -9,9 +9,12 @@ import {
     UseGuards,
     Request,
     ParseIntPipe,
+    ForbiddenException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { NotificationService } from "application/services/notification.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import {
     SubscribePushDto,
@@ -32,7 +35,10 @@ interface JwtPayload {
 
 @Controller("notifications")
 export class NotificationController {
-    constructor(private readonly notificationService: NotificationService) {}
+    constructor(
+        private readonly notificationService: NotificationService,
+        private readonly configService: ConfigService,
+    ) {}
 
     /**
      * Get VAPID public key (needed by frontend to subscribe)
@@ -151,14 +157,11 @@ export class NotificationController {
      * Send notification to a specific user (admin only)
      */
     @Post("send")
-    @UseGuards(JwtGuard, TenantGuard)
+    @UseGuards(JwtGuard, TenantGuard, OwnerOrAdminGuard)
     async sendNotification(
         @CurrentTenant() tenant: { organizationId?: string },
-        @Request() req: { user: JwtPayload },
         @Body() dto: SendNotificationDto,
     ): Promise<NotificationResponseDto> {
-        // TODO: Add admin role check
-        // if (req.user.role !== 'admin') throw new ForbiddenException();
         const notification = await this.notificationService.sendNotification(
             tenant.organizationId ?? "",
             dto.userId,
@@ -173,13 +176,10 @@ export class NotificationController {
      * Broadcast notification to all users (admin only)
      */
     @Post("broadcast")
-    @UseGuards(JwtGuard)
+    @UseGuards(JwtGuard, TenantGuard, OwnerOrAdminGuard)
     async broadcastNotification(
-        @Request() req: { user: JwtPayload },
         @Body() dto: BroadcastNotificationDto,
     ): Promise<BroadcastResultResponseDto> {
-        // TODO: Add admin role check
-        // if (req.user.role !== 'admin') throw new ForbiddenException();
         return this.notificationService.broadcastNotification(
             dto.title,
             dto.body,
@@ -193,6 +193,9 @@ export class NotificationController {
      */
     @Post("test-broadcast")
     async testBroadcast(): Promise<BroadcastResultResponseDto> {
+        if (this.configService.get('NODE_ENV') === 'production') {
+            throw new ForbiddenException('Test endpoint disabled in production');
+        }
         return this.notificationService.broadcastNotification(
             "🎉 테스트 알림",
             "PWA 푸시 알림이 정상 작동합니다!",

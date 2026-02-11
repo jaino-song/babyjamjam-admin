@@ -57,8 +57,9 @@ export function getChosungString(str: string): string {
  * - matchesKoreanSearch("김현아", "ㄱ") → true (초성 match, starts with ㄱ)
  * - matchesKoreanSearch("김현아", "ㄱㅎ") → true (초성 match, starts with ㄱㅎ)
  * - matchesKoreanSearch("김현아", "ㄱㅎㅇ") → true (초성 match)
- * - matchesKoreanSearch("김현아", "ㅎ") → false (초성 ㅎ is not at the start)
- * - matchesKoreanSearch("테스트", "ㅅ") → false (테스트 starts with ㅌ, not ㅅ)
+ * - matchesKoreanSearch("김현아", "ㅎ") → false (초성 ㅎ is not at the start; full chosung is ㄱㅎㅇ)
+ * - matchesKoreanSearch("테스트", "ㅅ") → false (starts with ㅌ, not ㅅ)
+ * - matchesKoreanSearch("테스트 신규", "ㅅ") → false (full chosung ㅌㅅㅌㅅㄱ starts with ㅌ)
  */
 export function matchesKoreanSearch(target: string, query: string): boolean {
     const normalizedTarget = target.normalize("NFC");
@@ -72,12 +73,7 @@ export function matchesKoreanSearch(target: string, query: string): boolean {
     const hasChosung = query.split("").some(isChosung);
     if (hasChosung) {
         const targetChosung = getChosungString(normalizedTarget).replace(/\s/g, "");
-        if (targetChosung.startsWith(query)) {
-            return true;
-        }
-        
-        const words = normalizedTarget.split(/\s+/);
-        return words.some(word => getChosungString(word).startsWith(query));
+        return targetChosung.startsWith(query);
     }
 
     return false;

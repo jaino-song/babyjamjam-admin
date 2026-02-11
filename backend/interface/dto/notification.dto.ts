@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsObject, Min } from "class-validator";
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsObject, Min, MaxLength } from "class-validator";
 import { Type } from "class-transformer";
 
 /**
@@ -35,10 +35,12 @@ export class SendNotificationDto {
 
     @IsString()
     @IsNotEmpty()
+    @MaxLength(100)
     title!: string;
 
     @IsString()
     @IsNotEmpty()
+    @MaxLength(500)
     body!: string;
 
     @IsObject()
@@ -49,10 +51,12 @@ export class SendNotificationDto {
 export class BroadcastNotificationDto {
     @IsString()
     @IsNotEmpty()
+    @MaxLength(100)
     title!: string;
 
     @IsString()
     @IsNotEmpty()
+    @MaxLength(500)
     body!: string;
 
     @IsObject()

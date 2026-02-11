@@ -5,10 +5,10 @@ import { cn } from "@/lib/utils";
 
 interface HeroBannerProps {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   description?: string;
-  primaryActionLabel: string;
-  secondaryActionLabel: string;
+  primaryActionLabel?: string;
+  secondaryActionLabel?: string;
   primaryActionDisabled?: boolean;
   secondaryActionDisabled?: boolean;
   primaryActionHref?: string;
@@ -17,14 +17,14 @@ interface HeroBannerProps {
 
 export function HeroBanner({
   title,
-  subtitle,
-  description,
-  primaryActionLabel,
-  secondaryActionLabel,
+  subtitle = "",
+  description = "",
+  primaryActionLabel = "",
+  secondaryActionLabel = "",
   primaryActionDisabled = false,
   secondaryActionDisabled = false,
-  primaryActionHref,
-  secondaryActionHref,
+  primaryActionHref = "#",
+  secondaryActionHref = "#",
 }: HeroBannerProps) {
   return (
     <div
@@ -64,59 +64,63 @@ export function HeroBanner({
           )}
         </div>
 
-          <div
+        <div
           data-component="dashboard-hero-actions"
           className="flex gap-3 opacity-0 animate-fade-in"
           style={{ animationDelay: "200ms" }}
         >
-          <Button
-            data-component="dashboard-hero-primary-action"
-            variant="outline"
-            asChild={!primaryActionDisabled}
-            disabled={primaryActionDisabled}
-            className={cn(
-              "border-2 border-primary-foreground/30 bg-transparent text-primary-foreground",
-              "hover:bg-primary-foreground/10 hover:border-primary-foreground/50",
-              "transition-all duration-200 hover:scale-105 active:scale-95",
-              "flex-1 min-w-0 px-4"
-            )}
-          >
-            {primaryActionDisabled ? (
-              <span className="flex items-center">
-                <FileSignature className="mr-2 h-4 w-4 shrink-0" />
-                <span className="truncate">{primaryActionLabel}</span>
-              </span>
-            ) : (
-              <Link href={primaryActionHref || "#"}>
-                <FileSignature className="mr-2 h-4 w-4 shrink-0" />
-                <span className="truncate">{primaryActionLabel}</span>
-              </Link>
-            )}
-          </Button>
-          <Button
-            data-component="dashboard-hero-secondary-action"
-            variant="outline"
-            asChild={!secondaryActionDisabled}
-            disabled={secondaryActionDisabled}
-            className={cn(
-              "border-2 border-primary-foreground/30 bg-transparent text-primary-foreground",
-              "hover:bg-primary-foreground/10 hover:border-primary-foreground/50",
-              "transition-all duration-200 hover:scale-105 active:scale-95",
-              "flex-1 min-w-0 px-4"
-            )}
-          >
-            {secondaryActionDisabled ? (
-              <span className="flex items-center">
-                <MessageSquare className="mr-2 h-4 w-4 shrink-0" />
-                <span className="truncate">{secondaryActionLabel}</span>
-              </span>
-            ) : (
-              <Link href={secondaryActionHref || "#"}>
-                <MessageSquare className="mr-2 h-4 w-4 shrink-0" />
-                <span className="truncate">{secondaryActionLabel}</span>
-              </Link>
-            )}
-          </Button>
+          {primaryActionLabel && (
+            <Button
+              data-component="dashboard-hero-primary-action"
+              variant="outline"
+              asChild={!primaryActionDisabled}
+              disabled={primaryActionDisabled}
+              className={cn(
+                "border-2 border-primary-foreground/30 bg-transparent text-primary-foreground",
+                "hover:bg-primary-foreground/10 hover:border-primary-foreground/50",
+                "transition-all duration-200 hover:scale-105 active:scale-95",
+                "flex-1 min-w-0 px-4"
+              )}
+            >
+              {primaryActionDisabled ? (
+                <span className="flex items-center">
+                  <FileSignature className="mr-2 h-4 w-4 shrink-0" />
+                  <span className="truncate">{primaryActionLabel}</span>
+                </span>
+              ) : (
+                <Link href={primaryActionHref || "#"}>
+                  <FileSignature className="mr-2 h-4 w-4 shrink-0" />
+                  <span className="truncate">{primaryActionLabel}</span>
+                </Link>
+              )}
+            </Button>
+          )}
+          {secondaryActionLabel && (
+            <Button
+              data-component="dashboard-hero-secondary-action"
+              variant="outline"
+              asChild={!secondaryActionDisabled}
+              disabled={secondaryActionDisabled}
+              className={cn(
+                "border-2 border-primary-foreground/30 bg-transparent text-primary-foreground",
+                "hover:bg-primary-foreground/10 hover:border-primary-foreground/50",
+                "transition-all duration-200 hover:scale-105 active:scale-95",
+                "flex-1 min-w-0 px-4"
+              )}
+            >
+              {secondaryActionDisabled ? (
+                <span className="flex items-center">
+                  <MessageSquare className="mr-2 h-4 w-4 shrink-0" />
+                  <span className="truncate">{secondaryActionLabel}</span>
+                </span>
+              ) : (
+                <Link href={secondaryActionHref || "#"}>
+                  <MessageSquare className="mr-2 h-4 w-4 shrink-0" />
+                  <span className="truncate">{secondaryActionLabel}</span>
+                </Link>
+              )}
+            </Button>
+          )}
         </div>
       </div>
     </div>

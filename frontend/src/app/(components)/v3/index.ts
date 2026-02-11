@@ -17,3 +17,5 @@ export { ListPanel } from './ListPanel';
 export { DetailPanel } from './DetailPanel';
 export { SplitLayout, useSplitLayoutNav } from './SplitLayout';
 export { AnimatedSlotList } from './AnimatedSlotList';
+export { HeaderActionButton } from './HeaderActionButton';
+export type { HeaderActionButtonProps } from './HeaderActionButton';

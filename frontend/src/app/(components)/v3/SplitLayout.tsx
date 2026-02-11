@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useCallback, useMemo } from "react";
-import { motion } from "framer-motion";
 import { useIsMobile } from "@/app/hooks/useIsMobile";
 import { SplitLayoutContext } from "./SplitLayoutContext";
 
@@ -46,33 +45,17 @@ export function SplitLayout({ children, hasSelection = false, onBack }: SplitLay
     );
   }
 
-  // Mobile: render as carousel
-  const activeSlide = hasSelection ? 1 : 0;
-
+  // Mobile: carousel with horizontal slide transition
   return (
     <SplitLayoutContext.Provider value={contextValue}>
-      <div
-        data-component="split-layout"
-        className="overflow-hidden w-full"
-      >
-        <motion.div
-          className="grid grid-cols-2 w-[200%]"
-          animate={{ x: activeSlide === 0 ? "0%" : "-50%" }}
-          transition={{
-            type: "spring",
-            stiffness: 300,
-            damping: 30,
-          }}
+      <div data-component="split-layout" className="w-full overflow-hidden">
+        <div
+          className="flex transition-transform duration-300 ease-out"
+          style={{ transform: hasSelection ? "translateX(-100%)" : "translateX(0)" }}
         >
-          {/* Slide 1: ListPanel */}
-          <div className="flex flex-col">
-            {listPanel}
-          </div>
-          {/* Slide 2: DetailPanel */}
-          <div className="flex flex-col">
-            {detailPanel}
-          </div>
-        </motion.div>
+          <div className="w-full flex-shrink-0">{listPanel}</div>
+          <div className="w-full flex-shrink-0">{detailPanel}</div>
+        </div>
       </div>
     </SplitLayoutContext.Provider>
   );

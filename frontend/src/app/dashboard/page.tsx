@@ -11,6 +11,7 @@ import {
   InfoCard,
   InfoRow,
   AnimatedSlotList,
+  HeaderActionButton,
 } from "@/app/(components)/v3";
 import {
   Users,
@@ -19,13 +20,13 @@ import {
   Send,
   MessageSquare,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import Link from "next/link";
+
 import { ChatWidget } from "@/app/(components)/chat/ChatWidget";
 import { useState } from "react";
+import { HeroBanner } from "../(components)/dashboard/HeroBanner";
 
 const iconBackgroundColors = [
   "bg-v3-primary text-white",
@@ -78,37 +79,44 @@ const DASHBOARD_STATS = [
 
 export default function DashboardPage() {
   const { data: stats, isLoading } = useDashboardStats();
-  useInitialUser();
+  const user = useInitialUser();
   const [activeTab, setActiveTab] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const filteredActivities =
     activeTab === "all"
       ? DASHBOARD_ACTIVITIES
       : DASHBOARD_ACTIVITIES.filter((activity) => activity.tab === activeTab);
+  const searchedActivities = searchQuery.trim()
+    ? filteredActivities.filter((a) =>
+      a.title.toLowerCase().includes(searchQuery.trim().toLowerCase()) ||
+      a.description.toLowerCase().includes(searchQuery.trim().toLowerCase())
+    )
+    : filteredActivities;
 
   return (
     <section
       data-component="dashboard"
       className="space-y-6"
     >
+      <HeroBanner title={user?.organizationName ?? "대시보드"}></HeroBanner>
       <div data-component="dashboard-header">
         <PageHeader
           title="대시보드"
-          subtitle="오늘의 업무 현황입니다"
           actions={
             <div data-component="dashboard-header-actions" className="flex gap-2">
-              <Link href="/contracts/creation">
-                <Button className="bg-v3-primary hover:bg-v3-primary-hover text-white rounded-2xl px-4 py-2 text-sm">
-                  <Send className="w-4 h-4 mr-2" /> 계약 발송
-                </Button>
-              </Link>
-              <Link href="/messages">
-                <Button
-                  variant="outline"
-                  className="rounded-2xl px-4 py-2 text-sm border-v3-border"
-                >
-                  <MessageSquare className="w-4 h-4 mr-2" /> 메시지 작성
-                </Button>
-              </Link>
+              <HeaderActionButton
+                href="/contracts/creation"
+                icon={Send}
+                label="계약 발송"
+                data-component="dashboard-header-send-contract"
+              />
+              <HeaderActionButton
+                href="/messages"
+                icon={MessageSquare}
+                label="메시지 작성"
+                variant="outline"
+                data-component="dashboard-header-send-message"
+              />
             </div>
           }
         />
@@ -152,13 +160,16 @@ export default function DashboardPage() {
               ]}
               activeTab={activeTab}
               onTabChange={setActiveTab}
+              searchValue={searchQuery}
+              onSearchChange={setSearchQuery}
+              searchPlaceholder="활동 검색..."
               isLoading={isLoading}
             >
               <div
                 data-component="dashboard-split-list"
                 className="space-y-2"
               >
-                {!isLoading && filteredActivities.length === 0 ? (
+                {!isLoading && searchedActivities.length === 0 ? (
                   <div
                     data-component="dashboard-split-list-empty"
                     className="p-8 text-center text-v3-text-muted"
@@ -168,7 +179,7 @@ export default function DashboardPage() {
                 ) : (
                   <AnimatedSlotList
                     count={4}
-                    items={filteredActivities}
+                    items={searchedActivities}
                     isLoading={isLoading}
                     itemDataComponent="dashboard-split-list-item"
                     className="space-y-2"
@@ -176,8 +187,8 @@ export default function DashboardPage() {
                       cn(
                         "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
                         !isLoading &&
-                          item &&
-                          "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+                        item &&
+                        "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
                       )
                     }
                     render={({ index, item, isLoading }) => {

@@ -10,6 +10,7 @@ export interface AuthUser {
     email?: string;
     profileImage?: string;
     role?: string;
+    organizationName?: string | null;
 }
 
 interface UseGetAuthUserOptions {

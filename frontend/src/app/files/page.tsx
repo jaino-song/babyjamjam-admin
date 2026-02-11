@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { FolderOpen, FileText, Image, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
-import { PageHeader, StatMini, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, SearchFilterBar } from "@/app/(components)/v3";
+import { PageHeader, StatMini, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton } from "@/app/(components)/v3";
+import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useDocuments, useUploadDocument, useUpdateDocument, useDeleteDocument, Document } from "@/app/hooks/use-documents";
@@ -41,12 +42,12 @@ export default function FilesPage() {
 
   const filteredDocs = useMemo(() => {
     let docs = [...documents];
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim();
       docs = docs.filter(d =>
-        d.name.toLowerCase().includes(q) ||
-        d.description?.toLowerCase().includes(q) ||
-        d.tags?.some(t => t.toLowerCase().includes(q))
+        matchesKoreanSearch(d.name, q) ||
+        (d.description && matchesKoreanSearch(d.description, q)) ||
+        d.tags?.some(t => matchesKoreanSearch(t, q))
       );
     }
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -132,28 +133,15 @@ export default function FilesPage() {
     <section data-component="files" className="space-y-6">
       <PageHeader
         title="파일 관리"
-        subtitle="문서 및 파일을 관리합니다"
         icon={FolderOpen}
         actions={
-          <button
-            data-component="files-upload-btn"
+          <HeaderActionButton
+            icon={Upload}
+            label="업로드"
             onClick={() => setIsUploadOpen(true)}
-            className="inline-flex items-center gap-2 rounded-[14px] bg-v3-primary px-5 py-2.5 text-[0.85rem] font-semibold text-white shadow-v3 hover:shadow-v3-hover hover:-translate-y-0.5 transition-all duration-300"
-          >
-            <Upload className="h-4 w-4" />
-            업로드
-          </button>
+            data-component="files-upload-btn"
+          />
         }
-      />
-
-      <SearchFilterBar
-        searchPlaceholder="문서명, 설명, 태그로 검색..."
-        searchValue={searchQuery}
-        onSearchChange={setSearchQuery}
-        filterOptions={filterItems}
-        filterValue={activeFilter}
-        onFilterChange={setActiveFilter}
-        filterLabel="카테고리"
       />
 
       <div data-component="files-stats" className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -163,7 +151,15 @@ export default function FilesPage() {
       </div>
 
       <SplitLayout>
-        <ListPanel title="파일 목록">
+        <ListPanel
+          title="파일 목록"
+          tabs={filterItems}
+          activeTab={activeFilter}
+          onTabChange={setActiveFilter}
+          searchValue={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchPlaceholder="문서명, 설명, 태그 검색..."
+        >
           {isLoading ? (
             <div className="space-y-3">
               {[1, 2, 3, 4].map(i => (

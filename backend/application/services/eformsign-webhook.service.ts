@@ -5,6 +5,8 @@ import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto"
 import { AlimtalkService } from "./alimtalk.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
+import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
+import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 
 /**
  * Eformsign document status codes (from document.status field)
@@ -56,6 +58,10 @@ export class EformsignWebhookService {
         private readonly clientRepository: IClientRepository,
         @Inject(EFORMSIGN_DOC_REPOSITORY)
         private readonly eformsignDocRepository: IEformsignDocRepository,
+        @Inject(EMPLOYEE_SCHEDULE_REPOSITORY)
+        private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
+        @Inject(EMPLOYEE_REPOSITORY)
+        private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
     async processWebhook(organizationid: string, payload: EformsignWebhookPayloadDto): Promise<void> {
@@ -249,13 +255,27 @@ export class EformsignWebhookService {
                 contractType: workflowName || "방문요양 계약서",
                 signedDate: this.formatDate(today),
                 serviceStartDate: client.startDate ? this.formatDate(client.startDate) : this.formatDate(today),
-                employeeName: "담당자",
+                employeeName: await this.getEmployeeNameForClient(organizationid, doc.clientId),
             };
 
             await this.alimtalkService.sendContractSignedAlimtalk(client, contractInfo);
             this.logger.log(`Contract signed alimtalk sent for client ${client.id}`);
         } catch (error) {
             this.logger.error(`Failed to send contract signed alimtalk: ${error}`);
+        }
+    }
+
+    // 클라이언트에 배정된 담당 직원 이름을 조회
+    private async getEmployeeNameForClient(organizationId: string, clientId: number): Promise<string> {
+        try {
+            const schedules = await this.employeeScheduleRepository.findByClientId(organizationId, clientId);
+            const activeSchedule = schedules.find(s => !s.replaced);
+            if (!activeSchedule) return "담당자";
+
+            const employee = await this.employeeRepository.findById(organizationId, activeSchedule.primaryEmployeeId);
+            return employee?.name ?? "담당자";
+        } catch {
+            return "담당자";
         }
     }
 

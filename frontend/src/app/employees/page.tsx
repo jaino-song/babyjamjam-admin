@@ -10,7 +10,7 @@ import {
 } from "@/app/hooks/useEmployees";
 import { EmployeeFormDialog } from "@/app/(components)/employees/EmployeeFormDialog";
 import { EmployeeDetailModal } from "@/app/(components)/employees/EmployeeDetailModal";
-import { PageHeader, StatMini, SearchFilterBar } from "@/app/(components)/v3";
+import { PageHeader, StatMini, SearchFilterBar, HeaderActionButton } from "@/app/(components)/v3";
 
 const filterItems = [
     { label: "전체", value: "all" },
@@ -134,17 +134,14 @@ export default function EmployeesPage() {
         <section data-component="employees" className="space-y-6">
             <PageHeader
                 title="직원 관리"
-                subtitle="직원 정보를 관리하고 현황을 확인하세요"
                 icon={UserCheck}
                 actions={
-                    <button
-                        data-component="employees-header-add"
+                    <HeaderActionButton
+                        icon={Plus}
+                        label="직원 추가"
                         onClick={handleAddNew}
-                        className="flex items-center gap-2 rounded-[14px] bg-v3-primary px-5 py-2.5 text-[0.85rem] font-semibold text-white shadow-v3 transition-all duration-200 hover:shadow-v3-hover hover:-translate-y-0.5 active:scale-95"
-                    >
-                        <Plus size={18} />
-                        직원 추가
-                    </button>
+                        data-component="employees-header-add"
+                    />
                 }
             />
 
