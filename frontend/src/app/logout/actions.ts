@@ -1,7 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { serverAPIClient } from "@/app/lib/axios/server";
+import { serverAPIClient } from "@/lib/api/server";
 
 export async function logout(): Promise<{ success: boolean; error?: string }> {
   try {

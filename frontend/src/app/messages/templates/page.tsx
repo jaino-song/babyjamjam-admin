@@ -2,9 +2,9 @@
 
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { ContentPaper } from "@/app/(components)/root/content-paper";
+import { ContentPaper } from "@/components/app/root/content-paper";
 import { useSystemTemplates } from "@/features/system-templates/hooks";
-import { useMessageTemplates } from "@/app/hooks/use-message-templates";
+import { useMessageTemplates } from "@/hooks/use-message-templates";
 import {
   Table,
   TableBody,

@@ -1,7 +1,7 @@
 "use client";
 
 import { Spinner } from "@/components/ui/spinner";
-import { ContentPaper } from "@/app/(components)/root/content-paper";
+import { ContentPaper } from "@/components/app/root/content-paper";
 
 export default function Loading() {
     return (

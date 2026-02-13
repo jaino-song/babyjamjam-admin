@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { PageHeader } from "@/app/(components)/v3";
+import { PageHeader } from "@/components/app/v3";
 import {
   Settings,
   User,
@@ -14,10 +14,10 @@ import {
   Monitor,
   MessageSquare,
 } from "lucide-react";
-import { ContentPaper } from "@/app/(components)/root/content-paper";
-import { VoucherPriceUploadForm } from "@/app/(components)/settings/VoucherPriceUploadForm";
-import { NotificationTestSection } from "@/app/(components)/settings/NotificationTestSection";
-import { useGetAuthUser } from "@/app/hooks/useGetAuthUser";
+import { ContentPaper } from "@/components/app/root/content-paper";
+import { VoucherPriceUploadForm } from "@/components/app/settings/VoucherPriceUploadForm";
+import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { settingsApi, AlimtalkProvider } from "@/services/api";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -26,7 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
-import { useToast } from "@/app/hooks/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 
 const NAV_SECTIONS = [

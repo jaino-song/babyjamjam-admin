@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { serverAPIClient } from "@/app/lib/axios/server";
+import { serverAPIClient } from "@/lib/api/server";
 
 /**
  * GET /api/notifications/vapid-key

@@ -1,6 +1,6 @@
 "use client";
 
-import { useToast } from "@/app/hooks/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 

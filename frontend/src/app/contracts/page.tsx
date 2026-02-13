@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
+import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import {
   FileText,
   Clock,
@@ -15,15 +15,15 @@ import {
   Mail,
   Eye,
 } from "lucide-react";
-import { useEformsignDocumentsByType } from "@/app/hooks/useEformsignDocuments";
-import { useEformsignAuth } from "@/app/hooks/useEformsignAuth";
-import { useInfiniteContracts } from "@/app/hooks/useInfiniteContracts";
-import { EformsignDocument } from "@/app/lib/eformsign/types";
+import { useEformsignDocumentsByType } from "@/hooks/useEformsignDocuments";
+import { useEformsignAuth } from "@/hooks/useEformsignAuth";
+import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
+import { EformsignDocument } from "@/lib/eformsign/types";
 import {
   DocumentFilterType,
   mapStatusToLabel,
   getStatusCategory,
-} from "@/app/lib/eformsign/status-codes";
+} from "@/lib/eformsign/status-codes";
 import {
   PageHeader,
   StatMini,
@@ -36,8 +36,8 @@ import {
   ActivityTimeline,
   AnimatedSlotList,
   HeaderActionButton,
-} from "@/app/(components)/v3";
-import type { StatusType } from "@/app/(components)/v3";
+} from "@/components/app/v3";
+import type { StatusType } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 

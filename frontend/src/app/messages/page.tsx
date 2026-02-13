@@ -1,11 +1,11 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ContentPaper } from "@/app/(components)/root/content-paper";
-import { t } from "@/app/lib/i18n/translations";
-import { useLocale } from "@/app/(components)/LocaleProvider";
+import { ContentPaper } from "@/components/app/root/content-paper";
+import { t } from "@/lib/i18n/translations";
+import { useLocale } from "@/providers/LocaleProvider";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
-import { CustomTemplateForm } from "@/app/(components)/messages/forms/custom-template-form";
+import { CustomTemplateForm } from "@/components/app/messages/forms/custom-template-form";
 import {
   Select,
   SelectContent,
@@ -20,13 +20,13 @@ import { Spinner } from "@/components/ui/spinner";
 import { Plus, FilePen } from "lucide-react";
 
 
-import { GreetingMessageForm } from "@/app/(components)/messages/forms/GreetingMessageForm";
-import { ServiceInfoMessageForm } from "@/app/(components)/messages/forms/service-info-message-form";
-import { PriceInfoMessageForm } from "@/app/(components)/messages/forms/PriceInfoMessageForm";
-import { ReminderMessageForm } from "@/app/(components)/messages/forms/ReminderMessageForm";
-import { ThanksMessageForm } from "@/app/(components)/messages/forms/ThanksMessageForm";
-import { SurveyMessageForm } from "@/app/(components)/messages/forms/SurveyMessageForm";
-import { InfoMessageForm } from "@/app/(components)/messages/forms/InfoMessageForm";
+import { GreetingMessageForm } from "@/components/app/messages/forms/GreetingMessageForm";
+import { ServiceInfoMessageForm } from "@/components/app/messages/forms/service-info-message-form";
+import { PriceInfoMessageForm } from "@/components/app/messages/forms/PriceInfoMessageForm";
+import { ReminderMessageForm } from "@/components/app/messages/forms/ReminderMessageForm";
+import { ThanksMessageForm } from "@/components/app/messages/forms/ThanksMessageForm";
+import { SurveyMessageForm } from "@/components/app/messages/forms/SurveyMessageForm";
+import { InfoMessageForm } from "@/components/app/messages/forms/InfoMessageForm";
 
 type BuiltinTemplateType = "greeting" | "service-info" | "price-info" | "reminder" | "thanks" | "survey" | "info";
 

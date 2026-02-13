@@ -1,7 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { serverAPIClient } from "@/app/lib/axios/server";
+import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 
 interface Organization {

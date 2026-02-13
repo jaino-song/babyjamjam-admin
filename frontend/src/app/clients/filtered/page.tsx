@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { X } from "lucide-react";
-import { useFilteredClients, useDeleteClient } from "@/app/hooks/useClients";
-import { Client, DocumentStatus } from "@/app/lib/client/types";
-import { ClientDetailModal } from "../../(components)/clients/ClientDetailModal";
-import { ClientFormDialog } from "../../(components)/clients/ClientFormDialog";
+import { useFilteredClients, useDeleteClient } from "@/hooks/useClients";
+import { Client, DocumentStatus } from "@/lib/client/types";
+import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

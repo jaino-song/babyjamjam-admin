@@ -2,18 +2,18 @@
 
 import { useMemo, useState } from "react";
 import { FolderOpen, FileText, Image, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
-import { PageHeader, StatMini, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton } from "@/app/(components)/v3";
-import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
+import { PageHeader, StatMini, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton } from "@/components/app/v3";
+import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { useDocuments, useUploadDocument, useUpdateDocument, useDeleteDocument, Document } from "@/app/hooks/use-documents";
-import { useDocumentCategories, useCreateDocumentCategory, DocumentCategory } from "@/app/hooks/use-document-categories";
-import { DocumentDropzone } from "@/app/(components)/documents/document-dropzone";
-import DocumentPreviewModal from "@/app/(components)/documents/document-preview-modal";
-import { DocumentEditModal } from "@/app/(components)/documents/document-edit-modal";
-import { AddCategoryModal } from "@/app/(components)/documents/add-category-modal";
-import { formatDate } from "@/app/(components)/documents/document-list";
-import { toast } from "@/app/hooks/use-toast";
+import { useDocuments, useUploadDocument, useUpdateDocument, useDeleteDocument, Document } from "@/hooks/use-documents";
+import { useDocumentCategories, useCreateDocumentCategory, DocumentCategory } from "@/hooks/use-document-categories";
+import { DocumentDropzone } from "@/components/app/documents/document-dropzone";
+import DocumentPreviewModal from "@/components/app/documents/document-preview-modal";
+import { DocumentEditModal } from "@/components/app/documents/document-edit-modal";
+import { AddCategoryModal } from "@/components/app/documents/add-category-modal";
+import { formatDate } from "@/components/app/documents/document-list";
+import { toast } from "@/hooks/use-toast";
 
 export default function FilesPage() {
   const [activeFilter, setActiveFilter] = useState<string>("all");

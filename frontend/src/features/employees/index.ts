@@ -23,6 +23,5 @@ export { employeeKeys } from './hooks/keys';
 // API (for advanced usage)
 export { employeesApi } from './api/employees.api';
 
-// Note: Components are now in app/(components)/employees/
+// Note: Components are now in components/app/employees/
 // Import them directly from there instead
-

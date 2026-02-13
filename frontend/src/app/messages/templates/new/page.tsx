@@ -3,10 +3,10 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { ContentPaper } from "@/app/(components)/root/content-paper";
-import { TemplateEditor } from "@/app/(components)/my-templates/template-editor";
-import { useLocale } from "@/app/(components)/LocaleProvider";
-import { t } from "@/app/lib/i18n/translations";
+import { ContentPaper } from "@/components/app/root/content-paper";
+import { TemplateEditor } from "@/components/app/my-templates/template-editor";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
 
 export default function NewTemplatePage() {
     const locale = useLocale();

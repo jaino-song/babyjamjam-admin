@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
-import { useToast } from '@/app/hooks/use-toast';
+import { useToast } from '@/hooks/use-toast';
 import { useUpdateSystemTemplate } from '../hooks';
 import type { SystemTemplate, CustomVariable } from '../types';
 

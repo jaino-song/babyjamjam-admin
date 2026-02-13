@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { proxyGetRequest } from "@/app/lib/api/route-utils";
+import { proxyGetRequest } from "@/lib/api/route-utils";
 
 /**
  * GET /api/documents

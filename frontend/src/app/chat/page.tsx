@@ -6,9 +6,9 @@ import { ArrowLeft, Trash2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { ChatInput } from "../(components)/chat/ChatInput";
-import { AssistantMessage } from "../(components)/chat/AssistantMessage";
-import { useChatStream, ChatMessage, ChatState } from "@/app/hooks/useChatStream";
+import { ChatInput } from "@/components/app/chat/ChatInput";
+import { AssistantMessage } from "@/components/app/chat/AssistantMessage";
+import { useChatStream, ChatMessage, ChatState } from "@/hooks/useChatStream";
 
 function UserMessage({ message }: { message: ChatMessage }) {
     return (

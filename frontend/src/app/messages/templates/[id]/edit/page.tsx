@@ -5,11 +5,11 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { TemplateEditor } from "@/app/(components)/my-templates/template-editor";
-import { useMessageTemplate } from "@/app/hooks/use-message-templates";
-import { ContentPaper } from "@/app/(components)/root/content-paper";
-import { useLocale } from "@/app/(components)/LocaleProvider";
-import { t } from "@/app/lib/i18n/translations";
+import { TemplateEditor } from "@/components/app/my-templates/template-editor";
+import { useMessageTemplate } from "@/hooks/use-message-templates";
+import { ContentPaper } from "@/components/app/root/content-paper";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
 
 export default function EditTemplatePage() {
     const params = useParams();

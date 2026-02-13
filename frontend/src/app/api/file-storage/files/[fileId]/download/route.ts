@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { serverAPIClient } from "@/app/lib/axios/server";
+import { serverAPIClient } from "@/lib/api/server";
 
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;

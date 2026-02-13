@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { t } from "@/app/lib/i18n/translations";
-import { useLocale } from "@/app/(components)/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
+import { useLocale } from "@/providers/LocaleProvider";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { loginWithEmail } from "./actions";
 import { AuthCard } from "@/components/auth/auth-card";

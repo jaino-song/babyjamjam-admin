@@ -1,7 +1,7 @@
 "use client";
 
-import { useDashboardStats } from "@/app/hooks/useDashboardStats";
-import { useInitialUser } from "@/app/(components)/providers/UserProvider";
+import { useDashboardStats } from "@/hooks/useDashboardStats";
+import { useInitialUser } from "@/providers/UserProvider";
 import {
   PageHeader,
   StatMini,
@@ -12,7 +12,7 @@ import {
   InfoRow,
   AnimatedSlotList,
   HeaderActionButton,
-} from "@/app/(components)/v3";
+} from "@/components/app/v3";
 import {
   Users,
   Calendar,
@@ -24,9 +24,10 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-import { ChatWidget } from "@/app/(components)/chat/ChatWidget";
+import { ChatWidget } from "@/components/app/chat/ChatWidget";
 import { useState } from "react";
-import { HeroBanner } from "../(components)/dashboard/HeroBanner";
+import { HeroBanner } from "@/components/app/dashboard/HeroBanner";
+import { redirect } from "next/navigation";
 
 const iconBackgroundColors = [
   "bg-v3-primary text-white",
@@ -93,12 +94,16 @@ export default function DashboardPage() {
     )
     : filteredActivities;
 
+  if (!user) {
+    redirect("/logout");
+  }
+
   return (
     <section
       data-component="dashboard"
       className="space-y-6"
     >
-      <HeroBanner title={user?.organizationName ?? "대시보드"}></HeroBanner>
+      <HeroBanner title={user?.organizationName ?? "다시 로그인 해주세요"}></HeroBanner>
       <div data-component="dashboard-header">
         <PageHeader
           title="대시보드"

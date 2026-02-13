@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { serverAPIClient } from "@/app/lib/axios/server";
+import { serverAPIClient } from "@/lib/api/server";
 
 // Helper: 요청에서 토큰 추출
 function getAuthToken(request: NextRequest): string | null {

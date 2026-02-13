@@ -1,6 +1,6 @@
-import { api } from "../app/lib/axios/client";
+import { api } from "@/lib/api/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
-import { EformsignDocumentsResponse } from '@/app/lib/eformsign/types';
+import { EformsignDocumentsResponse } from '@/lib/eformsign/types';
 
 // Auth API response types
 export interface AuthResponse {

@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { useSystemTemplate } from '@/features/system-templates/hooks';
 import { SystemTemplateEditor } from '@/features/system-templates/components/system-template-editor';
 import { VersionHistory } from '@/features/system-templates/components/VersionHistory';
-import { ContentPaper } from '@/app/(components)/root/content-paper';
+import { ContentPaper } from '@/components/app/root/content-paper';
 
 export default function EditSystemTemplatePage({ params }: { params: Promise<{ templateKey: string }> }) {
   const { templateKey } = use(params);

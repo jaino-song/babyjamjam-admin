@@ -3,12 +3,12 @@
 import { useState, useMemo, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Users, Plus, Phone, MessageSquare, FileText, ClipboardList, Clock, UserCheck, AlertTriangle } from "lucide-react";
-import { useClients, useDeleteClient, useClient } from "@/app/hooks/useClients";
-import { Client, SERVICE_STATUS_OPTIONS } from "@/app/lib/client/types";
-import { ClientFormDialog } from "../(components)/clients/ClientFormDialog";
-import { ClientDetailModal } from "../(components)/clients/ClientDetailModal";
-import { useLocale } from "../(components)/LocaleProvider";
-import { t } from "@/app/lib/i18n/translations";
+import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
+import { Client, SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
+import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
+import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,9 +24,9 @@ import {
     StatusBadge,
     AnimatedSlotList,
     HeaderActionButton,
-} from "@/app/(components)/v3";
-import { matchesKoreanSearch } from "@/app/lib/utils/korean-search";
-import type { StatusType } from "@/app/(components)/v3";
+} from "@/components/app/v3";
+import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import type { StatusType } from "@/components/app/v3";
 
 const FILTER_CHIPS = [
     { label: "전체", value: "all" },

@@ -1,17 +1,17 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { QueryProvider } from "./query-provider";
+import { QueryProvider } from "@/providers/QueryProvider";
 import localFont from "next/font/local";
-import { LocaleProvider } from "./(components)/LocaleProvider";
+import { LocaleProvider } from "@/providers/LocaleProvider";
 import { getLocale } from "./actions/locale";
-import { getCurrentUser } from "./lib/auth/cookies";
-import { UserProvider } from "./(components)/providers/UserProvider";
-import { NotificationPermissionPrompt } from "./(components)/notification-permission-prompt";
+import { getCurrentUser } from "@/lib/auth/cookies";
+import { UserProvider } from "@/providers/UserProvider";
+import { NotificationPermissionPrompt } from "@/components/app/notification-permission-prompt";
 import { Toaster } from "@/components/ui/toaster";
-import { MobileBottomNav } from "./(components)/root/mobile-bottom-nav";
-import { V3Sidebar } from "./(components)/v3/V3Sidebar";
-import { V3MobileHeader } from "./(components)/v3/V3MobileHeader";
-import { V3MainContent } from "./(components)/v3/V3MainContent";
+import { MobileBottomNav } from "@/components/app/root/mobile-bottom-nav";
+import { V3Sidebar } from "@/components/app/v3/V3Sidebar";
+import { V3MobileHeader } from "@/components/app/v3/V3MobileHeader";
+import { V3MainContent } from "@/components/app/v3/V3MainContent";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",

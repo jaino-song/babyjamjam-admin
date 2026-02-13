@@ -7,10 +7,10 @@ import {
     EmployeeStatus,
     useEmployees,
     useDeleteEmployee,
-} from "@/app/hooks/useEmployees";
-import { EmployeeFormDialog } from "@/app/(components)/employees/EmployeeFormDialog";
-import { EmployeeDetailModal } from "@/app/(components)/employees/EmployeeDetailModal";
-import { PageHeader, StatMini, SearchFilterBar, HeaderActionButton } from "@/app/(components)/v3";
+} from "@/hooks/useEmployees";
+import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
+import { EmployeeDetailModal } from "@/components/app/employees/EmployeeDetailModal";
+import { PageHeader, StatMini, SearchFilterBar, HeaderActionButton } from "@/components/app/v3";
 
 const filterItems = [
     { label: "전체", value: "all" },

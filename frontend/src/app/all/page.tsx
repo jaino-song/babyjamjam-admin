@@ -20,7 +20,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { useGetAuthUser } from "@/app/hooks/useGetAuthUser";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 const SHORTCUT_COLORS = [
   { bg: "bg-v3-primary-light", text: "text-v3-primary" },
