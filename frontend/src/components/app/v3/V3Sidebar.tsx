@@ -1,0 +1,164 @@
+"use client";
+
+import React from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { 
+  LayoutDashboard, 
+  BarChart3, 
+  Users, 
+  UserCheck, 
+  Calendar, 
+  FileText, 
+  FolderOpen, 
+  Bell, 
+  Settings,
+  LucideIcon
+} from "lucide-react";
+import { useInitialUser } from "@/providers/UserProvider";
+import { isLayoutExcluded } from "@/lib/constants/v3-layout";
+
+interface NavItem {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+  badge?: string;
+}
+
+interface NavSection {
+  title: string;
+  items: NavItem[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    title: "메인",
+    items: [
+      { label: "대시보드", href: "/dashboard", icon: LayoutDashboard },
+      { label: "분석", href: "/dashboard/analytics", icon: BarChart3 },
+    ],
+  },
+  {
+    title: "관리",
+    items: [
+      { label: "고객", href: "/clients", icon: Users },
+      { label: "직원", href: "/employees", icon: UserCheck },
+      { label: "일정", href: "/employees/schedule", icon: Calendar },
+    ],
+  },
+  {
+    title: "문서",
+    items: [
+      { label: "계약", href: "/contracts", icon: FileText },
+      { label: "파일", href: "/files", icon: FolderOpen },
+    ],
+  },
+  {
+    title: "시스템",
+    items: [
+      { label: "알림", href: "/messages", icon: Bell },
+      { label: "설정", href: "/settings", icon: Settings },
+    ],
+  },
+];
+
+export const V3Sidebar = () => {
+  const pathname = usePathname();
+  const user = useInitialUser();
+
+  const getNavItemName = (href: string) => {
+    const segment = href.split("/").filter(Boolean).pop() || "";
+    return segment.toLowerCase();
+  };
+
+  const isActive = (href: string) => {
+    if (href === "/dashboard" && pathname === "/dashboard/analytics") return false;
+    if (href === "/employees" && pathname === "/employees/schedule") return false;
+    return pathname.startsWith(href);
+  };
+  
+  if (isLayoutExcluded(pathname)) {
+    return null;
+  }
+
+  const initials = user?.name 
+    ? user.name.slice(0, 2).toUpperCase() 
+    : "USER";
+
+  return (
+    <aside 
+      className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[280px] bg-white z-40 rounded-tr-[32px] rounded-br-[32px] shadow-v3 animate-v3-slide-right overflow-hidden"
+      aria-label="Sidebar Navigation"
+      data-component="sidebar"
+    >
+      <div className="flex items-center gap-3 px-6 pt-8 pb-6" data-component="sidebar-brand">
+        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-v3-primary shrink-0 shadow-sm">
+          <LayoutDashboard className="w-6 h-6 text-white" strokeWidth={2} />
+        </div>
+        <span className="text-xl font-bold text-gray-900 tracking-tight">
+          케어허브
+        </span>
+      </div>
+
+      <nav className="flex-1 overflow-y-auto px-4 py-2 space-y-6 custom-scrollbar" data-component="sidebar-nav">
+        {NAV_SECTIONS.map((section, idx) => (
+          <div key={section.title + idx}>
+            <h3 className="px-4 mb-2 text-[0.65rem] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">
+              {section.title}
+            </h3>
+            <ul className="space-y-1">
+              {section.items.map((item) => {
+                const active = isActive(item.href);
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      data-component={`sidebar-nav-${getNavItemName(item.href)}`}
+                      className={`
+                        relative group flex items-center gap-3 px-4 py-2.5 rounded-2xl transition-all duration-200 overflow-hidden
+                        ${active 
+                          ? "bg-v3-primary text-white shadow-md shadow-blue-500/20" 
+                          : "text-v3-text hover:bg-v3-primary-light hover:text-v3-primary"
+                        }
+                      `}
+                    >
+                      <item.icon 
+                        className={`w-5 h-5 shrink-0 transition-colors ${active ? "text-white" : "group-hover:text-v3-primary"}`} 
+                        strokeWidth={2} 
+                      />
+                      <span className="text-[0.85rem] font-medium leading-none pt-0.5">
+                        {item.label}
+                      </span>
+                      
+                      {item.badge && (
+                         <span className="ml-auto text-[0.65rem] px-2 py-0.5 rounded-full bg-v3-primary-light text-v3-primary font-bold">
+                           {item.badge}
+                         </span>
+                      )}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </nav>
+
+      <div className="p-4 mt-auto" data-component="sidebar-profile">
+        <div className="flex items-center gap-3 p-3 rounded-2xl bg-v3-dim-white/50 border border-v3-border/50 hover:bg-white hover:shadow-v3-hover transition-all cursor-pointer group">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-v3-primary to-blue-600 flex items-center justify-center shadow-inner shrink-0 text-white font-bold text-sm">
+            {initials}
+          </div>
+          <div className="flex flex-col min-w-0">
+            <span className="text-[0.85rem] font-semibold text-gray-900 truncate group-hover:text-v3-primary transition-colors">
+              {user?.name || "GUEST"}
+            </span>
+            <span className="text-[0.7rem] text-v3-text-muted truncate">
+              {user?.role || "Viewer"}
+            </span>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+};

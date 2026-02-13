@@ -1,16 +1,26 @@
+import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+
+const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
+const BACKEND_URL = isProduction
+    ? process.env.NEXT_PUBLIC_API_BASE_URL
+    : process.env.DEVELOPMENT_API_BASE_URL;
 
 export async function POST(req: NextRequest) {
     try {
-        const body = await req.json();
-        const backendUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
+        const cookieStore = await cookies();
+        const authToken = cookieStore.get("auth_token");
+        if (!authToken) {
+            return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+        }
 
-        const response = await fetch(`${backendUrl}/ai/chat/feedback`, {
+        const body = await req.json();
+
+        const response = await fetch(`${BACKEND_URL}/ai/chat/feedback`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                Authorization: req.headers.get("Authorization") || "",
-                Cookie: req.headers.get("Cookie") || "",
+                Authorization: `Bearer ${authToken.value}`,
             },
             body: JSON.stringify(body),
         });

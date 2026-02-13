@@ -237,5 +237,116 @@
       "indirect-016",
       "indirect-019"
     ]
+  },
+  {
+    "timestamp": "2026-02-08T19:44:50.878Z",
+    "totalTests": 20,
+    "passed": 16,
+    "failed": 4,
+    "passRate": 80,
+    "averageScore": 8.69,
+    "failedTestIds": [
+      "term-001",
+      "client-005",
+      "client-006",
+      "client-012"
+    ]
+  },
+  {
+    "timestamp": "2026-02-08T19:48:36.150Z",
+    "totalTests": 20,
+    "passed": 13,
+    "failed": 7,
+    "passRate": 65,
+    "averageScore": 8.14,
+    "failedTestIds": [
+      "term-001",
+      "term-004",
+      "term-005",
+      "client-004",
+      "client-005",
+      "client-011",
+      "client-012"
+    ]
+  },
+  {
+    "timestamp": "2026-02-08T19:51:38.306Z",
+    "totalTests": 20,
+    "passed": 19,
+    "failed": 1,
+    "passRate": 95,
+    "averageScore": 9.43,
+    "failedTestIds": [
+      "client-005"
+    ]
+  },
+  {
+    "timestamp": "2026-02-08T19:52:32.783Z",
+    "totalTests": 13,
+    "passed": 12,
+    "failed": 1,
+    "passRate": 92.31,
+    "averageScore": 9.32,
+    "failedTestIds": [
+      "term-001"
+    ]
+  },
+  {
+    "timestamp": "2026-02-08T19:52:55.094Z",
+    "totalTests": 4,
+    "passed": 4,
+    "failed": 0,
+    "passRate": 100,
+    "averageScore": 9.63,
+    "failedTestIds": []
+  },
+  {
+    "timestamp": "2026-02-08T20:00:50.695Z",
+    "totalTests": 20,
+    "passed": 19,
+    "failed": 1,
+    "passRate": 95,
+    "averageScore": 9.17,
+    "failedTestIds": [
+      "client-012"
+    ]
+  },
+  {
+    "timestamp": "2026-02-08T20:04:27.732Z",
+    "totalTests": 20,
+    "passed": 19,
+    "failed": 1,
+    "passRate": 95,
+    "averageScore": 9.43,
+    "failedTestIds": [
+      "client-005"
+    ]
+  },
+  {
+    "timestamp": "2026-02-08T20:06:07.532Z",
+    "totalTests": 20,
+    "passed": 20,
+    "failed": 0,
+    "passRate": 100,
+    "averageScore": 9.73,
+    "failedTestIds": []
+  },
+  {
+    "timestamp": "2026-02-08T20:06:47.838Z",
+    "totalTests": 13,
+    "passed": 13,
+    "failed": 0,
+    "passRate": 100,
+    "averageScore": 9.55,
+    "failedTestIds": []
+  },
+  {
+    "timestamp": "2026-02-09T05:37:37.826Z",
+    "totalTests": 10,
+    "passed": 10,
+    "failed": 0,
+    "passRate": 100,
+    "averageScore": 9.85,
+    "failedTestIds": []
   }
 ]

@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { X } from "lucide-react";
-import { useFilteredClients, useDeleteClient } from "@/app/hooks/useClients";
-import { Client, DocumentStatus } from "@/app/lib/client/types";
-import { ClientDetailModal } from "../../(components)/clients/ClientDetailModal";
-import { ClientFormDialog } from "../../(components)/clients/ClientFormDialog";
+import { useFilteredClients, useDeleteClient } from "@/hooks/useClients";
+import { Client, DocumentStatus } from "@/lib/client/types";
+import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -96,9 +96,9 @@ export default function FilteredClientsPage() {
     }
 
     return (
-        <div className="bg-card min-h-screen">
+        <section data-component="clients-filtered" className="bg-card min-h-screen">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <div data-component="clients-filtered-header" className="flex items-center justify-between px-4 py-3 border-b border-border">
                 <h1 className="text-lg font-semibold text-foreground">
                     {filterConfig.title}
                 </h1>
@@ -108,7 +108,7 @@ export default function FilteredClientsPage() {
             </div>
 
             {/* Content */}
-            <div className="px-4 sm:px-6 py-4">
+            <div data-component="clients-filtered-content" className="px-4 sm:px-6 py-4">
                 {isLoading ? (
                     <div className="flex justify-center py-16">
                         <Spinner size="lg" />
@@ -166,6 +166,6 @@ export default function FilteredClientsPage() {
                 }}
                 client={editingClient}
             />
-        </div>
+        </section>
     );
 }

@@ -3,6 +3,7 @@ import { IChatSessionRepository } from "domain/repositories/chat-session.reposit
 import { ChatSessionEntity } from "domain/entities/chat-session.entity";
 import { PrismaService } from "../prisma.service";
 import { ChatSessionMapper } from "../mapper/chat-session.mapper";
+import { randomUUID } from "crypto";
 
 @Injectable()
 export class SbChatSessionRepository implements IChatSessionRepository {
@@ -43,7 +44,12 @@ export class SbChatSessionRepository implements IChatSessionRepository {
 
     async create(session: ChatSessionEntity): Promise<ChatSessionEntity> {
         const created = await this.prismaService.chat_session.create({
-            data: ChatSessionMapper.toPrismaCreate(session),
+            data: {
+                // Some DB environments miss default UUID generators on chat tables.
+                // Generate IDs in-app to avoid hard failures in production chat.
+                id: randomUUID(),
+                ...ChatSessionMapper.toPrismaCreate(session),
+            },
             include: { messages: true },
         });
         return ChatSessionMapper.toDomain(created);
@@ -60,7 +66,10 @@ export class SbChatSessionRepository implements IChatSessionRepository {
         
         if (newMessages.length > 0) {
             await this.prismaService.chat_message.createMany({
-                data: newMessages.map(m => ChatSessionMapper.toPrismaCreateMessage(session.id, m)),
+                data: newMessages.map(m => ({
+                    id: randomUUID(),
+                    ...ChatSessionMapper.toPrismaCreateMessage(session.id, m),
+                })),
             });
         }
         

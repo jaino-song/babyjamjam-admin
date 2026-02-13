@@ -68,7 +68,7 @@ export class ToolExecutorService {
                 case "deleteEmployee":
                     return this.deleteEmployee(organizationid, args);
                 case "getMessages":
-                    return this.getMessages();
+                    return this.getMessages(organizationid);
                 case "createMessage":
                     return this.createMessage(organizationid, args);
                 case "updateMessage":
@@ -130,20 +130,23 @@ export class ToolExecutorService {
     }
 
     private requestConfirmation(toolName: string, args: ToolArgs): ToolExecutionResult {
+        const clientRef = args['clientId'] ?? args['clientName'] ?? '?';
+        const employeeRef = args['employeeId'] ?? args['employeeName'] ?? '?';
+        const newPrimaryEmployeeRef = args['newPrimaryEmployeeId'] ?? args['newPrimaryEmployeeName'] ?? '?';
         const messages: Record<string, string> = {
             createClient: `새 산모 "${args['name']}"님을 등록하시겠습니까?`,
-            updateClient: `산모 ID ${args['clientId']}의 정보를 수정하시겠습니까?`,
-            deleteClient: `산모 ID ${args['clientId']}을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
-            terminateClientService: `산모 ID ${args['clientId']}의 서비스를 종료하시겠습니까?`,
-            requestEmployeeReplacement: `산모 ID ${args['clientId']}의 관리사를 교체하시겠습니까? (새 담당: ID ${args['newPrimaryEmployeeId']})`,
+            updateClient: `산모 ${clientRef}의 정보를 수정하시겠습니까?`,
+            deleteClient: `산모 ${clientRef}을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
+            terminateClientService: `산모 ${clientRef}의 서비스를 종료하시겠습니까?`,
+            requestEmployeeReplacement: `산모 ${clientRef}의 관리사를 교체하시겠습니까? (새 담당: ${newPrimaryEmployeeRef})`,
             createEmployee: `새 관리사 "${args['name']}"님을 등록하시겠습니까?`,
-            updateEmployee: `관리사 ID ${args['employeeId']}의 정보를 수정하시겠습니까?`,
-            deleteEmployee: `관리사 ID ${args['employeeId']}을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
-            changeEmployeeAvailability: `관리사 ID ${args['employeeId']}의 배정 상태를 ${args['available'] ? '가능' : '불가'}으로 변경하시겠습니까?`,
+            updateEmployee: `관리사 ${employeeRef}의 정보를 수정하시겠습니까?`,
+            deleteEmployee: `관리사 ${employeeRef}을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
+            changeEmployeeAvailability: `관리사 ${employeeRef}의 배정 상태를 ${args['available'] ? '가능' : '불가'}으로 변경하시겠습니까?`,
             createMessage: `새 메시지 "${args['title']}"을(를) 등록하시겠습니까?`,
             updateMessage: `메시지 ID ${args['messageId']}을(를) 수정하시겠습니까?`,
             deleteMessage: `메시지 ID ${args['messageId']}을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
-            createAndSendContract: `산모 ID ${args['clientId']}에게 계약서를 발송하시겠습니까?`,
+            createAndSendContract: `산모 ${clientRef}에게 계약서를 발송하시겠습니까?`,
         };
 
         return {
@@ -151,6 +154,65 @@ export class ToolExecutorService {
             requiresConfirmation: true,
             confirmationMessage: messages[toolName] || `${toolName} 작업을 실행하시겠습니까?`,
         };
+    }
+
+    private async resolveClientId(organizationid: string, args: ToolArgs): Promise<number> {
+        const rawId = args['clientId'];
+        const parsedId = Number(rawId);
+        if (Number.isFinite(parsedId) && parsedId > 0) {
+            return parsedId;
+        }
+
+        const clientName = [args['clientName'], args['name'], args['query']]
+            .find((value) => typeof value === "string" && value.trim().length > 0);
+
+        if (!clientName || typeof clientName !== "string") {
+            throw new Error("clientId 또는 clientName이 필요합니다");
+        }
+
+        const query = clientName.trim();
+        const result = await this.clientService.findAllPaginated(organizationid, 1, 10, query);
+        if (result.data.length === 0) {
+            throw new Error(`"${query}" 산모를 찾을 수 없습니다`);
+        }
+        if (result.data.length > 1) {
+            const candidates = result.data.slice(0, 5).map((c) => `${c.id}:${c.name}`).join(", ");
+            throw new Error(`"${query}" 이름의 산모가 여러 명입니다. clientId를 지정해주세요 (${candidates})`);
+        }
+
+        return result.data[0]!.id;
+    }
+
+    private async resolveEmployeeId(
+        organizationid: string,
+        args: ToolArgs,
+        idKey: string,
+        nameKey: string,
+    ): Promise<number> {
+        const rawId = args[idKey];
+        const parsedId = Number(rawId);
+        if (Number.isFinite(parsedId) && parsedId > 0) {
+            return parsedId;
+        }
+
+        const employeeNameRaw = args[nameKey];
+        if (typeof employeeNameRaw !== "string" || employeeNameRaw.trim().length === 0) {
+            throw new Error(`${idKey} 또는 ${nameKey}이 필요합니다`);
+        }
+
+        const employeeName = employeeNameRaw.trim();
+        const employees = await this.employeeService.findAll(organizationid);
+        const matches = employees.filter((e) => e.name.includes(employeeName));
+
+        if (matches.length === 0) {
+            throw new Error(`"${employeeName}" 관리사를 찾을 수 없습니다`);
+        }
+        if (matches.length > 1) {
+            const candidates = matches.slice(0, 5).map((e) => `${e.id}:${e.name}`).join(", ");
+            throw new Error(`"${employeeName}" 이름의 관리사가 여러 명입니다. ${idKey}를 지정해주세요 (${candidates})`);
+        }
+
+        return matches[0]!.id;
     }
 
     private async searchClients(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
@@ -206,7 +268,7 @@ export class ToolExecutorService {
     }
 
     private async updateClient(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const clientId = Number(args['clientId']);
+        const clientId = await this.resolveClientId(organizationid, args);
         const updateData: Record<string, unknown> = {};
         
         if (args['name'] !== undefined) updateData['name'] = String(args['name']);
@@ -229,7 +291,7 @@ export class ToolExecutorService {
     }
 
     private async deleteClient(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const clientId = Number(args['clientId']);
+        const clientId = await this.resolveClientId(organizationid, args);
         await this.clientService.delete(organizationid, clientId);
         return { success: true, data: { message: "산모가 삭제되었습니다" } };
     }
@@ -297,8 +359,18 @@ export class ToolExecutorService {
         return { success: true, data: { message: "관리사가 삭제되었습니다" } };
     }
 
-    private async getMessages(): Promise<ToolExecutionResult> {
-        return { success: false, error: "메시지 목록 조회는 지원되지 않습니다" };
+    private async getMessages(organizationid: string): Promise<ToolExecutionResult> {
+        const messages = await this.messageService.findAll(organizationid);
+        return {
+            success: true,
+            data: messages.map((m) => ({
+                id: m.id,
+                title: m.title,
+                text: m.text,
+                createdAt: m.createdAt,
+                editedAt: m.editedAt,
+            })),
+        };
     }
 
     private async createMessage(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
@@ -383,8 +455,9 @@ export class ToolExecutorService {
     }
 
     private async getDashboardStats(organizationid: string): Promise<ToolExecutionResult> {
-        const [allClients, startingSoon, endingSoon, incompleteContracts, noContract] = await Promise.all([
+        const [allClients, allEmployees, startingSoon, endingSoon, incompleteContracts, noContract] = await Promise.all([
             this.clientService.findAll(organizationid),
+            this.employeeService.findAll(organizationid),
             this.clientService.findByFilter(organizationid, "starting-soon"),
             this.clientService.findByFilter(organizationid, "ending-soon"),
             this.clientService.findByFilter(organizationid, "incomplete-contracts"),
@@ -395,6 +468,7 @@ export class ToolExecutorService {
             success: true,
             data: {
                 totalClients: allClients.length,
+                totalEmployees: allEmployees.length,
                 startingSoonCount: startingSoon.length,
                 endingSoonCount: endingSoon.length,
                 incompleteContractsCount: incompleteContracts.length,
@@ -425,15 +499,20 @@ export class ToolExecutorService {
     }
 
     private async terminateClientService(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const clientId = Number(args['clientId']);
+        const clientId = await this.resolveClientId(organizationid, args);
         const reason = args['reason'] ? String(args['reason']) : undefined;
         const client = await this.clientService.terminateService(organizationid, clientId, reason);
         return { success: true, data: { id: client.id, name: client.name, message: "서비스가 종료되었습니다" } };
     }
 
     private async requestEmployeeReplacement(organizationid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const clientId = Number(args['clientId']);
-        const newPrimaryEmployeeId = Number(args['newPrimaryEmployeeId']);
+        const clientId = await this.resolveClientId(organizationid, args);
+        const newPrimaryEmployeeId = await this.resolveEmployeeId(
+            organizationid,
+            args,
+            "newPrimaryEmployeeId",
+            "newPrimaryEmployeeName",
+        );
         const newSecondaryEmployeeId = args['newSecondaryEmployeeId'] ? Number(args['newSecondaryEmployeeId']) : undefined;
         const client = await this.clientService.requestReplacement(
             organizationid,

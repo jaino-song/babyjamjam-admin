@@ -393,3 +393,28 @@ model auth_token {
   @@index([userId])
   @@index([token])
 }
+
+model alimtalk_log {
+  id             Int       @id @default(autoincrement())
+  organizationId String?   @map("organization_id") @db.Uuid
+  provider       String    // "aligo" | "channeltalk"
+  templateKey    String    @map("template_key")
+  receiver       String
+  clientId       Int?      @map("client_id")
+  messageBody    String    @map("message_body")
+  variables      Json      @default("{}")
+  status         String    @default("pending") // "pending" | "sent" | "failed"
+  aligoMid       String?   @map("aligo_mid")
+  errorMessage   String?   @map("error_message")
+  attempts       Int       @default(0)
+  lastAttemptAt  DateTime? @map("last_attempt_at") @db.Timestamptz(6)
+  nextRetryAt    DateTime? @map("next_retry_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId], map: "idx_alimtalk_log_organization")
+  @@index([status], map: "idx_alimtalk_log_status")
+  @@index([receiver], map: "idx_alimtalk_log_receiver")
+  @@index([createdAt], map: "idx_alimtalk_log_created_at")
+  @@index([nextRetryAt], map: "idx_alimtalk_log_next_retry_at")
+}

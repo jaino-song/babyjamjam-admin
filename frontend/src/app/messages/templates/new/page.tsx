@@ -3,18 +3,18 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { ContentPaper } from "@/app/(components)/root/content-paper";
-import { TemplateEditor } from "@/app/(components)/my-templates/template-editor";
-import { useLocale } from "@/app/(components)/LocaleProvider";
-import { t } from "@/app/lib/i18n/translations";
+import { ContentPaper } from "@/components/app/root/content-paper";
+import { TemplateEditor } from "@/components/app/my-templates/template-editor";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
 
 export default function NewTemplatePage() {
     const locale = useLocale();
 
     return (
-        <div className="bg-background">
-            <section className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
-                <div className="mb-4">
+        <div data-component="messages-templates-new" className="bg-background">
+            <section data-component="messages-templates-new-content" className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
+                <div data-component="messages-templates-new-nav" className="mb-4">
                     <Button variant="ghost" size="icon" asChild>
                         <Link href="/messages/templates">
                             <ArrowLeft className="h-6 w-6" />

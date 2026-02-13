@@ -136,7 +136,7 @@ test.describe('Contracts Page Search Feature', () => {
       await page.waitForLoadState('networkidle');
 
       // Verify toolbar is visible
-      await expect(page.locator('[data-component="documents-list-toolbar"]')).toBeVisible();
+      await expect(page.locator('[data-component="data-table-toolbar"]')).toBeVisible();
 
       // Verify search icon is visible but TextField is NOT visible initially
       const searchIconButton = page.getByRole('button', { name: /search/i });
@@ -345,14 +345,14 @@ test.describe('Contracts Page Search Feature', () => {
       await page.waitForLoadState('networkidle');
 
       // Select '완료' status filter
-      const filterButton = page.locator('[data-component="documents-list-toolbar-buttons"]').locator('button').nth(1);
+      const filterButton = page.locator('[data-component="data-table-toolbar"]').locator('button').nth(1);
       await filterButton.click();
 
       await page.locator('[role="menuitem"]').filter({ hasText: '완료' }).click();
       await page.waitForLoadState('networkidle');
 
       // Verify status filter is applied
-      const filterChip = page.locator('[data-component="documents-list-toolbar-buttons"]').locator('.MuiChip-root');
+      const filterChip = page.locator('[data-component="data-table-toolbar"]').locator('.MuiChip-root');
       await expect(filterChip).toContainText('완료');
 
       // Verify both completed documents are visible

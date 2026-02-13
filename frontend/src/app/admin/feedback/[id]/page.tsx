@@ -55,7 +55,7 @@ export default function FeedbackDetailPage() {
             onClick={() => router.push('/admin')}
             className="mb-8 text-primary hover:text-primary/80 font-medium flex items-center gap-2"
           >
-            ← 목록으로
+            ←
           </button>
           <div className="bg-card rounded-lg shadow p-12 text-center">
             <p className="text-destructive text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
@@ -67,16 +67,17 @@ export default function FeedbackDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-muted/50 p-8">
-      <div className="max-w-4xl mx-auto">
+    <div data-component="admin-feedback-detail" className="min-h-screen bg-muted/50 p-8">
+      <div data-component="admin-feedback-detail-content" className="max-w-4xl mx-auto">
         <button
           onClick={() => router.push('/admin')}
+          data-component="admin-feedback-detail-back"
           className="mb-8 text-primary hover:text-primary/80 font-medium flex items-center gap-2 transition-colors"
         >
-          ← 목록으로
+          ←
         </button>
 
-        <div className="bg-card rounded-lg shadow p-6 mb-6">
+        <div data-component="admin-feedback-detail-info" className="bg-card rounded-lg shadow p-6 mb-6">
           <h2 className="text-xl font-bold text-foreground mb-4">피드백 정보</h2>
           <div className="space-y-3">
             <div className="flex items-center gap-3">
@@ -112,7 +113,7 @@ export default function FeedbackDetailPage() {
           </div>
         </div>
 
-        <div className="bg-card rounded-lg shadow p-6">
+        <div data-component="admin-feedback-detail-chat" className="bg-card rounded-lg shadow p-6">
           <h2 className="text-xl font-bold text-foreground mb-6">대화 내역</h2>
           <div className="space-y-4">
             {feedback.session.messages.map((message: SessionMessage) => {
@@ -125,31 +126,28 @@ export default function FeedbackDetailPage() {
                   className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[80%] rounded-lg p-4 ${
-                      isHighlighted
+                    className={`max-w-[80%] rounded-lg p-4 ${isHighlighted
                         ? 'ring-2 ring-warning bg-warning/10'
                         : isUser
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted text-foreground'
-                    }`}
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted text-foreground'
+                      }`}
                   >
                     <div className="flex items-center gap-2 mb-2">
-                      <span className={`text-xs font-medium ${
-                        isHighlighted
+                      <span className={`text-xs font-medium ${isHighlighted
                           ? 'text-warning'
                           : isUser
-                          ? 'text-primary-foreground/80'
-                          : 'text-muted-foreground'
-                      }`}>
+                            ? 'text-primary-foreground/80'
+                            : 'text-muted-foreground'
+                        }`}>
                         {isUser ? '사용자' : 'AI 어시스턴트'}
                       </span>
-                      <span className={`text-xs ${
-                        isHighlighted
+                      <span className={`text-xs ${isHighlighted
                           ? 'text-warning/80'
                           : isUser
-                          ? 'text-primary-foreground/60'
-                          : 'text-muted-foreground/80'
-                      }`}>
+                            ? 'text-primary-foreground/60'
+                            : 'text-muted-foreground/80'
+                        }`}>
                         {formatDate(message.timestamp)}
                       </span>
                       {isHighlighted && (
@@ -161,9 +159,8 @@ export default function FeedbackDetailPage() {
                     {isUser ? (
                       <p className="whitespace-pre-wrap break-words">{message.content}</p>
                     ) : (
-                      <div className={`prose prose-sm max-w-none ${
-                        isHighlighted ? 'prose-yellow' : 'prose-neutral dark:prose-invert'
-                      }`}>
+                      <div className={`prose prose-sm max-w-none ${isHighlighted ? 'prose-yellow' : 'prose-neutral dark:prose-invert'
+                        }`}>
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{

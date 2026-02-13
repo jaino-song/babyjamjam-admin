@@ -1,4 +1,4 @@
-import { api } from '@/core/api/client';
+import { api } from '@/lib/api/client';
 import type {
   Client,
   CreateClientDto,

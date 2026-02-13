@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { serverAPIClient } from "@/app/lib/axios/server";
-import { setAuthCookies, errorResponse, getAuthToken, getAuthHeaders } from "@/app/lib/api/route-utils";
+import { serverAPIClient } from "@/lib/api/server";
+import { setAuthCookies, errorResponse, getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {

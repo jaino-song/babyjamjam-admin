@@ -93,7 +93,8 @@ test.describe('Chat History Persistence', () => {
         await expect(chatInput).toBeVisible({ timeout: 10000 });
         await chatInput.click();
 
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
+        await page.waitForURL('**/chat', { timeout: 10000 });
+        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
 
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
         await expect(page.getByText('무엇을 도와드릴까요?').first()).toBeVisible();
@@ -122,7 +123,8 @@ test.describe('Chat History Persistence', () => {
         await expect(chatInput).toBeVisible({ timeout: 10000 });
         await chatInput.click();
 
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
+        await page.waitForURL('**/chat', { timeout: 10000 });
+        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible();
     });
 
@@ -133,13 +135,14 @@ test.describe('Chat History Persistence', () => {
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await chatInput.click();
 
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
+        await page.waitForURL('**/chat', { timeout: 10000 });
+        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
 
-        const modalInput = page.getByPlaceholder('무엇을 도와드릴까요?').last();
-        await expect(modalInput).toBeVisible({ timeout: 5000 });
+        const chatPageInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+        await expect(chatPageInput).toBeVisible({ timeout: 5000 });
 
-        await modalInput.fill('새로운 메시지');
-        await modalInput.press('Enter');
+        await chatPageInput.fill('새로운 메시지');
+        await chatPageInput.press('Enter');
 
         await expect(page.getByText('새로운 메시지')).toBeVisible({ timeout: 5000 });
         await expect(page.getByText('테스트 응답입니다.')).toBeVisible({ timeout: 10000 });
@@ -152,16 +155,16 @@ test.describe('Chat History Persistence', () => {
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await chatInput.click();
 
+        await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
 
-        const closeButton = page.locator('button').filter({ has: page.locator('svg[data-testid="CloseIcon"]') });
-        await closeButton.click();
-
-        await expect(page.getByText('AI 어시스턴트')).not.toBeVisible({ timeout: 3000 });
+        await page.getByTestId('chat-back').click();
+        await page.waitForURL('**/dashboard', { timeout: 15000 });
 
         await chatInput.click();
+        await page.waitForURL('**/chat', { timeout: 10000 });
 
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
     });
 
@@ -192,7 +195,8 @@ test.describe('Chat History Persistence', () => {
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await chatInput.click();
 
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
+        await page.waitForURL('**/chat', { timeout: 10000 });
+        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
 
         resolveHistory!();
 
@@ -206,10 +210,10 @@ test.describe('Chat History Persistence', () => {
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await chatInput.click();
 
+        await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
 
-        const deleteButton = page.locator('button').filter({ has: page.locator('svg[data-testid="DeleteOutlineIcon"]') });
-        await deleteButton.click();
+        await page.getByTestId('chat-clear').click();
 
         await expect(page.getByText('고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible({ timeout: 5000 });
     });
@@ -235,7 +239,8 @@ test.describe('Chat History API Error Handling', () => {
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await chatInput.click();
 
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
+        await page.waitForURL('**/chat', { timeout: 10000 });
+        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
     });
 
     test('should handle 401 unauthorized error', async ({ page }) => {
@@ -253,6 +258,7 @@ test.describe('Chat History API Error Handling', () => {
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await chatInput.click();
 
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
+        await page.waitForURL('**/chat', { timeout: 10000 });
+        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
     });
 });

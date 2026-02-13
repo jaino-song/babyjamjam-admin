@@ -173,8 +173,19 @@ export class AIChatController {
             throw new NotFoundException("Session not found");
         }
 
-        // Verify the message exists in the session
-        const message = session.messages.find((m) => m.id === dto.messageId);
+        // Ensure users can only submit feedback for their own sessions
+        if (session.userId !== user.userId) {
+            throw new NotFoundException("Session not found");
+        }
+
+        // Accept both messageId (preferred) and messageIndex (backward compatibility).
+        let message = dto.messageId
+            ? session.messages.find((m) => m.id === dto.messageId)
+            : undefined;
+
+        if (!message && dto.messageIndex !== undefined) {
+            message = session.messages[dto.messageIndex];
+        }
 
         if (!message) {
             throw new NotFoundException("Message not found");

@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { getCurrentUser, hasSelectedOrganization } from "@/app/lib/auth/cookies";
+import { getCurrentUser, hasSelectedOrganization } from "@/lib/auth/cookies";
 import { redirect } from "next/navigation";
 
 interface DashboardLayoutProps {

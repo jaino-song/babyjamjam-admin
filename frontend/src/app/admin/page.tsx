@@ -57,8 +57,8 @@ export default function AdminFeedbackPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background p-4 sm:p-6 md:p-8">
-      <div className="max-w-7xl mx-auto">
+    <section data-component="admin" className="min-h-screen bg-background p-4 sm:p-6 md:p-8">
+      <div data-component="admin-content" className="max-w-7xl mx-auto">
         <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-6 sm:mb-8 opacity-0 animate-fade-in">
           피드백 관리
         </h1>
@@ -76,7 +76,7 @@ export default function AdminFeedbackPage() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
+          <div data-component="admin-stats" className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
             <Card className="opacity-0 animate-fade-in hover:shadow-md transition-shadow" style={{ animationDelay: '100ms' }}>
               <CardContent className="p-6">
                 <p className="text-sm text-muted-foreground mb-2">전체</p>
@@ -99,9 +99,9 @@ export default function AdminFeedbackPage() {
         )}
 
         {/* Feedback Table */}
-        <Card className="opacity-0 animate-fade-in" style={{ animationDelay: '400ms' }}>
+        <Card data-component="admin-feedback-table" className="opacity-0 animate-fade-in" style={{ animationDelay: '400ms' }}>
           {/* Filter Tabs */}
-          <div className="border-b border-border">
+          <div data-component="admin-feedback-filters" className="border-b border-border">
             <div className="flex space-x-8 px-6">
               {(['all', 'positive', 'negative'] as const).map((type) => (
                 <button
@@ -135,7 +135,7 @@ export default function AdminFeedbackPage() {
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div data-component="admin-feedback-list" className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-border">
                   <thead className="bg-muted/50">
                     <tr>
@@ -193,7 +193,7 @@ export default function AdminFeedbackPage() {
               )}
 
               {feedbackData && feedbackData.totalPages > 1 && (
-                <div className="px-6 py-4 flex items-center justify-between border-t border-border">
+                <div data-component="admin-feedback-pagination" className="px-6 py-4 flex items-center justify-between border-t border-border">
                   <div className="flex-1 flex justify-between sm:hidden">
                     <Button
                       variant="outline"
@@ -292,6 +292,6 @@ export default function AdminFeedbackPage() {
           )}
         </Card>
       </div>
-    </div>
+    </section>
   );
 }

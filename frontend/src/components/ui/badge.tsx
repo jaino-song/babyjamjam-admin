@@ -25,6 +25,15 @@ const badgeVariants = cva(
           "bg-warning/15 text-warning border-warning/30 [a&]:hover:bg-warning/25",
         info:
           "bg-info/15 text-info border-info/30 [a&]:hover:bg-info/25",
+        v3: "bg-[hsl(220,20%,97%)] text-gray-700 px-3 py-1 hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm border-transparent",
+        "v3-active":
+          "bg-[hsl(137,34%,31%)] text-white px-3 py-1 hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm border-transparent",
+        "v3-pending":
+          "bg-[hsl(34,100%,55%)] text-white px-3 py-1 hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm border-transparent",
+        "v3-expired":
+          "bg-[hsl(355,36%,45%)] text-white px-3 py-1 hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm border-transparent",
+        "v3-info":
+          "bg-[hsl(214,100%,34%)] text-white px-3 py-1 hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm border-transparent",
       },
     },
     defaultVariants: {

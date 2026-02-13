@@ -160,6 +160,11 @@ export class LiveEvalRunner {
 
         if (this.tools.length > 0) {
             requestBody['tools'] = [{ functionDeclarations: this.tools }];
+            requestBody['toolConfig'] = {
+                functionCallingConfig: {
+                    mode: "AUTO",
+                },
+            };
         }
 
         try {

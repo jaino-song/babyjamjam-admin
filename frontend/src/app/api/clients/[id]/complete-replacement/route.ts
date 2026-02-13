@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { serverAPIClient } from "@/app/lib/axios/server";
+import { serverAPIClient } from "@/lib/api/server";
 
 type RouteParams = { params: Promise<{ id: string }> };
 

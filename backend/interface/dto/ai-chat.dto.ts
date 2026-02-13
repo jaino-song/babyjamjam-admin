@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNotEmpty, IsIn } from "class-validator";
+import { IsString, IsOptional, IsNotEmpty, IsIn, IsInt, Min } from "class-validator";
 
 export class ChatStreamDto {
     @IsOptional()
@@ -35,9 +35,14 @@ export class ChatFeedbackDto {
     @IsString()
     sessionId!: string;
 
-    @IsNotEmpty()
+    @IsOptional()
     @IsString()
-    messageId!: string;
+    messageId?: string;
+
+    @IsOptional()
+    @IsInt()
+    @Min(0)
+    messageIndex?: number;
 
     @IsNotEmpty()
     @IsIn(['positive', 'negative'])

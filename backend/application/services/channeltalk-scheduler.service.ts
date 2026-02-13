@@ -1,7 +1,11 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { ConfigService } from "@nestjs/config";
+import { Cron } from "@nestjs/schedule";
 import { ChannelTalkService } from "./channeltalk.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { ORGANIZATION_REPOSITORY, IOrganizationRepository } from "domain/repositories/organization.repository.interface";
+import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
+import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 
 @Injectable()
 export class ChannelTalkSchedulerService {
@@ -9,8 +13,15 @@ export class ChannelTalkSchedulerService {
 
     constructor(
         private readonly channelTalkService: ChannelTalkService,
+        private readonly configService: ConfigService,
         @Inject(CLIENT_REPOSITORY)
-        private readonly clientRepository: IClientRepository
+        private readonly clientRepository: IClientRepository,
+        @Inject(ORGANIZATION_REPOSITORY)
+        private readonly organizationRepository: IOrganizationRepository,
+        @Inject(EMPLOYEE_SCHEDULE_REPOSITORY)
+        private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
+        @Inject(EMPLOYEE_REPOSITORY)
+        private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
     /**
@@ -22,59 +33,58 @@ export class ChannelTalkSchedulerService {
         this.logger.log("[Scheduler] Starting contract reminder check...");
 
         try {
-            // todo: iterate over all organizations
-            const organizationid = "";
-            const now = new Date();
+            const organizations = await this.organizationRepository.findAllActive();
 
-            // 3 days from now
-            const threeDaysLater = new Date(now);
-            threeDaysLater.setDate(threeDaysLater.getDate() + 3);
+            for (const org of organizations) {
+                this.logger.log(`[Scheduler] Processing contract reminders for org: ${org.name} (${org.id})`);
+                const now = new Date();
 
-            // 1 day from now
-            const oneDayLater = new Date(now);
-            oneDayLater.setDate(oneDayLater.getDate() + 1);
+                const threeDaysLater = new Date(now);
+                threeDaysLater.setDate(threeDaysLater.getDate() + 3);
 
-            // Send 3-day reminders
-            const clientsFor3Days = await this.clientRepository.findByStartDate(
-                organizationid,
-                threeDaysLater
-            );
-            this.logger.log(`[Scheduler] Found ${clientsFor3Days.length} clients for 3-day reminder`);
+                const oneDayLater = new Date(now);
+                oneDayLater.setDate(oneDayLater.getDate() + 1);
 
-            for (const client of clientsFor3Days) {
-                try {
-                    const serviceStartDate = this.formatDate(client.startDate!);
-                    await this.channelTalkService.sendContractReminder3DaysAlimtalk(
-                        client,
-                        serviceStartDate
-                    );
-                } catch (error) {
-                    this.logger.error(
-                        `[Scheduler] Failed to send 3-day reminder for client ${client.id}`,
-                        error instanceof Error ? error.stack : String(error)
-                    );
+                const clientsFor3Days = await this.clientRepository.findByStartDate(
+                    org.id,
+                    threeDaysLater
+                );
+                this.logger.log(`[Scheduler] Found ${clientsFor3Days.length} clients for 3-day reminder`);
+
+                for (const client of clientsFor3Days) {
+                    try {
+                        const serviceStartDate = this.formatDate(client.startDate!);
+                        await this.channelTalkService.sendContractReminder3DaysAlimtalk(
+                            client,
+                            serviceStartDate
+                        );
+                    } catch (error) {
+                        this.logger.error(
+                            `[Scheduler] Failed to send 3-day reminder for client ${client.id}`,
+                            error instanceof Error ? error.stack : String(error)
+                        );
+                    }
                 }
-            }
 
-            // Send 1-day reminders
-            const clientsFor1Day = await this.clientRepository.findByStartDate(
-                organizationid,
-                oneDayLater
-            );
-            this.logger.log(`[Scheduler] Found ${clientsFor1Day.length} clients for 1-day reminder`);
+                const clientsFor1Day = await this.clientRepository.findByStartDate(
+                    org.id,
+                    oneDayLater
+                );
+                this.logger.log(`[Scheduler] Found ${clientsFor1Day.length} clients for 1-day reminder`);
 
-            for (const client of clientsFor1Day) {
-                try {
-                    const serviceStartDate = this.formatDate(client.startDate!);
-                    await this.channelTalkService.sendContractReminder1DayAlimtalk(
-                        client,
-                        serviceStartDate
-                    );
-                } catch (error) {
-                    this.logger.error(
-                        `[Scheduler] Failed to send 1-day reminder for client ${client.id}`,
-                        error instanceof Error ? error.stack : String(error)
-                    );
+                for (const client of clientsFor1Day) {
+                    try {
+                        const serviceStartDate = this.formatDate(client.startDate!);
+                        await this.channelTalkService.sendContractReminder1DayAlimtalk(
+                            client,
+                            serviceStartDate
+                        );
+                    } catch (error) {
+                        this.logger.error(
+                            `[Scheduler] Failed to send 1-day reminder for client ${client.id}`,
+                            error instanceof Error ? error.stack : String(error)
+                        );
+                    }
                 }
             }
 
@@ -96,35 +106,35 @@ export class ChannelTalkSchedulerService {
         this.logger.log("[Scheduler] Starting survey request check...");
 
         try {
-            // todo: iterate over all organizations
-            const organizationid = "";
-            // Check clients whose service ended yesterday
-            const yesterday = new Date();
-            yesterday.setDate(yesterday.getDate() - 1);
+            const organizations = await this.organizationRepository.findAllActive();
 
-            const clients = await this.clientRepository.findByEndDate(organizationid, yesterday);
-            this.logger.log(`[Scheduler] Found ${clients.length} clients for survey request`);
+            for (const org of organizations) {
+                this.logger.log(`[Scheduler] Processing survey requests for org: ${org.name} (${org.id})`);
+                const yesterday = new Date();
+                yesterday.setDate(yesterday.getDate() - 1);
 
-            for (const client of clients) {
-                try {
-                    const serviceEndDate = this.formatDate(client.endDate!);
-                    // TODO: Get actual employee name from employee_schedule
-                    // For now, using placeholder
-                    const employeeName = "담당자";
-                    // TODO: Generate actual survey link
-                    const surveyLink = "https://example.com/survey";
+                const clients = await this.clientRepository.findByEndDate(org.id, yesterday);
+                this.logger.log(`[Scheduler] Found ${clients.length} clients for survey request`);
 
-                    await this.channelTalkService.sendSurveyRequestAlimtalk(
-                        client,
-                        serviceEndDate,
-                        employeeName,
-                        surveyLink
-                    );
-                } catch (error) {
-                    this.logger.error(
-                        `[Scheduler] Failed to send survey request for client ${client.id}`,
-                        error instanceof Error ? error.stack : String(error)
-                    );
+                for (const client of clients) {
+                    try {
+                        const serviceEndDate = this.formatDate(client.endDate!);
+                        const employeeName = await this.getEmployeeNameForClient(org.id, client.id);
+                        const surveyBaseUrl = this.configService.get<string>('SURVEY_BASE_URL', 'https://example.com/survey');
+                        const surveyLink = `${surveyBaseUrl}?clientId=${client.id}`;
+
+                        await this.channelTalkService.sendSurveyRequestAlimtalk(
+                            client,
+                            serviceEndDate,
+                            employeeName,
+                            surveyLink
+                        );
+                    } catch (error) {
+                        this.logger.error(
+                            `[Scheduler] Failed to send survey request for client ${client.id}`,
+                            error instanceof Error ? error.stack : String(error)
+                        );
+                    }
                 }
             }
 
@@ -140,43 +150,44 @@ export class ChannelTalkSchedulerService {
     /**
      * Check and send payment reminders
      * Runs daily at 9 AM KST
-     * Note: Requires createdAt field in client model (currently not available)
      */
     @Cron("0 9 * * *", { timeZone: "Asia/Seoul" })
     async checkPaymentReminders(): Promise<void> {
         this.logger.log("[Scheduler] Starting payment reminder check...");
 
         try {
-            // todo: iterate over all organizations
-            const organizationid = "";
-            // Payment reminder intervals (days after registration)
-            const reminderIntervals = [3, 7];
+            const organizations = await this.organizationRepository.findAllActive();
 
-            for (const days of reminderIntervals) {
-                const targetDate = new Date();
-                targetDate.setDate(targetDate.getDate() - days);
+            for (const org of organizations) {
+                this.logger.log(`[Scheduler] Processing payment reminders for org: ${org.name} (${org.id})`);
+                const reminderIntervals = [3, 7];
 
-                const clients = await this.clientRepository.findByCreatedDate(
-                    organizationid,
-                    targetDate
-                );
-                this.logger.log(
-                    `[Scheduler] Found ${clients.length} clients for ${days}-day payment reminder`
-                );
+                for (const days of reminderIntervals) {
+                    const targetDate = new Date();
+                    targetDate.setDate(targetDate.getDate() - days);
 
-                for (const client of clients) {
-                    try {
-                        const registrationDate = this.formatDate(targetDate);
-                        await this.channelTalkService.sendPaymentReminderAlimtalk(
-                            client,
-                            registrationDate,
-                            days
-                        );
-                    } catch (error) {
-                        this.logger.error(
-                            `[Scheduler] Failed to send payment reminder for client ${client.id}`,
-                            error instanceof Error ? error.stack : String(error)
-                        );
+                    const clients = await this.clientRepository.findByCreatedDate(
+                        org.id,
+                        targetDate
+                    );
+                    this.logger.log(
+                        `[Scheduler] Found ${clients.length} clients for ${days}-day payment reminder`
+                    );
+
+                    for (const client of clients) {
+                        try {
+                            const registrationDate = this.formatDate(targetDate);
+                            await this.channelTalkService.sendPaymentReminderAlimtalk(
+                                client,
+                                registrationDate,
+                                days
+                            );
+                        } catch (error) {
+                            this.logger.error(
+                                `[Scheduler] Failed to send payment reminder for client ${client.id}`,
+                                error instanceof Error ? error.stack : String(error)
+                            );
+                        }
                     }
                 }
             }
@@ -190,9 +201,20 @@ export class ChannelTalkSchedulerService {
         }
     }
 
-    /**
-     * Format date to YYYY-MM-DD string
-     */
+    // 클라이언트에 배정된 담당 직원 이름을 조회
+    private async getEmployeeNameForClient(organizationId: string, clientId: number): Promise<string> {
+        try {
+            const schedules = await this.employeeScheduleRepository.findByClientId(organizationId, clientId);
+            const activeSchedule = schedules.find(s => !s.replaced);
+            if (!activeSchedule) return "담당자";
+
+            const employee = await this.employeeRepository.findById(organizationId, activeSchedule.primaryEmployeeId);
+            return employee?.name ?? "담당자";
+        } catch {
+            return "담당자";
+        }
+    }
+
     private formatDate(date: Date): string {
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, "0");

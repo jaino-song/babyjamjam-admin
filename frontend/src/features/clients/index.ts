@@ -31,6 +31,5 @@ export { clientKeys } from './hooks/keys';
 // API (for advanced usage)
 export { clientsApi } from './api/clients.api';
 
-// Note: Components are now in app/(components)/clients/
+// Note: Components are now in components/app/clients/
 // Import them directly from there instead
-

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { SendAligoAlimtalkUsecase } from "application/usecases/aligo";
 import { ClientEntity } from "domain/entities/client.entity";
+import { PhoneNumber } from "domain/value-objects/phone-number.vo";
 
 interface ContractSignedInfo {
     contractType: string;
@@ -23,15 +24,15 @@ export class AligoService {
     constructor(private readonly sendAlimtalkUsecase: SendAligoAlimtalkUsecase) {}
 
     async sendClientCreatedAlimtalk(client: ClientEntity): Promise<void> {
-        const phone = this.formatPhoneNumber(client.phone);
+        const phone = PhoneNumber.create(client.phone);
         if (!phone) {
-            this.logger.warn(`[Aligo] Cannot send alimtalk: no phone for client ${client.id}`);
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
             return;
         }
 
         await this.safeSend({
             templateKey: "CLIENT_CREATED",
-            receiver: phone,
+            receiver: phone.toString(),
             variables: {
                 고객명: client.name,
                 등록일: this.formatDate(new Date()),
@@ -44,12 +45,15 @@ export class AligoService {
         client: ClientEntity,
         contractInfo: ContractSignedInfo
     ): Promise<void> {
-        const phone = this.formatPhoneNumber(client.phone);
-        if (!phone) return;
+        const phone = PhoneNumber.create(client.phone);
+        if (!phone) {
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            return;
+        }
 
         await this.safeSend({
             templateKey: "CONTRACT_SIGNED",
-            receiver: phone,
+            receiver: phone.toString(),
             variables: {
                 고객명: client.name,
                 계약유형: contractInfo.contractType,
@@ -64,12 +68,15 @@ export class AligoService {
         client: ClientEntity,
         serviceStartDate: string
     ): Promise<void> {
-        const phone = this.formatPhoneNumber(client.phone);
-        if (!phone) return;
+        const phone = PhoneNumber.create(client.phone);
+        if (!phone) {
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            return;
+        }
 
         await this.safeSend({
             templateKey: "CONTRACT_REMINDER_3DAYS",
-            receiver: phone,
+            receiver: phone.toString(),
             variables: {
                 고객명: client.name,
                 서비스시작일: serviceStartDate,
@@ -81,12 +88,15 @@ export class AligoService {
         client: ClientEntity,
         serviceStartDate: string
     ): Promise<void> {
-        const phone = this.formatPhoneNumber(client.phone);
-        if (!phone) return;
+        const phone = PhoneNumber.create(client.phone);
+        if (!phone) {
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            return;
+        }
 
         await this.safeSend({
             templateKey: "CONTRACT_REMINDER_1DAY",
-            receiver: phone,
+            receiver: phone.toString(),
             variables: {
                 고객명: client.name,
                 서비스시작일: serviceStartDate,
@@ -98,12 +108,15 @@ export class AligoService {
         client: ClientEntity,
         paymentInfo: PaymentInfo
     ): Promise<void> {
-        const phone = this.formatPhoneNumber(client.phone);
-        if (!phone) return;
+        const phone = PhoneNumber.create(client.phone);
+        if (!phone) {
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            return;
+        }
 
         await this.safeSend({
             templateKey: "PAYMENT_CONFIRMED",
-            receiver: phone,
+            receiver: phone.toString(),
             variables: {
                 고객명: client.name,
                 결제금액: this.formatCurrency(paymentInfo.amount),
@@ -120,12 +133,15 @@ export class AligoService {
         employeeName: string,
         surveyLink: string
     ): Promise<void> {
-        const phone = this.formatPhoneNumber(client.phone);
-        if (!phone) return;
+        const phone = PhoneNumber.create(client.phone);
+        if (!phone) {
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            return;
+        }
 
         await this.safeSend({
             templateKey: "SURVEY_REQUEST",
-            receiver: phone,
+            receiver: phone.toString(),
             variables: {
                 고객명: client.name,
                 서비스종료일: serviceEndDate,
@@ -143,12 +159,15 @@ export class AligoService {
         expectedAmount?: string,
         paymentDeadline?: string
     ): Promise<void> {
-        const phone = this.formatPhoneNumber(client.phone);
-        if (!phone) return;
+        const phone = PhoneNumber.create(client.phone);
+        if (!phone) {
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            return;
+        }
 
         await this.safeSend({
             templateKey: "PAYMENT_REMINDER",
-            receiver: phone,
+            receiver: phone.toString(),
             variables: {
                 고객명: client.name,
                 등록일: registrationDate,
@@ -169,11 +188,6 @@ export class AligoService {
                 error instanceof Error ? error.stack : String(error)
             );
         }
-    }
-
-    private formatPhoneNumber(phone: string | null): string | null {
-        if (!phone) return null;
-        return phone.replace(/-/g, "");
     }
 
     private formatDate(date: Date): string {

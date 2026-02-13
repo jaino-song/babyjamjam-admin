@@ -24,6 +24,7 @@ export default defineConfig({
     /* Use saved authentication state */
     storageState: 'auth.json',
   },
+  globalSetup: './tests/global-setup',
 
   /* Configure projects for major browsers */
   projects: [

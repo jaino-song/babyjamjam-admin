@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
-import { serverAPIClient } from "@/app/lib/axios/server";
+import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 
@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
 
         // Set auth cookies on successful login
         const cookieStore = await cookies();
+        const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 
         let role = "user";
         try {
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest) {
 
         cookieStore.set("auth_token", data.accessToken, {
             httpOnly: true,
-            secure: true,
+            secure: isSecureCookie,
             sameSite: "lax",
             path: "/",
             maxAge: isPrivileged ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
 
         cookieStore.set("refresh_token", data.refreshToken, {
             httpOnly: true,
-            secure: true,
+            secure: isSecureCookie,
             sameSite: "lax",
             path: "/",
             maxAge: isPrivileged ? 7 * 24 * 60 * 60 : 1 * 24 * 60 * 60,

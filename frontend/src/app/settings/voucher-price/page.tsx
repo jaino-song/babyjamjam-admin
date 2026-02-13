@@ -1,5 +1,5 @@
-import { VoucherPriceUploadForm } from "@/app/(components)/settings/VoucherPriceUploadForm";
+import { redirect } from "next/navigation";
 
 export default function VoucherPricePage() {
-  return <VoucherPriceUploadForm />;
+  redirect("/settings");
 }

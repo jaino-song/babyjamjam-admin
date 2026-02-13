@@ -1,6 +1,8 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import { ALIGO_API_PORT, IAligoApiPort, AligoAlimtalkResponse } from "domain/ports/aligo-api.port";
 import { SendAligoAlimtalkDto, AligoMessageBuilder, ALIGO_TEMPLATES } from "application/dto/aligo";
+import { ALIMTALK_LOG_REPOSITORY, IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
+import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
 
 @Injectable()
 export class SendAligoAlimtalkUsecase {
@@ -8,7 +10,9 @@ export class SendAligoAlimtalkUsecase {
 
     constructor(
         @Inject(ALIGO_API_PORT)
-        private readonly aligoApi: IAligoApiPort
+        private readonly aligoApi: IAligoApiPort,
+        @Inject(ALIMTALK_LOG_REPOSITORY)
+        private readonly logRepository: IAlimtalkLogRepository,
     ) {}
 
     async execute(dto: SendAligoAlimtalkDto): Promise<AligoAlimtalkResponse> {
@@ -20,14 +24,36 @@ export class SendAligoAlimtalkUsecase {
             ? AligoMessageBuilder.buildButtonJson(dto.buttonUrl)
             : undefined;
 
+        // 발송 로그 생성
+        const log = AlimtalkLogEntity.create({
+            organizationId: dto.organizationId,
+            provider: "aligo",
+            templateKey: dto.templateKey,
+            receiver: dto.receiver,
+            clientId: dto.clientId,
+            messageBody: message,
+            variables: dto.variables,
+        });
+        const savedLog = await this.logRepository.save(log);
+
         this.logger.debug(`[Aligo] Sending ${dto.templateKey} to ${dto.receiver}`);
 
-        return this.aligoApi.sendAlimtalk({
-            tplCode: template.code,
-            receiver: dto.receiver,
-            subject,
-            message,
-            buttonJson,
-        });
+        try {
+            const response = await this.aligoApi.sendAlimtalk({
+                tplCode: template.code,
+                receiver: dto.receiver,
+                subject,
+                message,
+                buttonJson,
+            });
+
+            savedLog.markSent(response.info?.mid?.toString());
+            await this.logRepository.update(savedLog);
+            return response;
+        } catch (error) {
+            savedLog.markFailed(error instanceof Error ? error.message : String(error));
+            await this.logRepository.update(savedLog);
+            throw error;
+        }
     }
 }

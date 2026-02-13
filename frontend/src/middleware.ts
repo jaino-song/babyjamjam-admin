@@ -13,6 +13,11 @@ interface TokenPayload {
 // Routes that don't require authentication
 const PUBLIC_ROUTES = [
   "/login",
+  "/register",
+  "/forgot-password",
+  "/reset-password",
+  "/verify-email",
+  "/callback",
   "/logout",
   "/auth",
   "/api",

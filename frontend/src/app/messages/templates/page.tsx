@@ -2,9 +2,9 @@
 
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { ContentPaper } from "@/app/(components)/root/content-paper";
+import { ContentPaper } from "@/components/app/root/content-paper";
 import { useSystemTemplates } from "@/features/system-templates/hooks";
-import { useMessageTemplates } from "@/app/hooks/use-message-templates";
+import { useMessageTemplates } from "@/hooks/use-message-templates";
 import {
   Table,
   TableBody,
@@ -59,14 +59,14 @@ export default function TemplatesPage() {
   };
 
   return (
-    <div className="bg-background">
-      <section className="px-2 sm:px-3 md:px-6 py-3 sm:py-4 mx-auto">
+    <div data-component="messages-templates" className="bg-background">
+      <section data-component="messages-templates-content" className="px-2 sm:px-3 md:px-6 py-3 sm:py-4 mx-auto">
         <ContentPaper
           title="템플릿 관리"
           subtitle="시스템 및 사용자 정의 메시지 템플릿을 관리합니다"
           className="min-h-[70vh]"
         >
-          <div className="flex items-center justify-end py-2">
+          <div data-component="messages-templates-header" className="flex items-center justify-end py-2">
             <Button
               className="gap-2 w-[100px]"
               onClick={handleCreate}
@@ -78,7 +78,7 @@ export default function TemplatesPage() {
 
           <Separator />
 
-          <div className="min-h-[200px] w-full" data-component="templates-page-table-container">
+          <div className="min-h-[200px] w-full" data-component="messages-templates-table">
             <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow>

@@ -71,7 +71,7 @@ test.describe('Contracts Page Skeleton Loading', () => {
       await page.goto('/contracts');
 
       await expect(page.locator('.MuiSkeleton-root').first()).toBeVisible({ timeout: 1000 });
-      await expect(page.locator('[data-component="documents-list-toolbar"]')).toBeVisible();
+      await expect(page.locator('[data-component="data-table-toolbar"]')).toBeVisible();
       await expect(page.locator('thead th')).toHaveCount(3);
     });
 
@@ -96,7 +96,7 @@ test.describe('Contracts Page Skeleton Loading', () => {
 
       await page.goto('/contracts');
 
-      await expect(page.locator('[data-component="documents-list-toolbar"]')).toBeVisible({ timeout: 500 });
+      await expect(page.locator('[data-component="data-table-toolbar"]')).toBeVisible({ timeout: 500 });
       await expect(page.locator('thead')).toBeVisible({ timeout: 500 });
     });
 
@@ -192,7 +192,7 @@ test.describe('Contracts Page Skeleton Loading', () => {
 
       await expect(page.locator('tbody').getByText('홍길동')).toBeVisible();
 
-      const filterButton = page.locator('[data-component="documents-list-toolbar-buttons"]').locator('button').nth(1);
+      const filterButton = page.locator('[data-component="data-table-toolbar"]').locator('button').nth(1);
       await filterButton.click();
 
       await page.locator('[role="menuitem"]').filter({ hasText: '완료' }).click();
@@ -200,7 +200,7 @@ test.describe('Contracts Page Skeleton Loading', () => {
       await page.waitForLoadState('networkidle');
       await expect(page.locator('.MuiSkeleton-root')).not.toBeVisible();
       
-      const filterChip = page.locator('[data-component="documents-list-toolbar-buttons"]').locator('.MuiChip-root');
+      const filterChip = page.locator('[data-component="data-table-toolbar"]').locator('.MuiChip-root');
       await expect(filterChip).toContainText('완료');
     });
   });

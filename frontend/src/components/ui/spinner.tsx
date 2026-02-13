@@ -17,6 +17,7 @@ const Spinner = React.forwardRef<SVGSVGElement, SpinnerProps>(
     return (
       <Loader2
         ref={ref}
+        data-component="spinner"
         className={cn("animate-spin", sizeClasses[size], className)}
         {...props}
       />

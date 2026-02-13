@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
-import { serverAPIClient } from "@/app/lib/axios/server";
+import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 
@@ -17,6 +17,7 @@ interface APIErrorResponse {
 }
 
 const isProduction = process.env.NODE_ENV === "production";
+const isSecureCookie = isProduction || process.env.VERCEL_ENV === "preview";
 const API_URL = isProduction ? process.env.NEXT_PUBLIC_API_BASE_URL : process.env.DEVELOPMENT_API_BASE_URL;
 
 // 30일 세션을 부여받는 권한 있는 역할들
@@ -48,16 +49,18 @@ export async function POST(request: NextRequest) {
 
         cookieStore.set("auth_token", data.accessToken, {
             httpOnly: true,
-            secure: true,  // Must be true with sameSite: 'none'
-            sameSite: "none",  // Required for mobile browsers during OAuth redirects
+            // In local dev (http://localhost), secure cookies will not be stored/sent by browsers.
+            // Use sameSite=lax in dev to keep auth working; keep sameSite=none in prod/preview for OAuth flows.
+            secure: isSecureCookie,
+            sameSite: isSecureCookie ? "none" : "lax",
             path: "/",
             maxAge: ["owner", "creator"].includes(role) ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
         })
 
         cookieStore.set("refresh_token", data.refreshToken, {
             httpOnly: true,
-            secure: true,  // Must be true with sameSite: 'none'
-            sameSite: "none",  // Required for mobile browsers during OAuth redirects
+            secure: isSecureCookie,
+            sameSite: isSecureCookie ? "none" : "lax",
             path: "/",
             maxAge: 7 * 24 * 60 * 60,
         })

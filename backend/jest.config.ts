@@ -16,6 +16,7 @@ const config: Config = {
         "^domain/(.*)$": "<rootDir>/domain/$1",
         "^infrastructure/(.*)$": "<rootDir>/infrastructure/$1",
         "^interface/(.*)$": "<rootDir>/interface/$1",
+        "^module/(.*)$": "<rootDir>/module/$1",
     },
     collectCoverageFrom: [
         "application/**/!(*.spec).ts",

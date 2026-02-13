@@ -7,8 +7,12 @@ import {
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
+import { EMPLOYEE_SCHEDULE_REPOSITORY } from "domain/repositories/employee-schedule.repository.interface";
+import { EMPLOYEE_REPOSITORY } from "domain/repositories/employee.repository.interface";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
+import { SbEmployeeScheduleRepository } from "infrastructure/database/repositories/sb.employee-schedule.repository";
+import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.employee.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { AlimtalkModule } from "./alimtalk.module";
@@ -29,6 +33,14 @@ import { AlimtalkModule } from "./alimtalk.module";
         {
             provide: CLIENT_REPOSITORY,
             useClass: SbClientRepository,
+        },
+        {
+            provide: EMPLOYEE_SCHEDULE_REPOSITORY,
+            useClass: SbEmployeeScheduleRepository,
+        },
+        {
+            provide: EMPLOYEE_REPOSITORY,
+            useClass: SbEmployeeRepository,
         },
     ],
 })

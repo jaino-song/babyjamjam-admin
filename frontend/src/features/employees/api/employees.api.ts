@@ -1,4 +1,4 @@
-import { api } from '@/core/api/client';
+import { api } from '@/lib/api/client';
 import type { Employee, CreateEmployeeDto, UpdateEmployeeDto } from '../types';
 
 export const employeesApi = {

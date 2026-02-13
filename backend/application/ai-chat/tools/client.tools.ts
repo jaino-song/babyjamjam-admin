@@ -124,13 +124,28 @@ export const createClientSchema: FunctionDeclaration = {
 
 export const updateClientSchema: FunctionDeclaration = {
     name: "updateClient",
-    description: "Update an existing client's information. Requires confirmation before execution.",
+    description: `Update an existing client's information. Requires confirmation before execution.
+
+USE THIS TOOL when user asks:
+- "산모 정보 수정", "전화번호 변경", "연락처 바꿔줘", "주소 수정"
+
+ACTION-FIRST RULE:
+- Even when some update value is missing, call updateClient first with confirmed=false and available identifier (clientId or clientName).
+- Then ask the missing detail if needed.
+
+Examples:
+- "이수진 산모 전화번호 변경해줘" -> updateClient(clientName: "이수진", confirmed: false)
+- "김민지 산모 연락처 010-1234-5678로 바꿔줘" -> updateClient(clientName: "김민지", phone: "010-1234-5678", confirmed: false)`,
     parameters: {
         type: "object",
         properties: {
             clientId: {
                 type: "number",
                 description: "The unique ID of the client to update",
+            },
+            clientName: {
+                type: "string",
+                description: "Client name when ID is unknown (e.g., '이수진')",
             },
             name: {
                 type: "string",
@@ -177,7 +192,7 @@ export const updateClientSchema: FunctionDeclaration = {
                 description: "Set to true to confirm and execute the update. Set to false to request confirmation first.",
             },
         },
-        required: ["clientId", "confirmed"],
+        required: ["confirmed"],
     },
 };
 
@@ -191,12 +206,16 @@ export const deleteClientSchema: FunctionDeclaration = {
                 type: "number",
                 description: "The unique ID of the client to delete",
             },
+            clientName: {
+                type: "string",
+                description: "Client name when ID is unknown (e.g., '최민지')",
+            },
             confirmed: {
                 type: "boolean",
                 description: "Set to true to confirm and execute the deletion. Set to false to request confirmation first.",
             },
         },
-        required: ["clientId", "confirmed"],
+        required: ["confirmed"],
     },
 };
 
@@ -246,6 +265,10 @@ SYNONYMS: 산모 = 이용자 = 고객 = 엄마 = client`,
                 type: "number",
                 description: "The unique ID of the client (산모/이용자 ID)",
             },
+            clientName: {
+                type: "string",
+                description: "Client name when ID is unknown (e.g., '정하은')",
+            },
             reason: {
                 type: "string",
                 description: "Reason for termination (종료 사유)",
@@ -255,7 +278,7 @@ SYNONYMS: 산모 = 이용자 = 고객 = 엄마 = client`,
                 description: "Set to true to confirm. Set to false to request confirmation first.",
             },
         },
-        required: ["clientId", "confirmed"],
+        required: ["confirmed"],
     },
 };
 
@@ -276,9 +299,17 @@ SYNONYMS:
                 type: "number",
                 description: "The unique ID of the client (산모/이용자 ID)",
             },
+            clientName: {
+                type: "string",
+                description: "Client name when ID is unknown (e.g., '김서연')",
+            },
             newPrimaryEmployeeId: {
                 type: "number",
                 description: "ID of the new primary employee (새 담당 관리사 ID)",
+            },
+            newPrimaryEmployeeName: {
+                type: "string",
+                description: "New primary employee name when ID is unknown",
             },
             newSecondaryEmployeeId: {
                 type: "number",
@@ -289,7 +320,7 @@ SYNONYMS:
                 description: "Set to true to confirm. Set to false to request confirmation first.",
             },
         },
-        required: ["clientId", "newPrimaryEmployeeId", "confirmed"],
+        required: ["confirmed"],
     },
 };
 

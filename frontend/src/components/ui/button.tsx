@@ -22,6 +22,11 @@ const buttonVariants = cva(
           "bg-kakao text-kakao-foreground border border-border shadow-sm hover:bg-kakao/90",
         google:
           "bg-google text-google-foreground border border-border shadow-sm hover:bg-muted",
+        v3: "rounded-full bg-[hsl(214,100%,34%)] text-white shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] hover:-translate-y-[2px] hover:shadow-[0_12px_48px_hsla(214,50%,20%,0.12)] transition-all duration-300",
+        "v3-soft":
+          "rounded-full bg-[hsl(214,80%,95%)] text-[hsl(214,100%,34%)] hover:bg-[hsl(214,70%,90%)] transition-all duration-300",
+        "v3-outline":
+          "rounded-full border-2 border-[hsl(214,100%,34%)] bg-transparent text-[hsl(214,100%,34%)] hover:bg-[hsl(214,80%,95%)] transition-all duration-300",
       },
       size: {
         default: "h-10 px-4 py-2",

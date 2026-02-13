@@ -8,7 +8,7 @@
  */
 
 // Cache version - increment to force update
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = `imirae-back-office-${CACHE_VERSION}`;
 
 // Assets to precache during install
@@ -41,10 +41,14 @@ const PRECACHE_ASSETS = [
 self.addEventListener('install', (event) => {
     console.log('[SW] Installing service worker...');
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            console.log('[SW] Precaching assets...');
-            return cache.addAll(PRECACHE_ASSETS);
-        })
+        Promise.all([
+            caches.open(CACHE_NAME).then((cache) => {
+                console.log('[SW] Precaching assets...');
+                return cache.addAll(PRECACHE_ASSETS);
+            }),
+            // Activate updated SW immediately so fixes take effect without requiring a full browser restart.
+            self.skipWaiting(),
+        ])
     );
 });
 
@@ -73,10 +77,31 @@ self.addEventListener('activate', (event) => {
  */
 self.addEventListener('fetch', (event) => {
     const { request } = event;
-    const url = new URL(request.url);
+    let url;
+    try {
+        url = new URL(request.url);
+    } catch {
+        return;
+    }
 
     if (request.method !== 'GET') return;
+    // Only handle same-origin http(s) requests. This prevents errors like:
+    // "Request scheme 'chrome-extension' is unsupported"
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+    if (url.origin !== self.location.origin) return;
     if (url.pathname.startsWith('/api/')) return;
+    // Dev DX: don't cache in localhost dev, it can cause stale chunks/HMR issues.
+    if (self.location.hostname === 'localhost' || self.location.hostname === '127.0.0.1') return;
+    // Avoid caching Next dev/hmr endpoints even outside localhost.
+    if (url.pathname.startsWith('/_next/webpack-hmr')) return;
+    // Only cache static assets; avoid caching HTML navigations or XHR/fetch calls.
+    const cacheableDestinations = new Set(['style', 'script', 'image', 'font', 'manifest']);
+    const cacheableByPath =
+        url.pathname.startsWith('/assets/') ||
+        url.pathname.startsWith('/splash/') ||
+        url.pathname === '/manifest.json' ||
+        url.pathname === '/apple-touch-icon.png';
+    if (!cacheableDestinations.has(request.destination) && !cacheableByPath) return;
 
     event.respondWith(
         caches.match(request).then((cachedResponse) => {
@@ -88,9 +113,11 @@ self.addEventListener('fetch', (event) => {
                     return networkResponse;
                 }
                 const responseToCache = networkResponse.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                    cache.put(request, responseToCache);
-                });
+                event.waitUntil(
+                    caches.open(CACHE_NAME).then((cache) => cache.put(request, responseToCache)).catch(() => {
+                        // Ignore cache write errors (e.g. unsupported schemes, quota, etc.)
+                    })
+                );
                 return networkResponse;
             });
         })
