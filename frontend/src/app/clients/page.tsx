@@ -213,6 +213,7 @@ export default function ClientsPage() {
                     label="전체 고객"
                     colorIndex={0}
                     animationDelay="0s"
+                    isLoading={isLoading}
                 />
                 <StatMini
                     icon={UserCheck}
@@ -220,6 +221,7 @@ export default function ClientsPage() {
                     label="진행중"
                     colorIndex={2}
                     animationDelay="0.08s"
+                    isLoading={isLoading}
                 />
                 <StatMini
                     icon={Clock}
@@ -227,6 +229,7 @@ export default function ClientsPage() {
                     label="대기중"
                     colorIndex={1}
                     animationDelay="0.16s"
+                    isLoading={isLoading}
                 />
                 <StatMini
                     icon={AlertTriangle}
@@ -234,6 +237,7 @@ export default function ClientsPage() {
                     label="만료임박"
                     colorIndex={3}
                     animationDelay="0.24s"
+                    isLoading={isLoading}
                 />
             </div>
 

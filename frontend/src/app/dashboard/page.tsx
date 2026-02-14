@@ -3,7 +3,6 @@
 import { useDashboardStats } from "@/hooks/useDashboardStats";
 import { useInitialUser } from "@/providers/UserProvider";
 import {
-  PageHeader,
   StatMini,
   SplitLayout,
   ListPanel,
@@ -11,7 +10,6 @@ import {
   InfoCard,
   InfoRow,
   AnimatedSlotList,
-  HeaderActionButton,
 } from "@/components/app/v3";
 import {
   Users,
@@ -28,6 +26,8 @@ import { ChatWidget } from "@/components/app/chat/ChatWidget";
 import { useState } from "react";
 import { HeroBanner } from "@/components/app/dashboard/HeroBanner";
 import { redirect } from "next/navigation";
+import { QuickActions } from "@/components/app/v3/QuickActions";
+import { Block } from "@/components/app/v3/Block";
 
 const iconBackgroundColors = [
   "bg-v3-primary text-white",
@@ -103,32 +103,13 @@ export default function DashboardPage() {
       data-component="dashboard"
       className="space-y-6"
     >
-      <HeroBanner title={user?.organizationName ?? "다시 로그인 해주세요"}></HeroBanner>
-      <div data-component="dashboard-header">
-        <PageHeader
-          title="대시보드"
-          actions={
-            <div data-component="dashboard-header-actions" className="flex gap-2">
-              <HeaderActionButton
-                href="/contracts/creation"
-                icon={Send}
-                label="계약 발송"
-                data-component="dashboard-header-send-contract"
-              />
-              <HeaderActionButton
-                href="/messages"
-                icon={MessageSquare}
-                label="메시지 작성"
-                variant="outline"
-                data-component="dashboard-header-send-message"
-              />
-            </div>
-          }
-        />
-      </div>
+      <HeroBanner
+        title={user?.name ? `${user?.name} 님` : "다시 로그인 해주세요"}
+        subtitle={user?.organizationName ?? ""}
+      />
 
-      <div
-        data-component="dashboard-stats"
+      <Block
+        name="dashboard-stats"
         // Don't animate the whole grid as one "page child"; animate each card with staggering instead.
         className="grid grid-cols-2 lg:grid-cols-4 gap-4"
       >
@@ -148,13 +129,22 @@ export default function DashboardPage() {
             />
           </div>
         ))}
-      </div>
+      </Block>
 
-      <div
-        data-component="dashboard-split"
+      <QuickActions
+        shortcuts={[
+          { href: "/contracts/creation", label: "계약 발송", icon: Send },
+          { href: "/messages", label: "메시지 작성", icon: MessageSquare },
+          { href: "/messages", label: "메시지 작성", icon: MessageSquare },
+          { href: "/messages", label: "메시지 작성", icon: MessageSquare },
+        ]}
+      />
+
+      <Block
+        name="dashboard-split"
       >
         <SplitLayout>
-          <div data-component="dashboard-activities-panel">
+          <Block name="dashboard-activities-panel">
             <ListPanel
               title="최근 활동"
               tabs={[
@@ -170,17 +160,17 @@ export default function DashboardPage() {
               searchPlaceholder="활동 검색..."
               isLoading={isLoading}
             >
-              <div
-                data-component="dashboard-split-list"
+              <Block
+                name="dashboard-split-list"
                 className="space-y-2"
               >
                 {!isLoading && searchedActivities.length === 0 ? (
-                  <div
-                    data-component="dashboard-split-list-empty"
+                  <Block
+                    name="dashboard-split-list-empty"
                     className="p-8 text-center text-v3-text-muted"
                   >
                     표시할 활동이 없습니다
-                  </div>
+                  </Block>
                 ) : (
                   <AnimatedSlotList
                     count={4}
@@ -218,12 +208,12 @@ export default function DashboardPage() {
                             )}
                           </div>
 
-                          <div
-                            data-component="dashboard-split-list-item-content"
+                          <Block
+                            name="dashboard-split-list-item-content"
                             className="flex-1 min-w-0"
                           >
-                            <div
-                              data-component="dashboard-split-list-item-header"
+                            <Block
+                              name="dashboard-split-list-item-header"
                               className="flex items-center gap-2 mb-0.5"
                             >
                               {isLoading ? (
@@ -244,7 +234,7 @@ export default function DashboardPage() {
                                   </Badge>
                                 </>
                               )}
-                            </div>
+                            </Block>
 
                             {isLoading ? (
                               <Skeleton className="h-3 w-56 bg-v3-dim-white" />
@@ -253,57 +243,17 @@ export default function DashboardPage() {
                                 {activity?.description}
                               </p>
                             )}
-                          </div>
+                          </Block>
                         </>
                       );
                     }}
                   />
                 )}
-              </div>
+              </Block>
             </ListPanel>
-          </div>
-
-          <div
-            data-component="dashboard-summary-panel"
-          >
-            <DetailPanel
-              header={
-                <h3 className="text-lg font-bold text-v3-dark">업무 요약</h3>
-              }
-            >
-              <div data-component="dashboard-split-detail" className="space-y-4">
-                <InfoCard title="이번 달 현황">
-                  <InfoRow label="활성 고객" value={stats?.activeClients ?? "-"} />
-                  <InfoRow
-                    label="이번달 예정"
-                    value={stats?.upcomingThisMonth ?? "-"}
-                  />
-                  <InfoRow
-                    label="다음달 예정"
-                    value={stats?.upcomingNextMonth ?? "-"}
-                  />
-                  <InfoRow
-                    label="서명 대기"
-                    value={stats?.contractsPendingSignature ?? "-"}
-                  />
-                </InfoCard>
-
-                <div
-                  data-component="dashboard-chat-widget"
-                  className={cn(
-                    // Mobile: chat entry is in the bottom nav (center button), so hide this bar.
-                    "mt-4 hidden md:block",
-                    "animate-v3-pop-in"
-                  )}
-                  style={{ animationDelay: "0.28s" }}
-                >
-                  <ChatWidget />
-                </div>
-              </div>
-            </DetailPanel>
-          </div>
+          </Block>
         </SplitLayout>
-      </div>
+      </Block>
     </section>
   );
 }

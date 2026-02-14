@@ -42,17 +42,17 @@ export function HeroBanner({
 
       <div data-component="dashboard-hero-content" className="relative z-10 space-y-4">
         <div data-component="dashboard-hero-greeting" className="space-y-1">
-          <p
-            className="text-sm font-medium text-primary-foreground/80 opacity-0 animate-fade-in"
+          <h4
+            className="text-lg font-medium text-primary-foreground/80 opacity-0 animate-fade-in"
             style={{ animationDelay: "100ms" }}
           >
             {subtitle}
-          </p>
+          </h4>
           <h1
-            className="text-2xl font-bold text-primary-foreground flex items-center gap-2 opacity-0 animate-fade-in"
+            className="text-3xl font-bold text-primary-foreground flex items-center gap-2 opacity-0 animate-fade-in"
             style={{ animationDelay: "150ms" }}
           >
-            {title} <span className="text-2xl">😀</span>
+            {title} <span className="text-2xl"></span>
           </h1>
           {description && (
             <p

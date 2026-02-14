@@ -21,13 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
-
-const SHORTCUT_COLORS = [
-  { bg: "bg-v3-primary-light", text: "text-v3-primary" },
-  { bg: "bg-v3-orange-light", text: "text-v3-orange" },
-  { bg: "bg-v3-green-light", text: "text-v3-green" },
-  { bg: "bg-v3-burgundy-light", text: "text-v3-burgundy" },
-] as const;
+import { ShortcutGrid } from "@/components/app/v3/ShortcutGrid";
 
 function initials(name?: string | null) {
   if (!name) return "U";
@@ -139,39 +133,7 @@ export default function AllMenuPage() {
         className="bg-white rounded-tl-[28px] rounded-tr-[28px] -mx-4 p-4 opacity-0 animate-v3-slide-up"
         style={{ animationDelay: "0.1s", animationFillMode: "both" }}
       >
-        {/* Shortcuts */}
-        <section data-component="all-menu-shortcuts" className="space-y-3 mb-4">
-          <h2 className="px-1 text-lg font-extrabold tracking-tight text-v3-dark">
-            바로가기
-          </h2>
-          <div className="grid grid-cols-4 gap-3">
-            {shortcuts.map((s, idx) => {
-              const Icon = s.icon;
-              const color = SHORTCUT_COLORS[idx % SHORTCUT_COLORS.length];
-              return (
-                <Link
-                  key={s.href}
-                  href={s.href}
-                  data-component="all-menu-shortcut"
-                  className={cn(
-                    "p-3",
-                    "flex flex-col items-center gap-2",
-                    "transition-transform",
-                    "opacity-0 animate-v3-pop-up"
-                  )}
-                  style={{ animationDelay: `${0.2 + idx * 0.06}s`, animationFillMode: "both" }}
-                >
-                  <div className={cn("w-10 h-10 rounded-2xl flex items-center justify-center", color.bg)}>
-                    <Icon className={cn("w-5 h-5", color.text)} strokeWidth={2.5} />
-                  </div>
-                  <span className="text-xs font-bold text-v3-dark text-center leading-tight">
-                    {s.label}
-                  </span>
-                </Link>
-              );
-            })}
-          </div>
-        </section>
+        <ShortcutGrid shortcuts={shortcuts} className="mb-4" />
 
         {/* Full nav stack */}
         <section data-component="all-menu-nav" className="space-y-3 pb-2">
