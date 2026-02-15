@@ -139,7 +139,6 @@ export default function ContractsPage() {
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
-    isInitialLoad,
     error,
   } = useInfiniteContracts({
     enabled: isAuthenticated,
@@ -208,19 +207,6 @@ export default function ContractsPage() {
 
   return (
     <section data-component="contracts" className="space-y-6">
-        <PageHeader
-          title="전자계약 관리"
-          icon={FileText}
-          actions={
-            <HeaderActionButton
-              href="/contracts/creation"
-              icon={Plus}
-              label="서명 요청"
-              data-component="contracts-header-send-contract"
-            />
-          }
-        />
-
         <div data-component="contracts-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatMini
             icon={FileText}
@@ -266,6 +252,14 @@ export default function ContractsPage() {
             onSearchChange={setSearchQuery}
             searchPlaceholder="고객명, 문서명 검색..."
             isLoading={isInitialLoading || isContentLoading}
+            headerActions={
+              <HeaderActionButton
+                href="/contracts/creation"
+                icon={Plus}
+                label="서명 요청"
+                data-component="contracts-header-send-contract"
+              />
+            }
           >
             {documents.length === 0 && !isInitialLoading && !isContentLoading ? (
               <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
@@ -292,7 +286,6 @@ export default function ContractsPage() {
                 hasMore={hasNextPage}
                 onLoadMore={() => fetchNextPage()}
                 isFetchingMore={isFetchingNextPage}
-                isInitialLoad={isInitialLoad}
                 render={({ item: doc, isLoading }) => {
                   // Skeleton state
                   if (isLoading) {
@@ -437,8 +430,6 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
   const category = getStatusCategory(doc.current_status?.status_type);
   const statusType = mapCategoryToStatusType(category);
   const statusLabel = mapStatusToLabel(doc.current_status?.status_type);
-  const bannerStyle = mapCategoryToBannerStyle(category);
-  const bannerLabel = mapCategoryToLabel(category);
   const steps = getSignatureProgress(category);
 
   const expiredDate = doc.current_status?.expired_date;
@@ -514,16 +505,40 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
         <StatusBadge status={statusType} label={statusLabel} />
       </div>
 
-      <div className={`rounded-[14px] px-4 py-3 text-[0.8rem] font-semibold ${bannerStyle}`}>
-        {bannerLabel}
+      <div className="flex items-center gap-0 py-2">
+        {steps.map((step, idx) => (
+          <div key={step.label} className="flex items-center">
+            <div className="flex flex-col items-center">
+              <div
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-[0.65rem] font-bold ${
+                  step.done
+                    ? "bg-v3-primary text-white"
+                    : "bg-v3-dim-white text-v3-text-muted"
+                }`}
+              >
+                {idx + 1}
+              </div>
+              <span className="text-[0.6rem] text-v3-text-muted mt-1 whitespace-nowrap">
+                {step.label}
+              </span>
+            </div>
+            {idx < steps.length - 1 && (
+              <div
+                className={`w-8 h-0.5 mx-1 mt-[-12px] ${
+                  steps[idx + 1].done ? "bg-v3-primary" : "bg-v3-border"
+                }`}
+              />
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
 
   return (
     <DetailPanel header={header}>
-      <div data-component="contracts-detail" className="space-y-5">
-        <InfoCard title="고객 정보">
+      <div data-component="contracts-detail" className="grid grid-cols-2 gap-5">
+        <InfoCard title="고객 정보" className="col-start-1 row-start-1 row-end-3">
           <InfoRow
             label="고객명"
             value={
@@ -549,7 +564,7 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
           )}
         </InfoCard>
 
-        <InfoCard title="계약 정보">
+        <InfoCard title="계약 정보" className="col-start-2 row-start-1 row-end-5">
           <InfoRow label="문서명" value={doc.document_name} />
           <InfoRow label="템플릿" value={doc.template?.name ?? "–"} />
           <InfoRow label="문서번호" value={doc.document_number ?? "–"} />
@@ -557,37 +572,7 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
           <InfoRow label="최종수정" value={formatDate(doc.updated_date)} />
         </InfoCard>
 
-        <InfoCard title="서명 진행 상태">
-          <div className="flex items-center gap-0 py-2">
-            {steps.map((step, idx) => (
-              <div key={step.label} className="flex items-center">
-                <div className="flex flex-col items-center">
-                  <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-[0.65rem] font-bold ${
-                      step.done
-                        ? "bg-v3-primary text-white"
-                        : "bg-v3-dim-white text-v3-text-muted"
-                    }`}
-                  >
-                    {idx + 1}
-                  </div>
-                  <span className="text-[0.6rem] text-v3-text-muted mt-1 whitespace-nowrap">
-                    {step.label}
-                  </span>
-                </div>
-                {idx < steps.length - 1 && (
-                  <div
-                    className={`w-8 h-0.5 mx-1 mt-[-12px] ${
-                      steps[idx + 1].done ? "bg-v3-primary" : "bg-v3-border"
-                    }`}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        </InfoCard>
-
-        <InfoCard title="활동 기록">
+        <InfoCard title="활동 기록" className="col-start-1 row-start-3 row-end-5">
           <ActivityTimeline items={activityItems} maxHeight="300px" />
         </InfoCard>
       </div>

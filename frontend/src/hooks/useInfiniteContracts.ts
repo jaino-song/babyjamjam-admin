@@ -105,9 +105,6 @@ export function useInfiniteContracts({
   // Check if there are more items to show
   const hasNextPage = visibleCount < allFilteredDocuments.length;
 
-  // Whether we're showing the initial teaser view
-  const isInitialLoad = visibleCount <= INITIAL_VISIBLE_COUNT;
-
   // Load more function - just increases visible count
   const fetchNextPage = useCallback(() => {
     setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, allFilteredDocuments.length));
@@ -120,8 +117,6 @@ export function useInfiniteContracts({
     hasNextPage,
     fetchNextPage,
     totalCount: allFilteredDocuments.length,
-    /** True when showing the initial teaser view (first 6 items) */
-    isInitialLoad,
     error: query.error,
     refetch: query.refetch,
   };

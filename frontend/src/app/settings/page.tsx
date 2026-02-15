@@ -1,9 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { PageHeader } from "@/components/app/v3";
+
 import {
-  Settings,
   User,
   Bell,
   Palette,
@@ -146,8 +145,6 @@ export default function SettingsPage() {
 
   return (
     <section data-component="settings" className="space-y-6">
-      <PageHeader title="설정" icon={Settings} />
-
       <div data-component="settings-content" className="flex flex-col lg:flex-row gap-8">
         <nav data-component="settings-nav" className="lg:w-[220px] shrink-0">
           <div className="hidden lg:block sticky top-24">

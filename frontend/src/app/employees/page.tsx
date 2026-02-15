@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { UserCheck, Plus, Users, CheckCircle, Clock, Briefcase, Star, Calendar, Pencil, Eye } from "lucide-react";
+import { Users, CheckCircle, Clock, Briefcase, Star, Calendar, Pencil, Eye } from "lucide-react";
 import {
     Employee,
     EmployeeStatus,
@@ -10,7 +10,7 @@ import {
 } from "@/hooks/useEmployees";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { EmployeeDetailModal } from "@/components/app/employees/EmployeeDetailModal";
-import { PageHeader, StatMini, SearchFilterBar, HeaderActionButton } from "@/components/app/v3";
+import { StatMini, SearchFilterBar } from "@/components/app/v3";
 
 const filterItems = [
     { label: "전체", value: "all" },
@@ -132,18 +132,12 @@ export default function EmployeesPage() {
 
     return (
         <section data-component="employees" className="space-y-6">
-            <PageHeader
-                title="직원 관리"
-                icon={UserCheck}
-                actions={
-                    <HeaderActionButton
-                        icon={Plus}
-                        label="직원 추가"
-                        onClick={handleAddNew}
-                        data-component="employees-header-add"
-                    />
-                }
-            />
+            <div data-component="employees-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <StatMini icon={Users} value={stats.total} label="전체 직원" colorIndex={0} animationDelay="0s" />
+                <StatMini icon={CheckCircle} value={stats.active} label="활성" colorIndex={2} animationDelay="0.08s" />
+                <StatMini icon={Clock} value={stats.available} label="가용" colorIndex={1} animationDelay="0.16s" />
+                <StatMini icon={Briefcase} value={stats.working} label="배정됨" colorIndex={3} animationDelay="0.24s" />
+            </div>
 
             <SearchFilterBar
                 searchPlaceholder="이름, 연락처, 지역으로 검색..."
@@ -154,13 +148,6 @@ export default function EmployeesPage() {
                 onFilterChange={setFilter}
                 filterLabel="상태"
             />
-
-            <div data-component="employees-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatMini icon={Users} value={stats.total} label="전체 직원" colorIndex={0} animationDelay="0s" />
-                <StatMini icon={CheckCircle} value={stats.active} label="활성" colorIndex={2} animationDelay="0.08s" />
-                <StatMini icon={Clock} value={stats.available} label="가용" colorIndex={1} animationDelay="0.16s" />
-                <StatMini icon={Briefcase} value={stats.working} label="배정됨" colorIndex={3} animationDelay="0.24s" />
-            </div>
 
             {isLoading ? (
                 <div data-component="employees-list" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -275,9 +262,9 @@ function EmployeeCard({ employee, onClick, onEdit }: EmployeeCardProps) {
                     <span>
                         {employee.registeredDate
                             ? new Date(employee.registeredDate).toLocaleDateString("ko-KR", {
-                                  month: "short",
-                                  day: "numeric",
-                              })
+                                month: "short",
+                                day: "numeric",
+                            })
                             : "-"}
                     </span>
                 </div>

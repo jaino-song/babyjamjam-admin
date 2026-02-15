@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { FolderOpen, FileText, Image, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
-import { PageHeader, StatMini, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton } from "@/components/app/v3";
+import { StatMini, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton } from "@/components/app/v3";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
@@ -131,19 +131,6 @@ export default function FilesPage() {
 
   return (
     <section data-component="files" className="space-y-6">
-      <PageHeader
-        title="파일 관리"
-        icon={FolderOpen}
-        actions={
-          <HeaderActionButton
-            icon={Upload}
-            label="업로드"
-            onClick={() => setIsUploadOpen(true)}
-            data-component="files-upload-btn"
-          />
-        }
-      />
-
       <div data-component="files-stats" className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatMini icon={FolderOpen} value={isLoading ? "–" : stats.total} label="전체 파일" colorIndex={0} animationDelay="0s" />
         <StatMini icon={Tag} value={isLoading ? "–" : stats.categoryCount} label="카테고리" colorIndex={1} animationDelay="0.08s" />
@@ -159,6 +146,14 @@ export default function FilesPage() {
           searchValue={searchQuery}
           onSearchChange={setSearchQuery}
           searchPlaceholder="문서명, 설명, 태그 검색..."
+          headerActions={
+            <HeaderActionButton
+              icon={Upload}
+              label="업로드"
+              onClick={() => setIsUploadOpen(true)}
+              data-component="files-upload-btn"
+            />
+          }
         >
           {isLoading ? (
             <div className="space-y-3">

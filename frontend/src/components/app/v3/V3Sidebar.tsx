@@ -17,11 +17,12 @@ import {
 } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
+import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
 
 interface NavItem {
   label: string;
   href: string;
-  icon: LucideIcon;
+  icon: LucideIcon | React.ElementType;
   badge?: string;
 }
 
@@ -35,26 +36,27 @@ const NAV_SECTIONS: NavSection[] = [
     title: "메인",
     items: [
       { label: "대시보드", href: "/dashboard", icon: LayoutDashboard },
-      { label: "분석", href: "/dashboard/analytics", icon: BarChart3 },
+      { label: "서비스 일정", href: "/employees/schedule", icon: Calendar },
     ],
   },
   {
-    title: "관리",
+    title: "지점 관리",
     items: [
-      { label: "고객", href: "/clients", icon: Users },
-      { label: "직원", href: "/employees", icon: UserCheck },
-      { label: "일정", href: "/employees/schedule", icon: Calendar },
+      { label: "고객 관리", href: "/clients", icon: Users },
+      { label: "직원 관리", href: "/employees", icon: UserCheck },
+      { label: "알림톡 관리", href: "/alimtalk", icon: KakaoTalkIcon },
+      { label: "통계", href: "/dashboard/analytics", icon: BarChart3 },
     ],
   },
   {
-    title: "문서",
+    title: "문서 관리",
     items: [
-      { label: "계약", href: "/contracts", icon: FileText },
-      { label: "파일", href: "/files", icon: FolderOpen },
+      { label: "전자문서", href: "/contracts", icon: FileText },
+      { label: "파일 저장소", href: "/files", icon: FolderOpen },
     ],
   },
   {
-    title: "시스템",
+    title: "시스템 관리",
     items: [
       { label: "알림", href: "/messages", icon: Bell },
       { label: "설정", href: "/settings", icon: Settings },

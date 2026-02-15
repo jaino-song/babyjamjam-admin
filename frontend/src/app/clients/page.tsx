@@ -191,20 +191,6 @@ export default function ClientsPage() {
 
     return (
         <section data-component="clients" className="space-y-6 pb-10">
-            <PageHeader
-                title="고객 관리"
-                icon={Users}
-                actions={
-                    <HeaderActionButton
-                        icon={Plus}
-                        label={t(locale, "clients.add")}
-                        onClick={handleAddNew}
-                        data-testid="add-client-button"
-                        data-component="clients-header-add"
-                    />
-                }
-            />
-
             <div data-component="clients-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatMini
                     icon={Users}
@@ -250,6 +236,15 @@ export default function ClientsPage() {
 	                    onSearchChange={setSearchQuery}
 	                    searchPlaceholder={t(locale, "clients.search-placeholder")}
 	                    isLoading={isLoading}
+	                    headerActions={
+	                        <HeaderActionButton
+	                            icon={Plus}
+	                            label={t(locale, "clients.add")}
+	                            onClick={handleAddNew}
+	                            data-testid="add-client-button"
+	                            data-component="clients-header-add"
+	                        />
+	                    }
 	                >
 	                    <div className="space-y-2">
 	                        {!isLoading && filteredClients.length === 0 ? (
