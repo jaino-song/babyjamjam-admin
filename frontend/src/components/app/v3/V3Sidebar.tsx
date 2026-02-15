@@ -3,15 +3,15 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { 
-  LayoutDashboard, 
-  BarChart3, 
-  Users, 
-  UserCheck, 
-  Calendar, 
-  FileText, 
-  FolderOpen, 
-  Bell, 
+import {
+  LayoutDashboard,
+  BarChart3,
+  Users,
+  UserCheck,
+  Calendar,
+  FileText,
+  FolderOpen,
+  Bell,
   Settings,
   LucideIcon
 } from "lucide-react";
@@ -76,17 +76,17 @@ export const V3Sidebar = () => {
     if (href === "/employees" && pathname === "/employees/schedule") return false;
     return pathname.startsWith(href);
   };
-  
+
   if (isLayoutExcluded(pathname)) {
     return null;
   }
 
-  const initials = user?.name 
-    ? user.name.slice(0, 2).toUpperCase() 
+  const initials = user?.name
+    ? user.name.slice(0, 2).toUpperCase()
     : "USER";
 
   return (
-    <aside 
+    <aside
       className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[280px] bg-white z-40 rounded-tr-[32px] rounded-br-[32px] shadow-v3 animate-v3-slide-right overflow-hidden"
       aria-label="Sidebar Navigation"
       data-component="sidebar"
@@ -116,24 +116,24 @@ export const V3Sidebar = () => {
                       data-component={`sidebar-nav-${getNavItemName(item.href)}`}
                       className={`
                         relative group flex items-center gap-3 px-4 py-2.5 rounded-2xl transition-all duration-200 overflow-hidden
-                        ${active 
-                          ? "bg-v3-primary text-white shadow-md shadow-blue-500/20" 
+                        ${active
+                          ? "bg-v3-primary text-white shadow-md shadow-blue-500/20"
                           : "text-v3-text hover:bg-v3-primary-light hover:text-v3-primary"
                         }
                       `}
                     >
-                      <item.icon 
-                        className={`w-5 h-5 shrink-0 transition-colors ${active ? "text-white" : "group-hover:text-v3-primary"}`} 
-                        strokeWidth={2} 
+                      <item.icon
+                        className={`w-5 h-5 shrink-0 transition-colors ${active ? "text-white" : "group-hover:text-v3-primary"}`}
+                        strokeWidth={2}
                       />
                       <span className="text-[0.85rem] font-medium leading-none pt-0.5">
                         {item.label}
                       </span>
-                      
+
                       {item.badge && (
-                         <span className="ml-auto text-[0.65rem] px-2 py-0.5 rounded-full bg-v3-primary-light text-v3-primary font-bold">
-                           {item.badge}
-                         </span>
+                        <span className="ml-auto text-[0.65rem] px-2 py-0.5 rounded-full bg-v3-primary-light text-v3-primary font-bold">
+                          {item.badge}
+                        </span>
                       )}
                     </Link>
                   </li>

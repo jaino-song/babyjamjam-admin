@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pattern 4 — Stepped Wizard (Responsive)</title>
+  <style>
+    :root {
+      --v3-primary: hsl(214, 100%, 34%); --v3-primary-light: hsl(214, 80%, 95%);
+      --v3-primary-medium: hsl(214, 70%, 88%); --v3-primary-hover: hsl(214, 100%, 28%);
+      --v3-green: hsl(137, 34%, 31%); --v3-green-light: hsl(137, 40%, 93%);
+      --v3-burgundy: hsl(355, 36%, 45%); --v3-burgundy-light: hsl(355, 40%, 94%);
+      --v3-orange: hsl(34, 100%, 55%); --v3-orange-light: hsl(34, 100%, 94%);
+      --v3-purple: hsl(270, 60%, 55%); --v3-purple-light: hsl(270, 60%, 94%);
+      --v3-dark: hsl(214, 40%, 18%); --v3-text: hsl(214, 25%, 28%);
+      --v3-text-muted: hsl(214, 10%, 55%); --v3-border: hsl(214, 20%, 92%);
+      --v3-dim-white: hsl(220, 20%, 97%);
+      --shadow-v3: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+      --shadow-v3-hover: 0 12px 48px hsla(214, 50%, 20%, 0.12);
+      --shadow-v3-float: 0 20px 60px hsla(214, 50%, 20%, 0.15);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Noto Sans KR", sans-serif; color: var(--v3-text); background: var(--v3-dim-white); }
+
+    /* =========================================
+       DESKTOP SIDEBAR (hidden below 768px)
+       ========================================= */
+    .sidebar {
+      position: fixed; left: 0; top: 0; bottom: 0; width: 280px;
+      background: #fff; z-index: 40; border-radius: 0 32px 32px 0;
+      box-shadow: var(--shadow-v3); display: flex; flex-direction: column;
+    }
+    .sidebar-brand { display: flex; align-items: center; gap: 12px; padding: 32px 24px 24px; }
+    .sidebar-brand .icon-box { width: 48px; height: 48px; border-radius: 12px; background: var(--v3-primary); display: flex; align-items: center; justify-content: center; }
+    .sidebar-brand .icon-box svg { width: 24px; height: 24px; color: #fff; }
+    .sidebar-brand span { font-size: 1.25rem; font-weight: 800; color: var(--v3-dark); }
+    .sidebar nav { flex: 1; overflow-y: auto; padding: 8px 16px; }
+    .nav-section { margin-bottom: 24px; }
+    .nav-section h3 { padding: 0 16px; margin-bottom: 8px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.15em; color: var(--v3-text-muted); }
+    .nav-section ul { list-style: none; }
+    .nav-item a { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 16px; font-size: 0.85rem; font-weight: 500; color: var(--v3-text); text-decoration: none; transition: all 0.2s; }
+    .nav-item a:hover { background: var(--v3-primary-light); color: var(--v3-primary); }
+    .nav-item.active a { background: var(--v3-primary); color: #fff; box-shadow: 0 4px 12px hsla(214,100%,34%,0.2); }
+    .nav-item a svg { width: 20px; height: 20px; flex-shrink: 0; }
+    .sidebar-profile { padding: 16px; margin-top: auto; }
+    .sidebar-profile .profile-card { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 16px; background: var(--v3-dim-white); border: 1px solid var(--v3-border); }
+    .profile-avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, var(--v3-primary), hsl(217,91%,60%)); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 0.85rem; flex-shrink: 0; }
+    .profile-name { font-size: 0.85rem; font-weight: 600; color: var(--v3-dark); }
+    .profile-role { font-size: 0.7rem; color: var(--v3-text-muted); }
+
+    /* =========================================
+       MOBILE HEADER (visible below 768px)
+       ========================================= */
+    .mobile-header {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+      align-items: center; justify-content: space-between;
+      padding: 12px 16px; background: #fff;
+      box-shadow: var(--shadow-v3); border-radius: 0 0 24px 24px;
+    }
+    .mobile-header-logo { display: flex; align-items: center; gap: 10px; }
+    .mobile-header-logo .icon-box { width: 36px; height: 36px; border-radius: 10px; background: var(--v3-primary); display: flex; align-items: center; justify-content: center; }
+    .mobile-header-logo .icon-box svg { width: 20px; height: 20px; color: #fff; }
+    .mobile-header-logo span { font-size: 1rem; font-weight: 800; color: var(--v3-dark); }
+    .mobile-header-bell { width: 36px; height: 36px; border-radius: 12px; background: var(--v3-dim-white); border: 1px solid var(--v3-border); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .mobile-header-bell svg { width: 18px; height: 18px; color: var(--v3-text-muted); }
+
+    /* =========================================
+       MAIN CONTENT AREA
+       ========================================= */
+    .main { margin-left: 280px; padding: 32px; flex: 1; min-height: 100vh; }
+
+    /* =========================================
+       PATTERN: Stepped Wizard — DESKTOP
+       ========================================= */
+    .wizard-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 0.85rem; font-weight: 600; color: var(--v3-text-muted);
+      text-decoration: none; margin-bottom: 24px; transition: color 0.2s; cursor: pointer;
+      background: none; border: none; font-family: inherit;
+    }
+    .wizard-back:hover { color: var(--v3-primary); }
+    .wizard-back svg { width: 20px; height: 20px; }
+
+    .wizard-card {
+      background: #fff; border-radius: 28px; box-shadow: var(--shadow-v3);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .wizard-header { padding: 32px 32px 0; text-align: center; }
+    .wizard-title { font-size: 1.25rem; font-weight: 800; color: var(--v3-dark); margin-bottom: 4px; }
+    .wizard-subtitle { font-size: 0.8rem; color: var(--v3-text-muted); margin-bottom: 28px; }
+
+    /* Step indicator — DESKTOP (dots + labels + connectors) */
+    .wizard-steps-desktop {
+      display: flex; align-items: center; justify-content: center; gap: 0;
+      padding: 0 48px 28px;
+    }
+    .step-item { display: flex; align-items: center; gap: 8px; }
+    .step-dot {
+      width: 32px; height: 32px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.75rem; font-weight: 700; transition: all 0.3s;
+    }
+    .step-dot.completed { background: var(--v3-primary); color: #fff; box-shadow: 0 2px 8px hsla(214,100%,34%,0.2); }
+    .step-dot.current { background: var(--v3-primary); color: #fff; box-shadow: 0 2px 12px hsla(214,100%,34%,0.3); transform: scale(1.1); }
+    .step-dot.pending { background: var(--v3-dim-white); color: var(--v3-text-muted); border: 2px solid var(--v3-border); }
+    .step-label { font-size: 0.75rem; font-weight: 600; color: var(--v3-text-muted); }
+    .step-item.active .step-label { color: var(--v3-primary); font-weight: 700; }
+    .step-item.done .step-label { color: var(--v3-dark); }
+    .step-connector { width: 48px; height: 2px; margin: 0 8px; border-radius: 2px; }
+    .step-connector.done { background: var(--v3-primary); }
+    .step-connector.pending { background: var(--v3-border); }
+
+    /* Step indicator — MOBILE (progress bar) */
+    .wizard-steps-mobile {
+      display: none;
+      padding: 0 20px 20px;
+    }
+    .mobile-step-info {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+    }
+    .mobile-step-label { font-size: 0.75rem; font-weight: 700; color: var(--v3-primary); }
+    .mobile-step-count { font-size: 0.7rem; font-weight: 600; color: var(--v3-text-muted); }
+    .mobile-progress-track {
+      width: 100%; height: 6px; border-radius: 3px;
+      background: var(--v3-border); overflow: hidden;
+    }
+    .mobile-progress-fill {
+      height: 100%; border-radius: 3px;
+      background: linear-gradient(90deg, var(--v3-primary), hsl(217, 91%, 60%));
+      transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    /* Wizard body */
+    .wizard-body { padding: 0 32px 32px; flex: 1; overflow-y: auto; }
+    .wizard-section-title {
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--v3-text-muted); font-weight: 600; margin-bottom: 20px;
+    }
+    .wizard-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group.full { grid-column: 1 / -1; }
+    .form-group label { font-size: 0.75rem; font-weight: 600; color: var(--v3-text-muted); }
+    .form-group input, .form-group select, .form-group textarea {
+      padding: 12px 16px; border-radius: 14px;
+      border: 1.5px solid var(--v3-border); background: #fff;
+      font-size: 0.85rem; font-family: inherit; color: var(--v3-dark);
+      outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+      border-color: var(--v3-primary);
+      box-shadow: 0 0 0 3px hsla(214,100%,34%,0.08);
+    }
+    .form-group textarea { resize: vertical; min-height: 80px; }
+
+    /* Completed step summary — DESKTOP (expanded) */
+    .completed-step-desktop {
+      background: var(--v3-green-light); border-radius: 18px;
+      padding: 16px; margin-bottom: 24px;
+    }
+    .completed-step-header {
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--v3-green); font-weight: 600; margin-bottom: 12px;
+    }
+    .completed-fields { display: flex; gap: 16px; flex-wrap: wrap; }
+    .completed-field {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px; border-radius: 14px;
+      background: var(--v3-green-light); border: 1.5px solid hsl(137, 40%, 85%);
+    }
+    .completed-field svg { width: 16px; height: 16px; color: var(--v3-green); flex-shrink: 0; }
+    .completed-field span { font-size: 0.85rem; font-weight: 600; color: var(--v3-dark); }
+
+    /* Completed step summary — MOBILE (collapsed card) */
+    .completed-step-mobile {
+      display: none;
+      margin-bottom: 20px;
+    }
+    .completed-step-card {
+      background: var(--v3-green-light); border-radius: 16px;
+      padding: 14px 16px;
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; transition: all 0.2s;
+      border: 1.5px solid transparent;
+    }
+    .completed-step-card:hover, .completed-step-card:active {
+      border-color: hsl(137, 40%, 80%);
+    }
+    .completed-step-left { display: flex; align-items: center; gap: 10px; }
+    .completed-check-circle {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--v3-green); display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .completed-check-circle svg { width: 14px; height: 14px; color: #fff; }
+    .completed-step-name { font-size: 0.8rem; font-weight: 700; color: var(--v3-dark); }
+    .completed-step-detail { font-size: 0.7rem; color: var(--v3-text-muted); margin-top: 1px; }
+    .completed-step-edit {
+      font-size: 0.7rem; font-weight: 600; color: var(--v3-primary);
+      text-decoration: none; padding: 6px 12px; border-radius: 10px;
+      background: var(--v3-primary-light); transition: all 0.2s; white-space: nowrap;
+    }
+    .completed-step-edit:hover { background: var(--v3-primary-medium); }
+
+    /* Wizard footer */
+    .wizard-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 32px; border-top: 1px solid var(--v3-border);
+    }
+    .btn-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 20px; border-radius: 14px; border: 1.5px solid var(--v3-border);
+      background: #fff; font-size: 0.85rem; font-weight: 600;
+      color: var(--v3-text-muted); cursor: pointer; font-family: inherit; transition: all 0.2s;
+    }
+    .btn-back:hover { border-color: var(--v3-text-muted); }
+    .btn-back svg { width: 16px; height: 16px; }
+    .btn-next {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 28px; border-radius: 14px; border: none;
+      background: var(--v3-primary); font-size: 0.85rem; font-weight: 700;
+      color: #fff; cursor: pointer; font-family: inherit;
+      transition: all 0.2s; box-shadow: 0 2px 8px hsla(214,100%,34%,0.2);
+    }
+    .btn-next:hover { background: var(--v3-primary-hover); transform: translateY(-1px); }
+    .btn-next svg { width: 16px; height: 16px; }
+    .step-progress-text { font-size: 0.75rem; color: var(--v3-text-muted); font-weight: 600; }
+
+    /* =========================================
+       MOBILE BOTTOM NAV (visible below 768px)
+       — hidden during wizard to not compete
+       ========================================= */
+    .mobile-bottom-nav {
+      display: none;
+    }
+
+    /* =========================================
+       ANNOTATION BADGE
+       ========================================= */
+    .annotation {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: var(--v3-dark); color: #fff; padding: 12px 24px; border-radius: 16px;
+      font-size: 0.8rem; font-weight: 600; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      z-index: 9999; text-align: center; line-height: 1.5;
+      pointer-events: none; white-space: nowrap;
+    }
+    .annotation strong { color: hsl(214,80%,70%); }
+
+    /* =========================================
+       RESPONSIVE — MOBILE (< 768px)
+       ========================================= */
+    @media (max-width: 767px) {
+      .sidebar { display: none; }
+      .mobile-header { display: flex; }
+      .main {
+        margin-left: 0;
+        padding: 16px;            /* p-4 — matches V3MainContent */
+        padding-top: 80px;        /* pt-20 — below mobile header */
+        padding-bottom: 24px;     /* no bottom nav during wizard */
+        min-height: 100vh;
+        display: flex; flex-direction: column;
+      }
+
+      .wizard-back { margin-bottom: 16px; font-size: 0.8rem; }
+      .wizard-back svg { width: 18px; height: 18px; }
+
+      .wizard-card {
+        border-radius: 28px;      /* rounded-[28px] — matches ListPanel, DetailPanel */
+        max-width: 100%;
+        flex: 1; display: flex; flex-direction: column;
+        min-height: calc(100vh - 80px - 16px - 48px);
+      }
+
+      .wizard-header { padding: 24px 24px 0; }  /* p-6 — matches panel headers */
+      .wizard-title { font-size: 1.1rem; margin-bottom: 2px; }
+      .wizard-subtitle { font-size: 0.75rem; margin-bottom: 16px; }
+
+      .wizard-steps-desktop { display: none; }
+      .wizard-steps-mobile { display: block; padding: 0 24px 20px; }
+
+      .completed-step-desktop { display: none; }
+      .completed-step-mobile { display: block; }
+
+      .wizard-body { padding: 0 24px 24px; flex: 1; }  /* p-6 — matches panel content */
+      .wizard-form-grid { grid-template-columns: 1fr; gap: 14px; }
+      .wizard-section-title { margin-bottom: 16px; }
+
+      .form-group input, .form-group select, .form-group textarea {
+        padding: 14px 16px; font-size: 0.9rem; border-radius: 14px;
+      }
+
+      .wizard-footer {
+        padding: 16px 24px;       /* horizontal p-6 to match body */
+        position: sticky; bottom: 0;
+        background: #fff; border-radius: 0 0 28px 28px;
+        box-shadow: 0 -4px 20px hsla(214, 50%, 20%, 0.06);
+      }
+      .btn-back { padding: 12px 16px; font-size: 0.8rem; border-radius: 14px; }
+      .btn-next { padding: 12px 24px; font-size: 0.8rem; border-radius: 14px; flex: 1; justify-content: center; margin-left: 8px; }
+      .step-progress-text { display: none; }
+
+      .annotation { bottom: 12px; font-size: 0.7rem; padding: 10px 16px; border-radius: 12px; white-space: normal; max-width: 90vw; }
+    }
+
+    @media (max-width: 379px) {
+      .main { padding: 12px; padding-top: 76px; }
+      .wizard-card { border-radius: 24px; }
+      .wizard-header { padding: 20px 20px 0; }
+      .wizard-body { padding: 0 20px 20px; }
+      .wizard-steps-mobile { padding: 0 20px 16px; }
+      .wizard-footer { padding: 14px 20px; border-radius: 0 0 24px 24px; }
+      .wizard-title { font-size: 1rem; }
+      .mobile-progress-track { height: 5px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ==========================================
+     DESKTOP SIDEBAR
+     ========================================== -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="icon-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></div>
+    <span>케어허브</span>
+  </div>
+  <nav>
+    <div class="nav-section"><h3>메인</h3><ul>
+      <li class="nav-item"><a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>대시보드</a></li>
+    </ul></div>
+    <div class="nav-section"><h3>관리</h3><ul>
+      <li class="nav-item active"><a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/></svg>고객</a></li>
+      <li class="nav-item"><a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>직원</a></li>
+    </ul></div>
+    <div class="nav-section"><h3>문서</h3><ul>
+      <li class="nav-item"><a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>계약</a></li>
+    </ul></div>
+    <div class="nav-section"><h3>시스템</h3><ul>
+      <li class="nav-item"><a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>설정</a></li>
+    </ul></div>
+  </nav>
+  <div class="sidebar-profile"><div class="profile-card"><div class="profile-avatar">김대</div><div><div class="profile-name">김대표</div><div class="profile-role">관리자</div></div></div></div>
+</aside>
+
+<!-- ==========================================
+     MOBILE HEADER
+     ========================================== -->
+<header class="mobile-header">
+  <div class="mobile-header-logo">
+    <div class="icon-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></div>
+    <span>케어허브</span>
+  </div>
+  <div class="mobile-header-bell">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+  </div>
+</header>
+
+<!-- ==========================================
+     MAIN CONTENT — WIZARD
+     ========================================== -->
+<main class="main">
+  <button class="wizard-back">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+    고객 목록으로 돌아가기
+  </button>
+
+  <div class="wizard-card">
+    <div class="wizard-header">
+      <div class="wizard-title">새 고객 등록</div>
+      <div class="wizard-subtitle">고객 정보를 단계별로 입력해 주세요</div>
+
+      <!-- DESKTOP: dots + labels + connectors -->
+      <div class="wizard-steps-desktop">
+        <div class="step-item done">
+          <div class="step-dot completed">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <span class="step-label">기본 정보</span>
+        </div>
+        <div class="step-connector done"></div>
+        <div class="step-item active">
+          <div class="step-dot current">2</div>
+          <span class="step-label">서비스 설정</span>
+        </div>
+        <div class="step-connector pending"></div>
+        <div class="step-item">
+          <div class="step-dot pending">3</div>
+          <span class="step-label">계약 발송</span>
+        </div>
+      </div>
+
+      <!-- MOBILE: slim progress bar -->
+      <div class="wizard-steps-mobile">
+        <div class="mobile-step-info">
+          <span class="mobile-step-label">서비스 설정</span>
+          <span class="mobile-step-count">2 / 3 단계</span>
+        </div>
+        <div class="mobile-progress-track">
+          <div class="mobile-progress-fill" style="width: 66.6%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="wizard-body">
+
+      <!-- DESKTOP: expanded completed step summary -->
+      <div class="completed-step-desktop">
+        <div class="completed-step-header">&#10003; 1단계 완료 — 기본 정보</div>
+        <div class="completed-fields">
+          <div class="completed-field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg><span>김새롬</span></div>
+          <div class="completed-field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg><span>010-9876-5432</span></div>
+          <div class="completed-field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg><span>서울 마포구 와우산로 94</span></div>
+        </div>
+      </div>
+
+      <!-- MOBILE: collapsed completed step card -->
+      <div class="completed-step-mobile">
+        <div class="completed-step-card">
+          <div class="completed-step-left">
+            <div class="completed-check-circle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div>
+              <div class="completed-step-name">1단계: 기본 정보</div>
+              <div class="completed-step-detail">김새롬 · 010-9876-5432</div>
+            </div>
+          </div>
+          <a href="#" class="completed-step-edit">수정</a>
+        </div>
+      </div>
+
+      <!-- Current step form -->
+      <div class="wizard-section-title">2단계 — 서비스 설정</div>
+      <div class="wizard-form-grid">
+        <div class="form-group">
+          <label>바우처 유형</label>
+          <select><option value="">선택하세요</option><option selected>산후도우미</option><option>가사도우미</option><option>간병도우미</option></select>
+        </div>
+        <div class="form-group">
+          <label>서비스 기간 (일)</label>
+          <input type="number" value="30">
+        </div>
+        <div class="form-group">
+          <label>시작일</label>
+          <input type="date" value="2026-03-01">
+        </div>
+        <div class="form-group">
+          <label>종료일</label>
+          <input type="date" value="2026-03-31">
+        </div>
+        <div class="form-group">
+          <label>담당 직원 (주)</label>
+          <select><option value="">선택하세요</option><option selected>정수진</option><option>이지은</option><option>박현우</option></select>
+        </div>
+        <div class="form-group">
+          <label>담당 직원 (부)</label>
+          <select><option value="">선택하세요</option><option>정수진</option><option selected>이지은</option><option>박현우</option></select>
+        </div>
+        <div class="form-group full">
+          <label>메모</label>
+          <textarea placeholder="특이사항이 있으면 입력하세요"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="wizard-footer">
+      <button class="btn-back">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        이전
+      </button>
+      <span class="step-progress-text">2 / 3 단계</span>
+      <button class="btn-next">
+        다음
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+  </div>
+</main>
+
+<!-- Annotation -->
+<div class="annotation">
+  <strong>Pattern 4 — Stepped Wizard (Responsive)</strong><br>
+  Resize browser to see desktop ↔ mobile transition (768px breakpoint)
+</div>
+
+</body>
+</html>
