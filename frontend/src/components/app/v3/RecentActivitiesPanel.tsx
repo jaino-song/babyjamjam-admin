@@ -83,52 +83,6 @@ function getRelativeDate(dateStr: string): string {
   return `${diffDays}일 후`;
 }
 
-function LoadingSkeleton() {
-  return (
-    <div className="space-y-5 pt-2">
-      {[3, 2].map((count, sectionIndex) => (
-        <div key={`skeleton-section-${sectionIndex}`} className="space-y-2">
-          <div className="flex items-center justify-between px-2">
-            <Skeleton className="h-3 w-14 bg-v3-dim-white" />
-            <Skeleton className="h-4 w-10 rounded-full bg-v3-dim-white" />
-          </div>
-          <div className="space-y-2">
-            {Array.from({ length: count }, (_, idx) => {
-              const iconBgClass =
-                SKELETON_ICON_BG[
-                  (sectionIndex * 3 + idx) % SKELETON_ICON_BG.length
-                ]?.split(" ")[0] ?? "bg-v3-primary";
-
-              return (
-                <div
-                  key={`skeleton-item-${sectionIndex}-${idx}`}
-                  className="flex items-center gap-3 p-4 rounded-[18px] border border-v3-border/70"
-                >
-                  <div
-                    className={cn(
-                      "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0",
-                      iconBgClass,
-                    )}
-                  >
-                    <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
-                  </div>
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Skeleton className="h-4 w-24 bg-v3-dim-white" />
-                      <Skeleton className="h-4 w-12 rounded-full bg-v3-dim-white" />
-                    </div>
-                    <Skeleton className="h-3 w-40 bg-v3-dim-white" />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ErrorState({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="p-8 text-center space-y-3">
@@ -188,7 +142,7 @@ export function RecentActivitiesPanel({
   return (
     <div
       className={cn(
-        "bg-white rounded-[28px] shadow-v3 border border-v3-border flex flex-col overflow-hidden",
+        "bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden",
         className,
       )}
     >
@@ -197,40 +151,71 @@ export function RecentActivitiesPanel({
       </div>
 
       <div className="p-6 pt-0 space-y-5">
-        {isLoading ? (
-          <LoadingSkeleton />
-        ) : isError ? (
+        {!isLoading && isError ? (
           <ErrorState onRetry={onRetry} />
-        ) : isEmpty ? (
+        ) : !isLoading && isEmpty ? (
           <EmptyState />
         ) : (
           <>
-            {actionRequiredItems.length > 0 && (
+            {(isLoading || actionRequiredItems.length > 0) && (
               <div className="space-y-0">
                 <div className="flex items-center justify-between p-2">
-                  <span className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold">
-                    조치 필요
-                  </span>
-                  <span className="rounded-full bg-v3-dim-white border border-v3-border text-v3-text text-[9px] font-bold tracking-[0.04em] px-2 py-[3px] min-w-[36px] text-center">
-                    {actionRequiredItems.length}건
-                  </span>
+                  {isLoading ? (
+                    <>
+                      <Skeleton className="h-3 w-14 bg-v3-dim-white" />
+                      <Skeleton className="h-4 w-10 rounded-full bg-v3-dim-white" />
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold">
+                        조치 필요
+                      </span>
+                      <span className="rounded-full bg-v3-dim-white border border-v3-border text-v3-text text-[9px] font-bold tracking-[0.04em] px-2 py-[3px] min-w-[36px] text-center">
+                        {actionRequiredItems.length}건
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 <AnimatedSlotList
                   items={actionRequiredItems}
                   isLoading={isLoading}
+                  loadingCount={3}
                   className="space-y-2"
                   itemDataComponent="dashboard-split-list-item"
                   onSlotClick={(item) => onSelect(item.client)}
-                  slotClassName={({ item }) =>
+                  slotClassName={({ item, isLoading: loading }) =>
                     cn(
                       "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
-                      item && selectedId === item.client.id
+                      !loading && item && selectedId === item.client.id
                         ? "bg-v3-primary-light border-2 border-v3-primary"
-                        : "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
+                        : !loading && "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
                     )
                   }
-                  render={({ item }) => {
+                  render={({ index, item, isLoading: loading }) => {
+                    if (loading) {
+                      const iconBgClass =
+                        SKELETON_ICON_BG[index % SKELETON_ICON_BG.length]?.split(" ")[0] ?? "bg-v3-primary";
+                      return (
+                        <>
+                          <div
+                            className={cn(
+                              "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0",
+                              iconBgClass,
+                            )}
+                          >
+                            <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
+                          </div>
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <Skeleton className="h-4 w-24 bg-v3-dim-white" />
+                              <Skeleton className="h-4 w-12 rounded-full bg-v3-dim-white" />
+                            </div>
+                            <Skeleton className="h-3 w-40 bg-v3-dim-white" />
+                          </div>
+                        </>
+                      );
+                    }
                     if (!item) return null;
                     const colors =
                       PRIORITY_COLORS[item.priority] || PRIORITY_COLORS[3];
@@ -272,32 +257,65 @@ export function RecentActivitiesPanel({
               </div>
             )}
 
-            {upcomingItems.length > 0 && (
+            {(isLoading || upcomingItems.length > 0) && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between px-2">
-                  <span className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold">
-                    곧 시작
-                  </span>
-                  <span className="rounded-full bg-v3-dim-white border border-v3-border text-v3-text text-[9px] font-bold tracking-[0.04em] px-2 py-[3px] min-w-[36px] text-center">
-                    {upcomingItems.length}건
-                  </span>
+                  {isLoading ? (
+                    <>
+                      <Skeleton className="h-3 w-14 bg-v3-dim-white" />
+                      <Skeleton className="h-4 w-10 rounded-full bg-v3-dim-white" />
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold">
+                        곧 시작
+                      </span>
+                      <span className="rounded-full bg-v3-dim-white border border-v3-border text-v3-text text-[9px] font-bold tracking-[0.04em] px-2 py-[3px] min-w-[36px] text-center">
+                        {upcomingItems.length}건
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 <AnimatedSlotList
                   items={upcomingItems}
                   isLoading={isLoading}
+                  loadingCount={2}
                   className="space-y-2"
                   itemDataComponent="dashboard-split-list-item"
                   onSlotClick={(item) => onSelect(item)}
-                  slotClassName={({ item }) =>
+                  slotClassName={({ item, isLoading: loading }) =>
                     cn(
                       "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
-                      item && selectedId === item.id
+                      !loading && item && selectedId === item.id
                         ? "bg-v3-primary-light border-2 border-v3-primary"
-                        : "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
+                        : !loading && "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
                     )
                   }
-                  render={({ item }) => {
+                  render={({ index, item, isLoading: loading }) => {
+                    if (loading) {
+                      const iconBgClass =
+                        SKELETON_ICON_BG[(3 + index) % SKELETON_ICON_BG.length]?.split(" ")[0] ?? "bg-v3-primary";
+                      return (
+                        <>
+                          <div
+                            className={cn(
+                              "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0",
+                              iconBgClass,
+                            )}
+                          >
+                            <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
+                          </div>
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <Skeleton className="h-4 w-24 bg-v3-dim-white" />
+                              <Skeleton className="h-4 w-12 rounded-full bg-v3-dim-white" />
+                            </div>
+                            <Skeleton className="h-3 w-40 bg-v3-dim-white" />
+                          </div>
+                        </>
+                      );
+                    }
                     if (!item) return null;
 
                     return (

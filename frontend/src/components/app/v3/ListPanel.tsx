@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useRef } from "react";
-import { Search } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import React, { useState, useEffect, useRef } from "react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ExpandableSearch } from "./ExpandableSearch";
 
 interface TabItem {
   label: string;
@@ -15,17 +15,14 @@ interface ListPanelProps {
   tabs?: TabItem[];
   activeTab?: string;
   onTabChange?: (value: string) => void;
+  tabsVariant?: "inline" | "dropdown";
   children: React.ReactNode;
   headerActions?: React.ReactNode;
-  /** Search value (enables inline search when provided with onSearchChange) */
   searchValue?: string;
   onSearchChange?: (value: string) => void;
   searchPlaceholder?: string;
-  /** Shows skeleton for tabs (initial load only) */
   isLoading?: boolean;
-  /** Shows skeleton for content only (filter changes) */
   isContentLoading?: boolean;
-  tabsSkeletonCount?: number;
   contentSkeleton?: React.ReactNode;
 }
 
@@ -34,6 +31,7 @@ export function ListPanel({
   tabs,
   activeTab,
   onTabChange,
+  tabsVariant = "inline",
   children,
   headerActions,
   searchValue,
@@ -41,17 +39,29 @@ export function ListPanel({
   searchPlaceholder = "검색...",
   isLoading = false,
   isContentLoading = false,
-  tabsSkeletonCount = 3,
   contentSkeleton,
 }: ListPanelProps) {
-  const showTabs = (tabs && tabs.length > 0) || (isLoading && tabsSkeletonCount > 0);
+  const showTabs = tabs && tabs.length > 0;
   const showContentSkeleton = (isLoading || isContentLoading) && contentSkeleton;
   const hasSearch = searchValue !== undefined && !!onSearchChange;
-  const [searchExpanded, setSearchExpanded] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [dropdownOpen]);
+
+  const activeTabLabel = tabs?.find(t => t.value === activeTab)?.label ?? tabs?.[0]?.label ?? "";
 
   return (
-    <div data-component="list-panel" className="bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden">
+    <div data-component="list-panel" className="bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
       <div className="flex items-center justify-between p-6 pb-0 shrink-0">
         <h2 className="text-lg font-bold text-v3-dark">{title}</h2>
         {headerActions && <div>{headerActions}</div>}
@@ -59,69 +69,63 @@ export function ListPanel({
 
       {showTabs && (
         <div data-component="list-panel-tabs" className="flex items-center justify-between px-6 pt-4 shrink-0">
-          <div className="flex gap-1">
-          {isLoading
-            ? (tabs && tabs.length > 0
-              ? tabs.map((tab) => tab.value)
-              : Array.from({ length: tabsSkeletonCount }, (_, i) => `skeleton-${i}`)
-            ).map((key, idx) => (
-              <div
-                key={key}
-                data-component="list-panel-tabs-skeleton"
-                className="pb-2 px-3"
-                style={{ opacity: 0.9 - idx * 0.08 }}
-              >
-                <Skeleton className="h-4 w-14 rounded-full bg-v3-dim-white" />
-                <div className="h-2" />
-              </div>
-            ))
-            : (tabs ?? []).map((tab) => (
+          {tabsVariant === "dropdown" ? (
+            <div ref={dropdownRef} className="relative">
               <button
-                key={tab.value}
-                onClick={() => onTabChange?.(tab.value)}
-                className={`text-[0.8rem] pb-2 px-3 transition-colors ${activeTab === tab.value
-                  ? "text-v3-primary font-semibold border-b-2 border-v3-primary"
-                  : "text-v3-text-muted hover:text-v3-text"
-                  }`}
+                onClick={() => setDropdownOpen(prev => !prev)}
+                className="flex items-center gap-1.5 text-[0.8rem] font-semibold text-v3-dark px-3 py-1.5 rounded-[10px] border border-v3-border hover:bg-v3-dim-white transition-colors"
               >
-                {tab.label}
+                {activeTabLabel}
+                <ChevronDown className={cn("w-3.5 h-3.5 text-v3-text-muted transition-transform", dropdownOpen && "rotate-180")} />
               </button>
-            ))}
-          </div>
-          {hasSearch && (
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => {
-                  setSearchExpanded((prev) => {
-                    if (!prev) setTimeout(() => searchInputRef.current?.focus(), 50);
-                    else onSearchChange("");
-                    return !prev;
-                  });
-                }}
-                className="w-8 h-8 rounded-[10px] flex items-center justify-center transition-colors hover:bg-v3-dim-white"
-              >
-                <Search className="w-[18px] h-[18px] text-v3-text-muted" />
-              </button>
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder={searchPlaceholder}
-                value={searchValue}
-                onChange={(e) => onSearchChange(e.target.value)}
-                onBlur={() => { if (!searchValue) setSearchExpanded(false); }}
-                style={{ border: "none", outline: "none", boxShadow: "none" }}
-                className={cn(
-                  "bg-transparent text-[0.85rem] text-v3-dark caret-v3-primary placeholder:text-v3-text-muted/50 transition-all duration-250 ease-in-out",
-                  searchExpanded ? "w-[120px]" : "w-0"
-                )}
-              />
+              {dropdownOpen && (
+                <div className="absolute top-full left-0 z-50 mt-1 min-w-[140px] max-h-[240px] overflow-y-auto rounded-[14px] border border-v3-border bg-white shadow-v3 py-1 animate-in fade-in-0 zoom-in-95">
+                  {(tabs ?? []).map((tab) => (
+                    <button
+                      key={tab.value}
+                      onClick={() => { onTabChange?.(tab.value); setDropdownOpen(false); }}
+                      className={cn(
+                        "w-full text-left text-[0.8rem] px-4 py-2 transition-colors",
+                        activeTab === tab.value
+                          ? "text-v3-primary font-semibold bg-v3-primary-light"
+                          : "text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-text"
+                      )}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+          ) : (
+            <div className="flex gap-1">
+              {(tabs ?? []).map((tab) => (
+                <button
+                  key={tab.value}
+                  onClick={() => onTabChange?.(tab.value)}
+                  className={`text-[0.8rem] pb-2 px-3 transition-colors ${activeTab === tab.value
+                    ? "text-v3-primary font-semibold border-b-2 border-v3-primary"
+                    : "text-v3-text-muted hover:text-v3-text"
+                    }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {hasSearch && (
+            <ExpandableSearch
+              value={searchValue!}
+              onChange={onSearchChange!}
+              placeholder={searchPlaceholder}
+            />
           )}
         </div>
       )}
 
-      <div data-component="list-panel-content" className="p-6">
+      <div data-component="list-panel-content" className="overflow-y-auto min-h-0 flex-1 px-6 pt-6">
         {showContentSkeleton ? contentSkeleton : children}
+        <div className="sticky bottom-0 h-6 bg-white shrink-0" />
       </div>
     </div>
   );

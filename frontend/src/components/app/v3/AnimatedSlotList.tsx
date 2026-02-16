@@ -13,6 +13,8 @@ export interface AnimatedSlotListProps<T> {
   isLoading: boolean;
   /** Number of skeleton slots to show while loading (only used when count is not provided). Default: 4 */
   loadingCount?: number;
+  /** Number of skeleton slots to append while fetching more. Defaults to loadingCount. */
+  fetchingMoreCount?: number;
   className?: string;
   itemDataComponent?: string;
   /** Delay step in seconds (e.g. 0.04) */
@@ -35,6 +37,7 @@ export function AnimatedSlotList<T>({
   items,
   isLoading,
   loadingCount = 4,
+  fetchingMoreCount,
   className,
   itemDataComponent = "animated-slot-list-item",
   delayStepSeconds = 0.04,
@@ -46,39 +49,68 @@ export function AnimatedSlotList<T>({
   onLoadMore,
   isFetchingMore = false,
 }: AnimatedSlotListProps<T>) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const loadMoreTriggeredRef = useRef(false);
 
   const itemsLength = items?.length ?? 0;
-  const slotCount: number = count !== undefined ? count : (isLoading ? loadingCount : itemsLength);
+  const effectiveFetchingMoreCount = fetchingMoreCount ?? loadingCount;
+  const slotCount: number =
+    count !== undefined
+      ? count
+      : isLoading
+        ? loadingCount
+        : itemsLength + (isFetchingMore ? effectiveFetchingMoreCount : 0);
 
   useEffect(() => {
-    if (!hasMore || !onLoadMore) return;
+    loadMoreTriggeredRef.current = false;
+  }, [itemsLength, hasMore, isFetchingMore]);
 
-    const container = containerRef.current;
-    if (!container) return;
+  useEffect(() => {
+    if (!hasMore || !onLoadMore || isFetchingMore) return;
 
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      if (scrollHeight - scrollTop - clientHeight < 200) {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const panelContent = sentinel.closest('[data-component="list-panel-content"]');
+    const root = panelContent instanceof HTMLElement ? panelContent : null;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting || loadMoreTriggeredRef.current) return;
+
+        loadMoreTriggeredRef.current = true;
         onLoadMore();
+      },
+      {
+        root,
+        rootMargin: "200px 0px",
+        threshold: 0,
       }
-    };
+    );
 
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    return () => container.removeEventListener("scroll", handleScroll);
-  }, [hasMore, onLoadMore]);
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, onLoadMore, isFetchingMore]);
 
   return (
-    <div ref={containerRef} data-component="animated-slot-list" className={cn("relative overflow-y-auto", className)}>
+    <div data-component="animated-slot-list" className={cn("relative -mx-2 px-2", className)}>
       {Array.from({ length: slotCount }, (_, index) => {
-        const item = !isLoading ? (items?.[index] ?? null) : null;
+        const isAppendLoadingSlot = !isLoading && isFetchingMore && index >= itemsLength;
+        const isSlotLoading = isLoading || isAppendLoadingSlot;
+        const item = !isSlotLoading ? (items?.[index] ?? null) : null;
+
+        const loadingBatchIndex = isAppendLoadingSlot ? index - itemsLength : index;
+        const animationDelay = isSlotLoading
+          ? `${Math.max(0, loadingBatchIndex) * delayStepSeconds}s`
+          : "0s";
 
         const computedSlotClassName =
           typeof slotClassName === "function"
-            ? slotClassName({ index, item, isLoading })
+            ? slotClassName({ index, item, isLoading: isSlotLoading })
             : slotClassName ?? "";
 
-        const shouldHide = hideEmptySlots && !isLoading && !item;
+        const shouldHide = hideEmptySlots && !isSlotLoading && !item;
 
         return (
           <div
@@ -90,16 +122,20 @@ export function AnimatedSlotList<T>({
               shouldHide && "hidden"
             )}
             style={{
-              animationDelay: `${index * delayStepSeconds}s`,
+              animationDelay,
             }}
             onClick={
-              !isLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined
+              !isSlotLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined
             }
           >
-            {render({ index, item, isLoading })}
+            {render({ index, item, isLoading: isSlotLoading })}
           </div>
         );
       })}
+
+      {hasMore && !isFetchingMore && (
+        <div ref={sentinelRef} className="h-1" aria-hidden="true" />
+      )}
 
       {isFetchingMore && (
         <div className="flex justify-center py-4">

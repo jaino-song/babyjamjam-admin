@@ -13,7 +13,8 @@ import {
   FolderOpen,
   Bell,
   Settings,
-  LucideIcon
+  LucideIcon,
+  Calculator
 } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
@@ -36,16 +37,23 @@ const NAV_SECTIONS: NavSection[] = [
     title: "메인",
     items: [
       { label: "대시보드", href: "/dashboard", icon: LayoutDashboard },
-      { label: "서비스 일정", href: "/employees/schedule", icon: Calendar },
+      { label: "서비스 일정", href: "/schedule", icon: Calendar },
     ],
   },
   {
     title: "지점 관리",
     items: [
-      { label: "고객 관리", href: "/clients", icon: Users },
-      { label: "직원 관리", href: "/employees", icon: UserCheck },
-      { label: "알림톡 관리", href: "/alimtalk", icon: KakaoTalkIcon },
-      { label: "통계", href: "/dashboard/analytics", icon: BarChart3 },
+      { label: "고객", href: "/clients", icon: Users },
+      { label: "직원", href: "/employees", icon: UserCheck },
+      { label: "통계", href: "/analytics", icon: BarChart3 },
+    ],
+  },
+  {
+    title: "서비스 관리",
+    items: [
+      { label: "메시지", href: "/messages", icon: Users },
+      { label: "가격표", href: "/prices", icon: Calculator },
+      { label: "알림톡", href: "/alimtalk", icon: KakaoTalkIcon },
     ],
   },
   {
@@ -58,7 +66,6 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: "시스템 관리",
     items: [
-      { label: "알림", href: "/messages", icon: Bell },
       { label: "설정", href: "/settings", icon: Settings },
     ],
   },

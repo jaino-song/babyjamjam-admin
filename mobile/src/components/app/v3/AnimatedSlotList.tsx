@@ -97,7 +97,7 @@ export function AnimatedSlotList<T>({
   const showTeaserOverlay = isInitialLoad && hasMore && !isFetchingMore && !isLoading;
 
   return (
-    <div data-component="animated-slot-list" className={cn("relative", className)}>
+    <div data-component="animated-slot-list" className={cn("relative -mx-2 px-2", className)}>
       {Array.from({ length: slotCount }, (_, index) => {
         const item = !isLoading ? (items?.[index] ?? null) : null;
 

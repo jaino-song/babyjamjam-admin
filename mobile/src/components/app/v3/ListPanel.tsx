@@ -2,7 +2,6 @@
 
 import React, { useState, useRef } from "react";
 import { Search } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 interface TabItem {
@@ -25,7 +24,6 @@ interface ListPanelProps {
   isLoading?: boolean;
   /** Shows skeleton for content only (filter changes) */
   isContentLoading?: boolean;
-  tabsSkeletonCount?: number;
   contentSkeleton?: React.ReactNode;
 }
 
@@ -41,10 +39,9 @@ export function ListPanel({
   searchPlaceholder = "검색...",
   isLoading = false,
   isContentLoading = false,
-  tabsSkeletonCount = 3,
   contentSkeleton,
 }: ListPanelProps) {
-  const showTabs = (tabs && tabs.length > 0) || (isLoading && tabsSkeletonCount > 0);
+  const showTabs = tabs && tabs.length > 0;
   const showContentSkeleton = (isLoading || isContentLoading) && contentSkeleton;
   const hasSearch = searchValue !== undefined && !!onSearchChange;
   const [searchExpanded, setSearchExpanded] = useState(false);
@@ -90,33 +87,18 @@ export function ListPanel({
 
       {showTabs && (
         <div data-component="list-panel-tabs" className="flex gap-1 px-6 pt-4 shrink-0">
-          {isLoading
-            ? (tabs && tabs.length > 0
-              ? tabs.map((tab) => tab.value)
-              : Array.from({ length: tabsSkeletonCount }, (_, i) => `skeleton-${i}`)
-            ).map((key, idx) => (
-              <div
-                key={key}
-                data-component="list-panel-tabs-skeleton"
-                className="pb-2 px-3"
-                style={{ opacity: 0.9 - idx * 0.08 }}
-              >
-                <Skeleton className="h-4 w-14 rounded-full bg-v3-dim-white" />
-                <div className="h-2" />
-              </div>
-            ))
-            : (tabs ?? []).map((tab) => (
-              <button
-                key={tab.value}
-                onClick={() => onTabChange?.(tab.value)}
-                className={`text-[0.8rem] pb-2 px-3 transition-colors ${activeTab === tab.value
-                  ? "text-v3-primary font-semibold border-b-2 border-v3-primary"
-                  : "text-v3-text-muted hover:text-v3-text"
-                  }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          {(tabs ?? []).map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => onTabChange?.(tab.value)}
+              className={`text-[0.8rem] pb-2 px-3 transition-colors ${activeTab === tab.value
+                ? "text-v3-primary font-semibold border-b-2 border-v3-primary"
+                : "text-v3-text-muted hover:text-v3-text"
+                }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       )}
 
