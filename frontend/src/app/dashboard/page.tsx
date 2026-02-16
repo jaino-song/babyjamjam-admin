@@ -10,7 +10,7 @@ import { Client } from "@/lib/client/types";
 import { useInitialUser } from "@/providers/UserProvider";
 import { cn } from "@/lib/utils";
 import {
-  StatMini,
+  StatsBar,
   SplitLayout,
   DetailPanel,
   InfoCard,
@@ -35,12 +35,12 @@ import { Button } from "@/components/ui/button";
 import { HeroBanner } from "@/components/app/dashboard/HeroBanner";
 import { Block } from "@/components/app/v3/Block";
 
-const DASHBOARD_STATS = [
-  { icon: Users, valueKey: "activeClients", label: "서비스 진행 중", colorIndex: 0, counter: "명" },
-  { icon: Calendar, valueKey: "upcomingThisMonth", label: "이번달 시작 예정", colorIndex: 1, counter: "건" },
-  { icon: FileSignature, valueKey: "contractsPendingSignature", label: "문서 서명 대기 중", colorIndex: 2, counter: "건" },
-  { icon: Send, valueKey: "contractsNotSent", label: "문서 발송 대기 중", colorIndex: 3, counter: "건" },
-] as const;
+const DASHBOARD_STAT_KEYS = [
+  { icon: Users, valueKey: "activeClients" as const, label: "서비스 진행 중", colorIndex: 0, counter: "명" },
+  { icon: Calendar, valueKey: "upcomingThisMonth" as const, label: "이번달 시작 예정", colorIndex: 1, counter: "건" },
+  { icon: FileSignature, valueKey: "contractsPendingSignature" as const, label: "문서 서명 대기 중", colorIndex: 2, counter: "건" },
+  { icon: Send, valueKey: "contractsNotSent" as const, label: "문서 발송 대기 중", colorIndex: 3, counter: "건" },
+];
 
 const getAvatarGradient = (name: string) => {
   const charCode = name.charCodeAt(0);
@@ -170,27 +170,18 @@ export default function DashboardPage() {
         subtitle={user?.organizationName ?? ""}
       />
 
-      <Block
-        name="dashboard-stats"
-        // Don't animate the whole grid as one "page child"; animate each card with staggering instead.
-        className="grid grid-cols-2 lg:grid-cols-4 gap-4"
-      >
-        {DASHBOARD_STATS.map((stat, idx) => (
-          <div
-            key={stat.valueKey}
-            data-component="dashboard-stats-item"
-          >
-            <StatMini
-              icon={stat.icon}
-              value={stats?.[stat.valueKey] ?? 0}
-              label={stat.label}
-              colorIndex={stat.colorIndex}
-              animationDelay={`${idx * 0.08}s`}
-              isLoading={statsLoading}
-              counter={stat.counter}
-            />
-          </div>
-        ))}
+      <Block name="dashboard-stats">
+        <StatsBar
+          name="dashboard"
+          isLoading={statsLoading}
+          items={DASHBOARD_STAT_KEYS.map((s) => ({
+            icon: s.icon,
+            value: stats?.[s.valueKey] ?? 0,
+            label: s.label,
+            counter: s.counter,
+            colorIndex: s.colorIndex,
+          }))}
+        />
       </Block>
 
       <Block
@@ -215,85 +206,82 @@ export default function DashboardPage() {
 
           {selectedClientData ? (
             <DetailPanel
-              header={
-                <div className="text-center">
-                  <div
-                    className={cn(
-                      "mx-auto w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-lg",
-                      getAvatarGradient(selectedClientData.name)
-                    )}
-                  >
-                    {selectedClientData.name.charAt(0)}
-                  </div>
-                  <h2 className="text-xl font-bold text-v3-dark">{selectedClientData.name}</h2>
-                  <p className="text-[0.8rem] text-v3-text-muted mt-1">
-                    {selectedClientData.type || "일반"} ·{" "}
-                    {selectedClientData.duration ? `${selectedClientData.duration}일` : "-"}
-                  </p>
-                  <div className="mt-3">
-                    <StatusBadge
-                      status={mapServiceStatusToV3(selectedClientData.serviceStatus)}
-                      label={getStatusLabel(selectedClientData.serviceStatus)}
-                    />
-                  </div>
-
-                  <div className="flex gap-2 justify-center mt-5">
-                    {selectedClientData.phone ? (
-                      <Button
-                        asChild
-                        variant="ghost"
-                        className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
-                      >
-                        <a href={`tel:${selectedClientData.phone}`}>
-                          <Phone className="w-4 h-4" />
-                          <span className="text-[10px] font-semibold">전화</span>
-                        </a>
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        disabled
-                        className="flex-1 flex-col h-auto py-3 gap-1 rounded-[14px]"
-                      >
-                        <Phone className="w-4 h-4" />
-                        <span className="text-[10px] font-semibold">전화</span>
-                      </Button>
-                    )}
-
-                    <Button
-                      variant="ghost"
-                      className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
-                    >
-                      <MessageSquare className="w-4 h-4" />
-                      <span className="text-[10px] font-semibold">메시지</span>
-                    </Button>
-
-                    <Button
-                      asChild
-                      variant="ghost"
-                      className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
-                    >
-                      <Link href={`/clients?id=${selectedClientData.id}`}>
-                        <User className="w-4 h-4" />
-                        <span className="text-[10px] font-semibold">고객상세</span>
-                      </Link>
-                    </Button>
-
-                    <Button
-                      asChild
-                      variant="ghost"
-                      className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
-                    >
-                      <Link href={`/contracts?clientId=${selectedClientData.id}`}>
-                        <FileText className="w-4 h-4" />
-                        <span className="text-[10px] font-semibold">계약</span>
-                      </Link>
-                    </Button>
-                  </div>
+              avatar={
+                <div
+                  className={cn(
+                    "w-16 h-16 rounded-[20px] flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
+                    getAvatarGradient(selectedClientData.name)
+                  )}
+                >
+                  {selectedClientData.name.charAt(0)}
                 </div>
+              }
+              title={selectedClientData.name}
+              badges={
+                <StatusBadge
+                  status={mapServiceStatusToV3(selectedClientData.serviceStatus)}
+                  label={getStatusLabel(selectedClientData.serviceStatus)}
+                />
+              }
+              subtitle={
+                <>
+                  {selectedClientData.type || "일반"} ·{" "}
+                  {selectedClientData.duration ? `${selectedClientData.duration}일` : "-"}
+                </>
               }
             >
               <div className="space-y-4">
+                <div className="flex gap-2">
+                  {selectedClientData.phone ? (
+                    <Button
+                      asChild
+                      variant="ghost"
+                      className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                    >
+                      <a href={`tel:${selectedClientData.phone}`}>
+                        <Phone className="w-4 h-4" />
+                        <span className="text-[10px] font-semibold">전화</span>
+                      </a>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      disabled
+                      className="flex-1 flex-col h-auto py-3 gap-1 rounded-[14px]"
+                    >
+                      <Phone className="w-4 h-4" />
+                      <span className="text-[10px] font-semibold">전화</span>
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    <span className="text-[10px] font-semibold">메시지</span>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="ghost"
+                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                  >
+                    <Link href={`/clients?id=${selectedClientData.id}`}>
+                      <User className="w-4 h-4" />
+                      <span className="text-[10px] font-semibold">고객상세</span>
+                    </Link>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="ghost"
+                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                  >
+                    <Link href={`/contracts?clientId=${selectedClientData.id}`}>
+                      <FileText className="w-4 h-4" />
+                      <span className="text-[10px] font-semibold">계약</span>
+                    </Link>
+                  </Button>
+                </div>
+
                 <InfoCard title="기본 정보">
                   <InfoRow label="이름" value={selectedClientData.name} />
                   <InfoRow label="연락처" value={selectedClientData.phone || "-"} />
@@ -307,8 +295,8 @@ export default function DashboardPage() {
                     label="기간"
                     value={selectedClientData.duration ? `${selectedClientData.duration}일` : "-"}
                   />
-                  <InfoRow label="시작일" value={selectedClientData.startDate || "-"} />
-                  <InfoRow label="종료일" value={selectedClientData.endDate || "-"} />
+                  <InfoRow label="시작일" value={selectedClientData.startDate ? new Date(selectedClientData.startDate).toLocaleDateString("ko-KR") : "-"} />
+                  <InfoRow label="종료일" value={selectedClientData.endDate ? new Date(selectedClientData.endDate).toLocaleDateString("ko-KR") : "-"} />
                   <InfoRow
                     label="담당 직원"
                     value={selectedClientData.primaryEmployee?.name || "-"}

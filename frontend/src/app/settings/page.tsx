@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState } from "react";
 
 import {
   User,
@@ -14,6 +14,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { ContentPaper } from "@/components/app/root/content-paper";
+import { SectionNav } from "@/components/app/v3";
 import { VoucherPriceUploadForm } from "@/components/app/settings/VoucherPriceUploadForm";
 import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -70,14 +71,6 @@ export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("profile");
   const [notifications, setNotifications] = useState(true);
   const [selectedTheme, setSelectedTheme] = useState<string>("light");
-  const sectionRefs = useRef<Record<SectionId, HTMLElement | null>>({
-    profile: null,
-    notifications: null,
-    theme: null,
-    security: null,
-    pricing: null,
-  });
-
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: user } = useGetAuthUser();
@@ -114,92 +107,18 @@ export default function SettingsPage() {
     updateAlimtalkMutation.mutate(value as AlimtalkProvider);
   };
 
-  const scrollToSection = useCallback((sectionId: SectionId) => {
-    setActiveSection(sectionId);
-    const el = sectionRefs.current[sectionId];
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, []);
-
-  useEffect(() => {
-    const observers: IntersectionObserver[] = [];
-    const entries = Object.entries(sectionRefs.current) as [SectionId, HTMLElement | null][];
-
-    for (const [id, el] of entries) {
-      if (!el) continue;
-      const observer = new IntersectionObserver(
-        ([entry]) => {
-          if (entry.isIntersecting) {
-            setActiveSection(id);
-          }
-        },
-        { rootMargin: "-20% 0px -60% 0px", threshold: 0 }
-      );
-      observer.observe(el);
-      observers.push(observer);
-    }
-
-    return () => observers.forEach((o) => o.disconnect());
-  }, []);
-
   return (
     <section data-component="settings" className="space-y-6">
       <div data-component="settings-content" className="flex flex-col lg:flex-row gap-8">
-        <nav data-component="settings-nav" className="lg:w-[220px] shrink-0">
-          <div className="hidden lg:block sticky top-24">
-            <div className="flex flex-col gap-1">
-              {NAV_SECTIONS.map((section) => {
-                const Icon = section.icon;
-                const isActive = activeSection === section.id;
-                return (
-                  <button
-                    key={section.id}
-                    onClick={() => scrollToSection(section.id)}
-                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 text-left ${
-                      isActive
-                        ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
-                        : "text-[hsl(var(--v3-text-muted))] hover:bg-[hsl(var(--v3-bg))]"
-                    }`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    {section.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        <SectionNav
+          items={NAV_SECTIONS}
+          activeId={activeSection}
+          onSelect={(id) => setActiveSection(id as SectionId)}
+        />
 
-          <div className="lg:hidden overflow-x-auto scrollbar-hide -mx-4 px-4">
-            <div className="flex gap-2 pb-2">
-              {NAV_SECTIONS.map((section) => {
-                const Icon = section.icon;
-                const isActive = activeSection === section.id;
-                return (
-                  <button
-                    key={section.id}
-                    onClick={() => scrollToSection(section.id)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-200 ${
-                      isActive
-                        ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
-                        : "text-[hsl(var(--v3-text-muted))] bg-[hsl(var(--v3-bg))]"
-                    }`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    {section.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </nav>
-
-        <div data-component="settings-sections" className="flex-1 flex flex-col gap-8 min-w-0">
-          <section
-            data-component="settings-profile"
-            ref={(el) => { sectionRefs.current.profile = el; }}
-            id="section-profile"
-          >
+        <div data-component="settings-sections" className="flex-1 min-w-0">
+          {activeSection === "profile" && (
+          <section data-component="settings-profile">
             <ContentPaper variant="v3">
               <div className="mb-4 flex items-center gap-3">
                 <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--v3-primary))]/10">
@@ -263,12 +182,10 @@ export default function SettingsPage() {
               </div>
             </ContentPaper>
           </section>
+          )}
 
-          <section
-            data-component="settings-notifications"
-            ref={(el) => { sectionRefs.current.notifications = el; }}
-            id="section-notifications"
-          >
+          {activeSection === "notifications" && (
+          <section data-component="settings-notifications">
             <ContentPaper variant="v3">
               <div className="mb-4 flex items-center gap-3">
                 <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-500/10">
@@ -366,12 +283,10 @@ export default function SettingsPage() {
               )}
             </ContentPaper>
           </section>
+          )}
 
-          <section
-            data-component="settings-theme"
-            ref={(el) => { sectionRefs.current.theme = el; }}
-            id="section-theme"
-          >
+          {activeSection === "theme" && (
+          <section data-component="settings-theme">
             <ContentPaper variant="v3">
               <div className="mb-4 flex items-center gap-3">
                 <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-violet-500/10">
@@ -432,12 +347,10 @@ export default function SettingsPage() {
               </div>
             </ContentPaper>
           </section>
+          )}
 
-          <section
-            data-component="settings-security"
-            ref={(el) => { sectionRefs.current.security = el; }}
-            id="section-security"
-          >
+          {activeSection === "security" && (
+          <section data-component="settings-security">
             <ContentPaper variant="v3">
               <div className="mb-4 flex items-center gap-3">
                 <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-red-500/10">
@@ -501,14 +414,13 @@ export default function SettingsPage() {
               </div>
             </ContentPaper>
           </section>
+          )}
 
-          <section
-            data-component="settings-pricing"
-            ref={(el) => { sectionRefs.current.pricing = el; }}
-            id="section-pricing"
-          >
+          {activeSection === "pricing" && (
+          <section data-component="settings-pricing">
             <VoucherPriceUploadForm />
           </section>
+          )}
         </div>
       </div>
 

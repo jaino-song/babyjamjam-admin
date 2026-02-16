@@ -10,7 +10,7 @@ import {
 } from "@/hooks/useEmployees";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { EmployeeDetailModal } from "@/components/app/employees/EmployeeDetailModal";
-import { PageHeader, StatMini, SearchFilterBar, HeaderActionButton } from "@/components/app/v3";
+import { PageHeader, StatsBar, SearchFilterBar, HeaderActionButton, EmptyState } from "@/components/app/v3";
 
 const filterItems = [
     { label: "전체", value: "all" },
@@ -155,12 +155,15 @@ export default function EmployeesPage() {
                 filterLabel="상태"
             />
 
-            <div data-component="employees-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatMini icon={Users} value={stats.total} label="전체 직원" colorIndex={0} animationDelay="0s" />
-                <StatMini icon={CheckCircle} value={stats.active} label="활성" colorIndex={2} animationDelay="0.08s" />
-                <StatMini icon={Clock} value={stats.available} label="가용" colorIndex={1} animationDelay="0.16s" />
-                <StatMini icon={Briefcase} value={stats.working} label="배정됨" colorIndex={3} animationDelay="0.24s" />
-            </div>
+            <StatsBar
+                name="employees"
+                items={[
+                    { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
+                    { icon: CheckCircle, value: stats.active, label: "활성", counter: "명", colorIndex: 2 },
+                    { icon: Clock, value: stats.available, label: "가용", counter: "명", colorIndex: 1 },
+                    { icon: Briefcase, value: stats.working, label: "배정됨", counter: "명", colorIndex: 3 },
+                ]}
+            />
 
             {isLoading ? (
                 <div data-component="employees-list" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -184,14 +187,12 @@ export default function EmployeesPage() {
                     ))}
                 </div>
             ) : filteredEmployees.length === 0 ? (
-                <div data-component="employees-empty" className="bg-white rounded-[20px] shadow-v3 p-12 text-center">
-                    <Users className="w-12 h-12 text-v3-text-muted mx-auto mb-3" />
-                    <p className="text-v3-text-muted text-[0.9rem]">
-                        {search || filter !== "all"
-                            ? "검색 결과가 없습니다"
-                            : "등록된 직원이 없습니다"}
-                    </p>
-                </div>
+                <EmptyState
+                    name="employees-empty"
+                    icon={Users}
+                    message={search || filter !== "all" ? "검색 결과가 없습니다" : "등록된 직원이 없습니다"}
+                    className="rounded-[20px] p-12"
+                />
             ) : (
                 <div data-component="employees-list" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {filteredEmployees.map((employee) => (

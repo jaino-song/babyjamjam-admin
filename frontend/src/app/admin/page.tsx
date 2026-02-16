@@ -76,7 +76,7 @@ export default function AdminFeedbackPage() {
             ))}
           </div>
         ) : (
-          <div data-component="admin-stats" className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
+          <div data-component="admin-stats" className="flex flex-wrap gap-4 mb-6 sm:mb-8">
             <Card className="opacity-0 animate-fade-in hover:shadow-md transition-shadow" style={{ animationDelay: '100ms' }}>
               <CardContent className="p-6">
                 <p className="text-sm text-muted-foreground mb-2">전체</p>
