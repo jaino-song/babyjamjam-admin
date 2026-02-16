@@ -2,8 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { FolderOpen, FileText, Image, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
-import { PageHeader, StatMini, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton } from "@/components/app/v3";
+import { PageHeader, StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, DetailSkeleton, ListEmptyState, DetailActions } from "@/components/app/v3";
+import { Skeleton } from "@/components/ui/skeleton";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useDocuments, useUploadDocument, useUpdateDocument, useDeleteDocument, Document } from "@/hooks/use-documents";
@@ -63,8 +65,8 @@ export default function FilesPage() {
   }, [documents, categories]);
 
   const selectedDocument = useMemo(() => {
-    if (!selectedDocId) return filteredDocs[0] ?? null;
-    return filteredDocs.find(d => d.id === selectedDocId) ?? filteredDocs[0] ?? null;
+    if (!selectedDocId) return null;
+    return filteredDocs.find(d => d.id === selectedDocId) ?? null;
   }, [selectedDocId, filteredDocs]);
 
   function getFileIcon(mimeType: string) {
@@ -144,11 +146,15 @@ export default function FilesPage() {
         }
       />
 
-      <div data-component="files-stats" className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <StatMini icon={FolderOpen} value={isLoading ? "–" : stats.total} label="전체 파일" colorIndex={0} animationDelay="0s" />
-        <StatMini icon={Tag} value={isLoading ? "–" : stats.categoryCount} label="카테고리" colorIndex={1} animationDelay="0.08s" />
-        <StatMini icon={Calendar} value={isLoading ? "–" : stats.recentCount} label="최근 7일" colorIndex={2} animationDelay="0.16s" />
-      </div>
+      <StatsBar
+        name="files"
+        isLoading={isLoading}
+        items={[
+          { icon: FolderOpen, value: stats.total, label: "전체 파일", counter: "건" },
+          { icon: Tag, value: stats.categoryCount, label: "카테고리", counter: "개", colorIndex: 1 },
+          { icon: Calendar, value: stats.recentCount, label: "최근 7일", counter: "건", colorIndex: 2 },
+        ]}
+      />
 
       <SplitLayout>
         <ListPanel
@@ -160,29 +166,43 @@ export default function FilesPage() {
           onSearchChange={setSearchQuery}
           searchPlaceholder="문서명, 설명, 태그 검색..."
         >
-          {isLoading ? (
-            <div className="space-y-3">
-              {[1, 2, 3, 4].map(i => (
-                <div key={i} className="h-16 rounded-[14px] bg-v3-dim-white animate-pulse" />
-              ))}
-            </div>
-          ) : filteredDocs.length === 0 ? (
-            <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-              {searchQuery ? "검색 결과가 없습니다" : "등록된 문서가 없습니다"}
-            </div>
+          {!isLoading && filteredDocs.length === 0 ? (
+            <ListEmptyState message={searchQuery ? "검색 결과가 없습니다" : "등록된 문서가 없습니다"} />
           ) : (
-            <div className="space-y-1">
-              {filteredDocs.map(doc => {
-                const isActive = selectedDocument?.id === doc.id;
+            <AnimatedSlotList<Document>
+              items={filteredDocs}
+              isLoading={isLoading}
+              loadingCount={4}
+              className="space-y-2"
+              slotClassName={({ item, isLoading: slotLoading }) => {
+                const isActive = !slotLoading && item && selectedDocument?.id === item.id;
+                return cn(
+                  "flex items-center gap-3 p-3 rounded-[14px] transition-all duration-200 bg-white border-2 border-transparent",
+                  !slotLoading && "cursor-pointer",
+                  isActive
+                    ? "bg-v3-primary-light border-2 border-v3-primary"
+                    : !slotLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+                );
+              }}
+              onSlotClick={(doc) => setSelectedDocId(doc.id)}
+              render={({ item: doc, isLoading: slotLoading }) => {
+                if (slotLoading) {
+                  return (
+                    <>
+                      <div className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
+                        <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
+                        <Skeleton className="h-3 w-32 bg-v3-dim-white" />
+                      </div>
+                      <Skeleton className="h-3 w-12 bg-v3-dim-white shrink-0" />
+                    </>
+                  );
+                }
+                if (!doc) return null;
                 return (
-                  <button
-                    data-component="files-list-item"
-                    key={doc.id}
-                    onClick={() => setSelectedDocId(doc.id)}
-                    className={`w-full flex items-center gap-3 p-3 rounded-[14px] text-left transition-all duration-200 ${
-                      isActive ? "bg-v3-primary-light border-l-2 border-v3-primary" : "hover:bg-v3-dim-white"
-                    }`}
-                  >
+                  <>
                     <div className="w-9 h-9 rounded-[10px] bg-v3-primary-light flex items-center justify-center shrink-0">
                       {getFileIcon(doc.mimeType)}
                     </div>
@@ -191,14 +211,23 @@ export default function FilesPage() {
                       <p className="text-[0.7rem] text-v3-text-muted truncate">{getCategoryLabel(doc.categoryId)}</p>
                     </div>
                     <span className="text-[0.65rem] text-v3-text-muted whitespace-nowrap">{formatDate(doc.createdAt)}</span>
-                  </button>
+                  </>
                 );
-              })}
-            </div>
+              }}
+            />
           )}
         </ListPanel>
 
-        {selectedDocument ? (
+        {isLoading ? (
+          <DetailSkeleton
+            name="files-detail-skeleton"
+            headerActions={3}
+            sections={[
+              { titleWidth: "w-16", rows: ["w-1/2", "w-2/3", "w-1/3", "w-1/2", "w-1/2"] },
+              { titleWidth: "w-10", rows: ["w-3/4"] },
+            ]}
+          />
+        ) : selectedDocument ? (
           <FileDetail
             document={selectedDocument}
             categories={categories}
@@ -208,12 +237,7 @@ export default function FilesPage() {
             onDelete={() => setDeleteDoc(selectedDocument)}
           />
         ) : (
-          <div data-component="files-empty" className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
-            <div className="text-center text-v3-text-muted">
-              <FolderOpen className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-[0.85rem]">파일을 선택해주세요</p>
-            </div>
-          </div>
+          <EmptyState name="files-empty" icon={FolderOpen} message="파일을 선택해주세요" className="min-h-[400px]" />
         )}
       </SplitLayout>
 
@@ -293,11 +317,14 @@ function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, on
           {getCategoryLabel(doc.categoryId)}
         </span>
       </div>
-      <div data-component="files-detail-actions" className="flex gap-2">
-        <button data-component="files-detail-preview-btn" onClick={onPreview} className="rounded-[10px] bg-v3-primary px-3 py-1.5 text-[0.75rem] font-semibold text-white hover:bg-v3-primary-hover transition-colors">미리보기</button>
-        <button data-component="files-detail-edit-btn" onClick={onEdit} className="rounded-[10px] bg-v3-dim-white px-3 py-1.5 text-[0.75rem] font-semibold text-v3-text hover:bg-v3-border transition-colors">수정</button>
-        <button data-component="files-detail-delete-btn" onClick={onDelete} className="rounded-[10px] bg-v3-burgundy-light px-3 py-1.5 text-[0.75rem] font-semibold text-v3-burgundy hover:bg-v3-burgundy/10 transition-colors">삭제</button>
-      </div>
+      <DetailActions
+        name="files-detail-actions"
+        actions={[
+          { label: "미리보기", onClick: onPreview, variant: "primary" },
+          { label: "수정", onClick: onEdit, variant: "default" },
+          { label: "삭제", onClick: onDelete, variant: "danger" },
+        ]}
+      />
     </div>
   );
 

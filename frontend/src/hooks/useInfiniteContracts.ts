@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
@@ -8,6 +8,7 @@ import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-co
 
 const INITIAL_VISIBLE_COUNT = 6; // First load: teaser view (4 full + 2 fading)
 const PAGE_SIZE = 6; // How many more to show each time
+const FETCHING_SKELETON_DURATION_MS = 220;
 
 // Filter documents by actual status code
 function filterByActualStatus(
@@ -59,11 +60,27 @@ export function useInfiniteContracts({
 }: UseInfiniteContractsOptions = {}) {
   // Track how many items are visible (starts at 6, increases by 20 each load)
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
+  const [isFetchingNextPage, setIsFetchingNextPage] = useState(false);
+  const fetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset visible count when filter changes
   useEffect(() => {
+    if (fetchTimerRef.current) {
+      clearTimeout(fetchTimerRef.current);
+      fetchTimerRef.current = null;
+    }
+
     setVisibleCount(INITIAL_VISIBLE_COUNT);
+    setIsFetchingNextPage(false);
   }, [filterType]);
+
+  useEffect(() => {
+    return () => {
+      if (fetchTimerRef.current) {
+        clearTimeout(fetchTimerRef.current);
+      }
+    };
+  }, []);
 
   // Fetch all documents once
   const query = useQuery<EformsignDocumentsResponse>({
@@ -107,13 +124,25 @@ export function useInfiniteContracts({
 
   // Load more function - just increases visible count
   const fetchNextPage = useCallback(() => {
-    setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, allFilteredDocuments.length));
-  }, [allFilteredDocuments.length]);
+    if (isFetchingNextPage || !hasNextPage) return;
+
+    setIsFetchingNextPage(true);
+
+    if (fetchTimerRef.current) {
+      clearTimeout(fetchTimerRef.current);
+    }
+
+    fetchTimerRef.current = setTimeout(() => {
+      setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, allFilteredDocuments.length));
+      setIsFetchingNextPage(false);
+      fetchTimerRef.current = null;
+    }, FETCHING_SKELETON_DURATION_MS);
+  }, [allFilteredDocuments.length, hasNextPage, isFetchingNextPage]);
 
   return {
     documents,
     isLoading: query.isLoading,
-    isFetchingNextPage: false, // Client-side pagination is instant
+    isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
     totalCount: allFilteredDocuments.length,

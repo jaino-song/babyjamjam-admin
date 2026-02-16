@@ -26,7 +26,7 @@ import {
 } from "@/lib/eformsign/status-codes";
 import {
   PageHeader,
-  StatMini,
+  StatsBar,
   SplitLayout,
   ListPanel,
   DetailPanel,
@@ -36,6 +36,9 @@ import {
   ActivityTimeline,
   AnimatedSlotList,
   HeaderActionButton,
+  EmptyState,
+  DetailSkeleton,
+  ListEmptyState,
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -221,40 +224,16 @@ export default function ContractsPage() {
           }
         />
 
-        <div data-component="contracts-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatMini
-            icon={FileText}
-            value={stats.total}
-            label="전체 계약"
-            colorIndex={0}
-            animationDelay="0s"
-            isLoading={isInitialLoading}
-          />
-          <StatMini
-            icon={Clock}
-            value={stats.pending}
-            label="대기중"
-            colorIndex={1}
-            animationDelay="0.08s"
-            isLoading={isInitialLoading}
-          />
-          <StatMini
-            icon={CheckCircle2}
-            value={stats.completed}
-            label="서명완료"
-            colorIndex={2}
-            animationDelay="0.16s"
-            isLoading={isInitialLoading}
-          />
-          <StatMini
-            icon={AlertTriangle}
-            value={stats.expired}
-            label="만료"
-            colorIndex={3}
-            animationDelay="0.24s"
-            isLoading={isInitialLoading}
-          />
-        </div>
+        <StatsBar
+          name="contracts"
+          isLoading={isInitialLoading}
+          items={[
+            { icon: FileText, value: stats.total, label: "전체 계약", counter: "건" },
+            { icon: Clock, value: stats.pending, label: "대기중", counter: "건", colorIndex: 1 },
+            { icon: CheckCircle2, value: stats.completed, label: "서명완료", counter: "건", colorIndex: 2 },
+            { icon: AlertTriangle, value: stats.expired, label: "만료", counter: "건", colorIndex: 3 },
+          ]}
+        />
 
         <SplitLayout hasSelection={!!selectedDocId} onBack={() => setSelectedDocId(null)}>
           <ListPanel
@@ -268,9 +247,7 @@ export default function ContractsPage() {
             isLoading={isInitialLoading || isContentLoading}
           >
             {documents.length === 0 && !isInitialLoading && !isContentLoading ? (
-              <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                계약 문서가 없습니다
-              </div>
+              <ListEmptyState message="계약 문서가 없습니다" />
             ) : (
               <AnimatedSlotList<EformsignDocument>
                 items={documents}
@@ -362,73 +339,23 @@ export default function ContractsPage() {
           </ListPanel>
 
           {isInitialLoading ? (
-            <ContractDetailSkeleton />
+            <DetailSkeleton
+              name="contracts-detail-skeleton"
+              headerBadge
+              headerBanner
+              sections={[
+                { titleWidth: "w-16", rows: ["w-1/2", "w-2/3"] },
+                { titleWidth: "w-16", rows: ["w-3/4", "w-1/2", "w-2/3"] },
+                { titleWidth: "w-20", rows: ["w-full"] },
+              ]}
+            />
           ) : selectedDocument ? (
             <ContractDetail document={selectedDocument} />
           ) : (
-            <div className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
-              <div className="text-center text-v3-text-muted">
-                <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p className="text-[0.85rem]">계약을 선택해주세요</p>
-              </div>
-            </div>
+            <EmptyState icon={FileText} message="계약을 선택해주세요" className="min-h-[400px]" />
           )}
         </SplitLayout>
     </section>
-  );
-}
-
-function ContractDetailSkeleton() {
-  return (
-    <div className="bg-white rounded-[28px] shadow-v3">
-      {/* Header skeleton */}
-      <div className="p-6 space-y-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-6 w-2/3 bg-v3-dim-white" />
-            <div className="flex items-center gap-4">
-              <Skeleton className="h-3 w-24 bg-v3-dim-white" />
-              <Skeleton className="h-3 w-24 bg-v3-dim-white" />
-            </div>
-          </div>
-          <Skeleton className="h-5 w-16 rounded-full bg-v3-dim-white shrink-0" />
-        </div>
-        <Skeleton className="h-10 w-full rounded-[14px] bg-v3-dim-white" />
-      </div>
-
-      {/* Content skeleton */}
-      <div className="p-6 pt-0 space-y-5">
-        {/* 고객 정보 card */}
-        <div className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
-          <Skeleton className="h-3 w-16 bg-white/70" />
-          <div className="space-y-2">
-            <Skeleton className="h-4 w-1/2 bg-white/70" />
-            <Skeleton className="h-4 w-2/3 bg-white/70" />
-          </div>
-        </div>
-        {/* 계약 정보 card */}
-        <div className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
-          <Skeleton className="h-3 w-16 bg-white/70" />
-          <div className="space-y-2">
-            <Skeleton className="h-4 w-3/4 bg-white/70" />
-            <Skeleton className="h-4 w-1/2 bg-white/70" />
-            <Skeleton className="h-4 w-2/3 bg-white/70" />
-          </div>
-        </div>
-        {/* 서명 진행 card */}
-        <div className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
-          <Skeleton className="h-3 w-20 bg-white/70" />
-          <div className="flex items-center gap-3 py-2">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="flex items-center gap-2">
-                <Skeleton className="w-8 h-8 rounded-full bg-white/70" />
-                {i < 3 && <Skeleton className="w-8 h-0.5 bg-white/70" />}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
