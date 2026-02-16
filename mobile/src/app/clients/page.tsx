@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
     PageHeader,
-    StatMini,
+    StatsBar,
     SplitLayout,
     ListPanel,
     DetailPanel,
@@ -24,6 +24,9 @@ import {
     StatusBadge,
     AnimatedSlotList,
     HeaderActionButton,
+    EmptyState,
+    ListEmptyState,
+    DetailTabs,
 } from "@/components/app/v3";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import type { StatusType } from "@/components/app/v3";
@@ -205,40 +208,16 @@ export default function ClientsPage() {
                 }
             />
 
-            <div data-component="clients-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatMini
-                    icon={Users}
-                    value={total}
-                    label="전체 고객"
-                    colorIndex={0}
-                    animationDelay="0s"
-                    isLoading={isLoading}
-                />
-                <StatMini
-                    icon={UserCheck}
-                    value={stats.activeCount}
-                    label="진행중"
-                    colorIndex={2}
-                    animationDelay="0.08s"
-                    isLoading={isLoading}
-                />
-                <StatMini
-                    icon={Clock}
-                    value={stats.pendingCount}
-                    label="대기중"
-                    colorIndex={1}
-                    animationDelay="0.16s"
-                    isLoading={isLoading}
-                />
-                <StatMini
-                    icon={AlertTriangle}
-                    value={stats.expiredCount}
-                    label="만료임박"
-                    colorIndex={3}
-                    animationDelay="0.24s"
-                    isLoading={isLoading}
-                />
-            </div>
+            <StatsBar
+                name="clients"
+                isLoading={isLoading}
+                items={[
+                    { icon: Users, value: total, label: "전체 고객", counter: "명" },
+                    { icon: UserCheck, value: stats.activeCount, label: "진행중", counter: "명", colorIndex: 2 },
+                    { icon: Clock, value: stats.pendingCount, label: "대기중", counter: "명", colorIndex: 1 },
+                    { icon: AlertTriangle, value: stats.expiredCount, label: "만료임박", counter: "명", colorIndex: 3 },
+                ]}
+            />
 
 	            <SplitLayout hasSelection={!!selectedClient} onBack={() => setSelectedClient(null)}>
 	                <ListPanel
@@ -253,9 +232,7 @@ export default function ClientsPage() {
 	                >
 	                    <div className="space-y-2">
 	                        {!isLoading && filteredClients.length === 0 ? (
-	                            <div className="p-8 text-center text-v3-text-muted">
-	                                {t(locale, "clients.no-data")}
-	                            </div>
+	                            <ListEmptyState message={t(locale, "clients.no-data")} />
 	                        ) : (
 	                            <>
 	                                <AnimatedSlotList<Client>
@@ -431,30 +408,19 @@ export default function ClientsPage() {
                                 </div>
                             </div>
                         }
-                    >
-                        <div data-component="clients-detail-content" className="space-y-4">
-                            {/* Section Toggle Pills */}
-                            <div className="flex flex-wrap gap-2 pb-2">
-                                {[
+                        tabs={
+                            <DetailTabs
+                                tabs={[
                                     { key: "basic", label: "기본 정보" },
                                     { key: "caregiver", label: "담당 관리사" },
                                     { key: "service", label: "서비스 정보" },
-                                ].map((section) => (
-                                    <button
-                                        key={section.key}
-                                        onClick={() => setActiveSection(section.key)}
-                                        className={cn(
-                                            "px-3 py-1.5 rounded-full text-xs font-semibold transition-all duration-200",
-                                            activeSection === section.key
-                                                ? "bg-v3-primary text-white shadow-sm"
-                                                : "bg-v3-dim-white text-v3-text-muted hover:bg-v3-primary-light hover:text-v3-primary"
-                                        )}
-                                    >
-                                        {section.label}
-                                    </button>
-                                ))}
-                            </div>
-
+                                ]}
+                                activeTab={activeSection}
+                                onTabChange={setActiveSection}
+                            />
+                        }
+                    >
+                        <div data-component="clients-detail-content" className="space-y-4">
                             {activeSection === "basic" && (
                             <InfoCard title="기본 정보">
                                 <InfoRow
@@ -564,14 +530,7 @@ export default function ClientsPage() {
                         </div>
                     </DetailPanel>
                 ) : (
-                    <div data-component="clients-empty-state" className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
-                        <div className="text-center text-v3-text-muted">
-                            <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                            <p className="text-[0.85rem]">
-                                고객을 선택하면 상세 정보가 표시됩니다
-                            </p>
-                        </div>
-                    </div>
+                    <EmptyState name="clients-empty-state" icon={Users} message="고객을 선택하면 상세 정보가 표시됩니다" className="min-h-[400px]" />
                 )}
             </SplitLayout>
 

@@ -190,7 +190,7 @@ export function ClientsTable() {
                 </div>
             </div>
 
-            <div data-component="clients-table-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div data-component="clients-table-stats" className="flex flex-wrap gap-4">
                 <div className="bg-white p-5 rounded-[20px] shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
                     <div className="w-12 h-12 rounded-[14px] bg-[hsl(214,80%,95%)] flex items-center justify-center text-xl">👥</div>
                     <div>
