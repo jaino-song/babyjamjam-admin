@@ -34,7 +34,7 @@ export const SurveyMessageForm = () => {
   return (
     <div
       data-component="messages-survey-form"
-      className="flex flex-col grow h-full bg-background animate-fade-in"
+      className="flex flex-col grow h-full animate-fade-in"
     >
       <div className="flex flex-col grow">
         {/* form */}

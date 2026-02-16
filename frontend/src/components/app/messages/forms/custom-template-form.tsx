@@ -79,7 +79,7 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
     return (
         <div
             data-component="messages-custom-template-form"
-            className="flex flex-col grow h-full bg-background animate-fade-in"
+            className="flex flex-col grow h-full animate-fade-in"
         >
             <div className="flex flex-col grow">
                 <div className="flex flex-col gap-6">

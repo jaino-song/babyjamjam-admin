@@ -32,7 +32,7 @@ export const InfoMessageForm = () => {
   return (
     <div
       data-component="messages-info-form"
-      className="flex flex-col grow h-full bg-background animate-fade-in"
+      className="flex flex-col grow h-full animate-fade-in"
     >
       <div className="flex flex-col h-full">
         {/* generated message */}
