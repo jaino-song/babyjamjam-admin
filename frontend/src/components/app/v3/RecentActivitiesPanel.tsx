@@ -142,7 +142,7 @@ export function RecentActivitiesPanel({
   return (
     <div
       className={cn(
-        "bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden",
+        "bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full",
         className,
       )}
     >
@@ -150,7 +150,8 @@ export function RecentActivitiesPanel({
         <h2 className="text-lg font-bold text-v3-dark">{title}</h2>
       </div>
 
-      <div className="p-6 pt-0 space-y-5">
+      <div className="relative flex-1 min-h-0">
+      <div className="p-6 pt-0 space-y-5 overflow-y-auto h-full">
         {!isLoading && isError ? (
           <ErrorState onRetry={onRetry} />
         ) : !isLoading && isEmpty ? (
@@ -361,6 +362,8 @@ export function RecentActivitiesPanel({
             {viewAllLabel} <span aria-hidden="true">→</span>
           </Link>
         )}
+      </div>
+      <div className="absolute bottom-0 left-0 right-0 h-6 bg-white pointer-events-none z-20 rounded-b-[28px]" />
       </div>
     </div>
   );
