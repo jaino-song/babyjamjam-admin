@@ -5,16 +5,57 @@ import { ChevronLeft } from "lucide-react";
 import { useSplitLayoutNavOptional } from "./SplitLayoutContext";
 
 interface DetailPanelProps {
-  header: React.ReactNode;
+  /** Fully custom header (escape hatch for centered layouts etc.) */
+  header?: React.ReactNode;
+  /** Optional avatar element on the left */
+  avatar?: React.ReactNode;
+  /** Title text or node */
+  title?: React.ReactNode;
+  /** Subtitle below the title */
+  subtitle?: React.ReactNode;
+  /** Badges/chips inline with the title */
+  badges?: React.ReactNode;
+  /** Trailing content on the right side of the header (e.g. Stepper) */
+  trailing?: React.ReactNode;
+  tabs?: React.ReactNode;
   children: React.ReactNode;
 }
 
-export function DetailPanel({ header, children }: DetailPanelProps) {
+export function DetailPanel({
+  header = null,
+  avatar,
+  title,
+  subtitle,
+  badges,
+  trailing,
+  tabs,
+  children,
+}: DetailPanelProps) {
   const nav = useSplitLayoutNavOptional();
   const showBackButton = nav?.isMobile;
 
+  const hasStructuredHeader = !!title;
+
+  const renderedHeader = hasStructuredHeader ? (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center gap-4 min-w-0">
+        {avatar}
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-xl font-bold text-v3-dark truncate">{title}</h2>
+            {badges}
+          </div>
+          {subtitle && (
+            <p className="text-[0.8rem] text-v3-text-muted mt-0.5">{subtitle}</p>
+          )}
+        </div>
+      </div>
+      {trailing}
+    </div>
+  ) : header;
+
   return (
-    <div data-component="detail-panel" className={`bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden ${nav?.isMobile ? "" : "animate-v3-slide-up"}`}>
+    <div data-component="detail-panel" className={`bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0 ${nav?.isMobile ? "" : "animate-v3-slide-up"}`}>
       {/* Back button - mobile only */}
       {showBackButton && (
         <button
@@ -25,11 +66,13 @@ export function DetailPanel({ header, children }: DetailPanelProps) {
         </button>
       )}
 
-      <div data-component="detail-panel-header" className={showBackButton ? "p-6 pt-2" : "p-6"}>
-        {header}
-      </div>
-      <div className="overflow-y-auto p-6 pt-0">
+      {renderedHeader && <div data-component="detail-panel-header" className={showBackButton ? "px-6 pt-2" : "p-6"}>
+        {renderedHeader}
+      </div>}
+      {tabs && <div className="px-6 pt-4">{tabs}</div>}
+      <div className="overflow-y-auto p-6 flex-1 min-h-0">
         {children}
+        <div className="sticky bottom-0 h-6 bg-white shrink-0 z-20" />
       </div>
     </div>
   );

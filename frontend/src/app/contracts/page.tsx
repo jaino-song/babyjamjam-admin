@@ -26,7 +26,7 @@ import {
 } from "@/lib/eformsign/status-codes";
 import {
   PageHeader,
-  StatMini,
+  StatsBar,
   SplitLayout,
   ListPanel,
   DetailPanel,
@@ -36,7 +36,13 @@ import {
   ActivityTimeline,
   AnimatedSlotList,
   HeaderActionButton,
+  Stepper,
+  EmptyState,
+  PageSection,
+  DetailSkeleton,
+  ListEmptyState,
 } from "@/components/app/v3";
+import type { StatsBarItem } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -139,7 +145,6 @@ export default function ContractsPage() {
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
-    isInitialLoad,
     error,
   } = useInfiniteContracts({
     enabled: isAuthenticated,
@@ -185,8 +190,8 @@ export default function ContractsPage() {
   }, [allData?.documents]);
 
   const selectedDocument = useMemo(() => {
-    if (!selectedDocId) return documents[0] ?? null;
-    return documents.find((d) => d.id === selectedDocId) ?? documents[0] ?? null;
+    if (!selectedDocId) return null;
+    return documents.find((d) => d.id === selectedDocId) ?? null;
   }, [selectedDocId, documents]);
 
   const handleTabChange = (value: string) => {
@@ -207,56 +212,19 @@ export default function ContractsPage() {
   }
 
   return (
-    <section data-component="contracts" className="space-y-6">
-        <PageHeader
-          title="전자계약 관리"
-          icon={FileText}
-          actions={
-            <HeaderActionButton
-              href="/contracts/creation"
-              icon={Plus}
-              label="서명 요청"
-              data-component="contracts-header-send-contract"
-            />
-          }
+    <PageSection name="contracts">
+        <StatsBar
+          name="contracts"
+          isLoading={isInitialLoading}
+          items={[
+            { icon: FileText, value: stats.total, label: "전체 계약", counter: "건" },
+            { icon: Clock, value: stats.pending, label: "대기중", counter: "건", colorIndex: 1 },
+            { icon: CheckCircle2, value: stats.completed, label: "서명완료", counter: "건", colorIndex: 2 },
+            { icon: AlertTriangle, value: stats.expired, label: "만료", counter: "건", colorIndex: 3 },
+          ]}
         />
 
-        <div data-component="contracts-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatMini
-            icon={FileText}
-            value={stats.total}
-            label="전체 계약"
-            colorIndex={0}
-            animationDelay="0s"
-            isLoading={isInitialLoading}
-          />
-          <StatMini
-            icon={Clock}
-            value={stats.pending}
-            label="대기중"
-            colorIndex={1}
-            animationDelay="0.08s"
-            isLoading={isInitialLoading}
-          />
-          <StatMini
-            icon={CheckCircle2}
-            value={stats.completed}
-            label="서명완료"
-            colorIndex={2}
-            animationDelay="0.16s"
-            isLoading={isInitialLoading}
-          />
-          <StatMini
-            icon={AlertTriangle}
-            value={stats.expired}
-            label="만료"
-            colorIndex={3}
-            animationDelay="0.24s"
-            isLoading={isInitialLoading}
-          />
-        </div>
-
-        <SplitLayout hasSelection={!!selectedDocId} onBack={() => setSelectedDocId(null)}>
+        <SplitLayout hasSelection={!!selectedDocument} onBack={() => setSelectedDocId(null)}>
           <ListPanel
             title="계약 목록"
             tabs={TAB_ITEMS}
@@ -265,12 +233,19 @@ export default function ContractsPage() {
             searchValue={searchQuery}
             onSearchChange={setSearchQuery}
             searchPlaceholder="고객명, 문서명 검색..."
-            isLoading={isInitialLoading || isContentLoading}
+            isLoading={isInitialLoading}
+            isContentLoading={isContentLoading}
+            headerActions={
+              <HeaderActionButton
+                href="/contracts/creation"
+                icon={Plus}
+                label="서명 요청"
+                data-component="contracts-header-send-contract"
+              />
+            }
           >
             {documents.length === 0 && !isInitialLoading && !isContentLoading ? (
-              <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                계약 문서가 없습니다
-              </div>
+              <ListEmptyState message="계약 문서가 없습니다" />
             ) : (
               <AnimatedSlotList<EformsignDocument>
                 items={documents}
@@ -292,7 +267,6 @@ export default function ContractsPage() {
                 hasMore={hasNextPage}
                 onLoadMore={() => fetchNextPage()}
                 isFetchingMore={isFetchingNextPage}
-                isInitialLoad={isInitialLoad}
                 render={({ item: doc, isLoading }) => {
                   // Skeleton state
                   if (isLoading) {
@@ -362,73 +336,23 @@ export default function ContractsPage() {
           </ListPanel>
 
           {isInitialLoading ? (
-            <ContractDetailSkeleton />
+            <DetailSkeleton
+              name="contracts-detail-skeleton"
+              headerBadge
+              headerBanner
+              sections={[
+                { titleWidth: "w-16", rows: ["w-1/2", "w-2/3"] },
+                { titleWidth: "w-16", rows: ["w-3/4", "w-1/2", "w-2/3"] },
+                { titleWidth: "w-20", rows: ["w-full"] },
+              ]}
+            />
           ) : selectedDocument ? (
             <ContractDetail document={selectedDocument} />
           ) : (
-            <div className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
-              <div className="text-center text-v3-text-muted">
-                <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p className="text-[0.85rem]">계약을 선택해주세요</p>
-              </div>
-            </div>
+            <EmptyState icon={FileText} message="계약을 선택하면 상세 정보가 표시됩니다" />
           )}
         </SplitLayout>
-    </section>
-  );
-}
-
-function ContractDetailSkeleton() {
-  return (
-    <div className="bg-white rounded-[28px] shadow-v3">
-      {/* Header skeleton */}
-      <div className="p-6 space-y-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-6 w-2/3 bg-v3-dim-white" />
-            <div className="flex items-center gap-4">
-              <Skeleton className="h-3 w-24 bg-v3-dim-white" />
-              <Skeleton className="h-3 w-24 bg-v3-dim-white" />
-            </div>
-          </div>
-          <Skeleton className="h-5 w-16 rounded-full bg-v3-dim-white shrink-0" />
-        </div>
-        <Skeleton className="h-10 w-full rounded-[14px] bg-v3-dim-white" />
-      </div>
-
-      {/* Content skeleton */}
-      <div className="p-6 pt-0 space-y-5">
-        {/* 고객 정보 card */}
-        <div className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
-          <Skeleton className="h-3 w-16 bg-white/70" />
-          <div className="space-y-2">
-            <Skeleton className="h-4 w-1/2 bg-white/70" />
-            <Skeleton className="h-4 w-2/3 bg-white/70" />
-          </div>
-        </div>
-        {/* 계약 정보 card */}
-        <div className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
-          <Skeleton className="h-3 w-16 bg-white/70" />
-          <div className="space-y-2">
-            <Skeleton className="h-4 w-3/4 bg-white/70" />
-            <Skeleton className="h-4 w-1/2 bg-white/70" />
-            <Skeleton className="h-4 w-2/3 bg-white/70" />
-          </div>
-        </div>
-        {/* 서명 진행 card */}
-        <div className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
-          <Skeleton className="h-3 w-20 bg-white/70" />
-          <div className="flex items-center gap-3 py-2">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="flex items-center gap-2">
-                <Skeleton className="w-8 h-8 rounded-full bg-white/70" />
-                {i < 3 && <Skeleton className="w-8 h-0.5 bg-white/70" />}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
+    </PageSection>
   );
 }
 
@@ -437,8 +361,6 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
   const category = getStatusCategory(doc.current_status?.status_type);
   const statusType = mapCategoryToStatusType(category);
   const statusLabel = mapStatusToLabel(doc.current_status?.status_type);
-  const bannerStyle = mapCategoryToBannerStyle(category);
-  const bannerLabel = mapCategoryToLabel(category);
   const steps = getSignatureProgress(category);
 
   const expiredDate = doc.current_status?.expired_date;
@@ -491,39 +413,28 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
     return items;
   }, [doc, customerName, category]);
 
-  const header = (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-lg font-bold text-v3-dark truncate">
-            {doc.document_name}
-          </h2>
-          <div className="flex items-center gap-4 mt-1 text-[0.75rem] text-v3-text-muted">
-            <span className="flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5" />
-              발송일: {formatDate(doc.created_date)}
-            </span>
-            {expiredDate && expiredDate > 0 && (
-              <span className="flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
-                만료일: {formatDate(expiredDate)}
-              </span>
-            )}
-          </div>
-        </div>
-        <StatusBadge status={statusType} label={statusLabel} />
-      </div>
-
-      <div className={`rounded-[14px] px-4 py-3 text-[0.8rem] font-semibold ${bannerStyle}`}>
-        {bannerLabel}
-      </div>
-    </div>
-  );
-
   return (
-    <DetailPanel header={header}>
-      <div data-component="contracts-detail" className="space-y-5">
-        <InfoCard title="고객 정보">
+    <DetailPanel
+      title={doc.document_name}
+      badges={<StatusBadge status={statusType} label={statusLabel} />}
+      subtitle={
+        <span className="flex items-center gap-4 text-[0.75rem]">
+          <span className="flex items-center gap-1">
+            <Calendar className="w-3.5 h-3.5" />
+            발송일: {formatDate(doc.created_date)}
+          </span>
+          {expiredDate != null && expiredDate > 0 && (
+            <span className="flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5" />
+              만료일: {formatDate(expiredDate)}
+            </span>
+          )}
+        </span>
+      }
+      trailing={<Stepper steps={steps} />}
+    >
+      <div data-component="contracts-detail" className="grid grid-cols-2 gap-5">
+        <InfoCard title="고객 정보" className="col-start-1 row-start-1 row-end-3">
           <InfoRow
             label="고객명"
             value={
@@ -549,7 +460,7 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
           )}
         </InfoCard>
 
-        <InfoCard title="계약 정보">
+        <InfoCard title="계약 정보" className="col-start-2 row-start-1 row-end-5">
           <InfoRow label="문서명" value={doc.document_name} />
           <InfoRow label="템플릿" value={doc.template?.name ?? "–"} />
           <InfoRow label="문서번호" value={doc.document_number ?? "–"} />
@@ -557,37 +468,7 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
           <InfoRow label="최종수정" value={formatDate(doc.updated_date)} />
         </InfoCard>
 
-        <InfoCard title="서명 진행 상태">
-          <div className="flex items-center gap-0 py-2">
-            {steps.map((step, idx) => (
-              <div key={step.label} className="flex items-center">
-                <div className="flex flex-col items-center">
-                  <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-[0.65rem] font-bold ${
-                      step.done
-                        ? "bg-v3-primary text-white"
-                        : "bg-v3-dim-white text-v3-text-muted"
-                    }`}
-                  >
-                    {idx + 1}
-                  </div>
-                  <span className="text-[0.6rem] text-v3-text-muted mt-1 whitespace-nowrap">
-                    {step.label}
-                  </span>
-                </div>
-                {idx < steps.length - 1 && (
-                  <div
-                    className={`w-8 h-0.5 mx-1 mt-[-12px] ${
-                      steps[idx + 1].done ? "bg-v3-primary" : "bg-v3-border"
-                    }`}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        </InfoCard>
-
-        <InfoCard title="활동 기록">
+        <InfoCard title="활동 기록" className="col-start-1 row-start-3 row-end-5">
           <ActivityTimeline items={activityItems} maxHeight="300px" />
         </InfoCard>
       </div>

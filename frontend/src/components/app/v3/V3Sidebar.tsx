@@ -3,25 +3,27 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { 
-  LayoutDashboard, 
-  BarChart3, 
-  Users, 
-  UserCheck, 
-  Calendar, 
-  FileText, 
-  FolderOpen, 
-  Bell, 
+import {
+  LayoutDashboard,
+  BarChart3,
+  Users,
+  UserCheck,
+  Calendar,
+  FileText,
+  FolderOpen,
+  Bell,
   Settings,
-  LucideIcon
+  LucideIcon,
+  Calculator
 } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
+import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
 
 interface NavItem {
   label: string;
   href: string;
-  icon: LucideIcon;
+  icon: LucideIcon | React.ElementType;
   badge?: string;
 }
 
@@ -35,28 +37,35 @@ const NAV_SECTIONS: NavSection[] = [
     title: "메인",
     items: [
       { label: "대시보드", href: "/dashboard", icon: LayoutDashboard },
-      { label: "분석", href: "/dashboard/analytics", icon: BarChart3 },
+      { label: "서비스 일정", href: "/schedule", icon: Calendar },
     ],
   },
   {
-    title: "관리",
+    title: "지점 관리",
     items: [
       { label: "고객", href: "/clients", icon: Users },
       { label: "직원", href: "/employees", icon: UserCheck },
-      { label: "일정", href: "/employees/schedule", icon: Calendar },
+      { label: "통계", href: "/analytics", icon: BarChart3 },
     ],
   },
   {
-    title: "문서",
+    title: "서비스 관리",
     items: [
-      { label: "계약", href: "/contracts", icon: FileText },
-      { label: "파일", href: "/files", icon: FolderOpen },
+      { label: "메시지", href: "/messages", icon: Users },
+      { label: "가격표", href: "/prices", icon: Calculator },
+      { label: "알림톡", href: "/alimtalk", icon: KakaoTalkIcon },
     ],
   },
   {
-    title: "시스템",
+    title: "문서 관리",
     items: [
-      { label: "알림", href: "/messages", icon: Bell },
+      { label: "전자문서", href: "/contracts", icon: FileText },
+      { label: "파일 저장소", href: "/files", icon: FolderOpen },
+    ],
+  },
+  {
+    title: "시스템 관리",
+    items: [
       { label: "설정", href: "/settings", icon: Settings },
     ],
   },
@@ -76,17 +85,17 @@ export const V3Sidebar = () => {
     if (href === "/employees" && pathname === "/employees/schedule") return false;
     return pathname.startsWith(href);
   };
-  
+
   if (isLayoutExcluded(pathname)) {
     return null;
   }
 
-  const initials = user?.name 
-    ? user.name.slice(0, 2).toUpperCase() 
+  const initials = user?.name
+    ? user.name.slice(0, 2).toUpperCase()
     : "USER";
 
   return (
-    <aside 
+    <aside
       className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[280px] bg-white z-40 rounded-tr-[32px] rounded-br-[32px] shadow-v3 animate-v3-slide-right overflow-hidden"
       aria-label="Sidebar Navigation"
       data-component="sidebar"
@@ -116,24 +125,24 @@ export const V3Sidebar = () => {
                       data-component={`sidebar-nav-${getNavItemName(item.href)}`}
                       className={`
                         relative group flex items-center gap-3 px-4 py-2.5 rounded-2xl transition-all duration-200 overflow-hidden
-                        ${active 
-                          ? "bg-v3-primary text-white shadow-md shadow-blue-500/20" 
+                        ${active
+                          ? "bg-v3-primary text-white shadow-md shadow-blue-500/20"
                           : "text-v3-text hover:bg-v3-primary-light hover:text-v3-primary"
                         }
                       `}
                     >
-                      <item.icon 
-                        className={`w-5 h-5 shrink-0 transition-colors ${active ? "text-white" : "group-hover:text-v3-primary"}`} 
-                        strokeWidth={2} 
+                      <item.icon
+                        className={`w-5 h-5 shrink-0 transition-colors ${active ? "text-white" : "group-hover:text-v3-primary"}`}
+                        strokeWidth={2}
                       />
                       <span className="text-[0.85rem] font-medium leading-none pt-0.5">
                         {item.label}
                       </span>
-                      
+
                       {item.badge && (
-                         <span className="ml-auto text-[0.65rem] px-2 py-0.5 rounded-full bg-v3-primary-light text-v3-primary font-bold">
-                           {item.badge}
-                         </span>
+                        <span className="ml-auto text-[0.65rem] px-2 py-0.5 rounded-full bg-v3-primary-light text-v3-primary font-bold">
+                          {item.badge}
+                        </span>
                       )}
                     </Link>
                   </li>

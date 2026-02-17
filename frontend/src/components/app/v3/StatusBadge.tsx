@@ -1,6 +1,6 @@
 "use client";
 
-export type StatusType = 'active' | 'pending' | 'expired' | 'completed' | 'signed';
+export type StatusType = 'active' | 'pending' | 'expired' | 'completed' | 'signed' | 'breastPump' | 'careCenter';
 
 interface StatusBadgeProps {
   status: StatusType;
@@ -13,6 +13,8 @@ const statusConfig: Record<StatusType, { bg: string; text: string; defaultLabel:
   pending: { bg: 'bg-v3-orange-light', text: 'text-v3-orange', defaultLabel: '대기' },
   expired: { bg: 'bg-v3-burgundy-light', text: 'text-v3-burgundy', defaultLabel: '만료' },
   completed: { bg: 'bg-v3-dim-white', text: 'text-v3-text-muted', defaultLabel: '완료' },
+  breastPump: { bg: 'bg-v3-burgundy-light', text: 'text-v3-burgundy', defaultLabel: '유축기 대여' },
+  careCenter: { bg: 'bg-v3-primary-light', text: 'text-v3-primary', defaultLabel: '조리원 이용' },
 };
 
 export function StatusBadge({ status, label }: StatusBadgeProps) {

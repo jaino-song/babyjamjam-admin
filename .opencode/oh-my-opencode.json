@@ -1,8 +1,0 @@
-{
-  "lsp": {
-    "prisma": {
-      "command": ["/opt/homebrew/bin/prisma-language-server", "--stdio"],
-      "extensions": [".prisma"]
-    }
-  }
-}

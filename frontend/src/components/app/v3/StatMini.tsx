@@ -37,7 +37,7 @@ export function StatMini({
     <div
       data-component="stat-mini"
       className={cn(
-        "bg-white rounded-[20px] shadow-v3 hover:shadow-v3-hover hover:-translate-y-1 transition-[transform,box-shadow] duration-[500ms] p-4 will-change-transform flex gap-4 items-center",
+        "w-44 bg-white rounded-[20px] shadow-v3 hover:shadow-v3-hover hover:-translate-y-1 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] p-4 will-change-transform flex gap-4 items-center justify-start",
         // Component-level animation so stats behave identically across pages.
         "animate-v3-pop-up"
       )}
@@ -63,7 +63,7 @@ export function StatMini({
         </div>
       ) : (
         <div>
-          <span className="flex items-center gap-2">
+          <span className="flex items-center gap-1">
             <p className="text-2xl font-bold text-v3-dark">{value}</p>
             <p className="text-[0.7rem] text-v3-text-muted self-end mb-1">{counter}</p>
           </span>

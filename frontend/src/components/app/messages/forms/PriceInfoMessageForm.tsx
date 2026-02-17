@@ -186,7 +186,7 @@ export const PriceInfoMessageForm = () => {
   return (
     <div
       data-component="messages-price-info-form"
-      className="flex flex-col gap-4 animate-fade-in border-t pt-4"
+      className="flex flex-col gap-4 animate-fade-in"
     >
           <div className="grid grid-cols-16 gap-4">
             <div className="col-span-10">

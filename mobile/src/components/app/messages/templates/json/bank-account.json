@@ -1,0 +1,22 @@
+{
+    "Namdonggu": {
+        "area": "남동구",
+        "bankName": "농협은행",
+        "accNum": "171777-52-129984"
+    },
+    "Seogu": {
+        "area": "서구",
+        "bankName": "농협은행",
+        "accNum": "351-1268-7728-43"
+    },
+    "Bupyunggu": {
+        "area": "부평구",
+        "bankName": "농협은행",
+        "accNum": "171777-52-129984"
+    },
+    "Yeonsugu": {
+        "area": "연수구",
+        "bankName": "농협은행",
+        "accNum": "351-1268-7728-43"
+    }
+}

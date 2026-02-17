@@ -37,7 +37,7 @@ export function SplitLayout({ children, hasSelection = false, onBack }: SplitLay
       <SplitLayoutContext.Provider value={contextValue}>
         <div
           data-component="split-layout"
-          className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6"
+          className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 flex-1 h-full min-h-0"
         >
           {children}
         </div>
@@ -48,13 +48,13 @@ export function SplitLayout({ children, hasSelection = false, onBack }: SplitLay
   // Mobile: carousel with horizontal slide transition
   return (
     <SplitLayoutContext.Provider value={contextValue}>
-      <div data-component="split-layout" className="w-full overflow-hidden">
+      <div data-component="split-layout" className="w-full h-full min-h-0 overflow-hidden">
         <div
-          className="flex transition-transform duration-300 ease-out"
+          className="flex h-full transition-transform duration-300 ease-out"
           style={{ transform: hasSelection ? "translateX(-100%)" : "translateX(0)" }}
         >
-          <div className="w-full flex-shrink-0">{listPanel}</div>
-          <div className="w-full flex-shrink-0">{detailPanel}</div>
+          <div className="w-full h-full min-h-0 flex-shrink-0">{listPanel}</div>
+          <div className="w-full h-full min-h-0 flex-shrink-0">{detailPanel}</div>
         </div>
       </div>
     </SplitLayoutContext.Provider>

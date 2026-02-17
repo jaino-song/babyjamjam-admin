@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
     PageHeader,
-    StatMini,
+    StatsBar,
     SplitLayout,
     ListPanel,
     DetailPanel,
@@ -24,6 +24,10 @@ import {
     StatusBadge,
     AnimatedSlotList,
     HeaderActionButton,
+    EmptyState,
+    PageSection,
+    ListEmptyState,
+    DetailTabs,
 } from "@/components/app/v3";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import type { StatusType } from "@/components/app/v3";
@@ -111,8 +115,9 @@ export default function ClientsPage() {
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [activeFilter, setActiveFilter] = useState("all");
+    const [activeDetailTab, setActiveDetailTab] = useState<string>("basic");
     const [detailModalOpen, setDetailModalOpen] = useState(false);
-    const [activeSection, setActiveSection] = useState<string>("basic");
+
 
     const { data, isLoading } = useClients(1, 50);
     const deleteClient = useDeleteClient();
@@ -152,8 +157,7 @@ export default function ClientsPage() {
     }, [clients]);
 
     const handleAddNew = () => {
-        setEditingClient(null);
-        setFormDialogOpen(true);
+        router.push("/clients/new");
     };
 
     const handleSelectClient = (client: Client) => {
@@ -191,51 +195,17 @@ export default function ClientsPage() {
     };
 
     return (
-        <section data-component="clients" className="space-y-6 pb-10">
-            <PageHeader
-                title="고객 관리"
-                icon={Users}
-                actions={
-                    <HeaderActionButton
-                        icon={Plus}
-                        label={t(locale, "clients.add")}
-                        onClick={handleAddNew}
-                        data-testid="add-client-button"
-                        data-component="clients-header-add"
-                    />
-                }
+        <PageSection name="clients">
+            <StatsBar
+                name="clients"
+                isLoading={isLoading}
+                items={[
+                    { icon: Users, value: total, label: "전체 고객", counter: "명" },
+                    { icon: UserCheck, value: stats.activeCount, label: "진행중", counter: "명", colorIndex: 2 },
+                    { icon: Clock, value: stats.pendingCount, label: "대기중", counter: "명", colorIndex: 1 },
+                    { icon: AlertTriangle, value: stats.expiredCount, label: "만료임박", counter: "명", colorIndex: 3 },
+                ]}
             />
-
-            <div data-component="clients-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatMini
-                    icon={Users}
-                    value={total}
-                    label="전체 고객"
-                    colorIndex={0}
-                    animationDelay="0s"
-                />
-                <StatMini
-                    icon={UserCheck}
-                    value={stats.activeCount}
-                    label="진행중"
-                    colorIndex={2}
-                    animationDelay="0.08s"
-                />
-                <StatMini
-                    icon={Clock}
-                    value={stats.pendingCount}
-                    label="대기중"
-                    colorIndex={1}
-                    animationDelay="0.16s"
-                />
-                <StatMini
-                    icon={AlertTriangle}
-                    value={stats.expiredCount}
-                    label="만료임박"
-                    colorIndex={3}
-                    animationDelay="0.24s"
-                />
-            </div>
 
 	            <SplitLayout hasSelection={!!selectedClient} onBack={() => setSelectedClient(null)}>
 	                <ListPanel
@@ -247,12 +217,19 @@ export default function ClientsPage() {
 	                    onSearchChange={setSearchQuery}
 	                    searchPlaceholder={t(locale, "clients.search-placeholder")}
 	                    isLoading={isLoading}
+	                    headerActions={
+	                        <HeaderActionButton
+	                            icon={Plus}
+	                            label={t(locale, "clients.add")}
+	                            onClick={handleAddNew}
+	                            data-testid="add-client-button"
+	                            data-component="clients-header-add"
+	                        />
+	                    }
 	                >
 	                    <div className="space-y-2">
-	                        {!isLoading && filteredClients.length === 0 ? (
-	                            <div className="p-8 text-center text-v3-text-muted">
-	                                {t(locale, "clients.no-data")}
-	                            </div>
+	                    {!isLoading && filteredClients.length === 0 ? (
+	                            <ListEmptyState message={t(locale, "clients.no-data")} />
 	                        ) : (
 	                            <>
 	                                <AnimatedSlotList<Client>
@@ -351,224 +328,171 @@ export default function ClientsPage() {
 
                 {selectedClient ? (
                     <DetailPanel
-                        header={
-                            <div className="text-center">
-                                <div
-                                    className={cn(
-                                        "mx-auto w-20 h-20 rounded-[24px] flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-lg",
-                                        getAvatarGradient(selectedClient.name)
-                                    )}
-                                >
-                                    {selectedClient.name.charAt(0)}
-                                </div>
-                                <h2 className="text-xl font-bold text-v3-dark">
-                                    {selectedClient.name}
-                                </h2>
-                                <p className="text-[0.8rem] text-v3-text-muted mt-1">
-                                    {selectedClient.type || "일반"} ·{" "}
-                                    {selectedClient.duration
-                                        ? `${selectedClient.duration}일`
-                                        : "-"}
-                                </p>
-                                <div className="mt-3">
-                                    <StatusBadge
-                                        status={mapServiceStatusToV3(
-                                            selectedClient.serviceStatus
-                                        )}
-                                        label={getStatusLabel(
-                                            selectedClient.serviceStatus
-                                        )}
-                                    />
-                                </div>
-
-                                <div className="flex gap-2 justify-center mt-5">
-                                    {selectedClient.phone && (
-                                        <a
-                                            href={`tel:${selectedClient.phone}`}
-                                            className="flex-1"
-                                        >
-                                            <Button
-                                                variant="ghost"
-                                                className="w-full flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
-                                            >
-                                                <Phone className="w-4 h-4" />
-                                                <span className="text-[10px] font-semibold">
-                                                    전화
-                                                </span>
-                                            </Button>
-                                        </a>
-                                    )}
-                                    <Button
-                                        variant="ghost"
-                                        className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
-                                    >
-                                        <MessageSquare className="w-4 h-4" />
-                                        <span className="text-[10px] font-semibold">
-                                            메시지
-                                        </span>
-                                    </Button>
-                                    <Button
-                                        variant="ghost"
-                                        className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
-                                    >
-                                        <FileText className="w-4 h-4" />
-                                        <span className="text-[10px] font-semibold">
-                                            계약
-                                        </span>
-                                    </Button>
-                                    <Button
-                                        variant="ghost"
-                                        className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
-                                    >
-                                        <ClipboardList className="w-4 h-4" />
-                                        <span className="text-[10px] font-semibold">
-                                            서류
-                                        </span>
-                                    </Button>
-                                </div>
+                        avatar={
+                            <div
+                                className={cn(
+                                    "w-16 h-16 rounded-[20px] flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
+                                    getAvatarGradient(selectedClient.name)
+                                )}
+                            >
+                                {selectedClient.name.charAt(0)}
                             </div>
+                        }
+                        title={selectedClient.name}
+                        badges={
+                            <>
+                                <StatusBadge
+                                    status={mapServiceStatusToV3(
+                                        selectedClient.serviceStatus
+                                    )}
+                                    label={getStatusLabel(
+                                        selectedClient.serviceStatus
+                                    )}
+                                />
+                                {selectedClient.breastPump && (
+                                    <StatusBadge status="breastPump" />
+                                )}
+                                {selectedClient.careCenter && (
+                                    <StatusBadge status="careCenter" />
+                                )}
+                            </>
+                        }
+                        subtitle={
+                            <>
+                                {selectedClient.type || "일반"} ·{" "}
+                                {selectedClient.duration
+                                    ? `${selectedClient.duration}일`
+                                    : "-"}
+                            </>
+                        }
+                        tabs={
+                            <DetailTabs
+                                tabs={[
+                                    { key: "basic", label: "기본 정보" },
+                                    { key: "contracts", label: "계약서 정보" },
+                                    { key: "alimtalk", label: "알림톡 발송 현황" },
+                                ]}
+                                activeTab={activeDetailTab}
+                                onTabChange={setActiveDetailTab}
+                            />
                         }
                     >
                         <div data-component="clients-detail-content" className="space-y-4">
-                            {/* Section Toggle Pills */}
-                            <div className="flex flex-wrap gap-2 pb-2">
-                                {[
-                                    { key: "basic", label: "기본 정보" },
-                                    { key: "caregiver", label: "담당 관리사" },
-                                    { key: "service", label: "서비스 정보" },
-                                ].map((section) => (
-                                    <button
-                                        key={section.key}
-                                        onClick={() => setActiveSection(section.key)}
-                                        className={cn(
-                                            "px-3 py-1.5 rounded-full text-xs font-semibold transition-all duration-200",
-                                            activeSection === section.key
-                                                ? "bg-v3-primary text-white shadow-sm"
-                                                : "bg-v3-dim-white text-v3-text-muted hover:bg-v3-primary-light hover:text-v3-primary"
-                                        )}
-                                    >
-                                        {section.label}
-                                    </button>
-                                ))}
-                            </div>
+                            {activeDetailTab === "basic" && (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <InfoCard title="고객 정보" className="col-start-1 row-start-1 row-end-3">
+                                        <InfoRow
+                                            label={t(locale, "clients.form.name")}
+                                            value={selectedClient.name}
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.birthday")}
+                                            value={selectedClient.birthday || "-"}
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.due-date")}
+                                            value={formatDate(selectedClient.dueDate)}
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.phone")}
+                                            value={selectedClient.phone || "-"}
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.address")}
+                                            value={selectedClient.address || "-"}
+                                        />
+                                    </InfoCard>
 
-                            {activeSection === "basic" && (
-                            <InfoCard title="기본 정보">
-                                <InfoRow
-                                    label={t(locale, "clients.form.name")}
-                                    value={selectedClient.name}
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.birthday")}
-                                    value={selectedClient.birthday || "-"}
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.due-date")}
-                                    value={formatDate(selectedClient.dueDate)}
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.phone")}
-                                    value={selectedClient.phone || "-"}
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.address")}
-                                    value={selectedClient.address || "-"}
-                                />
-                            </InfoCard>
+                                    <InfoCard title="담당 관리사" className="col-start-1 row-start-3 row-end-5">
+                                        <InfoRow
+                                            label={t(locale, "clients.form.primary-employee")}
+                                            value={
+                                                selectedClient.primaryEmployee?.name ??
+                                                "-"
+                                            }
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.secondary-employee")}
+                                            value={
+                                                selectedClient.secondaryEmployee
+                                                    ?.name ?? "-"
+                                            }
+                                        />
+                                    </InfoCard>
+
+                                    <InfoCard title="서비스 정보" className="col-start-2 row-start-1 row-end-5">
+                                        <InfoRow
+                                            label={t(locale, "clients.form.voucher-type")}
+                                            value={selectedClient.type || "-"}
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.duration")}
+                                            value={
+                                                selectedClient.duration
+                                                    ? `${selectedClient.duration}일`
+                                                    : "-"
+                                            }
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.start-date")}
+                                            value={formatDate(selectedClient.startDate)}
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.end-date")}
+                                            value={formatDate(selectedClient.endDate)}
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.full-price")}
+                                            value={formatPrice(
+                                                selectedClient.fullPrice
+                                            )}
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.grant")}
+                                            value={formatPrice(selectedClient.grant)}
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.actual-price")}
+                                            value={formatPrice(
+                                                selectedClient.actualPrice
+                                            )}
+                                        />
+                                    </InfoCard>
+
+                                    <div data-component="clients-detail-actions" className="col-span-2 flex gap-3 pt-2">
+                                        <Button
+                                            variant="outline"
+                                            className="flex-1 rounded-full"
+                                            onClick={() => handleDelete(selectedClient.id)}
+                                        >
+                                            {t(locale, "common.delete")}
+                                        </Button>
+                                        <Button
+                                            variant="v3"
+                                            className="flex-1 rounded-full"
+                                            onClick={() => handleEdit(selectedClient)}
+                                        >
+                                            {t(locale, "common.edit")}
+                                        </Button>
+                                    </div>
+                                </div>
                             )}
 
-                            {activeSection === "caregiver" && (
-                            <InfoCard title="담당 관리사">
-                                <InfoRow
-                                    label={t(locale, "clients.form.primary-employee")}
-                                    value={
-                                        selectedClient.primaryEmployee?.name ??
-                                        "-"
-                                    }
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.secondary-employee")}
-                                    value={
-                                        selectedClient.secondaryEmployee
-                                            ?.name ?? "-"
-                                    }
-                                />
-                            </InfoCard>
+                            {activeDetailTab === "contracts" && (
+                                <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+                                    계약서 정보가 없습니다
+                                </div>
                             )}
 
-                            {activeSection === "service" && (
-                            <>
-                            <InfoCard title="서비스 정보">
-                                <InfoRow
-                                    label={t(locale, "clients.form.voucher-type")}
-                                    value={selectedClient.type || "-"}
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.duration")}
-                                    value={
-                                        selectedClient.duration
-                                            ? `${selectedClient.duration}일`
-                                            : "-"
-                                    }
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.start-date")}
-                                    value={formatDate(selectedClient.startDate)}
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.end-date")}
-                                    value={formatDate(selectedClient.endDate)}
-                                />
-                            </InfoCard>
-
-                            <InfoCard title="요금 정보">
-                                <InfoRow
-                                    label={t(locale, "clients.form.full-price")}
-                                    value={formatPrice(
-                                        selectedClient.fullPrice
-                                    )}
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.grant")}
-                                    value={formatPrice(selectedClient.grant)}
-                                />
-                                <InfoRow
-                                    label={t(locale, "clients.form.actual-price")}
-                                    value={formatPrice(
-                                        selectedClient.actualPrice
-                                    )}
-                                />
-                            </InfoCard>
-                            </>
+                            {activeDetailTab === "alimtalk" && (
+                                <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+                                    알림톡 발송 현황이 없습니다
+                                </div>
                             )}
-
-                            <div data-component="clients-detail-actions" className="flex gap-3 pt-2">
-                                <Button
-                                    variant="outline"
-                                    className="flex-1 rounded-full"
-                                    onClick={() => handleDelete(selectedClient.id)}
-                                >
-                                    {t(locale, "common.delete")}
-                                </Button>
-                                <Button
-                                    variant="v3"
-                                    className="flex-1 rounded-full"
-                                    onClick={() => handleEdit(selectedClient)}
-                                >
-                                    {t(locale, "common.edit")}
-                                </Button>
-                            </div>
                         </div>
                     </DetailPanel>
                 ) : (
-                    <div data-component="clients-empty-state" className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]">
-                        <div className="text-center text-v3-text-muted">
-                            <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                            <p className="text-[0.85rem]">
-                                고객을 선택하면 상세 정보가 표시됩니다
-                            </p>
-                        </div>
-                    </div>
+                    <EmptyState name="clients-empty-state" icon={Users} message="고객을 선택하면 상세 정보가 표시됩니다" />
                 )}
             </SplitLayout>
 
@@ -585,6 +509,6 @@ export default function ClientsPage() {
                 onClose={handleFormDialogClose}
                 client={editingClient}
             />
-        </section>
+        </PageSection>
     );
 }
