@@ -5,6 +5,7 @@ import com.imirae.incheon.network.ApiResult
 import com.imirae.incheon.network.TokenProvider
 import com.imirae.incheon.network.platformEngine
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.header
 import io.ktor.client.request.post
