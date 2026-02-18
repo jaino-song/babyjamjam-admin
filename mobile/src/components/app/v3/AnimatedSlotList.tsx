@@ -2,7 +2,8 @@
 
 import React, { useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { TeaserOverlay } from "./TeaserOverlay";
 
 type SlotClassNameArgs<T> = { index: number; item: T | null; isLoading: boolean };
 
@@ -52,10 +53,15 @@ export function AnimatedSlotList<T>({
   isInitialLoad = false,
 }: AnimatedSlotListProps<T>) {
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const loadMoreTriggeredRef = useRef(false);
 
   // If count is provided, use it. Otherwise, show all items (or loadingCount while loading)
   const itemsLength = items?.length ?? 0;
   const slotCount: number = count !== undefined ? count : (isLoading ? loadingCount : itemsLength);
+
+  useEffect(() => {
+    loadMoreTriggeredRef.current = false;
+  }, [itemsLength, hasMore, isFetchingMore]);
 
   // Calculate opacity for fade effect on teaser items (only last 2 items fade)
   const getItemOpacity = (index: number): number => {
@@ -75,16 +81,21 @@ export function AnimatedSlotList<T>({
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
 
+    const panelContent = sentinel.closest('[data-component="list-panel-content"]');
+    const root = panelContent instanceof HTMLElement ? panelContent : null;
+
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-        if (entry?.isIntersecting) {
-          onLoadMore();
-        }
+        if (!entry?.isIntersecting || loadMoreTriggeredRef.current) return;
+
+        loadMoreTriggeredRef.current = true;
+        onLoadMore();
       },
       {
+        root,
         // Trigger when sentinel is 200px from viewport
-        rootMargin: "200px",
+        rootMargin: "200px 0px",
         threshold: 0,
       }
     );
@@ -94,10 +105,15 @@ export function AnimatedSlotList<T>({
   }, [isInitialLoad, hasMore, isFetchingMore, onLoadMore]);
 
   // Show teaser overlay when in initial load state with more items
-  const showTeaserOverlay = isInitialLoad && hasMore && !isFetchingMore && !isLoading;
+  const showTeaserOverlay =
+    isInitialLoad &&
+    hasMore &&
+    itemsLength > 5 &&
+    !isFetchingMore &&
+    !isLoading;
 
   return (
-    <div data-component="animated-slot-list" className={cn("relative -mx-2 px-2", className)}>
+    <div data-component="animated-slot-list" className={cn("-mx-2 px-2", className)}>
       {Array.from({ length: slotCount }, (_, index) => {
         const item = !isLoading ? (items?.[index] ?? null) : null;
 
@@ -132,20 +148,8 @@ export function AnimatedSlotList<T>({
       })}
 
       {/* Teaser overlay - entire area is clickable to load more */}
-      {showTeaserOverlay && (
-        <button
-          onClick={onLoadMore}
-          className="absolute inset-x-0 bottom-0 h-36 cursor-pointer group"
-        >
-          {/* Gradient overlay */}
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent" />
-
-          {/* Tap to load more text and chevron */}
-          <div className="absolute inset-x-0 bottom-4 flex flex-col items-center gap-1 text-v3-text-muted text-sm group-hover:text-v3-primary transition-colors">
-            <span>탭하여 더 보기</span>
-            <ChevronDown className="w-5 h-5 animate-ball-bounce" />
-          </div>
-        </button>
+      {showTeaserOverlay && onLoadMore && (
+        <TeaserOverlay onClick={onLoadMore} />
       )}
 
       {/* Loading spinner when fetching more */}
