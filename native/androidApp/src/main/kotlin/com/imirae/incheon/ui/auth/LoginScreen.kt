@@ -1,5 +1,6 @@
 package com.imirae.incheon.ui.auth
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -45,7 +47,12 @@ fun LoginScreen(
     modifier: Modifier = Modifier
 ) {
     val authState by viewModel.authState.collectAsState()
-    var email by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("login_prefs", Context.MODE_PRIVATE) }
+
+    var rememberId by remember { mutableStateOf(prefs.getBoolean("rememberId", false)) }
+    var autoLogin by remember { mutableStateOf(prefs.getBoolean("autoLogin", false)) }
+    var email by remember { mutableStateOf(if (prefs.getBoolean("rememberId", false)) prefs.getString("savedEmail", "") ?: "" else "") }
     var password by remember { mutableStateOf("") }
     var emailError by remember { mutableStateOf<String?>(null) }
     var passwordError by remember { mutableStateOf<String?>(null) }
@@ -61,12 +68,23 @@ fun LoginScreen(
         }
     }
 
+    fun saveLoginPreferences() {
+        prefs.edit()
+            .putBoolean("rememberId", rememberId)
+            .putBoolean("autoLogin", autoLogin)
+            .apply {
+                if (rememberId) putString("savedEmail", email) else remove("savedEmail")
+            }
+            .apply()
+    }
+
     fun validateAndSubmit() {
         val emailResult = Validation.validateEmail(email)
         val passwordResult = Validation.validateRequired(password, "비밀번호")
         emailError = emailResult.errorMessage
         passwordError = passwordResult.errorMessage
         if (emailResult.isValid && passwordResult.isValid) {
+            saveLoginPreferences()
             viewModel.login(email, password)
         }
     }
@@ -163,7 +181,51 @@ fun LoginScreen(
                     shape = RoundedCornerShape(DesignTokens.Radius.md.dp)
                 )
 
-                // Login button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.xl.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable(enabled = !isLoading) { rememberId = !rememberId }
+                            .testTag("auth-login-remember-id")
+                    ) {
+                        Checkbox(
+                            checked = rememberId,
+                            onCheckedChange = { rememberId = it },
+                            enabled = !isLoading,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "아이디 저장",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable(enabled = !isLoading) { autoLogin = !autoLogin }
+                            .testTag("auth-login-auto-login")
+                    ) {
+                        Checkbox(
+                            checked = autoLogin,
+                            onCheckedChange = { autoLogin = it },
+                            enabled = !isLoading,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "자동 로그인",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
                 Button(
                     onClick = { validateAndSubmit() },
                     enabled = !isLoading,

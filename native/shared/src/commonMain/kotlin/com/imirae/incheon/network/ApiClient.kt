@@ -11,6 +11,7 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 interface TokenProvider {
@@ -116,8 +117,26 @@ class ApiClient(
                 throw e
             } catch (_: HttpRequestTimeoutException) {
                 return ApiResult.Error(ApiError.Timeout())
+            } catch (e: SerializationException) {
+                return ApiResult.Error(ApiError.Serialization(e.message ?: "응답 파싱 실패"))
             } catch (e: Exception) {
-                return ApiResult.Error(ApiError.Unknown(e.message ?: "Unknown"))
+                val message = e.message ?: e::class.simpleName ?: "Unknown"
+                val className = e::class.simpleName ?: ""
+                val networkIndicators = listOf(
+                    "UnknownHost", "ConnectException", "SocketException",
+                    "SocketTimeout", "SSLException", "SSLHandshake",
+                    "Unable to resolve host", "Connection refused",
+                    "Network is unreachable", "failed to connect",
+                    "CLEARTEXT", "No address associated", "connect timed out",
+                )
+                val isNetworkError = networkIndicators.any { indicator ->
+                    className.contains(indicator, ignoreCase = true) ||
+                        message.contains(indicator, ignoreCase = true)
+                }
+                if (isNetworkError) {
+                    return ApiResult.Error(ApiError.Network(message))
+                }
+                return ApiResult.Error(ApiError.Unknown(message))
             }
         }
     }
