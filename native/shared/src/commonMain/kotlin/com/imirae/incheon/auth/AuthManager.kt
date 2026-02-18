@@ -26,6 +26,7 @@ import kotlinx.serialization.json.Json
 class AuthManager(
     private val authService: AuthService,
     private val secureStorage: SecureStorage,
+    private val apiBaseUrl: String = "http://10.0.2.2:3001",
 ) : TokenProvider {
     private val sessionPolicy = SessionPolicy(secureStorage)
     private val stepUpAuth = StepUpAuth(secureStorage)
@@ -391,8 +392,9 @@ class AuthManager(
         stepUpAuth.clearStepUp()
     }
 
+    private val authBaseUrl: String get() = apiBaseUrl
+
     private companion object {
-        const val authBaseUrl = "https://api.imirae-incheon.com"
         const val accessTokenKey = "access_token"
         const val refreshTokenKey = "refresh_token"
         val expClaimRegex = "\"exp\"\\s*:\\s*(\\d+)".toRegex()

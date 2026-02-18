@@ -20,7 +20,7 @@ interface TokenProvider {
 }
 
 class ApiClient(
-    private val baseUrl: String = "https://api.imirae-incheon.com",
+    private val baseUrl: String = "http://10.0.2.2:3001",
     private val tokenProviderLazy: Lazy<TokenProvider?> = lazy { null },
     val rateLimitHandler: RateLimitHandler = RateLimitHandler(),
 ) {

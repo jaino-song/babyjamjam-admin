@@ -57,6 +57,7 @@ class ImiraeApplication : Application() {
         if (GlobalContext.getOrNull() == null) {
             startKoin {
                 androidContext(this@ImiraeApplication)
+                properties(mapOf("API_BASE_URL" to BuildConfig.API_BASE_URL))
                 modules(sharedModules + androidModule + phaseFiveAndSixModule)
             }
         }
