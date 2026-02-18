@@ -63,11 +63,8 @@ export function DetailPanel({
         {renderedHeader}
       </div>}
       {tabs && <div className="px-6 pt-4">{tabs}</div>}
-      <div className="relative flex-1 min-h-0">
-        <div className="overflow-y-auto h-full p-6 pt-0">
-          {children}
-        </div>
-        <div className="absolute bottom-0 left-0 right-0 h-6 bg-white pointer-events-none z-20 rounded-b-[28px]" />
+      <div className="overflow-y-auto p-6 pt-0 flex-1 min-h-0">
+        {children}
       </div>
     </div>
   );

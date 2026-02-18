@@ -37,7 +37,7 @@ export function SplitLayout({ children, hasSelection = false, onBack }: SplitLay
       <SplitLayoutContext.Provider value={contextValue}>
         <div
           data-component="split-layout"
-          className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 h-full min-h-0"
+          className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6"
         >
           {children}
         </div>

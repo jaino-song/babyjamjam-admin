@@ -5,12 +5,11 @@ import React from "react";
 interface InfoCardProps {
   title: string;
   children: React.ReactNode;
-  className?: string;
 }
 
-export function InfoCard({ title, children, className }: InfoCardProps) {
+export function InfoCard({ title, children }: InfoCardProps) {
   return (
-    <div data-component="info-card" className={`bg-v3-dim-white rounded-[18px] p-4 ${className ?? ""}`}>
+    <div data-component="info-card" className="bg-v3-dim-white rounded-[18px] p-4">
       <h3 data-component="info-card-title" className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold mb-3">
         {title}
       </h3>

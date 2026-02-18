@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -12,7 +13,6 @@ import {
   StatsBar,
   SplitLayout,
   DetailPanel,
-  DetailTabs,
   InfoCard,
   InfoRow,
   StatusBadge,
@@ -20,23 +20,17 @@ import {
   type ActionRequiredItem,
   type StatusType,
 } from "@/components/app/v3";
-import { useLocale } from "@/providers/LocaleProvider";
-import { t } from "@/lib/i18n/translations";
 import {
   Users,
   Calendar,
   FileSignature,
   Send,
-  MoreVertical,
-  ExternalLink,
+  Phone,
+  FileText,
+  User,
+  MessageSquare,
 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
 import { HeroBanner } from "@/components/app/dashboard/HeroBanner";
 import { Block } from "@/components/app/v3/Block";
@@ -79,19 +73,6 @@ const mapServiceStatusToV3 = (status: string | null): StatusType => {
   }
 };
 
-const formatDate = (dateStr: string | null): string => {
-  if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleDateString("ko-KR");
-};
-
-const formatPrice = (price: string | null): string => {
-  if (!price) return "-";
-  const cleaned = price.replace(/,/g, "");
-  const num = parseInt(cleaned, 10);
-  if (isNaN(num)) return "-";
-  return `${num.toLocaleString("ko-KR")}원`;
-};
-
 const getStatusLabel = (status: string | null): string => {
   switch (status) {
     case "active":
@@ -120,9 +101,7 @@ export default function DashboardPage() {
     refetch: refetchClients,
   } = useClients(1, 50);
   const user = useInitialUser();
-  const locale = useLocale();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [activeDetailTab, setActiveDetailTab] = useState("basic");
 
   const clients = useMemo(() => clientsData?.data ?? [], [clientsData?.data]);
   const hasMoreClients = (clientsData?.total ?? 0) > 50;
@@ -184,16 +163,14 @@ export default function DashboardPage() {
   return (
     <section
       data-component="dashboard"
-      className="flex flex-col gap-6 h-[calc(100dvh-11rem)] md:h-[calc(100dvh-4rem)]"
+      className="space-y-6"
     >
-      <div className="shrink-0">
-        <HeroBanner
-          title={user?.name ? `${user?.name} 님` : "다시 로그인 해주세요"}
-          subtitle={user?.organizationName ?? ""}
-        />
-      </div>
+      <HeroBanner
+        title={user?.name ? `${user?.name} 님` : "다시 로그인 해주세요"}
+        subtitle={user?.organizationName ?? ""}
+      />
 
-      <Block name="dashboard-stats" className="shrink-0">
+      <Block name="dashboard-stats">
         <StatsBar
           name="dashboard"
           isLoading={statsLoading}
@@ -209,13 +186,12 @@ export default function DashboardPage() {
 
       <Block
         name="dashboard-split"
-        className="flex-1 min-h-0"
       >
         <SplitLayout
           hasSelection={!!selectedClientData}
           onBack={() => setSelectedClient(null)}
         >
-          <Block name="dashboard-activities-panel" className="h-full min-h-0">
+          <Block name="dashboard-activities-panel">
             <RecentActivitiesPanel
               actionRequiredItems={actionRequiredClients}
               upcomingItems={upcomingClients}
@@ -242,18 +218,10 @@ export default function DashboardPage() {
               }
               title={selectedClientData.name}
               badges={
-                <>
-                  <StatusBadge
-                    status={mapServiceStatusToV3(selectedClientData.serviceStatus)}
-                    label={getStatusLabel(selectedClientData.serviceStatus)}
-                  />
-                  {selectedClientData.breastPump && (
-                    <StatusBadge status="breastPump" />
-                  )}
-                  {selectedClientData.careCenter && (
-                    <StatusBadge status="careCenter" />
-                  )}
-                </>
+                <StatusBadge
+                  status={mapServiceStatusToV3(selectedClientData.serviceStatus)}
+                  label={getStatusLabel(selectedClientData.serviceStatus)}
+                />
               }
               subtitle={
                 <>
@@ -261,80 +229,85 @@ export default function DashboardPage() {
                   {selectedClientData.duration ? `${selectedClientData.duration}일` : "-"}
                 </>
               }
-              trailing={
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors">
-                      <MoreVertical className="w-5 h-5 text-v3-text-muted" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="min-w-[140px]">
-                    <DropdownMenuItem asChild className="gap-2">
-                      <Link href={`/clients?id=${selectedClientData.id}`}>
-                        <ExternalLink className="w-4 h-4" />
-                        고객 상세 보기
-                      </Link>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              }
-              tabs={
-                <DetailTabs
-                  tabs={[
-                    { key: "basic", label: "기본 정보" },
-                    { key: "contracts", label: "계약서 정보" },
-                    { key: "alimtalk", label: "알림톡 발송 현황" },
-                  ]}
-                  activeTab={activeDetailTab}
-                  onTabChange={setActiveDetailTab}
-                />
-              }
             >
               <div className="space-y-4">
-                {activeDetailTab === "basic" && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <InfoCard title={t(locale, "clients.form.customer-info") || "고객 정보"} className="col-start-1 row-start-1 row-end-3">
-                      <InfoRow label={t(locale, "clients.form.name")} value={selectedClientData.name} />
-                      <InfoRow label={t(locale, "clients.form.birthday")} value={selectedClientData.birthday || "-"} />
-                      <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(selectedClientData.dueDate)} />
-                      <InfoRow label={t(locale, "clients.form.phone")} value={selectedClientData.phone || "-"} />
-                      <InfoRow label={t(locale, "clients.form.address")} value={selectedClientData.address || "-"} />
-                    </InfoCard>
+                <div className="flex gap-2">
+                  {selectedClientData.phone ? (
+                    <Button
+                      asChild
+                      variant="ghost"
+                      className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                    >
+                      <a href={`tel:${selectedClientData.phone}`}>
+                        <Phone className="w-4 h-4" />
+                        <span className="text-[10px] font-semibold">전화</span>
+                      </a>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      disabled
+                      className="flex-1 flex-col h-auto py-3 gap-1 rounded-[14px]"
+                    >
+                      <Phone className="w-4 h-4" />
+                      <span className="text-[10px] font-semibold">전화</span>
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    <span className="text-[10px] font-semibold">메시지</span>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="ghost"
+                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                  >
+                    <Link href={`/clients?id=${selectedClientData.id}`}>
+                      <User className="w-4 h-4" />
+                      <span className="text-[10px] font-semibold">고객상세</span>
+                    </Link>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="ghost"
+                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                  >
+                    <Link href={`/contracts?clientId=${selectedClientData.id}`}>
+                      <FileText className="w-4 h-4" />
+                      <span className="text-[10px] font-semibold">계약</span>
+                    </Link>
+                  </Button>
+                </div>
 
-                    <InfoCard title={t(locale, "clients.form.assigned-employee") || "담당 관리사"} className="col-start-1 row-start-3 row-end-5">
-                      <InfoRow label={t(locale, "clients.form.primary-employee")} value={selectedClientData.primaryEmployee?.name ?? "-"} />
-                      <InfoRow label={t(locale, "clients.form.secondary-employee")} value={selectedClientData.secondaryEmployee?.name ?? "-"} />
-                    </InfoCard>
+                <InfoCard title="기본 정보">
+                  <InfoRow label="이름" value={selectedClientData.name} />
+                  <InfoRow label="연락처" value={selectedClientData.phone || "-"} />
+                  <InfoRow label="주소" value={selectedClientData.address || "-"} />
+                  <InfoRow label="출산예정일" value={selectedClientData.dueDate || "-"} />
+                </InfoCard>
 
-                    <InfoCard title={t(locale, "clients.form.service-info") || "서비스 정보"} className="col-start-2 row-start-1 row-end-5">
-                      <InfoRow label={t(locale, "clients.form.voucher-type")} value={selectedClientData.type || "-"} />
-                      <InfoRow label={t(locale, "clients.form.duration")} value={selectedClientData.duration ? `${selectedClientData.duration}일` : "-"} />
-                      <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(selectedClientData.startDate)} />
-                      <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(selectedClientData.endDate)} />
-                      <InfoRow label={t(locale, "clients.form.full-price")} value={formatPrice(selectedClientData.fullPrice)} />
-                      <InfoRow label={t(locale, "clients.form.grant")} value={formatPrice(selectedClientData.grant)} />
-                      <InfoRow label={t(locale, "clients.form.actual-price")} value={formatPrice(selectedClientData.actualPrice)} />
-                    </InfoCard>
-                  </div>
-                )}
-
-                {activeDetailTab === "contracts" && (
-                  <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                    계약서 정보가 없습니다
-                  </div>
-                )}
-
-                {activeDetailTab === "alimtalk" && (
-                  <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                    알림톡 발송 현황이 없습니다
-                  </div>
-                )}
+                <InfoCard title="서비스 정보">
+                  <InfoRow label="바우처 유형" value={selectedClientData.type || "-"} />
+                  <InfoRow
+                    label="기간"
+                    value={selectedClientData.duration ? `${selectedClientData.duration}일` : "-"}
+                  />
+                  <InfoRow label="시작일" value={selectedClientData.startDate ? new Date(selectedClientData.startDate).toLocaleDateString("ko-KR") : "-"} />
+                  <InfoRow label="종료일" value={selectedClientData.endDate ? new Date(selectedClientData.endDate).toLocaleDateString("ko-KR") : "-"} />
+                  <InfoRow
+                    label="담당 직원"
+                    value={selectedClientData.primaryEmployee?.name || "-"}
+                  />
+                </InfoCard>
               </div>
             </DetailPanel>
           ) : (
             <Block
               name="dashboard-detail-empty"
-              className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center h-full"
+              className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]"
             >
               <div className="text-center text-v3-text-muted">
                 <p className="text-[0.8rem] font-semibold">
