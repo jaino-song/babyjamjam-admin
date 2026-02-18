@@ -16,9 +16,12 @@ enum AppRoute: Hashable {
     case contractCreate
     // Phase 5 routes
     case messages
+    case messageNew
+    case messageEdit(id: String)
     case chat
     case files
     case settings
+    case voucherPrices
     case admin
 }
 
@@ -69,8 +72,37 @@ struct AppNavigation: View {
                     ContractListView(onNavigateToCreate: { path.append(AppRoute.contractCreate) })
                 case .contractCreate:
                     ContractCreationView(onNavigateBack: { path.removeLast() })
-                default:
-                    Text("Coming soon")
+                // Phase 5 routes
+                case .messages:
+                    TemplateListView(
+                        onNavigateToNew: { path.append(AppRoute.messageNew) },
+                        onNavigateToEdit: { id in path.append(AppRoute.messageEdit(id: id)) }
+                    )
+                case .messageNew:
+                    TemplateNewView(onNavigateBack: { path.removeLast() })
+                case .messageEdit(let id):
+                    TemplateEditView(templateId: id, onNavigateBack: { path.removeLast() })
+                case .chat:
+                    ChatView()
+                case .files:
+                    FileListView()
+                case .settings:
+                    SettingsView(
+                        onNavigateToVoucherPrices: { path.append(AppRoute.voucherPrices) },
+                        onLogout: { path = NavigationPath() }
+                    )
+                case .voucherPrices:
+                    VoucherPriceView(onNavigateBack: { path.removeLast() })
+                case .admin:
+                    AdminFeedbackView()
+                case .login:
+                    LoginView(
+                        onNavigateToRegister: { path.append(AppRoute.register) },
+                        onNavigateToForgotPassword: { path.append(AppRoute.forgotPassword) },
+                        onNavigateToVerifyEmail: { path.append(AppRoute.verifyEmail) },
+                        onNavigateToDashboard: { path = NavigationPath(); path.append(AppRoute.dashboard) },
+                        onNavigateToSelectOrg: { path.append(AppRoute.selectOrg) }
+                    )
                 }
             }
         }

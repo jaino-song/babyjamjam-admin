@@ -12,6 +12,11 @@ import com.imirae.incheon.ui.clients.*
 import com.imirae.incheon.ui.contracts.*
 import com.imirae.incheon.ui.dashboard.DashboardScreen
 import com.imirae.incheon.ui.employees.EmployeeListScreen
+import com.imirae.incheon.ui.messages.*
+import com.imirae.incheon.ui.chat.ChatScreen
+import com.imirae.incheon.ui.files.FileListScreen
+import com.imirae.incheon.ui.settings.*
+import com.imirae.incheon.ui.admin.AdminFeedbackScreen
 import com.imirae.incheon.viewmodel.*
 
 object Routes {
@@ -28,11 +33,13 @@ object Routes {
     const val EMPLOYEE_LIST = "employees"
     const val CONTRACT_LIST = "contracts"
     const val CONTRACT_CREATE = "contracts/create"
-    // Phase 5 routes (placeholders)
     const val MESSAGES = "messages"
+    const val MESSAGE_NEW = "messages/new"
+    const val MESSAGE_EDIT = "messages/{templateId}/edit"
     const val CHAT = "chat"
     const val FILES = "files"
     const val SETTINGS = "settings"
+    const val VOUCHER_PRICES = "settings/voucher-prices"
     const val ADMIN = "admin"
 }
 
@@ -45,6 +52,11 @@ fun AppNavGraph(
     clientDetailViewModel: ClientDetailViewModel,
     employeeListViewModel: EmployeeListViewModel,
     contractListViewModel: ContractListViewModel,
+    messageTemplateViewModel: MessageTemplateViewModel,
+    chatViewModel: ChatViewModel,
+    fileListViewModel: FileListViewModel,
+    settingsViewModel: SettingsViewModel,
+    adminViewModel: AdminViewModel,
     startDestination: String = Routes.LOGIN,
     modifier: Modifier = Modifier
 ) {
@@ -117,6 +129,40 @@ fun AppNavGraph(
         }
         composable(Routes.CONTRACT_CREATE) {
             ContractCreationScreen(viewModel = contractListViewModel, onNavigateBack = { navController.popBackStack() })
+        }
+
+        // Phase 5: Feature screens
+        composable(Routes.MESSAGES) {
+            TemplateListScreen(
+                viewModel = messageTemplateViewModel,
+                onNavigateToNew = { navController.navigate(Routes.MESSAGE_NEW) },
+                onNavigateToEdit = { id -> navController.navigate("messages/$id/edit") }
+            )
+        }
+        composable(Routes.MESSAGE_NEW) {
+            TemplateNewScreen(viewModel = messageTemplateViewModel, onNavigateBack = { navController.popBackStack() })
+        }
+        composable(Routes.MESSAGE_EDIT, arguments = listOf(navArgument("templateId") { type = NavType.StringType })) { backStackEntry ->
+            val templateId = backStackEntry.arguments?.getString("templateId") ?: ""
+            TemplateEditScreen(viewModel = messageTemplateViewModel, templateId = templateId, onNavigateBack = { navController.popBackStack() })
+        }
+        composable(Routes.CHAT) {
+            ChatScreen(viewModel = chatViewModel)
+        }
+        composable(Routes.FILES) {
+            FileListScreen(viewModel = fileListViewModel)
+        }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                onNavigateToVoucherPrices = { navController.navigate(Routes.VOUCHER_PRICES) },
+                onLogout = { navController.navigate(Routes.LOGIN) { popUpTo(0) } }
+            )
+        }
+        composable(Routes.VOUCHER_PRICES) {
+            VoucherPriceScreen(viewModel = settingsViewModel, onNavigateBack = { navController.popBackStack() })
+        }
+        composable(Routes.ADMIN) {
+            AdminFeedbackScreen(viewModel = adminViewModel)
         }
     }
 }
