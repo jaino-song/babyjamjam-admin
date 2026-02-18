@@ -5,12 +5,23 @@ import com.imirae.incheon.auth.SecureStorage
 import com.imirae.incheon.auth.SessionPolicy
 import com.imirae.incheon.auth.StepUpAuth
 import com.imirae.incheon.data.remote.*
+import com.imirae.incheon.deeplink.DeepLinkRouter
+import com.imirae.incheon.media.MediaPicker
+import com.imirae.incheon.notification.NotificationManager
 import com.imirae.incheon.network.ApiClient
+import com.imirae.incheon.network.RateLimitHandler
+import com.imirae.incheon.viewmodel.AdminViewModel
 import com.imirae.incheon.viewmodel.AuthViewModel
+import com.imirae.incheon.viewmodel.ChatViewModel
+import com.imirae.incheon.viewmodel.FileListViewModel
+import com.imirae.incheon.viewmodel.MessageTemplateViewModel
+import com.imirae.incheon.viewmodel.SettingsViewModel
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 val networkModule = module {
-    single { ApiClient(baseUrl = "https://api.imirae-incheon.com", tokenProvider = get<AuthManager>()) }
+    single { RateLimitHandler() }
+    single { ApiClient(baseUrl = "https://api.imirae-incheon.com", tokenProvider = get<AuthManager>(), rateLimitHandler = get()) }
 }
 
 val serviceModule = module {
@@ -32,4 +43,18 @@ val authModule = module {
     single { AuthViewModel(get()) }
 }
 
-val sharedModules = listOf(networkModule, serviceModule, authModule)
+val phaseFiveAndSixModule = module {
+    single { DeepLinkRouter() }
+    single { NotificationManager(get(), get()) }
+
+    single { MessageTemplateViewModel(get()) }
+    single { ChatViewModel(get()) }
+    single { FileListViewModel(get()) }
+    single { SettingsViewModel(get()) }
+    single { AdminViewModel() }
+
+    single<MediaPicker> { get(named("platformMediaPicker")) }
+    single(named("callRecordingManager")) { get<Any>(named("androidCallRecordingManager")) }
+}
+
+val sharedModules = listOf(networkModule, serviceModule, authModule, phaseFiveAndSixModule)

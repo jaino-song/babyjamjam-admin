@@ -1,46 +1,361 @@
 package com.imirae.incheon.ui.settings
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.AttachMoney
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.imirae.incheon.design.DesignTokens
+import com.imirae.incheon.domain.models.UserSettings
+import com.imirae.incheon.ui.components.ErrorScreen
+import com.imirae.incheon.ui.components.LoadingScreen
+import com.imirae.incheon.viewmodel.SettingsViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onNavigateToVoucherPrices: () -> Unit, onLogout: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(DesignTokens.Spacing.lg.dp).testTag("settings-screen"), verticalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.md.dp)) {
-        Text("설정", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.testTag("settings-title"))
-        SettingsItem(icon = Icons.Default.AttachMoney, title = "바우처 가격 관리", subtitle = "바우처 가격 정보를 관리합니다", onClick = onNavigateToVoucherPrices, tag = "settings-voucher-prices")
-        SettingsItem(icon = Icons.Default.Notifications, title = "알림 설정", subtitle = "푸시 알림을 관리합니다", onClick = {}, tag = "settings-notifications")
-        SettingsItem(icon = Icons.Default.Security, title = "보안", subtitle = "비밀번호 및 보안 설정", onClick = {}, tag = "settings-security")
-        SettingsItem(icon = Icons.Default.Info, title = "앱 정보", subtitle = "버전 및 라이선스 정보", onClick = {}, tag = "settings-about")
-        Spacer(modifier = Modifier.height(DesignTokens.Spacing.xl.dp))
-        OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth().testTag("settings-logout"), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
-            Icon(Icons.Default.Logout, null, modifier = Modifier.size(18.dp)); Spacer(modifier = Modifier.width(8.dp)); Text("로그아웃")
+fun SettingsScreen(
+    viewModel: SettingsViewModel,
+    onNavigateToVoucherPrices: () -> Unit,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    var notificationsEnabled by rememberSaveable { mutableStateOf(true) }
+    var language by rememberSaveable { mutableStateOf("ko") }
+    var theme by rememberSaveable { mutableStateOf("system") }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadSettings()
+    }
+
+    LaunchedEffect(uiState.settings) {
+        val currentSettings = uiState.settings ?: return@LaunchedEffect
+        notificationsEnabled = currentSettings.notifications
+        language = currentSettings.language
+        theme = currentSettings.theme
+    }
+
+    Scaffold(
+        modifier = modifier.fillMaxSize().testTag("settings-screen"),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "설정",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.testTag("settings-title")
+                    )
+                },
+                actions = {
+                    IconButton(
+                        onClick = { viewModel.refresh() },
+                        modifier = Modifier.testTag("settings-refresh-button")
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "설정 새로고침")
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        when {
+            uiState.isLoading && uiState.settings == null -> {
+                LoadingScreen(modifier = Modifier.padding(innerPadding))
+            }
+
+            uiState.error != null && uiState.settings == null -> {
+                ErrorScreen(
+                    message = uiState.error ?: "설정을 불러오지 못했습니다",
+                    onRetry = { viewModel.refresh() },
+                    modifier = Modifier.padding(innerPadding)
+                )
+            }
+
+            else -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                        .verticalScroll(rememberScrollState())
+                        .padding(DesignTokens.Spacing.lg.dp)
+                        .testTag("settings-content"),
+                    verticalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.md.dp)
+                ) {
+                    SettingsToggleCard(
+                        iconTag = "settings-notifications-icon",
+                        title = "알림",
+                        subtitle = "푸시 알림 수신을 설정합니다",
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        trailingControl = {
+                            Switch(
+                                checked = notificationsEnabled,
+                                onCheckedChange = { notificationsEnabled = it },
+                                modifier = Modifier.testTag("settings-notifications-switch")
+                            )
+                        }
+                    )
+
+                    SettingsSelectionCard(
+                        title = "언어",
+                        subtitle = "앱에서 사용할 언어를 선택합니다",
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Language,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.testTag("settings-language-icon")
+                            )
+                        },
+                        options = listOf("ko" to "한국어", "en" to "English"),
+                        selectedValue = language,
+                        onSelect = { language = it },
+                        optionTagPrefix = "settings-language-option"
+                    )
+
+                    SettingsSelectionCard(
+                        title = "테마",
+                        subtitle = "앱 테마를 선택합니다",
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Palette,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.testTag("settings-theme-icon")
+                            )
+                        },
+                        options = listOf("light" to "라이트", "dark" to "다크", "system" to "시스템"),
+                        selectedValue = theme,
+                        onSelect = { theme = it },
+                        optionTagPrefix = "settings-theme-option"
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.sm.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                viewModel.updateSettings(
+                                    UserSettings(
+                                        notifications = notificationsEnabled,
+                                        language = language,
+                                        theme = theme
+                                    )
+                                )
+                            },
+                            enabled = !uiState.isSaving,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(DesignTokens.Spacing.xxxl.dp)
+                                .testTag("settings-save-button"),
+                            shape = RoundedCornerShape(DesignTokens.Radius.md)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null)
+                            Text(
+                                text = "저장",
+                                modifier = Modifier.padding(start = DesignTokens.Spacing.xs.dp)
+                            )
+                        }
+
+                        Button(
+                            onClick = onNavigateToVoucherPrices,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(DesignTokens.Spacing.xxxl.dp)
+                                .testTag("settings-voucher-prices-button"),
+                            shape = RoundedCornerShape(DesignTokens.Radius.md)
+                        ) {
+                            Icon(Icons.Default.AttachMoney, contentDescription = null)
+                            Text(
+                                text = "바우처",
+                                modifier = Modifier.padding(start = DesignTokens.Spacing.xs.dp)
+                            )
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = onLogout,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(DesignTokens.Spacing.xxxl.dp)
+                            .testTag("settings-logout-button"),
+                        shape = RoundedCornerShape(DesignTokens.Radius.md)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Logout,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Text(
+                            text = "로그아웃",
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = DesignTokens.Spacing.xs.dp)
+                        )
+                    }
+
+                    if (uiState.saveSuccess) {
+                        Text(
+                            text = "설정이 저장되었습니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.testTag("settings-save-success")
+                        )
+                    }
+
+                    if (uiState.error != null) {
+                        Text(
+                            text = uiState.error ?: "오류가 발생했습니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("settings-inline-error")
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun SettingsItem(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, tag: String) {
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).testTag(tag), shape = RoundedCornerShape(DesignTokens.Radius.md), elevation = CardDefaults.cardElevation(1.dp)) {
-        Row(modifier = Modifier.padding(DesignTokens.Spacing.lg.dp), horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.md.dp)) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun SettingsToggleCard(
+    iconTag: String,
+    title: String,
+    subtitle: String,
+    leadingIcon: @Composable () -> Unit,
+    trailingControl: @Composable () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(DesignTokens.Radius.md),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(DesignTokens.Spacing.lg.dp),
+            horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.md.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(modifier = Modifier.testTag(iconTag)) {
+                leadingIcon()
             }
-            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            trailingControl()
+        }
+    }
+}
+
+@Composable
+private fun SettingsSelectionCard(
+    title: String,
+    subtitle: String,
+    leadingIcon: @Composable () -> Unit,
+    options: List<Pair<String, String>>,
+    selectedValue: String,
+    onSelect: (String) -> Unit,
+    optionTagPrefix: String
+) {
+    Card(
+        shape = RoundedCornerShape(DesignTokens.Radius.md),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(DesignTokens.Spacing.lg.dp),
+            verticalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.sm.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.md.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                leadingIcon()
+                Column {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.sm.dp)
+            ) {
+                options.forEach { (value, label) ->
+                    FilterChip(
+                        selected = value == selectedValue,
+                        onClick = { onSelect(value) },
+                        label = { Text(label) },
+                        modifier = Modifier.testTag("$optionTagPrefix-$value")
+                    )
+                }
+            }
         }
     }
 }

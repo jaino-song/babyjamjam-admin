@@ -41,6 +41,9 @@ object Routes {
     const val SETTINGS = "settings"
     const val VOUCHER_PRICES = "settings/voucher-prices"
     const val ADMIN = "admin"
+
+    fun clientDetail(clientId: String): String = "clients/$clientId"
+    fun messageEdit(templateId: String): String = "messages/$templateId/edit"
 }
 
 @Composable
@@ -100,13 +103,13 @@ fun AppNavGraph(
                 onNavigateToClients = { navController.navigate(Routes.CLIENT_LIST) },
                 onNavigateToEmployees = { navController.navigate(Routes.EMPLOYEE_LIST) },
                 onNavigateToContracts = { navController.navigate(Routes.CONTRACT_LIST) },
-                onNavigateToClientDetail = { id -> navController.navigate("clients/$id") }
+                onNavigateToClientDetail = { id -> navController.navigate(Routes.clientDetail(id)) }
             )
         }
         composable(Routes.CLIENT_LIST) {
             ClientListScreen(
                 viewModel = clientListViewModel,
-                onNavigateToDetail = { id -> navController.navigate("clients/$id") },
+                onNavigateToDetail = { id -> navController.navigate(Routes.clientDetail(id)) },
                 onNavigateToNew = { navController.navigate(Routes.CLIENT_NEW) }
             )
         }
@@ -136,7 +139,7 @@ fun AppNavGraph(
             TemplateListScreen(
                 viewModel = messageTemplateViewModel,
                 onNavigateToNew = { navController.navigate(Routes.MESSAGE_NEW) },
-                onNavigateToEdit = { id -> navController.navigate("messages/$id/edit") }
+                onNavigateToEdit = { id -> navController.navigate(Routes.messageEdit(id)) }
             )
         }
         composable(Routes.MESSAGE_NEW) {
@@ -154,6 +157,7 @@ fun AppNavGraph(
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
+                viewModel = settingsViewModel,
                 onNavigateToVoucherPrices = { navController.navigate(Routes.VOUCHER_PRICES) },
                 onLogout = { navController.navigate(Routes.LOGIN) { popUpTo(0) } }
             )

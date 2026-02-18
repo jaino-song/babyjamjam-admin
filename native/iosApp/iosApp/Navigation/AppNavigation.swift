@@ -1,4 +1,5 @@
 import SwiftUI
+import shared
 
 enum AppRoute: Hashable {
     case login
@@ -106,5 +107,49 @@ struct AppNavigation: View {
                 }
             }
         }
+    }
+}
+
+private final class IOSFeatureDependencyContainer {
+    static let shared = IOSFeatureDependencyContainer()
+
+    let templateService: TemplateService
+    let chatService: ChatService
+    let fileService: FileService
+    let settingsService: SettingsService
+
+    private init() {
+        let secureStorage = IosSecureStorage()
+        let anonymousClient = ApiClient(tokenProvider: nil)
+        let authService = AuthServiceImpl(apiClient: anonymousClient)
+        let authManager = AuthManager(authService: authService, secureStorage: secureStorage)
+        let authenticatedClient = ApiClient(tokenProvider: authManager)
+
+        self.templateService = TemplateServiceImpl(apiClient: authenticatedClient)
+        self.chatService = ChatServiceImpl(apiClient: authenticatedClient)
+        self.fileService = FileServiceImpl(apiClient: authenticatedClient)
+        self.settingsService = SettingsServiceImpl(apiClient: authenticatedClient)
+    }
+}
+
+extension KoinHelper {
+    func messageTemplateViewModel() -> MessageTemplateViewModel {
+        MessageTemplateViewModel(templateService: IOSFeatureDependencyContainer.shared.templateService)
+    }
+
+    func chatViewModel() -> ChatViewModel {
+        ChatViewModel(chatService: IOSFeatureDependencyContainer.shared.chatService)
+    }
+
+    func fileListViewModel() -> FileListViewModel {
+        FileListViewModel(fileService: IOSFeatureDependencyContainer.shared.fileService)
+    }
+
+    func settingsViewModel() -> SettingsViewModel {
+        SettingsViewModel(settingsService: IOSFeatureDependencyContainer.shared.settingsService)
+    }
+
+    func adminViewModel() -> AdminViewModel {
+        AdminViewModel()
     }
 }
