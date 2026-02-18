@@ -31,7 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -178,7 +178,7 @@ fun TemplateNewScreen(
                     viewModel.createTemplate(
                         title = title,
                         content = content,
-                        category = category.ifBlank { null }
+                        category = if (category.isBlank()) null else category
                     )
                 },
                 enabled = canSubmit,

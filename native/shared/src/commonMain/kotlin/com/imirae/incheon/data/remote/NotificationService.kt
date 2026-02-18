@@ -1,6 +1,7 @@
 package com.imirae.incheon.data.remote
 import com.imirae.incheon.domain.models.*
 import com.imirae.incheon.network.*
+import io.ktor.client.request.setBody
 
 interface NotificationService {
     suspend fun getNotifications(): ApiResult<List<Notification>>

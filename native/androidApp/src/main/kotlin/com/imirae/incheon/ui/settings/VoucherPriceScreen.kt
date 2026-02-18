@@ -148,7 +148,7 @@ private fun VoucherPriceItem(price: VoucherPrice) {
 
         if (!price.description.isNullOrBlank()) {
             Text(
-                text = price.description,
+                text = price.description ?: "",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier

@@ -150,7 +150,7 @@ private fun TemplateListItem(
                     color = MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     Text(
-                        text = template.category,
+                        text = template.category ?: "",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(

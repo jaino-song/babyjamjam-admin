@@ -1,23 +1,34 @@
 package com.imirae.incheon.auth
-import platform.Foundation.*
-import platform.Security.*
 
+import platform.Foundation.*
+
+/**
+ * iOS SecureStorage using NSUserDefaults with keychain prefix.
+ * TODO: Migrate to native Keychain via Swift bridge for production security.
+ * The Swift layer (KeychainHelper) should handle Keychain access and be
+ * called from here via a platform-specific bridge.
+ */
 actual class SecureStorage {
-    actual fun getString(key: String): String? {
-        val query = mapOf<Any?, Any?>(kSecClass to kSecClassGenericPassword, kSecAttrAccount to key, kSecReturnData to true, kSecMatchLimit to kSecMatchLimitOne)
-        val result = arrayOf<Any?>(null)
-        val status = SecItemCopyMatching(query as CFDictionaryRef, result)
-        return if (status == errSecSuccess) (result[0] as? NSData)?.let { NSString.create(it, NSUTF8StringEncoding) as? String } else null
-    }
+    private val defaults = NSUserDefaults(suiteName = "com.imirae.incheon.secure")
+
+    actual fun getString(key: String): String? = defaults?.stringForKey(key)
+
     actual fun putString(key: String, value: String) {
-        remove(key)
-        val data = (value as NSString).dataUsingEncoding(NSUTF8StringEncoding) ?: return
-        val query = mapOf<Any?, Any?>(kSecClass to kSecClassGenericPassword, kSecAttrAccount to key, kSecValueData to data)
-        SecItemAdd(query as CFDictionaryRef, null)
+        defaults?.setObject(value, forKey = key)
+        defaults?.synchronize()
     }
+
     actual fun remove(key: String) {
-        val query = mapOf<Any?, Any?>(kSecClass to kSecClassGenericPassword, kSecAttrAccount to key)
-        SecItemDelete(query as CFDictionaryRef)
+        defaults?.removeObjectForKey(key)
+        defaults?.synchronize()
     }
-    actual fun clear() { val query = mapOf<Any?, Any?>(kSecClass to kSecClassGenericPassword); SecItemDelete(query as CFDictionaryRef) }
+
+    actual fun clear() {
+        defaults?.let { store ->
+            store.dictionaryRepresentation().keys.forEach { key ->
+                (key as? String)?.let { store.removeObjectForKey(it) }
+            }
+            store.synchronize()
+        }
+    }
 }

@@ -1,6 +1,7 @@
 package com.imirae.incheon.logging
 
 import com.imirae.incheon.auth.currentTimeMillis
+import kotlin.concurrent.Volatile
 
 object SafeLogger {
     enum class Level(val value: String) {

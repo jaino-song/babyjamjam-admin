@@ -39,9 +39,9 @@ class CachePolicy(
             return "${rule.keyPrefix}:$normalizedPath"
         }
 
-        val normalizedQuery = queryParams.toSortedMap()
-            .entries
-            .joinToString(separator = "&") { (key, value) -> "$key=$value" }
+        val normalizedQuery = queryParams.entries
+            .sortedBy { entry -> entry.key }
+            .joinToString(separator = "&") { entry -> "${entry.key}=${entry.value}" }
 
         return "${rule.keyPrefix}:$normalizedPath?$normalizedQuery"
     }
