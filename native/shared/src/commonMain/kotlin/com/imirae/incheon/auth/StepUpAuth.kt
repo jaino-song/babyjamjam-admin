@@ -4,9 +4,18 @@ enum class SensitiveOperation { VIEW_RECORDINGS, ADMIN_ACTIONS, ACCOUNT_CHANGES,
 
 class StepUpAuth(private val secureStorage: SecureStorage) {
     private val stepUpValidityMs = 5 * 60 * 1000L // 5 minutes
+    private val lastStepUpKey = "last_step_up"
+
     fun requiresStepUp(operation: SensitiveOperation): Boolean {
-        val lastStepUp = secureStorage.getString("last_step_up")?.toLongOrNull() ?: return true
+        val lastStepUp = secureStorage.getString(lastStepUpKey)?.toLongOrNull() ?: return true
         return (currentTimeMillis() - lastStepUp) > stepUpValidityMs
     }
-    fun confirmStepUp() { secureStorage.putString("last_step_up", currentTimeMillis().toString()) }
+
+    fun confirmStepUp() {
+        secureStorage.putString(lastStepUpKey, currentTimeMillis().toString())
+    }
+
+    fun clearStepUp() {
+        secureStorage.remove(lastStepUpKey)
+    }
 }
