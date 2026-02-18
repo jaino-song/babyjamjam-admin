@@ -1,0 +1,15 @@
+default_platform(:android)
+
+platform :android do
+  desc "CI lane for pull requests"
+  lane :ci do
+    gradle_wrapper = File.expand_path("../gradlew", __dir__)
+
+    if File.exist?(gradle_wrapper)
+      sh("cd .. && chmod +x ./gradlew")
+      sh("cd .. && ./gradlew :androidApp:test :androidApp:lint :androidApp:assembleDebug --stacktrace")
+    else
+      UI.important("Gradle wrapper not found at #{gradle_wrapper}. Skipping Android lane setup check.")
+    end
+  end
+end

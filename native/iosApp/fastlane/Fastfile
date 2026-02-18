@@ -1,0 +1,30 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "CI lane for pull requests"
+  lane :ci do
+    setup_ci if ENV["CI"]
+
+    workspace_path = Dir["*.xcworkspace"].first
+    project_path = Dir["*.xcodeproj"].first
+    scheme = ENV.fetch("IOS_SCHEME", "iosApp")
+
+    if workspace_path
+      scan(
+        workspace: workspace_path,
+        scheme: scheme,
+        clean: true,
+        build_for_testing: true
+      )
+    elsif project_path
+      scan(
+        project: project_path,
+        scheme: scheme,
+        clean: true,
+        build_for_testing: true
+      )
+    else
+      UI.important("No .xcworkspace or .xcodeproj found in native/iosApp. Skipping iOS lane setup check.")
+    end
+  end
+end

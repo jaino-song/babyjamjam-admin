@@ -12,7 +12,11 @@ kotlin {
         it.binaries.framework { baseName = "shared"; isStatic = true }
     }
     sourceSets {
+        all {
+            languageSettings.optIn("kotlinx.cinterop.ExperimentalForeignApi")
+        }
         commonMain.dependencies {
+            api(libs.kmp.viewmodel.core)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.json)

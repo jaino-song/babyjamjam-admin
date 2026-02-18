@@ -5,6 +5,7 @@ ktor = "3.0.3"
 koin = "4.0.1"
 coroutines = "1.9.0"
 serialization = "1.7.3"
+kmp-viewmodel = "1.0.0-BETA-8"
 compose-bom = "2024.12.01"
 activity-compose = "1.9.3"
 navigation-compose = "2.8.5"
@@ -35,6 +36,7 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 koin-core = { group = "io.insert-koin", name = "koin-core", version.ref = "koin" }
 koin-android = { group = "io.insert-koin", name = "koin-android", version.ref = "koin" }
 koin-compose = { group = "io.insert-koin", name = "koin-androidx-compose", version.ref = "koin" }
+kmp-viewmodel-core = { group = "com.rickclephas.kmp", name = "kmp-observableviewmodel-core", version.ref = "kmp-viewmodel" }
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebase-bom" }
 firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
 kakao-sdk = { group = "com.kakao.sdk", name = "v2-user", version.ref = "kakao-sdk" }
