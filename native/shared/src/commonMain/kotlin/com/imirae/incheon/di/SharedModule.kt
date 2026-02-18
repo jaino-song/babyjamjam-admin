@@ -21,7 +21,7 @@ import org.koin.dsl.module
 
 val networkModule = module {
     single { RateLimitHandler() }
-    single { ApiClient(baseUrl = "https://api.imirae-incheon.com", tokenProvider = get<AuthManager>(), rateLimitHandler = get()) }
+    single { ApiClient(baseUrl = "https://api.imirae-incheon.com", tokenProviderLazy = lazy { get<AuthManager>() }, rateLimitHandler = get()) }
 }
 
 val serviceModule = module {

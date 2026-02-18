@@ -20,9 +20,10 @@ interface TokenProvider {
 
 class ApiClient(
     private val baseUrl: String = "https://api.imirae-incheon.com",
-    private val tokenProvider: TokenProvider? = null,
+    private val tokenProviderLazy: Lazy<TokenProvider?> = lazy { null },
     val rateLimitHandler: RateLimitHandler = RateLimitHandler(),
 ) {
+    private val tokenProvider: TokenProvider? get() = tokenProviderLazy.value
     val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
 
     val httpClient = HttpClient(platformEngine()) {
