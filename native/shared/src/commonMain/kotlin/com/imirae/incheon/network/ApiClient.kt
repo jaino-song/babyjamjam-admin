@@ -115,10 +115,6 @@ class ApiClient(
                 throw e
             } catch (_: HttpRequestTimeoutException) {
                 return ApiResult.Error(ApiError.Timeout())
-            } catch (_: ConnectTimeoutException) {
-                return ApiResult.Error(ApiError.Timeout())
-            } catch (_: SocketTimeoutException) {
-                return ApiResult.Error(ApiError.Timeout())
             } catch (e: Exception) {
                 return ApiResult.Error(ApiError.Unknown(e.message ?: "Unknown"))
             }

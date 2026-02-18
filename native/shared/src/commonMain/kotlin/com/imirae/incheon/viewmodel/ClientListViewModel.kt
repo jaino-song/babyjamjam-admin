@@ -94,7 +94,7 @@ class ClientListViewModel(private val clientService: ClientService) {
         var filtered = clients
         if (query.isNotBlank()) {
             filtered = filtered.filter { client ->
-                KoreanSearch.matchesKoreanSearch(query, client.name) ||
+                KoreanSearch.matchesChosung(query, client.name) ||
                 client.phone?.contains(query) == true ||
                 client.email?.contains(query, ignoreCase = true) == true
             }

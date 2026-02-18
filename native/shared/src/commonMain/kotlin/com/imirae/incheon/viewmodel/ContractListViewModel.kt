@@ -85,8 +85,8 @@ class ContractListViewModel(private val documentService: DocumentService) {
         var filtered = contracts
         if (query.isNotBlank()) {
             filtered = filtered.filter { contract ->
-                contract.clientName?.let { KoreanSearch.matchesKoreanSearch(query, it) } == true ||
-                contract.employeeName?.let { KoreanSearch.matchesKoreanSearch(query, it) } == true
+                contract.clientName?.let { KoreanSearch.matchesChosung(query, it) } == true ||
+                contract.employeeName?.let { KoreanSearch.matchesChosung(query, it) } == true
             }
         }
         if (status != null) {

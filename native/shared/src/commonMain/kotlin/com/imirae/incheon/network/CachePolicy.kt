@@ -85,6 +85,13 @@ class CachePolicy(
             ),
         )
 
+        private val MUTATION_METHODS = setOf(
+            HttpMethod.Post,
+            HttpMethod.Put,
+            HttpMethod.Patch,
+            HttpMethod.Delete,
+        )
+
         val DEFAULT_INVALIDATION_RULES: List<CacheInvalidationRule> = listOf(
             CacheInvalidationRule(
                 methods = MUTATION_METHODS,
@@ -106,13 +113,6 @@ class CachePolicy(
                 endpointPattern = Regex("^/api/templates(?:/.+)?$"),
                 invalidatePrefixes = setOf("templates"),
             ),
-        )
-
-        private val MUTATION_METHODS = setOf(
-            HttpMethod.Post,
-            HttpMethod.Put,
-            HttpMethod.Patch,
-            HttpMethod.Delete,
         )
     }
 }

@@ -69,7 +69,7 @@ class EmployeeListViewModel(private val employeeService: EmployeeService) {
         var filtered = employees
         if (query.isNotBlank()) {
             filtered = filtered.filter { emp ->
-                KoreanSearch.matchesKoreanSearch(query, emp.name) ||
+                KoreanSearch.matchesChosung(query, emp.name) ||
                 emp.phone?.contains(query) == true ||
                 emp.email?.contains(query, ignoreCase = true) == true
             }
