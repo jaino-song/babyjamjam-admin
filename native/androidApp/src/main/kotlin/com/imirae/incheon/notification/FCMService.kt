@@ -1,0 +1,97 @@
+package com.imirae.incheon.notification
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import com.imirae.incheon.MainActivity
+import com.imirae.incheon.R
+
+/**
+ * Firebase Cloud Messaging service for Android.
+ * Handles token registration, foreground/background/terminated message handling,
+ * and notification channel management.
+ */
+class FCMService {
+    companion object {
+        private const val CHANNEL_ID = "imirae_default"
+        private const val CHANNEL_NAME = "이미래 알림"
+        private const val CHANNEL_DESCRIPTION = "이미래 인천 서비스 알림"
+
+        fun createNotificationChannels(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    CHANNEL_ID,
+                    CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = CHANNEL_DESCRIPTION
+                    enableVibration(true)
+                }
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notificationManager.createNotificationChannel(channel)
+            }
+        }
+    }
+
+    /**
+     * Handle new FCM token — register with backend.
+     */
+    fun onNewToken(token: String, notificationManager: com.imirae.incheon.notification.NotificationManager) {
+        notificationManager.registerToken(token, "android")
+    }
+
+    /**
+     * Handle received message — show notification if in background, route if in foreground.
+     */
+    fun onMessageReceived(
+        context: Context,
+        title: String?,
+        body: String?,
+        data: Map<String, String>,
+        isAppInForeground: Boolean,
+        notificationManager: com.imirae.incheon.notification.NotificationManager
+    ) {
+        val payload = NotificationPayload(
+            title = title ?: "이미래 인천",
+            body = body ?: "",
+            deepLink = data["deepLink"] ?: data["link"],
+            data = data
+        )
+
+        if (isAppInForeground) {
+            // Route directly via deep link router
+            notificationManager.routeNotification(payload)
+            notificationManager.refreshUnreadCount()
+        } else {
+            // Show system notification
+            showNotification(context, payload)
+        }
+    }
+
+    private fun showNotification(context: Context, payload: NotificationPayload) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            payload.deepLink?.let { putExtra("deepLink", it) }
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context, 0, intent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info) // TODO: Replace with app icon
+            .setContentTitle(payload.title)
+            .setContentText(payload.body)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+    }
+}
