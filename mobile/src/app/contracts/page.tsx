@@ -25,7 +25,6 @@ import {
   getStatusCategory,
 } from "@/lib/eformsign/status-codes";
 import {
-  PageHeader,
   StatsBar,
   SplitLayout,
   ListPanel,
@@ -89,28 +88,6 @@ function mapCategoryToStatusType(category: "completed" | "rejected" | "in-progre
       return "expired";
     case "in-progress":
       return "pending";
-  }
-}
-
-function mapCategoryToBannerStyle(category: "completed" | "rejected" | "in-progress") {
-  switch (category) {
-    case "completed":
-      return "bg-v3-green-light text-v3-green border border-v3-green/20";
-    case "rejected":
-      return "bg-v3-burgundy-light text-v3-burgundy border border-v3-burgundy/20";
-    case "in-progress":
-      return "bg-v3-orange-light text-v3-orange border border-v3-orange/20";
-  }
-}
-
-function mapCategoryToLabel(category: "completed" | "rejected" | "in-progress"): string {
-  switch (category) {
-    case "completed":
-      return "서명 완료";
-    case "rejected":
-      return "만료 / 거부";
-    case "in-progress":
-      return "서명 대기중";
   }
 }
 
@@ -188,8 +165,8 @@ export default function ContractsPage() {
   }, [allData?.documents]);
 
   const selectedDocument = useMemo(() => {
-    if (!selectedDocId) return documents[0] ?? null;
-    return documents.find((d) => d.id === selectedDocId) ?? documents[0] ?? null;
+    if (!selectedDocId) return null;
+    return documents.find((d) => d.id === selectedDocId) ?? null;
   }, [selectedDocId, documents]);
 
   const handleTabChange = (value: string) => {
@@ -211,19 +188,6 @@ export default function ContractsPage() {
 
   return (
     <section data-component="contracts" className="space-y-6">
-        <PageHeader
-          title="전자계약 관리"
-          icon={FileText}
-          actions={
-            <HeaderActionButton
-              href="/contracts/creation"
-              icon={Plus}
-              label="서명 요청"
-              data-component="contracts-header-send-contract"
-            />
-          }
-        />
-
         <StatsBar
           name="contracts"
           isLoading={isInitialLoading}
@@ -245,6 +209,14 @@ export default function ContractsPage() {
             onSearchChange={setSearchQuery}
             searchPlaceholder="고객명, 문서명 검색..."
             isLoading={isInitialLoading || isContentLoading}
+            headerActions={
+              <HeaderActionButton
+                href="/contracts/creation"
+                icon={Plus}
+                label="서명 요청"
+                data-component="contracts-header-send-contract"
+              />
+            }
           >
             {documents.length === 0 && !isInitialLoading && !isContentLoading ? (
               <ListEmptyState message="계약 문서가 없습니다" />
@@ -364,8 +336,6 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
   const category = getStatusCategory(doc.current_status?.status_type);
   const statusType = mapCategoryToStatusType(category);
   const statusLabel = mapStatusToLabel(doc.current_status?.status_type);
-  const bannerStyle = mapCategoryToBannerStyle(category);
-  const bannerLabel = mapCategoryToLabel(category);
   const steps = getSignatureProgress(category);
 
   const expiredDate = doc.current_status?.expired_date;
@@ -420,30 +390,56 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
 
   const header = (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-lg font-bold text-v3-dark truncate">
-            {doc.document_name}
-          </h2>
-          <div className="flex items-center gap-4 mt-1 text-[0.75rem] text-v3-text-muted">
+      <div className="min-w-0">
+        <h2 className="text-lg font-bold text-v3-dark truncate">
+          {doc.document_name}
+        </h2>
+        <div className="flex items-center gap-4 mt-1 text-[0.75rem] text-v3-text-muted">
+          <span className="flex items-center gap-1">
+            <Calendar className="w-3.5 h-3.5" />
+            발송일: {formatDate(doc.created_date)}
+          </span>
+          {expiredDate != null && expiredDate > 0 && (
             <span className="flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5" />
-              발송일: {formatDate(doc.created_date)}
+              <Clock className="w-3.5 h-3.5" />
+              만료일: {formatDate(expiredDate)}
             </span>
-            {expiredDate && expiredDate > 0 && (
-              <span className="flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
-                만료일: {formatDate(expiredDate)}
-              </span>
-            )}
-          </div>
+          )}
         </div>
-        <StatusBadge status={statusType} label={statusLabel} />
+        <div className="mt-2">
+          <StatusBadge status={statusType} label={statusLabel} />
+        </div>
       </div>
 
-      <div className={`rounded-[14px] px-4 py-3 text-[0.8rem] font-semibold ${bannerStyle}`}>
-        {bannerLabel}
-      </div>
+      <InfoCard title="서명 진행 상태">
+        <div className="flex items-center gap-0 py-2">
+          {steps.map((step, idx) => (
+            <div key={step.label} className="flex items-center">
+              <div className="flex flex-col items-center">
+                <div
+                  className={`w-8 h-8 rounded-full flex items-center justify-center text-[0.65rem] font-bold ${
+                    step.done
+                      ? "bg-v3-primary text-white"
+                      : "bg-v3-dim-white text-v3-text-muted"
+                  }`}
+                >
+                  {idx + 1}
+                </div>
+                <span className="text-[0.6rem] text-v3-text-muted mt-1 whitespace-nowrap">
+                  {step.label}
+                </span>
+              </div>
+              {idx < steps.length - 1 && (
+                <div
+                  className={`w-8 h-0.5 mx-1 mt-[-12px] ${
+                    steps[idx + 1].done ? "bg-v3-primary" : "bg-v3-border"
+                  }`}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      </InfoCard>
     </div>
   );
 
@@ -482,36 +478,6 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
           <InfoRow label="문서번호" value={doc.document_number ?? "–"} />
           <InfoRow label="작성일" value={formatDate(doc.created_date)} />
           <InfoRow label="최종수정" value={formatDate(doc.updated_date)} />
-        </InfoCard>
-
-        <InfoCard title="서명 진행 상태">
-          <div className="flex items-center gap-0 py-2">
-            {steps.map((step, idx) => (
-              <div key={step.label} className="flex items-center">
-                <div className="flex flex-col items-center">
-                  <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-[0.65rem] font-bold ${
-                      step.done
-                        ? "bg-v3-primary text-white"
-                        : "bg-v3-dim-white text-v3-text-muted"
-                    }`}
-                  >
-                    {idx + 1}
-                  </div>
-                  <span className="text-[0.6rem] text-v3-text-muted mt-1 whitespace-nowrap">
-                    {step.label}
-                  </span>
-                </div>
-                {idx < steps.length - 1 && (
-                  <div
-                    className={`w-8 h-0.5 mx-1 mt-[-12px] ${
-                      steps[idx + 1].done ? "bg-v3-primary" : "bg-v3-border"
-                    }`}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
         </InfoCard>
 
         <InfoCard title="활동 기록">

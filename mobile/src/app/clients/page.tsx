@@ -14,7 +14,6 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
-    PageHeader,
     StatsBar,
     SplitLayout,
     ListPanel,
@@ -193,21 +192,7 @@ export default function ClientsPage() {
     };
 
     return (
-        <section data-component="clients" className="space-y-6 pb-10">
-            <PageHeader
-                title="고객 관리"
-                icon={Users}
-                actions={
-                    <HeaderActionButton
-                        icon={Plus}
-                        label={t(locale, "clients.add")}
-                        onClick={handleAddNew}
-                        data-testid="add-client-button"
-                        data-component="clients-header-add"
-                    />
-                }
-            />
-
+        <section data-component="clients" className="space-y-6">
             <StatsBar
                 name="clients"
                 isLoading={isLoading}
@@ -229,6 +214,15 @@ export default function ClientsPage() {
 	                    onSearchChange={setSearchQuery}
 	                    searchPlaceholder={t(locale, "clients.search-placeholder")}
 	                    isLoading={isLoading}
+	                    headerActions={
+	                        <HeaderActionButton
+	                            icon={Plus}
+	                            label={t(locale, "clients.add")}
+	                            onClick={handleAddNew}
+	                            data-testid="add-client-button"
+	                            data-component="clients-header-add"
+	                        />
+	                    }
 	                >
 	                    <div className="space-y-2">
 	                        {!isLoading && filteredClients.length === 0 ? (
@@ -507,6 +501,23 @@ export default function ClientsPage() {
                                         selectedClient.actualPrice
                                     )}
                                 />
+                            </InfoCard>
+
+                            <InfoCard title={t(locale, "clients.form.section-flags")}>
+                                <div className="flex flex-wrap gap-2">
+                                    <StatusBadge
+                                        status={selectedClient.voucherClient ? "active" : "expired"}
+                                        label={t(locale, "clients.form.voucher-client")}
+                                    />
+                                    <StatusBadge
+                                        status={selectedClient.careCenter ? "active" : "expired"}
+                                        label={t(locale, "clients.form.care-center")}
+                                    />
+                                    <StatusBadge
+                                        status={selectedClient.breastPump ? "active" : "expired"}
+                                        label={t(locale, "clients.form.breast-pump")}
+                                    />
+                                </div>
                             </InfoCard>
                             </>
                             )}

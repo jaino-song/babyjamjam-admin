@@ -302,6 +302,23 @@ export default function DashboardPage() {
                     value={selectedClientData.primaryEmployee?.name || "-"}
                   />
                 </InfoCard>
+
+                <InfoCard title="이용 현황">
+                  <div className="flex flex-wrap gap-2">
+                    <StatusBadge
+                      status={selectedClientData.voucherClient ? "active" : "expired"}
+                      label="바우처"
+                    />
+                    <StatusBadge
+                      status={selectedClientData.careCenter ? "active" : "expired"}
+                      label="산후조리원"
+                    />
+                    <StatusBadge
+                      status={selectedClientData.breastPump ? "active" : "expired"}
+                      label="유축기 대여"
+                    />
+                  </div>
+                </InfoCard>
               </div>
             </DetailPanel>
           ) : (
