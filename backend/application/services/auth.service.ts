@@ -605,7 +605,7 @@ export class AuthService {
         await this.authTokenRepository.create(tokenEntity);
 
         // Build verification URL
-        const verificationUrl = `${this.FRONTEND_URL}/auth/verify-email?token=${rawToken}`;
+        const verificationUrl = `${this.FRONTEND_URL}/verify-email?token=${rawToken}`;
 
         // Get user name
         const user = await this.prisma.user.findUnique({
@@ -813,7 +813,7 @@ export class AuthService {
         await this.authTokenRepository.create(tokenEntity);
 
         // Build reset URL
-        const resetUrl = `${this.FRONTEND_URL}/auth/reset-password?token=${rawToken}`;
+        const resetUrl = `${this.FRONTEND_URL}/reset-password?token=${rawToken}`;
 
         // Send email
         await this.emailService.sendPasswordResetEmail(user.email!, user.name, resetUrl);
