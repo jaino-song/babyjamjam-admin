@@ -5,13 +5,11 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 const baseStyles =
-  "inline-flex items-center gap-2 rounded-[14px] px-5 py-2.5 text-[0.85rem] font-semibold transition-all duration-300 hover:-translate-y-0.5 active:scale-95";
+  "flex items-center gap-1 px-2.5 py-1.5 rounded-2xl text-[0.75rem] font-semibold transition-colors";
 
 const variantStyles = {
-  primary:
-    "bg-v3-primary text-white shadow-v3 hover:shadow-v3-hover",
-  outline:
-    "border-2 border-v3-border bg-white text-v3-text hover:border-v3-primary hover:text-v3-primary",
+  primary: "text-v3-primary hover:bg-v3-primary-light",
+  muted: "text-v3-text-muted hover:bg-v3-dim-white",
 } as const;
 
 export interface HeaderActionButtonProps {
@@ -38,7 +36,7 @@ export function HeaderActionButton({
 
   const content = (
     <>
-      {Icon && <Icon className="h-4 w-4" />}
+      {Icon && <Icon className="w-3.5 h-3.5" />}
       {label}
     </>
   );

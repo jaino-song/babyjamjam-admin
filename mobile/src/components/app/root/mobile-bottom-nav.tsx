@@ -13,6 +13,8 @@ export function MobileBottomNav() {
 
   if (isLayoutExcluded(pathname)) return null;
 
+  if (pathname.startsWith("/clients/new")) return null;
+
   const navItems: Array<{
     href: string;
     label: string;
@@ -32,7 +34,7 @@ export function MobileBottomNav() {
       className={cn(
         "fixed bottom-4 left-4 right-4 z-[1000]",
         "grid grid-cols-5 items-end gap-1 p-2",
-        "bg-white/80 backdrop-blur-xl rounded-3xl",
+        "bg-white/80 backdrop-blur-xl rounded-2xl",
         "shadow-v3-hover",
         "md:hidden"
       )}

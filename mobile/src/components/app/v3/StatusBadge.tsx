@@ -20,7 +20,7 @@ export function StatusBadge({ status, label }: StatusBadgeProps) {
   return (
     <span
       data-component="status-badge"
-      className={`inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold ${config.bg} ${config.text}`}
+      className={`inline-flex items-center rounded-2xl px-3 py-1 text-[0.65rem] font-semibold ${config.bg} ${config.text}`}
     >
       {label || config.defaultLabel}
     </span>

@@ -71,7 +71,7 @@ function groupNotificationsByDate(notifications: Notification[]): GroupedNotific
     if (!Array.isArray(notifications)) {
         return [];
     }
-    
+
     const groups = new Map<string, Notification[]>();
 
     notifications.forEach((notification) => {
@@ -336,7 +336,7 @@ export function NotificationBell({ className }: { className?: string }) {
     return (
         <>
             {mounted && createPortal(
-                <div 
+                <div
                     className={`fixed inset-0 top-16 bg-black/30 backdrop-blur-[4px] z-40 sm:hidden transition-all duration-300 ${isOpen ? 'opacity-100 visible' : 'opacity-0 invisible'}`}
                     onClick={() => setIsOpen(false)}
                 />,
@@ -348,7 +348,6 @@ export function NotificationBell({ className }: { className?: string }) {
                         variant="ghost"
                         size="icon"
                         onClick={handleClick}
-                        disabled={isLoading}
                         data-component="notification-bell"
                         data-testid="notification-bell"
                         className={cn("relative transition-transform duration-200 hover:scale-110 active:scale-95", className)}
@@ -357,7 +356,7 @@ export function NotificationBell({ className }: { className?: string }) {
                             <Spinner size="sm" />
                         ) : isSubscribed ? (
                             <>
-                                <Bell className="!h-5 !w-5" />
+                                <Bell className="!h-5 !w-5 text-primary" />
                                 {unreadCount > 0 && (
                                     <Badge
                                         data-testid="notification-badge"

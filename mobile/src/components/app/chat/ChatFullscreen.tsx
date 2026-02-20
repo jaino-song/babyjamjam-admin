@@ -57,7 +57,7 @@ function UserMessage({ message }: { message: ChatMessage }) {
         <div className="flex justify-end mb-4">
             <div
                 data-component="chat-fullscreen-message-user"
-                className="max-w-[80%] px-4 py-3 rounded-lg bg-primary text-primary-foreground"
+                className="max-w-[80%] px-4 py-3 rounded-2xl bg-primary text-primary-foreground"
             >
                 <p className="whitespace-pre-wrap break-words">
                     {message.content}

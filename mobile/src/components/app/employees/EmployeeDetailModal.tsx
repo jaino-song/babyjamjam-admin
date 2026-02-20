@@ -83,7 +83,7 @@ export function EmployeeDetailModal({
             open={open}
             onOpenChange={(isOpen) => !isOpen && onClose()}
         >
-            <DialogContent data-component="employees-detail-modal-content" className="max-w-lg rounded-lg shadow-xl">
+            <DialogContent data-component="employees-detail-modal-content" className="max-w-lg rounded-2xl shadow-xl">
                 <DialogHeader className="flex flex-row items-center justify-between pr-8">
                     <DialogTitle className="text-xl font-semibold">
                         {employee.name}

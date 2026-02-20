@@ -57,7 +57,7 @@ export const Header = ({ initialUser }: HeaderProps) => {
       {/* Header */}
       <header
         data-component="header"
-        className="sticky top-0 z-50 w-full border-b bg-white shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] rounded-b-[24px] sm:rounded-none"
+        className="sticky top-0 z-50 w-full border-b bg-white shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] rounded-b-2xl sm:rounded-none"
       >
         <div className="flex h-16 sm:h-18 items-center gap-3 px-4">
           {/* Menu Icon */}

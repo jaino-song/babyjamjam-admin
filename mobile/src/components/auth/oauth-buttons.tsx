@@ -1,10 +1,9 @@
 "use client";
 
+import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { RiKakaoTalkFill } from "react-icons/ri";
 import { cn } from "@/lib/utils";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 // Google Icon Component (since MUI icons won't be used)
 function GoogleIcon({ className }: { className?: string }) {
@@ -23,43 +22,54 @@ function GoogleIcon({ className }: { className?: string }) {
 }
 
 interface OAuthButtonsProps {
-  disabled?: boolean;
+  kakaoButton: {
+    title: string;
+    icon: React.ReactNode;
+    onClick: () => void;
+    disabled?: boolean;
+  };
+  googleButton: {
+    title: string;
+    icon: React.ReactNode;
+    onClick: () => void;
+    disabled?: boolean;
+  };
   className?: string;
 }
 
-export function OAuthButtons({ disabled, className }: OAuthButtonsProps) {
-  const handleKakaoLogin = () => {
-    window.location.href = `${API_BASE_URL}/auth/kakao`;
-  };
-
-  const handleGoogleLogin = () => {
-    window.location.href = `${API_BASE_URL}/auth/google`;
-  };
-
+export function OAuthButtons({ kakaoButton, googleButton, className }: OAuthButtonsProps) {
   return (
     <div className={cn("flex flex-col gap-3", className)}>
       <Button
+        data-component="login-kakao-button"
         type="button"
         variant="kakao"
         size="lg"
-        className="w-full"
-        onClick={handleKakaoLogin}
-        disabled={disabled}
+        className="w-full rounded-2xl"
+        onClick={kakaoButton.onClick}
+        disabled={kakaoButton.disabled}
       >
-        <RiKakaoTalkFill className="h-5 w-5" />
-        카카오로 로그인
+        {kakaoButton.icon}
+        {kakaoButton.title}
       </Button>
+
       <Button
+        data-component="login-google-button"
         type="button"
         variant="google"
         size="lg"
-        className="w-full"
-        onClick={handleGoogleLogin}
-        disabled
+        className="w-full rounded-2xl"
+        onClick={googleButton.onClick}
+        disabled={googleButton.disabled}
       >
-        <GoogleIcon />
-        Google로 로그인
+        {googleButton.icon}
+        {googleButton.title}
       </Button>
     </div>
   );
 }
+
+export const OAuthButtonIcons = {
+  kakao: RiKakaoTalkFill,
+  google: GoogleIcon,
+};

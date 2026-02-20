@@ -22,7 +22,7 @@ function Switch({
       className={cn(
         "peer inline-flex shrink-0 items-center border border-transparent transition-all outline-none focus-visible:ring-[3px] focus-visible:border-ring focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
         variant === "default" && "data-[state=checked]:bg-primary data-[state=unchecked]:bg-input dark:data-[state=unchecked]:bg-input/80 group/switch rounded-full shadow-xs data-[size=default]:h-[1.15rem] data-[size=default]:w-8 data-[size=sm]:h-3.5 data-[size=sm]:w-6",
-        variant === "v3" && "w-[44px] h-[24px] rounded-[50px] duration-300 ease-in-out data-[state=unchecked]:bg-[hsl(220,20%,90%)] data-[state=checked]:bg-[hsl(214,100%,34%)]",
+        variant === "v3" && "w-[44px] h-[24px] rounded-2xl duration-300 ease-in-out data-[state=unchecked]:bg-[hsl(220,20%,90%)] data-[state=checked]:bg-[hsl(214,100%,34%)]",
         className
       )}
       {...props}

@@ -226,7 +226,7 @@ export function TemplateForm({ mode, initialData, onSubmit, isPending }: Templat
                                     {variables.map((variable, index) => (
                                         <div
                                             key={variable.key}
-                                            className="p-4 bg-card rounded-md border"
+                                            className="p-4 bg-card rounded-2xl border"
                                         >
                                             <p className="text-sm font-semibold mb-3 text-primary">
                                                 {index + 1}. {variable.key}

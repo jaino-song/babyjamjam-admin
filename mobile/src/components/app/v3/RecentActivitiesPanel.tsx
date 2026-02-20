@@ -86,7 +86,7 @@ function getRelativeDate(dateStr: string): string {
 function ErrorState({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="p-8 text-center space-y-3">
-      <div className="w-12 h-12 mx-auto rounded-[18px] bg-[hsl(355,40%,94%)] flex items-center justify-center">
+      <div className="w-12 h-12 mx-auto rounded-2xl bg-[hsl(355,40%,94%)] flex items-center justify-center">
         <AlertTriangle className="w-6 h-6 text-[hsl(355,36%,45%)]" />
       </div>
       <p className="text-[0.9rem] font-bold text-v3-dark">
@@ -98,7 +98,7 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
       <button
         type="button"
         onClick={onRetry}
-        className="inline-flex items-center justify-center rounded-[12px] border border-[hsla(355,36%,45%,0.25)] bg-[hsl(355,40%,94%)] px-3 py-2 text-[0.73rem] font-bold text-[hsl(355,36%,45%)] transition hover:-translate-y-0.5"
+        className="inline-flex items-center justify-center rounded-2xl border border-[hsla(355,36%,45%,0.25)] bg-[hsl(355,40%,94%)] px-3 py-2 text-[0.73rem] font-bold text-[hsl(355,36%,45%)] transition hover:-translate-y-0.5"
       >
         다시 시도
       </button>
@@ -109,7 +109,7 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
 function EmptyState() {
   return (
     <div className="p-8 text-center space-y-3">
-      <div className="w-12 h-12 mx-auto rounded-[18px] bg-v3-green-light flex items-center justify-center">
+      <div className="w-12 h-12 mx-auto rounded-2xl bg-v3-green-light flex items-center justify-center">
         <CheckCircle2 className="w-6 h-6 text-v3-green" />
       </div>
       <p className="text-[0.9rem] font-bold text-v3-dark">
@@ -142,7 +142,7 @@ export function RecentActivitiesPanel({
   return (
     <div
       className={cn(
-        "bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden",
+        "bg-white rounded-2xl shadow-v3 flex flex-col overflow-hidden",
         className,
       )}
     >
@@ -180,13 +180,14 @@ export function RecentActivitiesPanel({
                 <AnimatedSlotList
                   items={actionRequiredItems}
                   isLoading={isLoading}
+                  animate={isLoading}
                   loadingCount={3}
                   className="space-y-2"
                   itemDataComponent="dashboard-split-list-item"
                   onSlotClick={(item) => onSelect(item.client)}
                   slotClassName={({ item, isLoading: loading }) =>
                     cn(
-                      "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
+                      "flex items-center gap-3 p-4 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent",
                       !loading && item && selectedId === item.client.id
                         ? "bg-v3-primary-light border-2 border-v3-primary"
                         : !loading && "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
@@ -200,11 +201,11 @@ export function RecentActivitiesPanel({
                         <>
                           <div
                             className={cn(
-                              "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0",
+                              "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0",
                               iconBgClass,
                             )}
                           >
-                            <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
+                            <Skeleton className="w-4 h-4 rounded-2xl bg-white/70" />
                           </div>
                           <div className="flex-1 min-w-0 space-y-2">
                             <div className="flex items-center gap-2">
@@ -224,7 +225,7 @@ export function RecentActivitiesPanel({
                       <>
                         <div
                           className={cn(
-                            "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
+                            "w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
                             colors.iconBg,
                           )}
                         >
@@ -280,13 +281,14 @@ export function RecentActivitiesPanel({
                 <AnimatedSlotList
                   items={upcomingItems}
                   isLoading={isLoading}
+                  animate={isLoading}
                   loadingCount={2}
                   className="space-y-2"
                   itemDataComponent="dashboard-split-list-item"
                   onSlotClick={(item) => onSelect(item)}
                   slotClassName={({ item, isLoading: loading }) =>
                     cn(
-                      "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
+                      "flex items-center gap-3 p-4 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent",
                       !loading && item && selectedId === item.id
                         ? "bg-v3-primary-light border-2 border-v3-primary"
                         : !loading && "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
@@ -300,11 +302,11 @@ export function RecentActivitiesPanel({
                         <>
                           <div
                             className={cn(
-                              "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0",
+                              "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0",
                               iconBgClass,
                             )}
                           >
-                            <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
+                            <Skeleton className="w-4 h-4 rounded-2xl bg-white/70" />
                           </div>
                           <div className="flex-1 min-w-0 space-y-2">
                             <div className="flex items-center gap-2">
@@ -322,7 +324,7 @@ export function RecentActivitiesPanel({
                       <>
                         <div
                           className={cn(
-                            "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
+                            "w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
                             getAvatarGradient(item.name),
                           )}
                         >
@@ -356,7 +358,7 @@ export function RecentActivitiesPanel({
         {hasMore && (
           <Link
             href={viewAllHref}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-[14px] border border-v3-border bg-v3-dim-white px-3 py-[11px] text-[0.75rem] font-bold text-v3-primary transition hover:-translate-y-0.5 hover:border-v3-primary/30 hover:bg-v3-primary-light"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-v3-border bg-v3-dim-white px-3 py-[11px] text-[0.75rem] font-bold text-v3-primary transition hover:-translate-y-0.5 hover:border-v3-primary/30 hover:bg-v3-primary-light"
           >
             {viewAllLabel} <span aria-hidden="true">→</span>
           </Link>

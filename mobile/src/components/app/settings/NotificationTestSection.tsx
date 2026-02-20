@@ -38,7 +38,7 @@ export function NotificationTestSection() {
       className="space-y-4"
     >
       <div className="flex items-center gap-2 mb-2">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
+        <div className="flex items-center justify-center w-8 h-8 rounded-2xl bg-primary/10">
           <Bell size={18} className="text-primary" />
         </div>
         <div>

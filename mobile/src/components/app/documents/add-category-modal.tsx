@@ -115,7 +115,7 @@ export function AddCategoryModal({
                   type="button"
                   onClick={() => setSelectedColor(color.value)}
                   className={cn(
-                    "w-12 h-12 rounded-lg cursor-pointer transition-all duration-200",
+                    "w-12 h-12 rounded-2xl cursor-pointer transition-all duration-200",
                     "hover:scale-110 hover:shadow-md",
                     selectedColor === color.value
                       ? "ring-2 ring-offset-2 ring-foreground"

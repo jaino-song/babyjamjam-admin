@@ -1,6 +1,6 @@
 {
   "common": {
-    "title": "Imirae Incheon Back Office",
+    "title": "Babyjamjam Admin Service",
     "subtitle": "Analog to Digital",
     "start": "Get Started",
     "welcome": "Welcome",
@@ -24,7 +24,7 @@
     "close": "Close"
   },
   "header": {
-    "companyName": "Incheon Imirae",
+    "companyName": "Babyjamjam",
     "companySubtitle": "Operations Platform"
   },
   "dashboard": {
@@ -302,7 +302,8 @@
       "doc-revoked": "Revoked",
       "doc-deleted": "Deleted",
       "add-description": "Fill in the form to register a new client",
-      "edit-description": "Modify the client information"
+      "edit-description": "Modify the client information",
+      "error-phone-duplicate": "This phone number is already registered"
     },
     "detail": {
       "description": "View client information details"

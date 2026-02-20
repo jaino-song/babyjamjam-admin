@@ -116,9 +116,9 @@ export function ClientDetailModal({
 
     return (
         <Dialog data-component="clients-detail-modal" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-lg rounded-[28px] shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] border-none bg-white p-0 overflow-hidden gap-0">
+            <DialogContent className="max-w-lg rounded-2xl shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] border-none bg-white p-0 overflow-hidden gap-0">
                 <DialogHeader data-component="clients-detail-modal-header" className="p-6 text-center border-b border-border bg-gradient-to-br from-[hsl(214,80%,98%)] to-white relative">
-                    <div className="mx-auto w-20 h-20 rounded-[24px] flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-[0_12px_32px_hsla(214,100%,34%,0.3)] bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]">
+                    <div className="mx-auto w-20 h-20 rounded-2xl flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-[0_12px_32px_hsla(214,100%,34%,0.3)] bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]">
                         {client.name.charAt(0)}
                     </div>
                     <DialogTitle className="text-xl font-bold text-[hsl(214,40%,18%)] mb-1">
@@ -146,15 +146,15 @@ export function ClientDetailModal({
                 </DialogHeader>
 
                 <div className="flex gap-2 justify-center p-4 border-b border-border bg-white">
-                     <Button variant="ghost" className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-[hsl(214,80%,95%)] hover:text-[hsl(214,100%,34%)] rounded-[14px]">
+                     <Button variant="ghost" className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-[hsl(214,80%,95%)] hover:text-[hsl(214,100%,34%)] rounded-2xl">
                         <span className="text-lg">📞</span>
                         <span className="text-[10px] font-semibold">전화</span>
                      </Button>
-                     <Button variant="ghost" className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-[hsl(214,80%,95%)] hover:text-[hsl(214,100%,34%)] rounded-[14px]">
+                     <Button variant="ghost" className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-[hsl(214,80%,95%)] hover:text-[hsl(214,100%,34%)] rounded-2xl">
                         <span className="text-lg">💬</span>
                         <span className="text-[10px] font-semibold">메시지</span>
                      </Button>
-                     <Button variant="ghost" className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-[hsl(214,80%,95%)] hover:text-[hsl(214,100%,34%)] rounded-[14px]">
+                     <Button variant="ghost" className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-[hsl(214,80%,95%)] hover:text-[hsl(214,100%,34%)] rounded-2xl">
                         <span className="text-lg">📝</span>
                         <span className="text-[10px] font-semibold">계약</span>
                      </Button>

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { 
@@ -87,16 +88,14 @@ export const V3Sidebar = () => {
 
   return (
     <aside 
-      className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[280px] bg-white z-40 rounded-tr-[32px] rounded-br-[32px] shadow-v3 animate-v3-slide-right overflow-hidden"
+      className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[280px] bg-white z-40 rounded-tr-2xl rounded-br-2xl shadow-v3 animate-v3-slide-right overflow-hidden"
       aria-label="Sidebar Navigation"
       data-component="sidebar"
     >
       <div className="flex items-center gap-3 px-6 pt-8 pb-6" data-component="sidebar-brand">
-        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-v3-primary shrink-0 shadow-sm">
-          <LayoutDashboard className="w-6 h-6 text-white" strokeWidth={2} />
-        </div>
+        <Image src="/assets/logo.svg" alt="아가잼잼" width={48} height={48} className="w-12 h-12 rounded-2xl shrink-0 shadow-sm" />
         <span className="text-xl font-bold text-gray-900 tracking-tight">
-          케어허브
+          아가잼잼 관리자 서비스
         </span>
       </div>
 

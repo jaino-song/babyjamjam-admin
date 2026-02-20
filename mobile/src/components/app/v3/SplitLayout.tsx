@@ -50,7 +50,7 @@ export function SplitLayout({ children, hasSelection = false, onBack }: SplitLay
     <SplitLayoutContext.Provider value={contextValue}>
       <div data-component="split-layout" className="w-full overflow-hidden">
         <div
-          className="flex transition-transform duration-300 ease-out"
+          className="flex items-start transition-transform duration-300 ease-out"
           style={{ transform: hasSelection ? "translateX(-100%)" : "translateX(0)" }}
         >
           <div className="w-full flex-shrink-0">{listPanel}</div>

@@ -52,7 +52,7 @@ export function QuickActionButton({
             href={href}
             data-component="quick-action-button"
             className={cn(
-                "p-3 bg-white rounded-[20px] w-1/2 shadow-v3",
+                "p-3 rounded-2xl w-full",
                 "flex flex-col items-center gap-2",
                 "hover:shadow-v3-hover hover:-translate-y-1 active:scale-95",
                 "transition-[transform,box-shadow] duration-[500ms] will-change-transform",

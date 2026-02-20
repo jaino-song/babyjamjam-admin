@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { FolderOpen, FileText, Image, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
-import { PageHeader, StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, DetailSkeleton, ListEmptyState, DetailActions } from "@/components/app/v3";
+import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, DetailSkeleton, ListEmptyState, DetailActions } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
@@ -124,7 +124,7 @@ export default function FilesPage() {
   if (error) {
     return (
       <div className="p-6">
-        <div data-component="files-error" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
+        <div data-component="files-error" className="bg-v3-burgundy-light text-v3-burgundy rounded-2xl p-6 text-center">
           문서를 불러오는데 실패했습니다.
         </div>
       </div>
@@ -133,19 +133,6 @@ export default function FilesPage() {
 
   return (
     <section data-component="files" className="space-y-6">
-      <PageHeader
-        title="파일 관리"
-        icon={FolderOpen}
-        actions={
-          <HeaderActionButton
-            icon={Upload}
-            label="업로드"
-            onClick={() => setIsUploadOpen(true)}
-            data-component="files-upload-btn"
-          />
-        }
-      />
-
       <StatsBar
         name="files"
         isLoading={isLoading}
@@ -165,6 +152,14 @@ export default function FilesPage() {
           searchValue={searchQuery}
           onSearchChange={setSearchQuery}
           searchPlaceholder="문서명, 설명, 태그 검색..."
+          headerActions={
+            <HeaderActionButton
+              icon={Upload}
+              label="업로드"
+              onClick={() => setIsUploadOpen(true)}
+              data-component="files-upload-btn"
+            />
+          }
         >
           {!isLoading && filteredDocs.length === 0 ? (
             <ListEmptyState message={searchQuery ? "검색 결과가 없습니다" : "등록된 문서가 없습니다"} />
@@ -172,12 +167,13 @@ export default function FilesPage() {
             <AnimatedSlotList<Document>
               items={filteredDocs}
               isLoading={isLoading}
+              animate={isLoading}
               loadingCount={4}
               className="space-y-2"
               slotClassName={({ item, isLoading: slotLoading }) => {
                 const isActive = !slotLoading && item && selectedDocument?.id === item.id;
                 return cn(
-                  "flex items-center gap-3 p-3 rounded-[14px] transition-all duration-200 bg-white border-2 border-transparent",
+                  "flex items-center gap-3 p-3 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent",
                   !slotLoading && "cursor-pointer",
                   isActive
                     ? "bg-v3-primary-light border-2 border-v3-primary"
@@ -189,8 +185,8 @@ export default function FilesPage() {
                 if (slotLoading) {
                   return (
                     <>
-                      <div className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
-                        <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
+                      <div className="w-9 h-9 rounded-2xl shrink-0 bg-v3-dim-white flex items-center justify-center">
+                        <Skeleton className="w-4 h-4 rounded-2xl bg-white/70" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
@@ -203,7 +199,7 @@ export default function FilesPage() {
                 if (!doc) return null;
                 return (
                   <>
-                    <div className="w-9 h-9 rounded-[10px] bg-v3-primary-light flex items-center justify-center shrink-0">
+                    <div className="w-9 h-9 rounded-2xl bg-v3-primary-light flex items-center justify-center shrink-0">
                       {getFileIcon(doc.mimeType)}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -313,7 +309,7 @@ function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, on
             등록일: {formatDate(doc.createdAt)}
           </p>
         </div>
-        <span className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
+        <span className="inline-flex items-center rounded-2xl px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
           {getCategoryLabel(doc.categoryId)}
         </span>
       </div>
@@ -349,7 +345,7 @@ function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, on
           <InfoCard title="태그">
             <div className="flex flex-wrap gap-2">
               {doc.tags.map(tag => (
-                <span key={tag} className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
+                <span key={tag} className="inline-flex items-center rounded-2xl px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
                   {tag}
                 </span>
               ))}

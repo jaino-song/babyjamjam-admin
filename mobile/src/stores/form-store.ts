@@ -66,6 +66,23 @@ interface FormStore {
     setVoucherDuration: (voucherDuration: string) => void;
     setVoucherYear: (voucherYear: number) => void;
     setArea: (area: string) => void;
+    prefillFromClient: (client: {
+        id: number;
+        name: string;
+        phone?: string | null;
+        birthday?: string | null;
+        dueDate?: string | null;
+        address?: string | null;
+        type?: string | null;
+        duration?: number | null;
+        fullPrice?: string | null;
+        grant?: string | null;
+        actualPrice?: string | null;
+        startDate?: string | null;
+        endDate?: string | null;
+        primaryEmployee?: { id: number; name: string } | null;
+        secondaryEmployee?: { id: number; name: string } | null;
+    }) => void;
 }
 
 // 현재 연도를 기본값으로 사용
@@ -167,5 +184,25 @@ export const useFormStore = create<FormStore>((set) => {
         setVoucherDuration: (voucherDuration: string) => set({ voucherDuration }),
         setVoucherYear: (voucherYear: number) => set({ voucherYear }),
         setArea: (area: string) => set({ area }),
+        prefillFromClient: (client) => set({
+            clientId: client.id,
+            isManualEntry: false,
+            name: client.name,
+            phone: client.phone || "",
+            birthday: client.birthday || "",
+            dueDate: client.dueDate || "",
+            address: client.address || "",
+            voucherType: client.type || "",
+            voucherDuration: client.duration ? String(client.duration) : "",
+            fullPrice: client.fullPrice || "",
+            grant: client.grant || "",
+            actualPrice: client.actualPrice || "",
+            startDate: client.startDate || "",
+            endDate: client.endDate || "",
+            employeeId: client.primaryEmployee?.id ?? null,
+            employeeName: client.primaryEmployee?.name ?? "",
+            employee2Id: client.secondaryEmployee?.id ?? null,
+            employee2Name: client.secondaryEmployee?.name ?? "",
+        }),
     }
 })

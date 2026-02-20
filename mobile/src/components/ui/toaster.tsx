@@ -13,7 +13,7 @@ export function Toaster() {
         <div
           key={toast.id}
           className={cn(
-            "relative flex items-center justify-between gap-4 rounded-lg border p-4 pr-8 shadow-lg transition-all duration-300",
+            "relative flex items-center justify-between gap-4 rounded-2xl border p-4 pr-8 shadow-lg transition-all duration-300",
             "animate-in slide-in-from-bottom-2 fade-in-0",
             toast.variant === "destructive"
               ? "border-destructive/50 bg-destructive text-destructive-foreground"
@@ -31,7 +31,7 @@ export function Toaster() {
           {toast.action}
           <button
             onClick={() => dismiss(toast.id)}
-            className="absolute right-2 top-2 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 group-hover:opacity-100"
+            className="absolute right-2 top-2 rounded-2xl p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 group-hover:opacity-100"
           >
             <X className="h-4 w-4" />
           </button>

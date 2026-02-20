@@ -14,6 +14,8 @@ import {
   FileSignature,
   Mail,
   Eye,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import { useEformsignDocumentsByType } from "@/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
@@ -35,6 +37,7 @@ import {
   ActivityTimeline,
   AnimatedSlotList,
   HeaderActionButton,
+  Stepper,
   EmptyState,
   DetailSkeleton,
   ListEmptyState,
@@ -105,12 +108,12 @@ export default function ContractsPage() {
   const [activeTab, setActiveTab] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isRetrying, setIsRetrying] = useState(false);
 
-  const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth();
+  const { isAuthenticated, isLoading: isLoadingAuth, error: authError, authenticate } = useEformsignAuth();
   const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);
 
-  // Fetch all docs (for stats) - single request for total counts
-  const { data: allData, isLoading: isLoadingAll } = useEformsignDocumentsByType(isAuthenticated, null);
+  const { data: allData, isLoading: isLoadingAll, refetch: refetchAll } = useEformsignDocumentsByType(isAuthenticated, null);
 
   // Fetch filtered docs with infinite scroll for the current tab
   const {
@@ -121,6 +124,7 @@ export default function ContractsPage() {
     fetchNextPage,
     isInitialLoad,
     error,
+    refetch: refetchInfinite,
   } = useInfiniteContracts({
     enabled: isAuthenticated,
     filterType,
@@ -174,13 +178,45 @@ export default function ContractsPage() {
     setSelectedDocId(null);
   };
 
+  const handleRetry = async () => {
+    setIsRetrying(true);
+    try {
+      if (authError) {
+        await authenticate();
+      }
+      await Promise.all([refetchAll(), refetchInfinite()]);
+    } catch {
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
   if (authError || error) {
     return (
       <div className="p-6">
-        <div className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
-          {authError
-            ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
-            : "문서를 불러오는데 실패했습니다."}
+        <div className="bg-v3-burgundy-light text-v3-burgundy rounded-2xl p-6 text-center space-y-4">
+          <p>
+            {authError
+              ? "인증에 실패했습니다."
+              : "문서를 불러오는데 실패했습니다."}
+          </p>
+          <button
+            onClick={handleRetry}
+            disabled={isRetrying}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-v3-burgundy text-white text-[0.85rem] font-medium transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {isRetrying ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                재시도 중...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-4 h-4" />
+                다시 시도
+              </>
+            )}
+          </button>
         </div>
       </div>
     );
@@ -229,7 +265,7 @@ export default function ContractsPage() {
                 slotClassName={({ item, isLoading }) => {
                   const isActive = !isLoading && item && selectedDocument?.id === item.id;
                   return cn(
-                    "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
+                    "flex items-center gap-3 p-4 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent",
                     !isLoading && "cursor-pointer",
                     isActive
                       ? "bg-v3-primary-light border-2 border-v3-primary"
@@ -239,7 +275,7 @@ export default function ContractsPage() {
                 onSlotClick={(doc) => setSelectedDocId(doc.id)}
                 // Load more props
                 hasMore={hasNextPage}
-                onLoadMore={() => fetchNextPage()}
+                onLoadMore={fetchNextPage}
                 isFetchingMore={isFetchingNextPage}
                 isInitialLoad={isInitialLoad}
                 render={({ item: doc, isLoading }) => {
@@ -247,8 +283,8 @@ export default function ContractsPage() {
                   if (isLoading) {
                     return (
                       <>
-                        <div className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
-                          <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
+                        <div className="w-11 h-11 rounded-2xl shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
+                          <Skeleton className="w-5 h-5 rounded-2xl bg-white/70" />
                         </div>
                         <div className="flex-1 min-w-0">
                           <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
@@ -269,7 +305,7 @@ export default function ContractsPage() {
                     <>
                       <div
                         className={cn(
-                          "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0 shadow-md",
+                          "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md",
                           category === "completed"
                             ? "bg-v3-green-light"
                             : category === "rejected"
@@ -412,33 +448,7 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
       </div>
 
       <InfoCard title="서명 진행 상태">
-        <div className="flex items-center gap-0 py-2">
-          {steps.map((step, idx) => (
-            <div key={step.label} className="flex items-center">
-              <div className="flex flex-col items-center">
-                <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-[0.65rem] font-bold ${
-                    step.done
-                      ? "bg-v3-primary text-white"
-                      : "bg-v3-dim-white text-v3-text-muted"
-                  }`}
-                >
-                  {idx + 1}
-                </div>
-                <span className="text-[0.6rem] text-v3-text-muted mt-1 whitespace-nowrap">
-                  {step.label}
-                </span>
-              </div>
-              {idx < steps.length - 1 && (
-                <div
-                  className={`w-8 h-0.5 mx-1 mt-[-12px] ${
-                    steps[idx + 1].done ? "bg-v3-primary" : "bg-v3-border"
-                  }`}
-                />
-              )}
-            </div>
-          ))}
-        </div>
+        <Stepper steps={steps} className="py-2" />
       </InfoCard>
     </div>
   );

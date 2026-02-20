@@ -168,6 +168,7 @@ export default function DashboardPage() {
       <HeroBanner
         title={user?.name ? `${user?.name} 님` : "다시 로그인 해주세요"}
         subtitle={user?.organizationName ?? ""}
+        isLoading={statsLoading}
       />
 
       <Block name="dashboard-stats">
@@ -209,7 +210,7 @@ export default function DashboardPage() {
               avatar={
                 <div
                   className={cn(
-                    "w-16 h-16 rounded-[20px] flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
+                    "w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
                     getAvatarGradient(selectedClientData.name)
                   )}
                 >
@@ -236,7 +237,7 @@ export default function DashboardPage() {
                     <Button
                       asChild
                       variant="ghost"
-                      className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                      className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-2xl"
                     >
                       <a href={`tel:${selectedClientData.phone}`}>
                         <Phone className="w-4 h-4" />
@@ -247,7 +248,7 @@ export default function DashboardPage() {
                     <Button
                       variant="ghost"
                       disabled
-                      className="flex-1 flex-col h-auto py-3 gap-1 rounded-[14px]"
+                      className="flex-1 flex-col h-auto py-3 gap-1 rounded-2xl"
                     >
                       <Phone className="w-4 h-4" />
                       <span className="text-[10px] font-semibold">전화</span>
@@ -255,7 +256,7 @@ export default function DashboardPage() {
                   )}
                   <Button
                     variant="ghost"
-                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-2xl"
                   >
                     <MessageSquare className="w-4 h-4" />
                     <span className="text-[10px] font-semibold">메시지</span>
@@ -263,7 +264,7 @@ export default function DashboardPage() {
                   <Button
                     asChild
                     variant="ghost"
-                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-2xl"
                   >
                     <Link href={`/clients?id=${selectedClientData.id}`}>
                       <User className="w-4 h-4" />
@@ -273,7 +274,7 @@ export default function DashboardPage() {
                   <Button
                     asChild
                     variant="ghost"
-                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-[14px]"
+                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-2xl"
                   >
                     <Link href={`/contracts?clientId=${selectedClientData.id}`}>
                       <FileText className="w-4 h-4" />
@@ -324,7 +325,7 @@ export default function DashboardPage() {
           ) : (
             <Block
               name="dashboard-detail-empty"
-              className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center min-h-[400px]"
+              className="bg-white rounded-2xl shadow-v3 flex items-center justify-center min-h-[400px]"
             >
               <div className="text-center text-v3-text-muted">
                 <p className="text-[0.8rem] font-semibold">

@@ -34,7 +34,7 @@ function PopoverContent({
         sideOffset={sideOffset}
         avoidCollisions={avoidCollisions}
         className={cn(
-          "bg-popover text-popover-foreground z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-md border p-4 shadow-md outline-hidden",
+          "bg-popover text-popover-foreground z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-2xl border p-4 shadow-md outline-hidden",
           className
         )}
         {...props}

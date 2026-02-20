@@ -139,7 +139,7 @@ describe('ContentPaper', () => {
       render(<ContentPaper>Content</ContentPaper>);
       const paper = screen.getByTestId('ContentPaper');
 
-      expect(paper).toHaveClass('rounded-lg');
+      expect(paper).toHaveClass('rounded-2xl');
     });
 
     it('applies custom className', () => {

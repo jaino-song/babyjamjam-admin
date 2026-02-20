@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 
 interface ExpandableSearchProps {
   value: string;
@@ -38,11 +39,11 @@ export function ExpandableSearch({
     <div data-component="expandable-search" className={cn("flex items-center gap-1.5", className)}>
       <button
         onClick={handleToggle}
-        className="w-8 h-8 rounded-[10px] flex items-center justify-center hover:bg-v3-dim-white"
+        className="w-8 h-8 rounded-2xl flex items-center justify-center hover:bg-v3-dim-white"
       >
         <Search className={expanded ? "hidden" : "w-[18px] h-[18px] text-v3-text-muted"} />
       </button>
-      <input
+      <Input
         ref={inputRef}
         type="text"
         placeholder={placeholder}
@@ -51,7 +52,7 @@ export function ExpandableSearch({
         onBlur={handleBlur}
         style={{ border: "none", outline: "none", boxShadow: "none" }}
         className={cn(
-          "bg-transparent text-sm text-v3-dark caret-v3-primary placeholder:text-v3-text-muted/50",
+          "h-auto border-none bg-transparent p-0 text-sm text-v3-dark caret-v3-primary placeholder:text-v3-text-muted/50 focus-visible:ring-0 focus-visible:ring-offset-0",
           expanded ? expandedWidth : "w-0"
         )}
       />

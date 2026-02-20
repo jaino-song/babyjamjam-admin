@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { FileSignature, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 interface HeroBannerProps {
@@ -13,6 +14,7 @@ interface HeroBannerProps {
   secondaryActionDisabled?: boolean;
   primaryActionHref?: string;
   secondaryActionHref?: string;
+  isLoading?: boolean;
 }
 
 export function HeroBanner({
@@ -25,12 +27,13 @@ export function HeroBanner({
   secondaryActionDisabled = false,
   primaryActionHref = "#",
   secondaryActionHref = "#",
+  isLoading = false,
 }: HeroBannerProps) {
   return (
     <div
       data-component="dashboard-hero"
       className={cn(
-        "relative overflow-hidden rounded-[24px] p-8",
+        "relative overflow-hidden rounded-2xl p-6",
         "bg-gradient-to-br from-primary via-primary to-accent",
         "shadow-[var(--shadow-v3)] hover:shadow-[var(--shadow-v3-hover)] transition-all duration-300",
         "opacity-0 animate-fade-in"
@@ -40,27 +43,37 @@ export function HeroBanner({
       <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
       <div className="absolute -left-10 -bottom-10 h-32 w-32 rounded-full bg-white/5 blur-xl" />
 
-      <div data-component="dashboard-hero-content" className="relative z-10 space-y-4">
-        <div data-component="dashboard-hero-greeting" className="space-y-1">
-          <h4
-            className="text-lg font-medium text-primary-foreground/80 opacity-0 animate-fade-in"
-            style={{ animationDelay: "100ms" }}
-          >
-            {subtitle}
-          </h4>
-          <h1
-            className="text-3xl font-bold text-primary-foreground flex items-center gap-2 opacity-0 animate-fade-in"
-            style={{ animationDelay: "150ms" }}
-          >
-            {title} <span className="text-2xl"></span>
-          </h1>
-          {description && (
-            <p
-              className="text-sm text-primary-foreground/70 max-w-md opacity-0 animate-fade-in"
-              style={{ animationDelay: "175ms" }}
-            >
-              {description}
-            </p>
+      <div data-component="dashboard-hero-content" className="relative z-10">
+        <div data-component="dashboard-hero-greeting">
+          {isLoading ? (
+            <div className="space-y-3" data-component="dashboard-hero-greeting-skeleton">
+              <Skeleton className="h-5 w-40 bg-white/25" />
+              <Skeleton className="h-9 w-56 bg-white/30" />
+              {description !== "" && <Skeleton className="h-4 w-72 max-w-full bg-white/20" />}
+            </div>
+          ) : (
+            <>
+              <h4
+                className="text-lg font-medium text-primary-foreground/80 opacity-0 animate-fade-in"
+                style={{ animationDelay: "100ms" }}
+              >
+                {subtitle}
+              </h4>
+              <h1
+                className="text-3xl font-bold text-primary-foreground flex items-center gap-2 opacity-0 animate-fade-in"
+                style={{ animationDelay: "150ms" }}
+              >
+                {title} <span className="text-2xl"></span>
+              </h1>
+              {description && (
+                <p
+                  className="text-sm text-primary-foreground/70 max-w-md opacity-0 animate-fade-in"
+                  style={{ animationDelay: "175ms" }}
+                >
+                  {description}
+                </p>
+              )}
+            </>
           )}
         </div>
 

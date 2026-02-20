@@ -28,7 +28,7 @@ export const NavButton = ({
             href={href}
             onClick={disabled ? (e) => e.preventDefault() : onClick}
             className={cn(
-                "flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-all duration-200",
+                "flex items-center gap-3 px-3 py-3 rounded-2xl text-sm font-medium transition-all duration-200",
                 "opacity-0 animate-slide-in-left",
                 active
                     ? "bg-sidebar-primary/20 text-sidebar-primary"

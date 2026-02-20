@@ -53,7 +53,7 @@ export function ToolIndicator({ toolName, isExecuting }: ToolIndicatorProps) {
         <div
             data-component="chat-tool-indicator"
             data-testid="tool-indicator"
-            className="flex items-center gap-2 py-2 px-4 bg-muted/50 rounded mb-2"
+            className="flex items-center gap-2 py-2 px-4 bg-muted/50 rounded-2xl mb-2"
         >
             {/* Animated dots */}
             <div className="flex gap-1">

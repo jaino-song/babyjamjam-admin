@@ -142,7 +142,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 </Alert>
             )}
 
-            <div className="p-6 border rounded-lg">
+            <div className="p-6 border rounded-2xl">
                 <h3 className="text-lg font-semibold mb-2">
                     {t(locale, "template-editor.preview")}
                 </h3>

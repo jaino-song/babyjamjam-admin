@@ -49,7 +49,7 @@ export function QuickActions() {
               key={action.label}
               data-component="dashboard-quick-actions-card"
               className={cn(
-                "aspect-square flex flex-col items-center justify-center rounded-xl border bg-card",
+                "aspect-square flex flex-col items-center justify-center rounded-2xl border bg-card",
                 "transition-all active:scale-[0.95] cursor-pointer hover:shadow-md",
                 "opacity-0 animate-scale-in"
               )}

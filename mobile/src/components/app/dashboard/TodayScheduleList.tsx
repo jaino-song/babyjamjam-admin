@@ -44,7 +44,7 @@ export function TodayScheduleList() {
                 key={schedule.id}
                 data-component="dashboard-schedule-item"
                 className={cn(
-                  "flex items-start gap-4 rounded-lg border p-3 cursor-pointer",
+                  "flex items-start gap-4 rounded-2xl border p-3 cursor-pointer",
                   "transition-all duration-200 ease-out",
                   "hover:bg-muted/50 hover:border-l-2 hover:border-l-primary hover:translate-x-1",
                   "opacity-0 animate-slide-in-left"

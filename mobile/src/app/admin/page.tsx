@@ -69,8 +69,8 @@ export default function AdminFeedbackPage() {
             {[1, 2, 3].map((i) => (
               <Card key={i} className="opacity-0 animate-fade-in" style={{ animationDelay: `${i * 100}ms` }}>
                 <CardContent className="p-6">
-                  <div className="h-4 bg-muted rounded w-1/2 mb-4 animate-pulse"></div>
-                  <div className="h-8 bg-muted rounded w-1/3 animate-pulse"></div>
+                  <div className="h-4 bg-muted rounded-2xl w-1/2 mb-4 animate-pulse"></div>
+                  <div className="h-8 bg-muted rounded-2xl w-1/3 animate-pulse"></div>
                 </CardContent>
               </Card>
             ))}
@@ -125,10 +125,10 @@ export default function AdminFeedbackPage() {
               {[1, 2, 3, 4, 5].map((i) => (
                 <div key={i} className="border-b border-border py-4">
                   <div className="grid grid-cols-4 gap-4">
-                    <div className="h-4 bg-muted rounded animate-pulse"></div>
-                    <div className="h-4 bg-muted rounded animate-pulse"></div>
-                    <div className="h-4 bg-muted rounded animate-pulse"></div>
-                    <div className="h-4 bg-muted rounded animate-pulse"></div>
+                    <div className="h-4 bg-muted rounded-2xl animate-pulse"></div>
+                    <div className="h-4 bg-muted rounded-2xl animate-pulse"></div>
+                    <div className="h-4 bg-muted rounded-2xl animate-pulse"></div>
+                    <div className="h-4 bg-muted rounded-2xl animate-pulse"></div>
                   </div>
                 </div>
               ))}
@@ -224,7 +224,7 @@ export default function AdminFeedbackPage() {
                       </p>
                     </div>
                     <div>
-                      <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                      <nav className="relative z-0 inline-flex rounded-2xl shadow-sm -space-x-px">
                         <Button
                           variant="outline"
                           size="sm"

@@ -61,7 +61,7 @@ export function ListPanel({
   const activeTabLabel = tabs?.find(t => t.value === activeTab)?.label ?? tabs?.[0]?.label ?? "";
 
   return (
-    <div data-component="list-panel" className="bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
+    <div data-component="list-panel" className="bg-white rounded-2xl shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
       <div className="flex items-center justify-between p-6 pb-0 shrink-0">
         <h2 className="text-lg font-bold text-v3-dark">{title}</h2>
         {headerActions && <div>{headerActions}</div>}
@@ -73,13 +73,13 @@ export function ListPanel({
             <div ref={dropdownRef} className="relative">
               <button
                 onClick={() => setDropdownOpen(prev => !prev)}
-                className="flex items-center gap-1.5 text-[0.8rem] font-semibold text-v3-dark px-3 py-1.5 rounded-[10px] border border-v3-border hover:bg-v3-dim-white transition-colors"
+                className="flex items-center gap-1.5 text-[0.8rem] font-semibold text-v3-dark px-3 py-1.5 rounded-2xl border border-v3-border hover:bg-v3-dim-white transition-colors"
               >
                 {activeTabLabel}
                 <ChevronDown className={cn("w-3.5 h-3.5 text-v3-text-muted transition-transform", dropdownOpen && "rotate-180")} />
               </button>
               {dropdownOpen && (
-                <div className="absolute top-full left-0 z-50 mt-1 min-w-[140px] max-h-[240px] overflow-y-auto rounded-[14px] border border-v3-border bg-white shadow-v3 py-1 animate-in fade-in-0 zoom-in-95">
+                <div className="absolute top-full left-0 z-50 mt-1 min-w-[140px] max-h-[240px] overflow-y-auto rounded-2xl border border-v3-border bg-white shadow-v3 py-1 animate-in fade-in-0 zoom-in-95">
                   {(tabs ?? []).map((tab) => (
                     <button
                       key={tab.value}
@@ -123,9 +123,9 @@ export function ListPanel({
         </div>
       )}
 
-      <div data-component="list-panel-content" className="relative overflow-y-auto min-h-0 flex-1 px-6 pt-6">
+      <div data-component="list-panel-content" className="relative overflow-y-auto min-h-0 flex-1 p-6">
         {showContentSkeleton ? contentSkeleton : children}
-        <div className="sticky bottom-0 h-6 bg-white shrink-0" />
+        {/* <div className="sticky bottom-0 h-6 bg-white shrink-0" /> */}
       </div>
     </div>
   );
