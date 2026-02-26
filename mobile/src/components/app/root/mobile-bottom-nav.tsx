@@ -28,17 +28,44 @@ export function MobileBottomNav() {
       { href: "/all", label: "전체", icon: Menu, kind: "normal" },
     ];
 
+  const activeIndex = navItems.findIndex((item) => {
+    if (item.href === "/dashboard") return pathname === "/dashboard";
+    if (item.href === "/chat" || item.href === "/all")
+      return pathname === item.href;
+    return pathname.startsWith(item.href);
+  });
+
+  const activeItem = activeIndex >= 0 ? navItems[activeIndex] : null;
+
   return (
     <nav
       data-component="mobile-bottom-nav"
       className={cn(
-        "fixed bottom-4 left-4 right-4 z-[1000]",
+        "fixed bottom-4 left-4 right-4 z-40",
         "grid grid-cols-5 items-end gap-1 p-2",
         "bg-white/80 backdrop-blur-xl rounded-2xl",
         "shadow-v3-hover",
         "md:hidden"
       )}
     >
+      {activeIndex >= 0 && (
+        <div
+          aria-hidden="true"
+          className={cn(
+            "absolute top-2 bottom-2 rounded-2xl",
+            "transition-[transform,background-color] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]",
+            activeItem?.kind === "chat"
+              ? "bg-v3-primary-light"
+              : "bg-v3-primary"
+          )}
+          style={{
+            width: "calc((100% - 2rem) / 5)",
+            left: "0.5rem",
+            transform: `translateX(calc(${activeIndex} * (100% + 0.25rem)))`,
+          }}
+        />
+      )}
+
       {navItems.map((item) => {
         const isActive =
           item.href === "/dashboard"
@@ -58,14 +85,12 @@ export function MobileBottomNav() {
                 : `mobile-bottom-nav-${item.href.replace("/", "")}`
             }
             className={cn(
-              "flex flex-col items-center gap-1 p-2 rounded-2xl transition-all duration-200",
+              "relative z-10 flex flex-col items-center gap-1 p-2 rounded-2xl transition-colors duration-300",
               item.kind === "chat"
-                ? isActive
-                  ? "bg-v3-primary-light text-v3-primary"
-                  : "text-v3-primary hover:bg-v3-primary-light"
+                ? "text-v3-primary"
                 : isActive
-                  ? "bg-v3-primary text-white"
-                  : "text-gray-500 hover:bg-v3-primary-light"
+                  ? "text-white"
+                  : "text-gray-500"
             )}
           >
             <Icon
