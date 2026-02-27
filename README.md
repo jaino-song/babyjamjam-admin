@@ -1,4 +1,4 @@
-# 이미래 인천 (Imirae Incheon)
+# 아가잼잼 (Babyjamjam)
 
 Monorepo for **아가잼잼** — a Korean baby care service management platform with back office, mobile admin, and native apps.
 
