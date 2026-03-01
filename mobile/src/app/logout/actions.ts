@@ -22,6 +22,7 @@ export async function logout(): Promise<{ success: boolean; error?: string }> {
     // Clear all auth-related cookies
     cookieStore.delete("auth_token");
     cookieStore.delete("refresh_token");
+    cookieStore.delete("auto_login");
     cookieStore.delete("selected_organization_id");
 
     return { success: true };
