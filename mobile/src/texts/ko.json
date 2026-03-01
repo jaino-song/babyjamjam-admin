@@ -1,6 +1,6 @@
 {
   "common": {
-    "title": "인천 아이미래로 백오피스",
+    "title": "아가잼잼 관리자 서비스",
     "subtitle": "아날로그에서 디지털로",
     "start": "시작하기",
     "welcome": "환영합니다",
@@ -52,7 +52,7 @@
     "preview": "실시간 미리보기"
   },
   "header": {
-    "companyName": "인천 아이미래로",
+    "companyName": "아가잼잼",
     "companySubtitle": "운영 플랫폼"
   },
   "dashboard": {
@@ -332,7 +332,8 @@
       "doc-revoked": "철회됨",
       "doc-deleted": "삭제됨",
       "add-description": "새로운 고객을 등록하기 위해 양식을 작성하세요",
-      "edit-description": "고객 정보를 수정합니다"
+      "edit-description": "고객 정보를 수정합니다",
+      "error-phone-duplicate": "이미 등록된 연락처입니다"
     },
     "detail": {
       "description": "고객 상세 정보를 확인합니다"

@@ -703,10 +703,11 @@ body {
   font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
 }
 
-/* Focus visible styles */
-*:focus-visible {
-  outline: 2px solid hsl(var(--ring));
+/* Focus visible styles - exclude form elements (they have their own focus indicators) */
+*:focus-visible:not(input):not(select):not(textarea) {
+  outline: 2px solid hsl(var(--primary));
   outline-offset: 2px;
+  border-radius: 28px;
 }
 
 /* ========================================
@@ -888,7 +889,7 @@ body {
 
 /* Dashboard-style border radius (24px = MUI borderRadius: 3) */
 .rounded-dashboard {
-  border-radius: 1.5rem;
+  border-radius: 28px;
 }
 
 /* Dashboard-style padding variants */

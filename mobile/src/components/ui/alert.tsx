@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle, Info, AlertTriangle, X } from "lucide-react";
 
 const alertVariants = cva(
-  "relative w-full rounded-lg border px-4 py-3 text-sm [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground [&>div]:pl-7",
+  "relative w-full rounded-2xl border px-4 py-3 text-sm [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground [&>div]:pl-7",
   {
     variants: {
       variant: {
@@ -54,7 +54,7 @@ const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
         {onClose && (
           <button
             onClick={onClose}
-            className="absolute right-2 top-2 rounded-md p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            className="absolute right-2 top-2 rounded-2xl p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
             aria-label="Close alert"
           >
             <X className="h-4 w-4" />

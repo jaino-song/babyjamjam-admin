@@ -196,10 +196,10 @@ export function VoucherPriceUploadForm() {
               value={String(selectedYear)}
               onValueChange={(value: string) => setSelectedYear(Number(value))}
             >
-              <SelectTrigger id="year-select" className="w-[120px] rounded-xl border-border/50">
+              <SelectTrigger id="year-select" className="w-[120px] rounded-2xl border-border/50">
                 <SelectValue placeholder="연도 선택" />
               </SelectTrigger>
-              <SelectContent className="rounded-xl">
+              <SelectContent className="rounded-2xl">
                 {yearOptions.map((year) => (
                   <SelectItem key={year} value={String(year)}>
                     {year}년
@@ -226,7 +226,7 @@ export function VoucherPriceUploadForm() {
 
             <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
               {warnings.length > 0 && (
-                <Alert className="py-2 bg-warning/10 border-warning/30 text-warning rounded-xl">
+                <Alert className="py-2 bg-warning/10 border-warning/30 text-warning rounded-2xl">
                   <AlertDescription className="text-sm">
                     경고가 있지만 업데이트를 진행할 수 있습니다
                   </AlertDescription>
@@ -249,7 +249,7 @@ export function VoucherPriceUploadForm() {
 
           {/* 업데이트 에러 */}
           {bulkUpdateMutation.isError && (
-            <Alert variant="destructive" className="mt-4 rounded-xl">
+            <Alert variant="destructive" className="mt-4 rounded-2xl">
               <AlertDescription>
                 업데이트 실패: {bulkUpdateMutation.error?.message || "알 수 없는 오류"}
               </AlertDescription>
@@ -276,7 +276,7 @@ export function VoucherPriceUploadForm() {
           </div>
 
           {updateResult.errors.length > 0 && (
-            <Alert className="mb-4 text-left bg-warning/10 border-warning/30 rounded-xl">
+            <Alert className="mb-4 text-left bg-warning/10 border-warning/30 rounded-2xl">
               <AlertDescription>
                 <p className="font-semibold mb-2">일부 항목 처리 실패:</p>
                 <ul className="list-disc pl-4 space-y-1">

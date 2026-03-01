@@ -15,6 +15,7 @@ export interface SteppedWizardProps {
   title: string;
   subtitle?: string;
   steps: WizardStep[];
+  children?: React.ReactNode;
   currentStep: number;
   onStepChange: (step: number) => void;
   onComplete: () => void;
@@ -24,18 +25,29 @@ export interface SteppedWizardProps {
   prevLabel?: string;
   completeLabel?: string;
   isSubmitting?: boolean;
+  stepperProps?: {
+    showDesktop?: boolean;
+    showMobile?: boolean;
+    desktopClassName?: string;
+    mobileClassName?: string;
+  };
   className?: string;
 }
 
 function DesktopStepIndicator({
   steps,
   currentStep,
+  className,
 }: {
   steps: WizardStep[];
   currentStep: number;
+  className?: string;
 }) {
   return (
-    <div className="hidden md:flex items-center justify-center gap-0 px-12 pb-7">
+    <div
+      data-component="stepped-wizard-stepper-desktop"
+      className={cn("hidden md:flex items-center justify-center gap-0 pb-7", className)}
+    >
       {steps.map((step, idx) => {
         const isCompleted = idx < currentStep;
         const isCurrent = idx === currentStep;
@@ -43,6 +55,7 @@ function DesktopStepIndicator({
         return (
           <React.Fragment key={idx}>
             <div
+              data-component="stepped-wizard-stepper-desktop-item"
               className={cn(
                 "flex items-center gap-2",
                 isCurrent && "text-v3-primary",
@@ -50,15 +63,16 @@ function DesktopStepIndicator({
               )}
             >
               <div
+                data-component="stepped-wizard-stepper-desktop-index"
                 className={cn(
                   "w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300",
                   isCompleted &&
-                    "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
+                  "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
                   isCurrent &&
-                    "bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)] scale-110",
+                  "bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)] scale-110",
                   !isCompleted &&
-                    !isCurrent &&
-                    "bg-v3-dim-white text-v3-text-muted border-2 border-v3-border"
+                  !isCurrent &&
+                  "bg-v3-dim-white text-v3-text-muted border-2 border-v3-border"
                 )}
               >
                 {isCompleted ? (
@@ -68,6 +82,7 @@ function DesktopStepIndicator({
                 )}
               </div>
               <span
+                data-component="stepped-wizard-stepper-desktop-label"
                 className={cn(
                   "text-xs font-semibold",
                   isCurrent && "text-v3-primary font-bold",
@@ -81,6 +96,7 @@ function DesktopStepIndicator({
 
             {idx < steps.length - 1 && (
               <div
+                data-component="stepped-wizard-stepper-desktop-connector"
                 className={cn(
                   "w-12 h-0.5 mx-2 rounded-full",
                   idx < currentStep ? "bg-v3-primary" : "bg-v3-border"
@@ -97,24 +113,27 @@ function DesktopStepIndicator({
 function MobileStepIndicator({
   steps,
   currentStep,
+  className,
 }: {
   steps: WizardStep[];
   currentStep: number;
+  className?: string;
 }) {
   const progress = ((currentStep + 1) / steps.length) * 100;
 
   return (
-    <div className="md:hidden px-6 pb-5">
-      <div className="flex items-center justify-between mb-2.5">
-        <span className="text-xs font-bold text-v3-primary">
+    <div data-component="stepped-wizard-stepper-mobile" className={cn("md:hidden pb-5", className)}>
+      <div data-component="stepped-wizard-stepper-mobile-header" className="flex items-center justify-between mb-2.5">
+        <span data-component="stepped-wizard-stepper-mobile-current-label" className="text-xs font-bold text-v3-primary">
           {steps[currentStep]?.label}
         </span>
-        <span className="text-[0.7rem] font-semibold text-v3-text-muted">
+        <span data-component="stepped-wizard-stepper-mobile-progress-label" className="text-[0.7rem] font-semibold text-v3-text-muted">
           {currentStep + 1} / {steps.length} 단계
         </span>
       </div>
-      <div className="w-full h-1.5 rounded-full bg-v3-border overflow-hidden">
+      <div data-component="stepped-wizard-stepper-mobile-progress-track" className="w-full h-1.5 rounded-full bg-v3-border overflow-hidden">
         <div
+          data-component="stepped-wizard-stepper-mobile-progress-bar"
           className="h-full rounded-full bg-gradient-to-r from-v3-primary to-blue-500 transition-all duration-400"
           style={{
             width: `${progress}%`,
@@ -129,43 +148,19 @@ function MobileStepIndicator({
 function CompletedStepSummary({
   step,
   stepIndex,
-  onEdit,
 }: {
   step: WizardStep;
   stepIndex: number;
-  onEdit: () => void;
 }) {
   if (!step.summary) return null;
 
   return (
     <>
-      <div className="hidden md:block bg-v3-green-light rounded-[18px] p-4 mb-6">
-        <div className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-green font-semibold mb-3">
+      <div data-component="stepped-wizard-completed-summary" className="hidden md:block bg-v3-green-light rounded-2xl p-4 mb-6">
+        <div data-component="stepped-wizard-completed-summary-title" className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-green font-semibold mb-3">
           ✓ {stepIndex + 1}단계 완료 — {step.label}
         </div>
-        {step.summary}
-      </div>
-
-      <div className="md:hidden mb-5">
-        <button
-          type="button"
-          onClick={onEdit}
-          className="w-full bg-v3-green-light rounded-2xl p-3.5 flex items-center justify-between border-[1.5px] border-transparent hover:border-[hsl(137,40%,80%)] active:border-[hsl(137,40%,80%)] transition-all"
-        >
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-full bg-v3-green flex items-center justify-center shrink-0">
-              <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />
-            </div>
-            <div className="text-left">
-              <div className="text-[0.8rem] font-bold text-v3-dark">
-                {stepIndex + 1}단계: {step.label}
-              </div>
-            </div>
-          </div>
-          <span className="text-[0.7rem] font-semibold text-v3-primary px-3 py-1.5 rounded-[10px] bg-v3-primary-light shrink-0">
-            수정
-          </span>
-        </button>
+        <div data-component="stepped-wizard-completed-summary-content">{step.summary}</div>
       </div>
     </>
   );
@@ -175,6 +170,7 @@ export function SteppedWizard({
   title,
   subtitle,
   steps,
+  children,
   currentStep,
   onStepChange,
   onComplete,
@@ -184,12 +180,15 @@ export function SteppedWizard({
   prevLabel = "이전",
   completeLabel = "완료",
   isSubmitting = false,
+  stepperProps,
   className,
 }: SteppedWizardProps) {
   const isMobile = useIsMobile();
   const isFirstStep = currentStep === 0;
   const isLastStep = currentStep === steps.length - 1;
   const currentStepData = steps[currentStep];
+  const showDesktopStepper = stepperProps?.showDesktop ?? true;
+  const showMobileStepper = stepperProps?.showMobile ?? true;
 
   const handleNext = () => {
     if (isLastStep) {
@@ -206,9 +205,17 @@ export function SteppedWizard({
   };
 
   return (
-    <div className={cn("flex flex-col", className)}>
+    <div
+      data-component="stepped-wizard-root"
+      className={cn(
+        "flex flex-col",
+        isMobile && "h-full min-h-0 overflow-hidden",
+        className
+      )}
+    >
       {onBack && backLabel && (
         <button
+          data-component="stepped-wizard-back-button"
           type="button"
           onClick={onBack}
           className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
@@ -221,25 +228,38 @@ export function SteppedWizard({
       <div
         data-component="stepped-wizard"
         className={cn(
-          "bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden",
-          isMobile && "flex-1 min-h-[calc(100vh-80px-16px-48px)]"
+          "bg-white rounded-2xl shadow-v3 flex flex-col overflow-hidden p-6",
+          isMobile && "max-h-full min-h-0 h-full"
         )}
       >
-        <div className="pt-6 md:pt-8 px-6 md:px-8 text-center">
-          <h2 className="text-lg md:text-xl font-extrabold text-v3-dark mb-1">
+        <div data-component="stepped-wizard-header" className="text-center">
+          <h2 data-component="stepped-wizard-title" className="text-lg md:text-xl font-extrabold text-v3-dark mb-1">
             {title}
           </h2>
           {subtitle && (
-            <p className="text-xs md:text-[0.8rem] text-v3-text-muted mb-4 md:mb-7">
+            <p data-component="stepped-wizard-subtitle" className="text-xs md:text-[0.8rem] text-v3-text-muted mb-4 md:mb-7">
               {subtitle}
             </p>
           )}
         </div>
 
-        <DesktopStepIndicator steps={steps} currentStep={currentStep} />
-        <MobileStepIndicator steps={steps} currentStep={currentStep} />
+        {showDesktopStepper && (
+          <DesktopStepIndicator
+            steps={steps}
+            currentStep={currentStep}
+            className={stepperProps?.desktopClassName}
+          />
+        )}
+        {showMobileStepper && (
+          <MobileStepIndicator
+            steps={steps}
+            currentStep={currentStep}
+            className={stepperProps?.mobileClassName}
+          />
+        )}
 
-        <div className="flex-1 overflow-y-auto px-6 md:px-8 pb-6 md:pb-8">
+        <div data-component="stepped-wizard-content" className="min-h-0 overflow-y-auto h-full">
+          {children ? <div data-component="stepped-wizard-children">{children}</div> : null}
           {steps.map(
             (step, idx) =>
               idx < currentStep && (
@@ -247,35 +267,33 @@ export function SteppedWizard({
                   key={idx}
                   step={step}
                   stepIndex={idx}
-                  onEdit={() => onStepChange(idx)}
                 />
               )
           )}
 
           {currentStepData && (
-            <div>
-              <div className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold mb-4 md:mb-5">
-                {currentStep + 1}단계 — {currentStepData.label}
-              </div>
+            <div data-component="stepped-wizard-step-content">
               {currentStepData.content}
             </div>
           )}
         </div>
 
         <div
+          data-component="stepped-wizard-footer"
           className={cn(
-            "flex items-center justify-between border-t border-v3-border",
-            "px-6 md:px-8 py-4 md:py-5",
+            "flex items-center justify-between",
+            "pt-4 md:pt-5",
             isMobile &&
-              "sticky bottom-0 bg-white rounded-b-[28px] shadow-[0_-4px_20px_hsla(214,50%,20%,0.06)]"
+            "sticky bottom-0 bg-white"
           )}
         >
           <button
+            data-component="stepped-wizard-prev-button"
             type="button"
             onClick={handlePrev}
             disabled={isFirstStep}
             className={cn(
-              "inline-flex items-center gap-1.5 px-4 md:px-5 py-2.5 md:py-2.5 rounded-[14px] border-[1.5px] border-v3-border",
+              "inline-flex items-center gap-1.5 px-4 md:px-5 py-2.5 md:py-2.5 rounded-2xl border-[1.5px] border-v3-border",
               "bg-white text-[0.8rem] md:text-[0.85rem] font-semibold text-v3-text-muted transition-all",
               "hover:border-v3-text-muted",
               isFirstStep && "opacity-0 pointer-events-none"
@@ -285,16 +303,17 @@ export function SteppedWizard({
             {prevLabel}
           </button>
 
-          <span className="hidden md:block text-xs text-v3-text-muted font-semibold">
+          <span data-component="stepped-wizard-footer-progress" className="hidden md:block text-xs text-v3-text-muted font-semibold">
             {currentStep + 1} / {steps.length} 단계
           </span>
 
           <button
+            data-component="stepped-wizard-next-button"
             type="button"
             onClick={handleNext}
             disabled={isSubmitting}
             className={cn(
-              "inline-flex items-center justify-center gap-1.5 rounded-[14px] border-none",
+              "inline-flex items-center justify-center gap-1.5 rounded-2xl border-none",
               "bg-v3-primary text-[0.8rem] md:text-[0.85rem] font-bold text-white transition-all",
               "shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
               "hover:bg-v3-primary-hover hover:-translate-y-px",
@@ -305,7 +324,7 @@ export function SteppedWizard({
             )}
           >
             {isSubmitting ? (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div data-component="stepped-wizard-next-spinner" className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
               <>
                 {isLastStep ? completeLabel : nextLabel}

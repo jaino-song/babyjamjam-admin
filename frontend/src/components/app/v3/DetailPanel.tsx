@@ -69,10 +69,12 @@ export function DetailPanel({
       {renderedHeader && <div data-component="detail-panel-header" className={showBackButton ? "px-6 pt-2" : "p-6"}>
         {renderedHeader}
       </div>}
-      {tabs && <div className="px-6 pt-4">{tabs}</div>}
-      <div className="overflow-y-auto p-6 flex-1 min-h-0">
-        {children}
-        <div className="sticky bottom-0 h-6 bg-white shrink-0 z-20" />
+      {tabs && <div className="px-6">{tabs}</div>}
+      <div className="relative flex-1 min-h-0">
+        <div className="overflow-y-auto h-full p-6">
+          {children}
+        </div>
+        <div className="absolute bottom-0 left-0 right-0 h-6 bg-white pointer-events-none z-20 rounded-b-[28px]" />
       </div>
     </div>
   );

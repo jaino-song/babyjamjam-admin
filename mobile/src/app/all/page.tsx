@@ -77,7 +77,7 @@ export default function AllMenuPage() {
       <section
         data-component="all-menu-profile"
         className={cn(
-          "bg-white rounded-[28px] shadow-v3 p-5",
+          "bg-white rounded-2xl shadow-v3 p-5",
           "border border-black/5",
           "opacity-0 animate-v3-slide-up"
         )}
@@ -117,20 +117,11 @@ export default function AllMenuPage() {
               </>
             )}
           </div>
-
-          <Link href="/settings" className="shrink-0">
-            <Button
-              variant="outline"
-              className="rounded-2xl border-v3-border text-[0.8rem] px-3"
-            >
-              설정
-            </Button>
-          </Link>
         </div>
       </section>
 
       <div
-        className="bg-white rounded-tl-[28px] rounded-tr-[28px] -mx-4 p-4 opacity-0 animate-v3-slide-up"
+        className="bg-white rounded-tl-2xl rounded-tr-2xl -mx-4 p-4 opacity-0 animate-v3-slide-up"
         style={{ animationDelay: "0.1s", animationFillMode: "both" }}
       >
         <ShortcutGrid shortcuts={shortcuts} className="mb-4" />
@@ -150,13 +141,13 @@ export default function AllMenuPage() {
                   data-component="all-menu-nav-item"
                   className={cn(
                     "flex items-center gap-3 px-3 py-1",
-                    "rounded-[18px]",
+                    "rounded-2xl",
                     "active:scale-[0.98] transition-all",
                     "opacity-0 animate-v3-pop-up"
                   )}
                   style={{ animationDelay: `${0.35 + idx * 0.04}s`, animationFillMode: "both" }}
                 >
-                  <div className="w-11 h-11 rounded-[14px] bg-v3-dim-white flex items-center justify-center shrink-0">
+                  <div className="w-11 h-11 rounded-2xl bg-v3-dim-white flex items-center justify-center shrink-0">
                     <Icon className="w-5 h-5 text-v3-text-muted" strokeWidth={2.5} />
                   </div>
                   <div className="min-w-0 flex-1 flex items-center justify-between">

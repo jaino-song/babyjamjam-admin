@@ -11,6 +11,8 @@ interface DetailPanelProps {
   subtitle?: React.ReactNode;
   badges?: React.ReactNode;
   trailing?: React.ReactNode;
+  mobileActions?: React.ReactNode;
+  actions?: React.ReactNode;
   tabs?: React.ReactNode;
   children: React.ReactNode;
 }
@@ -22,7 +24,9 @@ export function DetailPanel({
   subtitle,
   badges,
   trailing,
+  mobileActions,
   tabs,
+  actions,
   children,
 }: DetailPanelProps) {
   const nav = useSplitLayoutNavOptional();
@@ -49,22 +53,37 @@ export function DetailPanel({
   ) : header;
 
   return (
-    <div data-component="detail-panel" className={`bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden ${nav?.isMobile ? "" : "animate-v3-slide-up"}`}>
+    <div data-component="detail-panel" className={`bg-white rounded-2xl shadow-v3 flex flex-col gap-4 overflow-hidden h-full min-h-0 ${nav?.isMobile ? "" : "animate-v3-slide-up"}`}>
       {showBackButton && (
-        <button
-          onClick={nav?.goToList}
-          className="flex items-center gap-1 px-4 pt-4 text-[0.8rem] text-v3-text-muted hover:text-v3-primary transition-colors"
+        <div
+          data-component="detail-panel-mobile-nav"
+          className="flex items-center justify-between px-4 pt-4"
         >
-          <ChevronLeft className="w-5 h-5" />
-        </button>
+          <button
+            data-component="detail-panel-mobile-nav-back"
+            onClick={nav?.goToList}
+            className="flex items-center gap-1 text-[0.8rem] text-v3-text-muted hover:text-v3-primary transition-colors"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          {mobileActions && (
+            <div data-component="detail-panel-mobile-nav-actions" className="flex items-center">
+              {mobileActions}
+            </div>
+          )}
+        </div>
       )}
 
-      {renderedHeader && <div data-component="detail-panel-header" className={showBackButton ? "p-6 pt-2" : "p-6"}>
+      {renderedHeader && <div data-component="detail-panel-header" className={showBackButton ? "px-6 pt-2" : "p-6"}>
         {renderedHeader}
       </div>}
-      {tabs && <div className="px-6 pt-4">{tabs}</div>}
-      <div className="overflow-y-auto p-6 pt-0 flex-1 min-h-0">
-        {children}
+      {actions && <div data-component="detail-panel-actions" className="px-6">{actions}</div>}
+      {tabs && <div className="px-6">{tabs}</div>}
+      <div className="relative flex-1 min-h-0">
+        <div className="overflow-y-auto h-full px-6 py-4">
+          {children}
+        </div>
+        <div className="absolute bottom-0 left-0 right-0 h-6 bg-white pointer-events-none z-20 rounded-b-2xl" />
       </div>
     </div>
   );

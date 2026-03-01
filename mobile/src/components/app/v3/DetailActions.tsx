@@ -30,7 +30,7 @@ export function DetailActions({ actions, name }: DetailActionsProps) {
           onClick={action.onClick}
           disabled={action.disabled}
           className={cn(
-            "rounded-[10px] px-3 py-1.5 text-[0.75rem] font-semibold transition-colors",
+            "rounded-2xl px-3 py-1.5 text-[0.75rem] font-semibold transition-colors",
             "disabled:opacity-50 disabled:pointer-events-none",
             variantStyles[action.variant ?? "default"]
           )}

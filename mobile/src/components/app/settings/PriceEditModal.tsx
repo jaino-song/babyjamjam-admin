@@ -89,7 +89,7 @@ export function PriceEditModal({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen: boolean) => !isOpen && onClose()}>
-      <DialogContent data-component="settings-price-edit-modal" className="sm:max-w-md rounded-[24px]">
+      <DialogContent data-component="settings-price-edit-modal" className="sm:max-w-md rounded-2xl">
         <DialogHeader>
           <DialogTitle>가격 수정</DialogTitle>
           <DialogDescription>
@@ -176,11 +176,11 @@ export function PriceEditModal({
             </p>
 
             {isValid ? (
-              <Alert className="bg-success/10 border-success/30 text-success rounded-xl">
+              <Alert className="bg-success/10 border-success/30 text-success rounded-2xl">
                 <AlertDescription>가격 계산이 일치합니다.</AlertDescription>
               </Alert>
             ) : (
-              <Alert className="bg-warning/10 border-warning/30 text-warning rounded-xl">
+              <Alert className="bg-warning/10 border-warning/30 text-warning rounded-2xl">
                 <AlertDescription>
                   가격 불일치: 차이 {formatPriceDisplay(Math.abs(difference))}원
                   {difference > 0 ? " (서비스가격이 더 큼)" : " (합계가 더 큼)"}

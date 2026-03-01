@@ -1,7 +1,7 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-    title: "Incheon Imirae Back Office - 고객 관리",
+    title: "아가잼잼 관리자 - 고객 관리",
     description: "고객 정보 관리 페이지",
 };
 

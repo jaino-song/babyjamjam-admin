@@ -229,7 +229,7 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
         >
             <DialogContent
                 data-component="employees-form-dialog"
-                className="max-w-lg max-h-[90vh] overflow-y-auto rounded-lg shadow-xl"
+                className="max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl shadow-xl"
             >
                 <DialogHeader>
                     <DialogTitle>
@@ -347,7 +347,7 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                         {/* Clickable area options */}
                         <div
                             className={cn(
-                                "flex flex-wrap gap-2 p-3 rounded-md border",
+                                "flex flex-wrap gap-2 p-3 rounded-2xl border",
                                 touched.workArea && !isWorkAreaValid && "border-destructive"
                             )}
                             onBlur={() => setTouched((prev) => ({ ...prev, workArea: true }))}

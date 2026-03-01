@@ -24,7 +24,15 @@ interface LoginResult {
     emailVerificationRequired?: boolean;
 }
 
-export async function loginWithEmail(email: string, password: string): Promise<LoginResult> {
+function resolveAutoLoginCookieValue(autoLogin: boolean): "1" | "0" {
+    return autoLogin ? "1" : "0";
+}
+
+function isAutoLoginCookieEnabled(value: string | undefined): boolean {
+    return value === "1";
+}
+
+export async function loginWithEmail(email: string, password: string, autoLogin = true): Promise<LoginResult> {
     try {
         console.log("[Server Action] Logging in with email");
 
@@ -51,21 +59,48 @@ export async function loginWithEmail(email: string, password: string): Promise<L
             console.error("[Server Action] Failed to decode token");
         }
 
-        cookieStore.set("auth_token", data.accessToken, {
+        const authCookieBaseOptions = {
             httpOnly: true,
             secure: isSecureCookie,
             sameSite: "lax",
             path: "/",
-            maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-        });
+        } as const;
 
-        cookieStore.set("refresh_token", data.refreshToken, {
+        if (autoLogin) {
+            cookieStore.set("auth_token", data.accessToken, {
+                ...authCookieBaseOptions,
+                maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
+            });
+        } else {
+            cookieStore.set("auth_token", data.accessToken, authCookieBaseOptions);
+        }
+
+        const refreshCookieBaseOptions = {
             httpOnly: true,
             secure: isSecureCookie,
             sameSite: "lax",
             path: "/",
-            maxAge: 7 * 24 * 60 * 60,
-        });
+        } as const;
+
+        if (autoLogin) {
+            cookieStore.set("refresh_token", data.refreshToken, {
+                ...refreshCookieBaseOptions,
+                maxAge: 7 * 24 * 60 * 60,
+            });
+        } else {
+            cookieStore.set("refresh_token", data.refreshToken, refreshCookieBaseOptions);
+        }
+
+        const autoLoginCookieValue = resolveAutoLoginCookieValue(autoLogin);
+        const autoLoginEnabled = isAutoLoginCookieEnabled(autoLoginCookieValue);
+        if (autoLoginEnabled) {
+            cookieStore.set("auto_login", autoLoginCookieValue, {
+                ...authCookieBaseOptions,
+                maxAge: 30 * 24 * 60 * 60,
+            });
+        } else {
+            cookieStore.set("auto_login", autoLoginCookieValue, authCookieBaseOptions);
+        }
 
         console.log("[Server Action] Email login successful");
         console.log("[Server Action] requiresOrgSelection:", data.requiresOrgSelection);

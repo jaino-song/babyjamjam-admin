@@ -32,13 +32,13 @@ export default function FeedbackDetailPage() {
       <div className="min-h-screen bg-muted/50 p-8">
         <div className="max-w-4xl mx-auto">
           <div className="animate-pulse">
-            <div className="h-8 bg-muted rounded w-32 mb-8"></div>
-            <div className="bg-card rounded-lg shadow p-6 mb-6">
-              <div className="h-6 bg-muted rounded w-48 mb-4"></div>
+            <div className="h-8 bg-muted rounded-2xl w-32 mb-8"></div>
+            <div className="bg-card rounded-2xl shadow p-6 mb-6">
+              <div className="h-6 bg-muted rounded-2xl w-48 mb-4"></div>
               <div className="space-y-3">
-                <div className="h-4 bg-muted rounded w-full"></div>
-                <div className="h-4 bg-muted rounded w-3/4"></div>
-                <div className="h-4 bg-muted rounded w-5/6"></div>
+                <div className="h-4 bg-muted rounded-2xl w-full"></div>
+                <div className="h-4 bg-muted rounded-2xl w-3/4"></div>
+                <div className="h-4 bg-muted rounded-2xl w-5/6"></div>
               </div>
             </div>
           </div>
@@ -57,7 +57,7 @@ export default function FeedbackDetailPage() {
           >
             ←
           </button>
-          <div className="bg-card rounded-lg shadow p-12 text-center">
+          <div className="bg-card rounded-2xl shadow p-12 text-center">
             <p className="text-destructive text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
             <p className="text-muted-foreground">요청하신 피드백이 존재하지 않거나 삭제되었습니다.</p>
           </div>
@@ -77,7 +77,7 @@ export default function FeedbackDetailPage() {
           ←
         </button>
 
-        <div data-component="admin-feedback-detail-info" className="bg-card rounded-lg shadow p-6 mb-6">
+        <div data-component="admin-feedback-detail-info" className="bg-card rounded-2xl shadow p-6 mb-6">
           <h2 className="text-xl font-bold text-foreground mb-4">피드백 정보</h2>
           <div className="space-y-3">
             <div className="flex items-center gap-3">
@@ -113,7 +113,7 @@ export default function FeedbackDetailPage() {
           </div>
         </div>
 
-        <div data-component="admin-feedback-detail-chat" className="bg-card rounded-lg shadow p-6">
+        <div data-component="admin-feedback-detail-chat" className="bg-card rounded-2xl shadow p-6">
           <h2 className="text-xl font-bold text-foreground mb-6">대화 내역</h2>
           <div className="space-y-4">
             {feedback.session.messages.map((message: SessionMessage) => {
@@ -126,7 +126,7 @@ export default function FeedbackDetailPage() {
                   className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[80%] rounded-lg p-4 ${isHighlighted
+                    className={`max-w-[80%] rounded-2xl p-4 ${isHighlighted
                         ? 'ring-2 ring-warning bg-warning/10'
                         : isUser
                           ? 'bg-primary text-primary-foreground'
@@ -179,7 +179,7 @@ export default function FeedbackDetailPage() {
                             code: ({ className, children }) => {
                               const isInline = !className;
                               return isInline ? (
-                                <code className="bg-muted text-foreground px-1.5 py-0.5 rounded text-sm font-mono">
+                                <code className="bg-muted text-foreground px-1.5 py-0.5 rounded-2xl text-sm font-mono">
                                   {children}
                                 </code>
                               ) : (
@@ -187,7 +187,7 @@ export default function FeedbackDetailPage() {
                               );
                             },
                             pre: ({ children }) => (
-                              <pre className="bg-card-foreground text-card p-4 rounded-lg overflow-x-auto mb-3">
+                              <pre className="bg-card-foreground text-card p-4 rounded-2xl overflow-x-auto mb-3">
                                 {children}
                               </pre>
                             ),

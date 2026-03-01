@@ -26,6 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 
@@ -159,7 +160,7 @@ export default function SettingsPage() {
                   <button
                     key={section.id}
                     onClick={() => scrollToSection(section.id)}
-                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 text-left ${
+                    className={`flex items-center gap-3 px-4 py-2.5 rounded-2xl text-sm font-medium transition-all duration-200 text-left ${
                       isActive
                         ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
                         : "text-[hsl(var(--v3-text-muted))] hover:bg-[hsl(var(--v3-bg))]"
@@ -205,7 +206,7 @@ export default function SettingsPage() {
           >
             <ContentPaper variant="v3">
               <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--v3-primary))]/10">
+                <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-[hsl(var(--v3-primary))]/10">
                   <User size={20} className="text-[hsl(var(--v3-primary))]" />
                 </div>
                 <div>
@@ -232,35 +233,35 @@ export default function SettingsPage() {
                   <Label htmlFor="profile-name" className="text-sm font-medium">
                     이름
                   </Label>
-                  <input
+                  <Input
                     id="profile-name"
                     type="text"
                     defaultValue={user?.name || ""}
                     placeholder="이름을 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                    className="mt-1.5 w-full px-4 py-2.5 rounded-2xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
                 <div>
                   <Label htmlFor="profile-email" className="text-sm font-medium">
                     이메일
                   </Label>
-                  <input
+                  <Input
                     id="profile-email"
                     type="email"
                     defaultValue={user?.email || ""}
                     placeholder="이메일을 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                    className="mt-1.5 w-full px-4 py-2.5 rounded-2xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
                 <div>
                   <Label htmlFor="profile-phone" className="text-sm font-medium">
                     전화번호
                   </Label>
-                  <input
+                  <Input
                     id="profile-phone"
                     type="tel"
                     placeholder="전화번호를 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                    className="mt-1.5 w-full px-4 py-2.5 rounded-2xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
               </div>
@@ -274,7 +275,7 @@ export default function SettingsPage() {
           >
             <ContentPaper variant="v3">
               <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-500/10">
+                <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-amber-500/10">
                   <Bell size={20} className="text-amber-500" />
                 </div>
                 <div>
@@ -285,7 +286,7 @@ export default function SettingsPage() {
               <Separator className="mb-4" />
 
               <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
+                <div className="flex items-center justify-between p-3 rounded-2xl hover:bg-muted/50 transition-colors">
                   <div className="space-y-0.5">
                     <Label htmlFor="notif-email" className="text-sm font-medium">
                       이메일 알림
@@ -302,7 +303,7 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                <div className="p-3 rounded-xl">
+                <div className="p-3 rounded-2xl">
                   <div className="flex items-center gap-2 mb-3">
                     <MessageSquare size={16} className="text-amber-500" />
                     <Label className="text-sm font-medium">알림톡 서비스</Label>
@@ -328,7 +329,7 @@ export default function SettingsPage() {
                       {PROVIDER_OPTIONS.map((option) => (
                         <div
                           key={option.value}
-                          className="flex items-start space-x-3 p-3 rounded-xl transition-all hover:bg-muted/50"
+                          className="flex items-start space-x-3 p-3 rounded-2xl transition-all hover:bg-muted/50"
                         >
                           <RadioGroupItem
                             value={option.value}
@@ -377,7 +378,7 @@ export default function SettingsPage() {
           >
             <ContentPaper variant="v3">
               <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-violet-500/10">
+                <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-violet-500/10">
                   <Palette size={20} className="text-violet-500" />
                 </div>
                 <div>
@@ -396,7 +397,7 @@ export default function SettingsPage() {
                       key={theme.id}
                       onClick={() => setSelectedTheme(theme.id)}
                       disabled={theme.id === "dark"}
-                      className={`relative flex flex-col items-center gap-3 p-6 rounded-xl border-2 transition-all duration-200 ${
+                      className={`relative flex flex-col items-center gap-3 p-6 rounded-2xl border-2 transition-all duration-200 ${
                         isSelected
                           ? "border-[hsl(var(--v3-primary))] bg-[hsl(var(--v3-primary))]/5"
                           : "border-[hsl(var(--v3-border))] hover:border-[hsl(var(--v3-primary))]/30"
@@ -443,7 +444,7 @@ export default function SettingsPage() {
           >
             <ContentPaper variant="v3">
               <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-red-500/10">
+                <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-red-500/10">
                   <Shield size={20} className="text-red-500" />
                 </div>
                 <div>
@@ -458,39 +459,39 @@ export default function SettingsPage() {
                   <Label htmlFor="current-password" className="text-sm font-medium">
                     현재 비밀번호
                   </Label>
-                  <input
+                  <Input
                     id="current-password"
                     type="password"
                     placeholder="현재 비밀번호를 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                    className="mt-1.5 w-full px-4 py-2.5 rounded-2xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
                 <div>
                   <Label htmlFor="new-password" className="text-sm font-medium">
                     새 비밀번호
                   </Label>
-                  <input
+                  <Input
                     id="new-password"
                     type="password"
                     placeholder="새 비밀번호를 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                    className="mt-1.5 w-full px-4 py-2.5 rounded-2xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
                 <div>
                   <Label htmlFor="confirm-password" className="text-sm font-medium">
                     비밀번호 확인
                   </Label>
-                  <input
+                  <Input
                     id="confirm-password"
                     type="password"
                     placeholder="새 비밀번호를 다시 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                    className="mt-1.5 w-full px-4 py-2.5 rounded-2xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
 
                 <Separator className="my-2" />
 
-                <div className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
+                <div className="flex items-center justify-between p-3 rounded-2xl hover:bg-muted/50 transition-colors">
                   <div className="space-y-0.5">
                     <Label htmlFor="two-factor" className="text-sm font-medium text-muted-foreground">
                       2단계 인증 (준비 중)

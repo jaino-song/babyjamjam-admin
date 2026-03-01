@@ -1,7 +1,7 @@
 "use client";
 
+import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard } from "lucide-react";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 import { NotificationBell } from "@/components/app/notifications/NotificationBell";
 
@@ -12,10 +12,8 @@ export function V3MobileHeader() {
   return (
     <header data-component="mobile-header" className="fixed top-0 left-0 right-0 z-[1000] flex md:hidden items-center justify-between px-4 py-3 bg-white shadow-v3" style={{ borderRadius: '0 0 24px 24px' }}>
       <div data-component="mobile-header-logo" className="flex items-center gap-2.5">
-        <div className="w-9 h-9 rounded-xl bg-v3-primary flex items-center justify-center">
-          <LayoutDashboard className="w-5 h-5 text-white" />
-        </div>
-        <span className="text-base font-bold text-v3-dark">케어허브</span>
+        <Image src="/assets/logo.svg" alt="아가잼잼" width={40} height={40} className="w-10 h-10 rounded-2xl" />
+        <span className="text-xl font-bold text-v3-primary">아가잼잼</span>
       </div>
 
       <div data-component="mobile-header-notifications">

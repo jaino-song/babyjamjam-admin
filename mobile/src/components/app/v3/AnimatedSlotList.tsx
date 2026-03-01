@@ -2,7 +2,8 @@
 
 import React, { useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { TeaserOverlay } from "./TeaserOverlay";
 
 type SlotClassNameArgs<T> = { index: number; item: T | null; isLoading: boolean };
 
@@ -31,6 +32,8 @@ export interface AnimatedSlotListProps<T> {
   isFetchingMore?: boolean;
   /** True when showing initial teaser view (enables gradient overlay) */
   isInitialLoad?: boolean;
+  /** Controls pop intro animation for slots. */
+  animate?: boolean;
 }
 
 export function AnimatedSlotList<T>({
@@ -50,12 +53,30 @@ export function AnimatedSlotList<T>({
   onLoadMore,
   isFetchingMore = false,
   isInitialLoad = false,
+  animate = true,
 }: AnimatedSlotListProps<T>) {
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const loadMoreTriggeredRef = useRef(false);
+  const onLoadMoreRef = useRef<(() => void) | undefined>(onLoadMore);
+  const isFetchingMoreRef = useRef(isFetchingMore);
 
   // If count is provided, use it. Otherwise, show all items (or loadingCount while loading)
   const itemsLength = items?.length ?? 0;
   const slotCount: number = count !== undefined ? count : (isLoading ? loadingCount : itemsLength);
+
+  useEffect(() => {
+    onLoadMoreRef.current = onLoadMore;
+  }, [onLoadMore]);
+
+  useEffect(() => {
+    isFetchingMoreRef.current = isFetchingMore;
+  }, [isFetchingMore]);
+
+  useEffect(() => {
+    if (isInitialLoad || !hasMore) {
+      loadMoreTriggeredRef.current = false;
+    }
+  }, [isInitialLoad, hasMore]);
 
   // Calculate opacity for fade effect on teaser items (only last 2 items fade)
   const getItemOpacity = (index: number): number => {
@@ -70,34 +91,54 @@ export function AnimatedSlotList<T>({
   // Intersection Observer for infinite scroll (after initial tap)
   useEffect(() => {
     // Only enable after initial teaser is dismissed
-    if (isInitialLoad || !hasMore || isFetchingMore || !onLoadMore) return;
+    if (isInitialLoad || !hasMore || !onLoadMoreRef.current) return;
 
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
 
+    const panelContent = sentinel.closest('[data-component="list-panel-content"]');
+    const panelRoot = panelContent instanceof HTMLElement ? panelContent : null;
+    const hasScrollablePanel =
+      panelRoot instanceof HTMLElement && panelRoot.scrollHeight > panelRoot.clientHeight + 1;
+    const root = hasScrollablePanel ? panelRoot : null;
+
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-        if (entry?.isIntersecting) {
-          onLoadMore();
+        if (!entry) return;
+
+        if (!entry.isIntersecting) {
+          loadMoreTriggeredRef.current = false;
+          return;
         }
+
+        if (loadMoreTriggeredRef.current || isFetchingMoreRef.current) return;
+
+        loadMoreTriggeredRef.current = true;
+        onLoadMoreRef.current?.();
       },
       {
-        // Trigger when sentinel is 200px from viewport
-        rootMargin: "200px",
+        root,
+        // Trigger near the bottom to avoid eager preloading all pages
+        rootMargin: "0px 0px 120px 0px",
         threshold: 0,
       }
     );
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [isInitialLoad, hasMore, isFetchingMore, onLoadMore]);
+  }, [isInitialLoad, hasMore]);
 
   // Show teaser overlay when in initial load state with more items
-  const showTeaserOverlay = isInitialLoad && hasMore && !isFetchingMore && !isLoading;
+  const showTeaserOverlay =
+    isInitialLoad &&
+    hasMore &&
+    itemsLength > 5 &&
+    !isFetchingMore &&
+    !isLoading;
 
   return (
-    <div data-component="animated-slot-list" className={cn("relative -mx-2 px-2", className)}>
+    <div data-component="animated-slot-list" className={cn("-mx-2 px-2", className)}>
       {Array.from({ length: slotCount }, (_, index) => {
         const item = !isLoading ? (items?.[index] ?? null) : null;
 
@@ -114,12 +155,12 @@ export function AnimatedSlotList<T>({
             key={`slot-${index}`}
             data-component={itemDataComponent}
             className={cn(
-              "animate-v3-pop-up",
+              animate && "animate-v3-pop-up",
               computedSlotClassName,
               shouldHide && "hidden"
             )}
             style={{
-              animationDelay: `${index * delayStepSeconds}s`,
+              animationDelay: animate ? `${index * delayStepSeconds}s` : undefined,
               opacity: isLoading ? 1 : itemOpacity,
             }}
             onClick={
@@ -132,20 +173,8 @@ export function AnimatedSlotList<T>({
       })}
 
       {/* Teaser overlay - entire area is clickable to load more */}
-      {showTeaserOverlay && (
-        <button
-          onClick={onLoadMore}
-          className="absolute inset-x-0 bottom-0 h-36 cursor-pointer group"
-        >
-          {/* Gradient overlay */}
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent" />
-
-          {/* Tap to load more text and chevron */}
-          <div className="absolute inset-x-0 bottom-4 flex flex-col items-center gap-1 text-v3-text-muted text-sm group-hover:text-v3-primary transition-colors">
-            <span>탭하여 더 보기</span>
-            <ChevronDown className="w-5 h-5 animate-ball-bounce" />
-          </div>
-        </button>
+      {showTeaserOverlay && onLoadMore && (
+        <TeaserOverlay onClick={onLoadMore} />
       )}
 
       {/* Loading spinner when fetching more */}

@@ -58,12 +58,23 @@ export async function POST(request: NextRequest) {
             headers: getAuthHeaders(token),
         });
         return NextResponse.json(response.data, { status: 201 });
-    } catch (error) {
-        console.error("[API] Error creating client:", error);
+    } catch (error: unknown) {
+        const apiError = error as {
+            response?: { data?: unknown; status?: number };
+            message?: string;
+        };
+
+        console.error("[API] Error creating client:", apiError.response?.data || apiError.message);
+
+        if (apiError.response?.data) {
+            return NextResponse.json(apiError.response.data, {
+                status: apiError.response.status || 500,
+            });
+        }
+
         return NextResponse.json(
             { error: "Failed to create client" },
             { status: 500 }
         );
     }
 }
-

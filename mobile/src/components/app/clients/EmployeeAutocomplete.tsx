@@ -9,6 +9,7 @@ import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/app/v3";
 
 interface EmployeeAutocompleteProps {
     "data-testid"?: string;
@@ -148,7 +149,7 @@ export function EmployeeAutocomplete({
                 </Label>
             )}
             <div ref={containerRef} className="relative">
-                <input
+                <Input
                     ref={inputRef}
                     type="text"
                     value={inputValue}
@@ -157,12 +158,9 @@ export function EmployeeAutocomplete({
                     onKeyDown={handleKeyDown}
                     placeholder={t(locale, "clients.form.employee-search-placeholder")}
                     data-component="employee-autocomplete-input"
-                    style={{ outline: "2px solid transparent", outlineOffset: "2px" }}
                     className={cn(
-                        "w-full h-9 px-3 pr-16 py-1 rounded-md border bg-transparent text-sm shadow-sm transition-colors",
-                        "placeholder:text-muted-foreground",
-                        error && "border-destructive",
-                        !error && "border-input"
+                        "pr-16",
+                        error && "border-destructive"
                     )}
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -173,7 +171,7 @@ export function EmployeeAutocomplete({
                         <button
                             type="button"
                             onClick={handleClear}
-                            className="p-0.5 rounded-sm hover:bg-accent"
+                            className="p-0.5 rounded-2xl hover:bg-accent"
                         >
                             <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
                         </button>
@@ -182,7 +180,7 @@ export function EmployeeAutocomplete({
 
                 {showDropdown && (
                     <div
-                        className="absolute top-full left-0 right-0 z-50 mt-1 rounded-md border bg-popover shadow-md animate-in fade-in-0 zoom-in-95"
+                        className="absolute top-full left-0 right-0 z-50 mt-1 rounded-2xl border bg-popover shadow-md animate-in fade-in-0 zoom-in-95"
                         data-testid="employee-autocomplete-dropdown"
                     >
                         {isLoading ? (

@@ -191,29 +191,29 @@ export function ClientsTable() {
             </div>
 
             <div data-component="clients-table-stats" className="flex flex-wrap gap-4">
-                <div className="bg-white p-5 rounded-[20px] shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
-                    <div className="w-12 h-12 rounded-[14px] bg-[hsl(214,80%,95%)] flex items-center justify-center text-xl">👥</div>
+                <div className="bg-white p-5 rounded-2xl shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
+                    <div className="w-12 h-12 rounded-2xl bg-[hsl(214,80%,95%)] flex items-center justify-center text-xl">👥</div>
                     <div>
                         <h3 className="text-2xl font-bold text-[hsl(214,40%,18%)] leading-none">{total}</h3>
                         <p className="text-[11px] text-muted-foreground mt-1">전체 고객</p>
                     </div>
                 </div>
-                <div className="bg-white p-5 rounded-[20px] shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
-                    <div className="w-12 h-12 rounded-[14px] bg-[hsl(137,40%,93%)] flex items-center justify-center text-xl">✅</div>
+                <div className="bg-white p-5 rounded-2xl shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
+                    <div className="w-12 h-12 rounded-2xl bg-[hsl(137,40%,93%)] flex items-center justify-center text-xl">✅</div>
                     <div>
                         <h3 className="text-2xl font-bold text-[hsl(214,40%,18%)] leading-none">-</h3>
                         <p className="text-[11px] text-muted-foreground mt-1">진행중</p>
                     </div>
                 </div>
-                <div className="bg-white p-5 rounded-[20px] shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
-                    <div className="w-12 h-12 rounded-[14px] bg-[hsl(34,100%,94%)] flex items-center justify-center text-xl">⏳</div>
+                <div className="bg-white p-5 rounded-2xl shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
+                    <div className="w-12 h-12 rounded-2xl bg-[hsl(34,100%,94%)] flex items-center justify-center text-xl">⏳</div>
                     <div>
                         <h3 className="text-2xl font-bold text-[hsl(214,40%,18%)] leading-none">-</h3>
                         <p className="text-[11px] text-muted-foreground mt-1">대기중</p>
                     </div>
                 </div>
-                <div className="bg-white p-5 rounded-[20px] shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
-                    <div className="w-12 h-12 rounded-[14px] bg-[hsl(355,40%,94%)] flex items-center justify-center text-xl">⚠️</div>
+                <div className="bg-white p-5 rounded-2xl shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] flex items-center gap-4 hover:-translate-y-1 transition-transform duration-300">
+                    <div className="w-12 h-12 rounded-2xl bg-[hsl(355,40%,94%)] flex items-center justify-center text-xl">⚠️</div>
                     <div>
                         <h3 className="text-2xl font-bold text-[hsl(214,40%,18%)] leading-none">-</h3>
                         <p className="text-[11px] text-muted-foreground mt-1">만료임박</p>
@@ -224,9 +224,9 @@ export function ClientsTable() {
             <ContentPaper variant="v3" className="flex flex-col min-h-[600px] overflow-hidden p-0">
                 <div className="px-6 py-5 border-b border-border flex justify-between items-center bg-white">
                     <h3 className="font-bold text-base text-[hsl(214,40%,18%)]">고객 목록</h3>
-                    <div className="flex gap-1 bg-[hsl(220,20%,97%)] p-1 rounded-xl">
-                        <Button variant="ghost" size="sm" className="bg-white shadow-sm h-7 rounded-[10px] text-xs font-semibold text-[hsl(214,100%,34%)]">목록</Button>
-                        <Button variant="ghost" size="sm" className="text-muted-foreground h-7 rounded-[10px] text-xs hover:text-foreground">카드</Button>
+                    <div className="flex gap-1 bg-[hsl(220,20%,97%)] p-1 rounded-2xl">
+                        <Button variant="ghost" size="sm" className="bg-white shadow-sm h-7 rounded-2xl text-xs font-semibold text-[hsl(214,100%,34%)]">목록</Button>
+                        <Button variant="ghost" size="sm" className="text-muted-foreground h-7 rounded-2xl text-xs hover:text-foreground">카드</Button>
                     </div>
                 </div>
                 
@@ -247,7 +247,7 @@ export function ClientsTable() {
                                     onClick={() => handleRowClick(client)}
                                 >
                                     <div className={cn(
-                                        "w-14 h-14 rounded-[18px] flex items-center justify-center font-bold text-lg text-white shrink-0 shadow-md transition-transform duration-300 group-hover:scale-105 group-hover:-rotate-3",
+                                        "w-14 h-14 rounded-2xl flex items-center justify-center font-bold text-lg text-white shrink-0 shadow-md transition-transform duration-300 group-hover:scale-105 group-hover:-rotate-3",
                                         getAvatarGradient(client.name)
                                     )}>
                                         {client.name.charAt(0)}

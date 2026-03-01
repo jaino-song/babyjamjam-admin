@@ -33,7 +33,7 @@ export function AccessDenied() {
 
         <Link
           href="/"
-          className="inline-flex items-center justify-center px-6 py-3 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors duration-200 shadow-sm hover:shadow-md"
+          className="inline-flex items-center justify-center px-6 py-3 bg-primary text-primary-foreground font-medium rounded-2xl hover:bg-primary/90 transition-colors duration-200 shadow-sm hover:shadow-md"
         >
           <svg
             className="w-5 h-5 mr-2"

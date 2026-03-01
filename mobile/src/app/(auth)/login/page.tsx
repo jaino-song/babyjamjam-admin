@@ -7,15 +7,18 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { loginWithEmail } from "./actions";
-import { AuthCard } from "@/components/auth/auth-card";
-import { FormField } from "@/components/auth/form-field";
-import { OAuthButtons } from "@/components/auth/oauth-buttons";
-import { Button } from "@/components/ui/button";
+import { InputField } from "@/components/app/v3";
+import { CardContainer } from "@/components/auth/card-container";
+import { AuthInlineLink } from "@/components/auth/auth-inline-link";
+import { OAuthButtonIcons, OAuthButtons } from "@/components/auth/oauth-buttons";
 import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 const LoginPage = () => {
     const locale = useLocale();
@@ -111,57 +114,104 @@ const LoginPage = () => {
         }
     };
 
-    return (
-        <AuthCard
-            title={t(locale, "login.title")}
-            description={t(locale, "login.subtitle")}
-        >
-            <div data-component="login" className="space-y-6">
-                {/* Error Alert */}
-                {serverError && (
-                    <Alert
-                        variant="destructive"
-                        onClose={() => {
-                            setServerError(null);
-                            setEmailVerificationRequired(false);
-                        }}
-                    >
-                        <div data-component="login-error-message">
-                            {serverError}
-                            {emailVerificationRequired && (
-                                <div data-component="login-error-verify-email" className="mt-2">
-                                    <Link
-                                        href="/verify-email"
-                                        className="text-destructive underline hover:no-underline"
-                                    >
-                                        인증 이메일 재발송
-                                    </Link>
-                                </div>
-                            )}
-                        </div>
-                    </Alert>
-                )}
+    const kakaoButton = {
+        title: "카카오로 로그인",
+        icon: <OAuthButtonIcons.kakao className="h-5 w-5" />,
+        onClick: () => {
+            window.location.href = `${API_BASE_URL}/auth/kakao`;
+        },
+        disabled: isLoading,
+    };
 
-                {/* Login Form */}
-                <form data-component="login-form" onSubmit={handleSubmit} className="space-y-4">
-                    <FormField
-                        label="이메일"
-                        type="email"
-                        value={formData.email}
-                        onChange={handleChange("email")}
-                        error={errors.email}
-                        disabled={isLoading}
-                        autoComplete="email"
+    const googleButton = {
+        title: "Google로 로그인",
+        icon: <OAuthButtonIcons.google />,
+        onClick: () => {
+            window.location.href = `${API_BASE_URL}/auth/google`;
+        },
+        disabled: true,
+    };
+
+    return (
+        <CardContainer
+            data-component="auth-login"
+            dataComponents={{
+                container: "auth-login-container",
+                card: "auth-login-card",
+                header: "auth-login-header",
+                title: "auth-login-title",
+                subtitle: "auth-login-subtitle",
+                content: "auth-login-content",
+            }}
+            className="[&_[data-component='auth-login-content']]:flex [&_[data-component='auth-login-content']]:flex-col [&_[data-component='auth-login-content']]:gap-6"
+            title={t(locale, "login.title")}
+            subtitle={t(locale, "login.subtitle")}
+        >
+            {/* Error Alert */}
+            {serverError && (
+                <Alert
+                    variant="destructive"
+                    onClose={() => {
+                        setServerError(null);
+                        setEmailVerificationRequired(false);
+                    }}
+                >
+                    <div data-component="login-error-message">
+                        {serverError}
+                        {emailVerificationRequired && (
+                            <div data-component="login-error-verify-email" className="mt-2">
+                                <Link
+                                    href="/verify-email"
+                                    className="text-destructive underline hover:no-underline"
+                                >
+                                    인증 이메일 재발송
+                                </Link>
+                            </div>
+                        )}
+                    </div>
+                </Alert>
+            )}
+
+            {/* Login Form */}
+            <form data-component="login-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
+                    <InputField
+                        title="이메일"
+                        message={errors.email}
+                        messageTone="error"
+                        messageId={errors.email ? "login-email-error" : undefined}
+                        className="gap-2"
+                        labelClassName="text-sm"
+                        inputClassName={errors.email ? "border-destructive focus:border-destructive" : undefined}
+                        inputProps={{
+                            id: "login-email",
+                            type: "email",
+                            value: formData.email,
+                            onChange: handleChange("email"),
+                            disabled: isLoading,
+                            autoComplete: "email",
+                            "aria-invalid": !!errors.email,
+                            "aria-describedby": errors.email ? "login-email-error" : undefined,
+                        }}
                     />
 
-                    <FormField
-                        label="비밀번호"
-                        type="password"
-                        value={formData.password}
-                        onChange={handleChange("password")}
-                        error={errors.password}
-                        disabled={isLoading}
-                        autoComplete="current-password"
+                    <InputField
+                        title="비밀번호"
+                        message={errors.password}
+                        messageTone="error"
+                        messageId={errors.password ? "login-password-error" : undefined}
+                        className="gap-2"
+                        labelClassName="text-sm"
+                        inputClassName={errors.password ? "border-destructive focus:border-destructive" : undefined}
+                        inputProps={{
+                            id: "login-password",
+                            type: "password",
+                            value: formData.password,
+                            onChange: handleChange("password"),
+                            disabled: isLoading,
+                            autoComplete: "current-password",
+                            "aria-invalid": !!errors.password,
+                            "aria-describedby": errors.password ? "login-password-error" : undefined,
+                        }}
                     />
 
                     <div data-component="login-form-checkboxes" className="flex items-center gap-6 pt-1">
@@ -191,51 +241,46 @@ const LoginPage = () => {
                     </div>
 
                     <Button
+                        data-component="login-submit-button"
                         type="submit"
                         size="lg"
-                        className="w-full"
+                        className="w-full rounded-2xl"
                         disabled={isLoading}
                     >
                         {isLoading ? <Spinner size="sm" /> : "로그인"}
                     </Button>
-                </form>
+            </form>
 
-                {/* Divider */}
-                <div data-component="login-divider" className="relative">
-                    <div data-component="login-divider-line" className="absolute inset-0 flex items-center">
-                        <span className="w-full border-t border-border" />
-                    </div>
-                    <div data-component="login-divider-text" className="relative flex justify-center text-xs uppercase">
-                        <span className="bg-card px-2 text-muted-foreground">
-                            또는
-                        </span>
-                    </div>
+            {/* Divider */}
+            <div data-component="login-divider" className="relative">
+                <div data-component="login-divider-line" className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t border-border" />
                 </div>
-
-                {/* OAuth Buttons */}
-                <OAuthButtons disabled={isLoading} />
-
-                <div data-component="login-forgot" className="flex justify-end">
-                    <Link
-                        href="/forgot-password"
-                        className="text-sm text-muted-foreground hover:text-primary transition-colors"
-                    >
-                        비밀번호를 잊으셨나요?
-                    </Link>
+                <div data-component="login-divider-text" className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-white px-2 text-muted-foreground">
+                        또는
+                    </span>
                 </div>
-
-                {/* Register Link */}
-                <p className="text-center text-sm text-muted-foreground">
-                    계정이 없으신가요?{" "}
-                    <Link
-                        href="/register"
-                        className="text-primary font-medium hover:underline"
-                    >
-                        회원가입
-                    </Link>
-                </p>
             </div>
-        </AuthCard>
+
+            {/* OAuth Buttons */}
+            <OAuthButtons kakaoButton={kakaoButton} googleButton={googleButton} />
+
+            <AuthInlineLink
+                dataComponent="login-forgot"
+                href="/forgot-password"
+                prefixText="비밀번호를 잊으셨나요?"
+                linkLabel="비밀번호 찾기"
+            />
+
+            {/* Register Link */}
+            <AuthInlineLink
+                dataComponent="login-register-link"
+                href="/register"
+                prefixText="계정이 없으신가요?"
+                linkLabel="회원가입"
+            />
+        </CardContainer>
     );
 };
 

@@ -356,7 +356,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     return (
         <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-xl" data-testid="client-form-dialog">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-xl" data-testid="client-form-dialog">
                 <DialogHeader>
                     <DialogTitle>
                         {isEditMode

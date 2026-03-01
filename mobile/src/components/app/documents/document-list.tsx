@@ -112,7 +112,7 @@ export default function DocumentList({
 
   if (documents.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground border border-border rounded-lg bg-muted/30">
+      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground border border-border rounded-2xl bg-muted/30">
         <File className="h-16 w-16 text-muted-foreground/30 mb-4" />
         <h6 className="text-lg font-semibold text-foreground/60 mb-1">
           등록된 문서가 없습니다

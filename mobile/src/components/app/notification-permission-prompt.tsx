@@ -27,7 +27,7 @@ export function NotificationPermissionPrompt() {
     };
 
     return (
-        <div className="fixed bottom-20 left-4 right-4 md:bottom-6 md:left-auto md:right-6 md:w-96 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-4 flex items-start gap-3 animate-in slide-in-from-bottom-4">
+        <div className="fixed bottom-20 left-4 right-4 md:bottom-6 md:left-auto md:right-6 md:w-96 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-lg p-4 flex items-start gap-3 animate-in slide-in-from-bottom-4">
             <div className="flex-shrink-0 text-2xl">🔔</div>
             <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
@@ -39,13 +39,13 @@ export function NotificationPermissionPrompt() {
                 <div className="flex gap-2 mt-2">
                     <button
                         onClick={handleEnable}
-                        className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                        className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-2xl transition-colors"
                     >
                         허용
                     </button>
                     <button
                         onClick={handleDismiss}
-                        className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                        className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-2xl transition-colors"
                     >
                         나중에
                     </button>

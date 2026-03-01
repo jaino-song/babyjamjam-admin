@@ -2,7 +2,13 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Users, Plus, Phone, MessageSquare, FileText, ClipboardList, Clock, UserCheck, AlertTriangle } from "lucide-react";
+import { Users, Plus, Phone, MessageSquare, FileText, ClipboardList, Clock, UserCheck, AlertTriangle, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
@@ -365,6 +371,25 @@ export default function ClientsPage() {
                                     : "-"}
                             </>
                         }
+                        trailing={
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors">
+                                        <MoreVertical className="w-5 h-5 text-v3-text-muted" />
+                                    </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="min-w-[140px]">
+                                    <DropdownMenuItem onClick={() => handleEdit(selectedClient)} className="gap-2">
+                                        <Pencil className="w-4 h-4" />
+                                        {t(locale, "common.edit")}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleDelete(selectedClient.id)} className="gap-2 text-destructive focus:text-destructive">
+                                        <Trash2 className="w-4 h-4" />
+                                        {t(locale, "common.delete")}
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        }
                         tabs={
                             <DetailTabs
                                 tabs={[
@@ -459,22 +484,7 @@ export default function ClientsPage() {
                                         />
                                     </InfoCard>
 
-                                    <div data-component="clients-detail-actions" className="col-span-2 flex gap-3 pt-2">
-                                        <Button
-                                            variant="outline"
-                                            className="flex-1 rounded-full"
-                                            onClick={() => handleDelete(selectedClient.id)}
-                                        >
-                                            {t(locale, "common.delete")}
-                                        </Button>
-                                        <Button
-                                            variant="v3"
-                                            className="flex-1 rounded-full"
-                                            onClick={() => handleEdit(selectedClient)}
-                                        >
-                                            {t(locale, "common.edit")}
-                                        </Button>
-                                    </div>
+
                                 </div>
                             )}
 

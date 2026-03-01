@@ -123,7 +123,7 @@ export function ParsedDataPreview({
         </div>
 
         {/* 데이터 테이블 */}
-        <div className="border rounded-lg overflow-hidden" data-component="settings-parsed-data-table">
+        <div className="border rounded-2xl overflow-hidden" data-component="settings-parsed-data-table">
           <Table>
             <TableHeader>
               <TableRow>

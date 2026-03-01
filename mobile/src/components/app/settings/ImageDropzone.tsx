@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { CloudUpload, FileText } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
@@ -115,7 +116,7 @@ export function ImageDropzone({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
-          "relative p-8 border-2 border-dashed rounded-[24px] transition-all duration-200",
+          "relative p-8 border-2 border-dashed rounded-2xl transition-all duration-200",
           isDragOver
             ? "border-primary bg-primary/5"
             : validationError
@@ -125,7 +126,7 @@ export function ImageDropzone({
           !isLoading && "hover:border-primary hover:bg-muted/50"
         )}
       >
-        <input
+        <Input
           type="file"
           accept={ALLOWED_EXTENSIONS}
           onChange={handleFileInputChange}

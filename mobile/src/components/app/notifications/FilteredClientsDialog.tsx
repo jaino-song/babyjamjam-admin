@@ -123,15 +123,15 @@ export function FilteredClientsDialog({
     return (
         <>
             <Dialog open={open} onOpenChange={(open: boolean) => !open && onClose()}>
-                <DialogContent data-component="admin-filtered-clients-dialog" className="max-w-lg max-h-[80vh] p-0">
-                    <DialogHeader data-component="admin-filtered-clients-header" className="px-4 py-3 flex flex-row items-center justify-between border-b">
-                        <DialogTitle className="font-semibold">{title}</DialogTitle>
-                        <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
+                <DialogContent data-component="filtered-clients-dialog" className="max-w-[440px] max-h-[80vh] rounded-2xl border-none bg-white text-foreground shadow-v3 p-0 flex flex-col overflow-hidden">
+                    <DialogHeader data-component="filtered-clients-header" className="px-6 pt-6 pb-3 text-center">
+                        <DialogTitle className="text-lg md:text-xl font-extrabold text-v3-dark">{title}</DialogTitle>
+                        <Button variant="ghost" size="icon" onClick={onClose} className="absolute right-3 top-3 h-8 w-8">
                             <X className="h-5 w-5" />
                         </Button>
                     </DialogHeader>
 
-                    <div data-component="admin-filtered-clients-body" className="overflow-y-auto max-h-[calc(80vh-4rem)]">
+                    <div data-component="filtered-clients-body" className="overflow-y-auto flex-1">
                         {isLoading ? (
                             <div className="flex justify-center py-16">
                                 <Spinner size="default" />

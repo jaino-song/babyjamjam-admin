@@ -217,7 +217,7 @@ export function DocumentDropzone({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={cn(
-            "relative p-6 border-2 border-dashed rounded-lg flex flex-col items-center gap-4",
+            "relative p-6 border-2 border-dashed rounded-2xl flex flex-col items-center gap-4",
             "transition-all duration-200",
             isDragOver
               ? "border-primary bg-primary/5"
@@ -226,7 +226,7 @@ export function DocumentDropzone({
             !isLoading && "hover:border-primary hover:bg-primary/5"
           )}
         >
-          <input
+          <Input
             type="file"
             accept={ALLOWED_EXTENSIONS}
             onChange={handleFileInputChange}
@@ -248,16 +248,16 @@ export function DocumentDropzone({
           </div>
         </div>
       ) : (
-        <div className="p-6 border border-border rounded-lg">
+        <div className="p-6 border border-border rounded-2xl">
           <div className="flex items-start gap-4 mb-6">
             {previewUrl ? (
               <img
                 src={previewUrl}
                 alt="Preview"
-                className="w-20 h-20 object-cover rounded border border-border"
+                className="w-20 h-20 object-cover rounded-2xl border border-border"
               />
             ) : (
-              <div className="w-20 h-20 flex items-center justify-center bg-muted rounded">
+              <div className="w-20 h-20 flex items-center justify-center bg-muted rounded-2xl">
                 {getFileIcon()}
               </div>
             )}

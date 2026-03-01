@@ -23,7 +23,7 @@ export function DetailSkeleton({
   return (
     <div
       data-component={name}
-      className="bg-white rounded-[28px] shadow-v3 h-full min-h-0 overflow-y-auto"
+      className="bg-white rounded-2xl shadow-v3 h-full min-h-0 overflow-y-auto"
     >
       {/* Header skeleton */}
       <div className="p-6 space-y-4">
@@ -41,20 +41,20 @@ export function DetailSkeleton({
           {headerActions > 0 && (
             <div className="flex gap-2 shrink-0">
               {Array.from({ length: headerActions }).map((_, i) => (
-                <Skeleton key={i} className="h-8 w-14 rounded-[10px] bg-v3-dim-white" />
+                <Skeleton key={i} className="h-8 w-14 rounded-2xl bg-v3-dim-white" />
               ))}
             </div>
           )}
         </div>
         {headerBanner && (
-          <Skeleton className="h-10 w-full rounded-[14px] bg-v3-dim-white" />
+          <Skeleton className="h-10 w-full rounded-2xl bg-v3-dim-white" />
         )}
       </div>
 
       {/* Content skeleton */}
       <div className="p-6 pt-0 space-y-5">
         {sections.map((section, idx) => (
-          <div key={idx} className="bg-v3-dim-white rounded-[18px] p-4 space-y-3">
+          <div key={idx} className="bg-v3-dim-white rounded-2xl p-4 space-y-3">
             {section.titleWidth && (
               <Skeleton className={`h-3 ${section.titleWidth} bg-white/70`} />
             )}

@@ -13,23 +13,27 @@ export const api = axios.create({
     withCredentials: true,
 });
 
-// Token refresh state management
-let isRefreshing = false;
-let isRedirectingToLogin = false;
-let failedQueue: Array<{
+type QueueItem = {
     resolve: (value?: unknown) => void;
     reject: (reason?: unknown) => void;
-}> = [];
+};
 
-const processQueue = (error: AxiosError | null = null) => {
-    failedQueue.forEach((prom) => {
+// Token refresh state management
+let isEformsignRefreshing = false;
+let isAuthRefreshing = false;
+let isRedirectingToLogin = false;
+const eformsignFailedQueue: QueueItem[] = [];
+const authFailedQueue: QueueItem[] = [];
+
+const processQueue = (queue: QueueItem[], error: AxiosError | null = null) => {
+    queue.forEach((prom) => {
         if (error) {
             prom.reject(error);
         } else {
             prom.resolve();
         }
     });
-    failedQueue = [];
+    queue.length = 0;
 };
 
 api.interceptors.request.use(
@@ -59,17 +63,22 @@ api.interceptors.response.use(
             return axios(originalRequest);
         }
 
-        // 401 Unauthorized - handle eformsign token refresh only for eformsign-related endpoints
+        // 401 Unauthorized
         if (err.response?.status === 401 && originalRequest && !originalRequest._retry) {
             const url = originalRequest.url || '';
-            
+
             // Only handle eformsign-related endpoints with token refresh
             const isEformsignEndpoint = url.includes('/documents') || 
                 url.includes('/access-token') || 
                 url.includes('/refresh-access-token') ||
                 url.includes('/generate-document') ||
                 url.includes('/generate-signature');
-            
+
+            // Don't retry auth refresh endpoint itself
+            if (url.includes('/auth/refresh')) {
+                return Promise.reject(err);
+            }
+
             // Don't retry token refresh endpoints themselves
             if (url.includes('access-token') || url.includes('refresh-access-token')) {
                 return Promise.reject(err);
@@ -77,14 +86,14 @@ api.interceptors.response.use(
 
             // For eformsign endpoints, try token refresh
             if (isEformsignEndpoint) {
-                if (isRefreshing) {
+                if (isEformsignRefreshing) {
                     return new Promise((resolve, reject) => {
-                        failedQueue.push({ resolve, reject });
+                        eformsignFailedQueue.push({ resolve, reject });
                     }).then(() => axios(originalRequest));
                 }
 
                 originalRequest._retry = true;
-                isRefreshing = true;
+                isEformsignRefreshing = true;
 
                 try {
                     const executionTime = Date.now();
@@ -94,31 +103,54 @@ api.interceptors.response.use(
                         safeStorageSetItem("session", "eformsign_auth_time", executionTime.toString());
                     }
 
-                    processQueue();
+                    processQueue(eformsignFailedQueue);
                     return axios(originalRequest);
                 } catch (refreshError) {
-                    processQueue(refreshError as AxiosError);
+                    processQueue(eformsignFailedQueue, refreshError as AxiosError);
                     if (typeof window !== 'undefined') {
                         safeStorageRemoveItem("session", "eformsign_auth_time");
                     }
                     // Don't redirect to login for eformsign auth failures
                     return Promise.reject(refreshError);
                 } finally {
-                    isRefreshing = false;
+                    isEformsignRefreshing = false;
                 }
             }
-            
-            // For non-eformsign 401 errors (main auth failure), redirect to login
-            // But don't redirect if already on an auth page (login, register, etc.)
-            if (typeof window !== 'undefined' && !isRedirectingToLogin) {
-                const currentPath = window.location.pathname;
-                const isAuthPage = isPublicAuthPath(currentPath);
-                if (!isAuthPage) {
-                    isRedirectingToLogin = true;
-                    window.location.href = '/login';
-                }
+
+            if (typeof window === 'undefined') {
+                return Promise.reject(err);
             }
-            return Promise.reject(err);
+
+            if (isAuthRefreshing) {
+                return new Promise((resolve, reject) => {
+                    authFailedQueue.push({ resolve, reject });
+                }).then(() => axios(originalRequest));
+            }
+
+            originalRequest._retry = true;
+            isAuthRefreshing = true;
+
+            try {
+                await api.post('/auth/refresh');
+                processQueue(authFailedQueue);
+                return axios(originalRequest);
+            } catch (refreshError) {
+                processQueue(authFailedQueue, refreshError as AxiosError);
+
+                // If refresh fails, redirect to login (unless already on auth page)
+                if (!isRedirectingToLogin) {
+                    const currentPath = window.location.pathname;
+                    const isAuthPage = isPublicAuthPath(currentPath);
+                    if (!isAuthPage) {
+                        isRedirectingToLogin = true;
+                        window.location.href = '/login';
+                    }
+                }
+
+                return Promise.reject(refreshError);
+            } finally {
+                isAuthRefreshing = false;
+            }
         }
 
         return Promise.reject(err);
