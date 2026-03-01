@@ -53,6 +53,40 @@ function isTokenExpired(token: string): boolean {
 function clearAuthCookies(response: NextResponse): void {
   response.cookies.delete("auth_token");
   response.cookies.delete("refresh_token");
+  response.cookies.delete("auto_login");
+}
+
+function buildRequestCookieHeader(request: NextRequest, params: {
+  accessToken: string;
+  refreshToken: string;
+  autoLogin: boolean;
+}): string {
+  const cookiesMap = new Map<string, string>();
+
+  request.cookies.getAll().forEach((cookie) => {
+    cookiesMap.set(cookie.name, cookie.value);
+  });
+
+  cookiesMap.set("auth_token", params.accessToken);
+  cookiesMap.set("refresh_token", params.refreshToken);
+  cookiesMap.set("auto_login", params.autoLogin ? "1" : "0");
+
+  return Array.from(cookiesMap.entries())
+    .map(([name, value]) => `${name}=${encodeURIComponent(value)}`)
+    .join("; ");
+}
+
+function nextWithUpdatedRequestCookies(
+  request: NextRequest,
+  params: { accessToken: string; refreshToken: string; autoLogin: boolean }
+): NextResponse {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("cookie", buildRequestCookieHeader(request, params));
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 }
 
 function setSessionCookies(
@@ -195,7 +229,13 @@ export async function middleware(request: NextRequest) {
 
   // Check if route only requires auth (not organization)
   if (AUTH_ONLY_ROUTES.some((route) => pathname.startsWith(route))) {
-    const response = NextResponse.next();
+    const response = refreshedSession
+      ? nextWithUpdatedRequestCookies(request, {
+        accessToken: refreshedSession.accessToken,
+        refreshToken: refreshedSession.refreshToken,
+        autoLogin,
+      })
+      : NextResponse.next();
     if (refreshedSession) {
       setSessionCookies(response, {
         accessToken: refreshedSession.accessToken,
@@ -226,7 +266,13 @@ export async function middleware(request: NextRequest) {
       return response;
     }
 
-    const response = NextResponse.next();
+    const response = refreshedSession
+      ? nextWithUpdatedRequestCookies(request, {
+        accessToken: refreshedSession.accessToken,
+        refreshToken: refreshedSession.refreshToken,
+        autoLogin,
+      })
+      : NextResponse.next();
     if (refreshedSession) {
       setSessionCookies(response, {
         accessToken: refreshedSession.accessToken,

@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 
+interface ClientPhone {
+  phone?: string | null;
+}
+
+interface PaginatedClientsResponse {
+  data?: ClientPhone[];
+  total?: number;
+  page?: number;
+  limit?: number;
+}
+
 function getAuthToken(request: NextRequest): string | null {
   return request.cookies.get("auth_token")?.value || null;
 }
@@ -27,20 +38,52 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ exists: false });
     }
 
-    const response = await serverAPIClient.get("/clients", {
-      params: { page: 1, limit: 500 },
-      headers: getAuthHeaders(token),
-    });
+    const limit = 500;
+    let page = 1;
+    let exists = false;
 
-    const clients = Array.isArray(response.data?.data)
-      ? (response.data.data as Array<{ phone?: string | null }>)
-      : Array.isArray(response.data)
-        ? (response.data as Array<{ phone?: string | null }>)
-        : [];
+    while (!exists) {
+      const response = await serverAPIClient.get<PaginatedClientsResponse | ClientPhone[]>("/clients", {
+        params: { page, limit },
+        headers: getAuthHeaders(token),
+      });
 
-    const exists = clients.some(
-      (client) => (client.phone ?? "").replace(/\D/g, "") === targetDigits,
-    );
+      const payload = response.data;
+      const clients = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : [];
+
+      if (clients.length === 0) {
+        break;
+      }
+
+      exists = clients.some(
+        (client) => (client.phone ?? "").replace(/\D/g, "") === targetDigits,
+      );
+
+      if (exists) {
+        break;
+      }
+
+      if (Array.isArray(payload)) {
+        break;
+      }
+
+      const total = typeof payload?.total === "number" ? payload.total : undefined;
+      const currentPage = typeof payload?.page === "number" ? payload.page : page;
+
+      if (total !== undefined && currentPage * limit >= total) {
+        break;
+      }
+
+      if (clients.length < limit) {
+        break;
+      }
+
+      page += 1;
+    }
 
     return NextResponse.json({ exists });
   } catch (error) {
