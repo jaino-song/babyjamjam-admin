@@ -93,7 +93,14 @@ fun AppNavGraph(
             VerifyEmailScreen(onNavigateToLogin = { navController.navigate(Routes.LOGIN) { popUpTo(0) } }, onResendVerification = { /* TODO */ })
         }
         composable(Routes.SELECT_ORG) {
-            SelectOrgScreen(viewModel = authViewModel, organizations = emptyList(), onNavigateToDashboard = { navController.navigate(Routes.DASHBOARD) { popUpTo(0) } })
+            SelectOrgScreen(
+                viewModel = authViewModel,
+                onNavigateToDashboard = { navController.navigate(Routes.DASHBOARD) { popUpTo(0) } },
+                onNavigateToLogin = {
+                    authViewModel.logout()
+                    navController.navigate(Routes.LOGIN) { popUpTo(0) }
+                }
+            )
         }
 
         // Core screens

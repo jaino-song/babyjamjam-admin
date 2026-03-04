@@ -103,7 +103,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                         <>
                             <Separator className="my-2 opacity-0 animate-fade-in bg-sidebar-border" style={{ animationDelay: '400ms' }} />
                             <NavButton
-                                href="/admin"
+                                href="/admin/feedback"
                                 label="관리자"
                                 icon={<ShieldCheck className="h-4 w-4" />}
                                 active={isAdmin}

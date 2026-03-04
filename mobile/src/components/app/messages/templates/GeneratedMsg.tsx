@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { motion } from "framer-motion";
 import { Copy } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { HeaderActionButton } from "@/components/app/v3/HeaderActionButton";
 import { MsgField } from "./MsgField";
 
 interface GeneratedMsgProps {
@@ -27,16 +27,12 @@ export const GeneratedMsg = memo(function GeneratedMsg({
     >
       <div className="flex flex-row justify-between items-center mb-4">
         <h6 className="text-lg font-semibold text-primary">{title}</h6>
-        <Button
-          variant="outline"
-          size="default"
-          className="w-20 gap-2"
+        <HeaderActionButton
+          icon={Copy}
+          label={copyButtonText}
           onClick={handleCopy}
           data-component="messages-generated-msg-copy"
-        >
-          <Copy className="h-4 w-4" />
-          {copyButtonText}
-        </Button>
+        />
       </div>
       <MsgField value={message} onChange={onMessageChange} />
     </motion.div>

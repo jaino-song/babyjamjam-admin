@@ -75,12 +75,12 @@ export function unauthorizedResponse(message = "Access token is required. Please
  */
 export function errorResponse(error: unknown, context: string) {
     const axiosError = error as AxiosError<{ error?: string; message?: string }>;
-    const message = axiosError.response?.data?.error 
-        || axiosError.response?.data?.message 
-        || axiosError.message 
+    const message = axiosError.response?.data?.error
+        || axiosError.response?.data?.message
+        || axiosError.message
         || `Failed to ${context}`;
     const status = axiosError.response?.status || 500;
-    
+
     console.error(`[${context}] Error:`, message);
     return NextResponse.json({ error: message }, { status });
 }
@@ -164,3 +164,53 @@ export async function proxyPostRequest(
     }
 }
 
+/**
+ * Proxy DELETE request to backend with access token and JWT auth
+ */
+export async function proxyDeleteRequest(
+    request: NextRequest,
+    backendPath: string,
+    context: string,
+    additionalBody?: Record<string, unknown>
+): Promise<NextResponse> {
+    const authToken = getAuthToken(request);
+    const accessToken = getAccessToken(request);
+
+    if (!authToken) {
+        return unauthorizedResponse("Authentication required. Please log in.");
+    }
+
+    if (!accessToken) {
+        return unauthorizedResponse("eFormsign access token required. Please authenticate with eFormsign first.");
+    }
+
+    try {
+        const body = await request.json().catch(() => ({}));
+        const { searchParams } = new URL(request.url);
+
+        const params: Record<string, string> = { accessToken };
+        for (const [key, value] of searchParams.entries()) {
+            if (key !== "accessToken") {
+                params[key] = value;
+            }
+        }
+
+        const response = await serverAPIClient.delete(backendPath, {
+            params,
+            data: {
+                ...body,
+                ...additionalBody,
+            },
+            headers: getAuthHeaders(authToken),
+        });
+
+        if (response.status >= 400) {
+            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
+            return NextResponse.json({ error: errorMessage }, { status: response.status });
+        }
+
+        return NextResponse.json(response.data);
+    } catch (error) {
+        return errorResponse(error, context);
+    }
+}

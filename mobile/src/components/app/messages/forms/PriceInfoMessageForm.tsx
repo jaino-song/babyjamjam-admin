@@ -6,6 +6,7 @@ import { GeneratedMsg } from "../templates/GeneratedMsg";
 import bankAccountJSON from "../templates/json/bank-account.json";
 import { priceInfoMsgTemplate } from "../templates/messageTemplate/priceInfoMsg";
 import { t } from "@/lib/i18n/translations";
+import { useToast } from "@/hooks/use-toast";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useBankAccountInfos, useVoucherPriceInfos } from "@/hooks";
@@ -57,6 +58,7 @@ function formatPrice(price: string): string {
 
 export const PriceInfoMessageForm = () => {
   const locale = useLocale();
+  const { toast } = useToast();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [durationTooltipOpen, setDurationTooltipOpen] = useState<boolean>(false);
   const tooltipTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -180,7 +182,7 @@ export const PriceInfoMessageForm = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    toast({ description: t(locale, "common.copy-success-message") });
   };
 
   return (
@@ -347,4 +349,3 @@ export const PriceInfoMessageForm = () => {
     </div>
   );
 };
-

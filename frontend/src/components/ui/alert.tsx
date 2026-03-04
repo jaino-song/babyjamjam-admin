@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle, Info, AlertTriangle, X } from "lucide-react";
 
 const alertVariants = cva(
-  "relative w-full rounded-lg border px-4 py-3 text-sm [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground [&>div]:pl-7",
+  "relative w-full rounded-lg border px-4 py-3 text-sm [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground [&>div]:pl-7",
   {
     variants: {
       variant: {
@@ -34,7 +34,7 @@ const alertIcons = {
 
 export interface AlertProps
   extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof alertVariants> {
+  VariantProps<typeof alertVariants> {
   onClose?: () => void;
 }
 

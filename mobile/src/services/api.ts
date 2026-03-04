@@ -1,6 +1,8 @@
 import { api } from "@/lib/api/client";
+import { isAxiosError } from "axios";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
-import { EformsignDocumentsResponse } from '@/lib/eformsign/types';
+import { EformsignDeleteDocumentsResponse, EformsignDocumentsResponse } from '@/lib/eformsign/types';
+import { safeStorageSetItem } from "@/lib/safe-storage";
 
 // Auth API response types
 export interface AuthResponse {
@@ -118,11 +120,58 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/documents/rejected');
         return data;
     },
+    deleteDocuments: async (
+        documentIds: string[],
+        isPermanent: boolean = false
+    ): Promise<EformsignDeleteDocumentsResponse> => {
+        const { data } = await api.delete('/eformsign/documents', {
+            params: { is_permanent: isPermanent },
+            data: { document_ids: documentIds },
+        });
+        return data;
+    },
+    deleteDocument: async (
+        documentId: string,
+        isPermanent: boolean = false
+    ): Promise<EformsignDeleteDocumentsResponse> => {
+        return eformsignApi.deleteDocuments([documentId], isPermanent);
+    },
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents');
         return data;
     },
+}
+
+/**
+ * Wraps an eformsign API call with automatic re-authentication on 401/403.
+ * 
+ * Flow:
+ * 1. Execute the API call
+ * 2. If it fails with 401/403 (after axios interceptor's token refresh also failed),
+ *    attempt a full re-authentication from scratch
+ * 3. Retry the original call once with the fresh token
+ * 4. If re-auth or retry fails, throw the original error
+ */
+export async function withEformsignReauth<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+        return await fn();
+    } catch (error) {
+        if (!isAxiosError(error)) throw error;
+
+        const status = error.response?.status;
+        if (status === 401 || status === 403) {
+            try {
+                const executionTime = Date.now();
+                await eformsignApi.authenticate(executionTime);
+                safeStorageSetItem("session", "eformsign_auth_time", executionTime.toString());
+                return await fn();
+            } catch {
+                throw error;
+            }
+        }
+        throw error;
+    }
 }
 
 export type AlimtalkProvider = 'aligo' | 'channeltalk' | 'none';

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { eformsignApi } from "@/services/api";
+import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
 import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
 
@@ -68,11 +68,7 @@ export function useInfiniteContracts({
   // Fetch all documents once
   const query = useQuery<EformsignDocumentsResponse>({
     queryKey: infiniteContractsQueryKeys.documents(filterType),
-    queryFn: async () => {
-      // Fetch all documents (backend doesn't support pagination)
-      const response = await eformsignApi.getAllDocuments();
-      return response;
-    },
+    queryFn: () => withEformsignReauth(() => eformsignApi.getAllDocuments()),
     enabled,
     staleTime: 1000 * 60 * 5, // 5 minutes
     gcTime: 1000 * 60 * 60, // 1 hour

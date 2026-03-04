@@ -5,11 +5,13 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
+import { useToast } from "@/hooks/use-toast";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 
 
 export const GreetingMessageForm = () => {
   const locale = useLocale();
+  const { toast } = useToast();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [isDirty, setIsDirty] = useState(false);
   const { data: systemTemplate } = useSystemTemplate("GREETING");
@@ -26,7 +28,7 @@ export const GreetingMessageForm = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    toast({ description: t(locale, "common.copy-success-message") });
   };
 
   return (

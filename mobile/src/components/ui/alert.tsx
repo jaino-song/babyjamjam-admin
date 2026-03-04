@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle, Info, AlertTriangle, X } from "lucide-react";
 
 const alertVariants = cva(
-  "relative w-full rounded-2xl border px-4 py-3 text-sm [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground [&>div]:pl-7",
+  "relative w-full rounded-2xl border px-4 py-3 text-sm [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground [&>div]:pl-7",
   {
     variants: {
       variant: {
@@ -34,28 +34,71 @@ const alertIcons = {
 
 export interface AlertProps
   extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof alertVariants> {
+  VariantProps<typeof alertVariants> {
   onClose?: () => void;
+  icon?: React.ComponentType<{ className?: string }>;
+  hideIcon?: boolean;
+  contentClassName?: string;
+  closeButtonClassName?: string;
+  closeButtonLabel?: string;
+  "data-component"?: string;
+  dataComponents?: {
+    root?: string;
+    icon?: string;
+    content?: string;
+    closeButton?: string;
+  };
 }
 
 const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
-  ({ className, variant = "default", children, onClose, ...props }, ref) => {
-    const IconComponent = alertIcons[variant || "default"];
+  (
+    {
+      className,
+      variant = "default",
+      children,
+      onClose,
+      icon,
+      hideIcon = false,
+      contentClassName,
+      closeButtonClassName,
+      closeButtonLabel = "Close alert",
+      "data-component": dataComponent,
+      dataComponents,
+      ...props
+    },
+    ref
+  ) => {
+    const IconComponent = icon ?? alertIcons[variant || "default"];
+    const componentName = dataComponent ?? "alert";
+    const componentSlots = {
+      root: dataComponents?.root ?? componentName,
+      icon: dataComponents?.icon ?? `${componentName}-icon`,
+      content: dataComponents?.content ?? `${componentName}-content`,
+      closeButton:
+        dataComponents?.closeButton ?? `${componentName}-close-button`,
+    };
 
     return (
       <div
         ref={ref}
         role="alert"
+        data-component={componentSlots.root}
         className={cn(alertVariants({ variant }), className)}
         {...props}
       >
-        <IconComponent className="h-4 w-4" />
-        <div className="flex-1">{children}</div>
+        {!hideIcon && <IconComponent data-component={componentSlots.icon} className="h-4 w-4" />}
+        <div data-component={componentSlots.content} className={cn("flex-1", contentClassName)}>
+          {children}
+        </div>
         {onClose && (
           <button
             onClick={onClose}
-            className="absolute right-2 top-2 rounded-2xl p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-            aria-label="Close alert"
+            data-component={componentSlots.closeButton}
+            className={cn(
+              "absolute right-2 top-2 rounded-2xl p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+              closeButtonClassName
+            )}
+            aria-label={closeButtonLabel}
           >
             <X className="h-4 w-4" />
           </button>

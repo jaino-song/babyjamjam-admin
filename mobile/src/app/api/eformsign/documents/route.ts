@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { proxyGetRequest } from "@/lib/api/route-utils";
+import { proxyDeleteRequest, proxyGetRequest } from "@/lib/api/route-utils";
 
 /**
  * GET /api/eformsign/documents
@@ -19,4 +19,12 @@ export async function GET(request: NextRequest) {
         `/api/documents?limit=${limit}&skip=${skip}`,
         "fetch all eformsign documents"
     );
+}
+
+/**
+ * DELETE /api/eformsign/documents
+ * Delete one or more eformsign documents
+ */
+export async function DELETE(request: NextRequest) {
+    return proxyDeleteRequest(request, "/api/documents", "delete eformsign documents");
 }

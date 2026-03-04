@@ -1,4 +1,9 @@
+import { Metadata } from "next";
 import { ReactNode } from "react";
+
+export const metadata: Metadata = {
+  title: "아가잼잼 관리자",
+};
 import { getCurrentUser, hasSelectedOrganization } from "@/lib/auth/cookies";
 import { redirect } from "next/navigation";
 

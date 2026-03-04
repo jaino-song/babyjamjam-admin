@@ -3,6 +3,7 @@
 import React from "react";
 import { ChevronLeft, ChevronRight, Check } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export interface WizardStep {
@@ -25,6 +26,7 @@ export interface SteppedWizardProps {
   prevLabel?: string;
   completeLabel?: string;
   isSubmitting?: boolean;
+  isNextDisabled?: boolean;
   stepperProps?: {
     showDesktop?: boolean;
     showMobile?: boolean;
@@ -180,12 +182,14 @@ export function SteppedWizard({
   prevLabel = "이전",
   completeLabel = "완료",
   isSubmitting = false,
+  isNextDisabled = false,
   stepperProps,
   className,
 }: SteppedWizardProps) {
   const isMobile = useIsMobile();
   const isFirstStep = currentStep === 0;
   const isLastStep = currentStep === steps.length - 1;
+  const isNextButtonDisabled = isSubmitting || isNextDisabled;
   const currentStepData = steps[currentStep];
   const showDesktopStepper = stepperProps?.showDesktop ?? true;
   const showMobileStepper = stepperProps?.showMobile ?? true;
@@ -307,20 +311,19 @@ export function SteppedWizard({
             {currentStep + 1} / {steps.length} 단계
           </span>
 
-          <button
+          <Button
             data-component="stepped-wizard-next-button"
             type="button"
             onClick={handleNext}
-            disabled={isSubmitting}
+            disabled={isNextButtonDisabled}
+            size="md"
             className={cn(
-              "inline-flex items-center justify-center gap-1.5 rounded-2xl border-none",
-              "bg-v3-primary text-[0.8rem] md:text-[0.85rem] font-bold text-white transition-all",
+              "gap-1.5 rounded-2xl border-none",
+              "bg-v3-primary text-[0.8rem] md:text-[0.85rem] font-bold text-white",
               "shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
               "hover:bg-v3-primary-hover hover:-translate-y-px",
-              "disabled:opacity-60 disabled:pointer-events-none",
-              isMobile
-                ? "flex-1 ml-2 px-6 py-3"
-                : "px-7 py-2.5"
+              "disabled:opacity-60",
+              isMobile ? "" : "px-7"
             )}
           >
             {isSubmitting ? (
@@ -333,7 +336,7 @@ export function SteppedWizard({
                 )}
               </>
             )}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -6,6 +6,7 @@ import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
+import { useToast } from "@/hooks/use-toast";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { NameInput } from "./form-components/NameInput";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button";
 
 export const SurveyMessageForm = () => {
   const locale = useLocale();
+  const { toast } = useToast();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const { name, setName } = useFormStore();
   const { data: systemTemplate } = useSystemTemplate("SURVEY");
@@ -28,7 +30,7 @@ export const SurveyMessageForm = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    toast({ description: t(locale, "common.copy-success-message") });
   };
 
   return (
@@ -69,4 +71,3 @@ export const SurveyMessageForm = () => {
     </div>
   );
 };
-

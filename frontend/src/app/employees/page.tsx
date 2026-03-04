@@ -14,9 +14,9 @@ import {
 import {
     Employee,
     EmployeeStatus,
-    useEmployees,
     useDeleteEmployee,
 } from "@/hooks/useEmployees";
+import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import {
     StatsBar,
@@ -26,10 +26,12 @@ import {
     InfoCard,
     InfoRow,
     HeaderActionButton,
+    AnimatedSlotList,
     EmptyState,
     PageSection,
     ListEmptyState,
 } from "@/components/app/v3";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -114,39 +116,24 @@ export default function EmployeesPage() {
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
 
-    const { data: employees = [], isLoading } = useEmployees();
+    const {
+        employees,
+        allEmployees,
+        isLoading,
+        isFetchingNextPage,
+        hasNextPage,
+        fetchNextPage,
+    } = useInfiniteEmployees({ filter, search });
     const deleteEmployee = useDeleteEmployee();
-
-    const filteredEmployees = useMemo(() => {
-        let list = employees;
-
-        if (filter === "active") {
-            list = list.filter((e) => e.openToNextWork);
-        } else if (filter === "inactive") {
-            list = list.filter((e) => !e.openToNextWork);
-        }
-
-        if (search.trim()) {
-            const q = search.toLowerCase();
-            list = list.filter(
-                (e) =>
-                    e.name.toLowerCase().includes(q) ||
-                    e.phone.includes(q) ||
-                    e.workArea.some((a) => a.toLowerCase().includes(q))
-            );
-        }
-
-        return list;
-    }, [employees, filter, search]);
 
     const stats = useMemo(() => {
         return {
-            total: employees.length,
-            active: employees.filter((e) => e.openToNextWork).length,
-            available: employees.filter((e) => e.status === "available").length,
-            working: employees.filter((e) => e.status === "working").length,
+            total: allEmployees.length,
+            active: allEmployees.filter((e: Employee) => e.openToNextWork).length,
+            available: allEmployees.filter((e: Employee) => e.status === "available").length,
+            working: allEmployees.filter((e: Employee) => e.status === "working").length,
         };
-    }, [employees]);
+    }, [allEmployees]);
 
     const handleAddNew = () => {
         setEditingEmployee(null);
@@ -216,37 +203,51 @@ export default function EmployeesPage() {
                         />
                     }
                 >
-                    {isLoading ? (
-                        <div className="space-y-2">
-                            {Array.from({ length: 6 }).map((_, idx) => (
-                                <div
-                                    key={idx}
-                                    className="h-[76px] rounded-[18px] bg-v3-dim-white animate-pulse"
-                                />
-                            ))}
-                        </div>
-                    ) : filteredEmployees.length === 0 ? (
+                    {!isLoading && employees.length === 0 ? (
                         <ListEmptyState
                             name="employees-empty"
                             message={search || filter !== "all" ? "검색 결과가 없습니다" : "등록된 직원이 없습니다"}
                         />
                     ) : (
-                        <div data-component="employees-list" className="space-y-2">
-                            {filteredEmployees.map((employee) => {
-                                const isActive = selectedEmployee?.id === employee.id;
+                        <AnimatedSlotList<Employee>
+                            items={employees}
+                            isLoading={isLoading}
+                            loadingCount={6}
+                            className="space-y-2"
+                            slotClassName={({ item, isLoading: slotLoading }) => {
+                                const isActive = !slotLoading && item && selectedEmployee?.id === item.id;
+                                return cn(
+                                    "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 border-2 border-transparent",
+                                    !slotLoading && "cursor-pointer",
+                                    isActive
+                                        ? "bg-v3-primary-light border-v3-primary"
+                                        : !slotLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+                                );
+                            }}
+                            onSlotClick={(employee) => handleSelectEmployee(employee)}
+                            hasMore={hasNextPage}
+                            onLoadMore={() => fetchNextPage()}
+                            isFetchingMore={isFetchingNextPage}
+                            render={({ item: employee, isLoading: slotLoading }) => {
+                                if (slotLoading) {
+                                    return (
+                                        <>
+                                            <div className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
+                                                <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
+                                                <Skeleton className="h-3 w-40 bg-v3-dim-white" />
+                                            </div>
+                                            <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white shrink-0" />
+                                        </>
+                                    );
+                                }
+
+                                if (!employee) return null;
 
                                 return (
-                                    <button
-                                        key={employee.id}
-                                        data-component="employees-list-item"
-                                        onClick={() => handleSelectEmployee(employee)}
-                                        className={cn(
-                                            "w-full flex items-center gap-3 p-4 rounded-[18px] text-left transition-all duration-200 border-2 border-transparent",
-                                            isActive
-                                                ? "bg-v3-primary-light border-v3-primary"
-                                                : "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                                        )}
-                                    >
+                                    <>
                                         <div className="w-11 h-11 rounded-[14px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-md">
                                             {getInitials(employee.name)}
                                         </div>
@@ -273,10 +274,10 @@ export default function EmployeesPage() {
                                         <div className="shrink-0">
                                             {getOpenToNextWorkBadge(employee.openToNextWork)}
                                         </div>
-                                    </button>
+                                    </>
                                 );
-                            })}
-                        </div>
+                            }}
+                        />
                     )}
                 </ListPanel>
 

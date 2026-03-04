@@ -25,7 +25,7 @@ const STATUS_OPTIONS: FilterOption[] = [
   { label: "전체", value: null, color: getStatusColor("전체") },
   { label: "대기", value: "in-progress", color: getStatusColor("대기") },
   { label: "완료", value: "completed", color: getStatusColor("완료") },
-  { label: "거부", value: "rejected", color: getStatusColor("거부") },
+  { label: "만료", value: "rejected", color: getStatusColor("만료") },
 ];
 
 // Customer names to filter out (internal/test accounts)

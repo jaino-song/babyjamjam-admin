@@ -18,20 +18,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.imirae.incheon.auth.AuthState
+import com.imirae.incheon.auth.OrganizationsUiState
 import com.imirae.incheon.design.DesignTokens
 import com.imirae.incheon.viewmodel.AuthViewModel
-
-data class OrganizationItem(val id: String, val name: String, val role: String)
 
 @Composable
 fun SelectOrgScreen(
     viewModel: AuthViewModel,
-    organizations: List<OrganizationItem>,
     onNavigateToDashboard: () -> Unit,
+    onNavigateToLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val authState by viewModel.authState.collectAsState()
-    val isLoading = authState is AuthState.Loading
+    val orgsState by viewModel.organizationsState.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.loadOrganizations()
+    }
 
     LaunchedEffect(authState) {
         if (authState is AuthState.Authenticated) {
@@ -75,36 +78,100 @@ fun SelectOrgScreen(
                     textAlign = TextAlign.Center
                 )
 
-                if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                }
+                when (val state = orgsState) {
+                    is OrganizationsUiState.Idle,
+                    is OrganizationsUiState.Loading -> {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                        Text(
+                            "조직 목록을 불러오는 중...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.sm.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    items(organizations) { org ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !isLoading) { viewModel.selectOrganization(org.id) }
-                                .testTag("auth-select-org-item-${org.id}"),
-                            shape = RoundedCornerShape(DesignTokens.Radius.md.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(DesignTokens.Spacing.lg.dp).fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(org.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                    Text(org.role, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    is OrganizationsUiState.Error -> {
+                        Text(
+                            state.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { viewModel.loadOrganizations() }) {
+                                Text("다시 시도")
+                            }
+                            OutlinedButton(onClick = onNavigateToLogin) {
+                                Text("로그아웃")
                             }
                         }
                     }
+
+                    is OrganizationsUiState.Loaded -> {
+                        if (state.organizations.isEmpty()) {
+                            Text(
+                                "접근 가능한 조직이 없습니다.\n관리자에게 조직 접근 권한을 요청해주세요.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { viewModel.loadOrganizations() }) {
+                                    Text("새로고침")
+                                }
+                                OutlinedButton(onClick = onNavigateToLogin) {
+                                    Text("로그아웃")
+                                }
+                            }
+                        } else {
+                            val isSelecting = authState is AuthState.Loading
+
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.sm.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(state.organizations) { org ->
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(enabled = !isSelecting) { viewModel.selectOrganization(org.id) }
+                                            .testTag("auth-select-org-item-${org.id}"),
+                                        shape = RoundedCornerShape(DesignTokens.Radius.md.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(DesignTokens.Spacing.lg.dp).fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(org.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                                val roleLabel = when (org.role) {
+                                                    "owner" -> "소유자"
+                                                    "admin" -> "관리자"
+                                                    else -> "사용자"
+                                                }
+                                                Text(roleLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            if (isSelecting) {
+                                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                            } else {
+                                                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (authState is AuthState.Error) {
+                    Text(
+                        (authState as AuthState.Error).message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         }

@@ -1,6 +1,13 @@
 {
+  "roles": {
+    "owner": "Owner",
+    "admin": "Branch Manager",
+    "manager": "Manager",
+    "user": "User",
+    "unknown": "User"
+  },
   "common": {
-    "title": "Babyjamjam Admin Service",
+    "title": "Babyjamjam Admin",
     "subtitle": "Analog to Digital",
     "start": "Get Started",
     "welcome": "Welcome",
@@ -229,6 +236,10 @@
     "no-data": "No clients registered.",
     "load-error": "Failed to load client list.",
     "delete-confirm": "Are you sure you want to delete this client?",
+    "delete-success": "Client deleted",
+    "delete-success-description": "The client has been deleted.",
+    "delete-fail": "Delete failed",
+    "delete-fail-description": "An error occurred while deleting the client.",
     "table": {
       "name": "Name",
       "phone": "Phone",
@@ -256,6 +267,7 @@
       "name": "Name",
       "birthday": "Birthday",
       "birthday-helper": "YYMMDD format (e.g., 990315)",
+      "due-date": "Expected Delivery Date",
       "phone": "Phone",
       "address": "Address",
       "primary-employee": "Primary Provider",
@@ -274,6 +286,7 @@
       "breast-pump": "Breast Pump Rental",
       "error-name-required": "Name is required.",
       "error-birthday-required": "Birthday is required.",
+      "error-due-date-required": "Expected delivery date is required.",
       "error-address-required": "Address is required.",
       "error-phone-required": "Phone number is required.",
       "error-employee-required": "Primary provider is required.",

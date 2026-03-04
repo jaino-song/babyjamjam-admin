@@ -8,16 +8,22 @@ export function V3MainContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const excluded = isLayoutExcluded(pathname);
   const isClientsNewRoute = pathname.startsWith("/clients/new");
+  const isForgotPasswordRoute = pathname === "/forgot-password";
+  const isLoginRoute = pathname === "/login";
 
   return (
     <main
       data-component="main-content"
       className={cn(
         "bg-v3-dim-white",
-        isClientsNewRoute
-          ? "h-[100dvh] overflow-hidden p-4 pt-20 pb-4 md:min-h-screen md:h-auto md:p-8 md:pt-8 md:pb-8 md:ml-[280px]"
-          : "min-h-screen p-4 md:p-8 pb-24 md:pb-8",
-        !isClientsNewRoute && (excluded ? "pt-4 md:pt-8" : "pt-20 md:pt-8 md:ml-[280px]")
+        isLoginRoute
+          ? "h-[100dvh] flex items-center justify-center p-4"
+          : isClientsNewRoute
+          ? "h-[100dvh] overflow-hidden p-4 pt-20 pb-4"
+          : isForgotPasswordRoute
+            ? "h-[100dvh] p-4"
+            : "min-h-[100dvh] flex flex-col p-4 pb-24",
+        !isLoginRoute && !isClientsNewRoute && !isForgotPasswordRoute && (excluded ? "pt-4" : "pt-20")
       )}
     >
       {children}

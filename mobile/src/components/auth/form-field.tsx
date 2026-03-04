@@ -15,7 +15,7 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
     const fieldId = id || label.toLowerCase().replace(/\s+/g, "-");
 
     return (
-      <div className="space-y-2">
+    <div className="flex flex-col gap-2">
         <Label htmlFor={fieldId} className={labelClassName}>{label}</Label>
         <Input
           ref={ref}

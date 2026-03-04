@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { eformsignApi } from "@/services/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { EformsignDocumentsResponse, EformsignDocument } from "@/lib/eformsign/types";
 import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
 
@@ -44,16 +44,16 @@ export function useEformsignDocumentsByType(isAuthenticated: boolean, type: Docu
       
       switch (type) {
         case null:
-          response = await fetchAllDocuments();
+          response = await withEformsignReauth(() => fetchAllDocuments());
           break;
         case "in-progress":
-          response = await eformsignApi.getInProgressDocuments();
+          response = await withEformsignReauth(() => eformsignApi.getInProgressDocuments());
           break;
         case "completed":
-          response = await eformsignApi.getCompletedDocuments();
+          response = await withEformsignReauth(() => eformsignApi.getCompletedDocuments());
           break;
         case "rejected":
-          response = await eformsignApi.getRejectedDocuments();
+          response = await withEformsignReauth(() => eformsignApi.getRejectedDocuments());
           break;
         default:
           throw new Error("Invalid type");
@@ -87,5 +87,39 @@ export function useEformsignDocuments(isAuthenticated: boolean = true) {
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 60,
+  });
+}
+
+export function useDeleteEformsignDocument() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (documentId: string) => eformsignApi.deleteDocument(documentId),
+    onMutate: async (documentId: string) => {
+      await queryClient.cancelQueries({ queryKey: ["eformsign-documents"] });
+
+      const previousQueries = queryClient.getQueriesData<EformsignDocumentsResponse>({
+        queryKey: ["eformsign-documents"],
+      });
+
+      queryClient.setQueriesData<EformsignDocumentsResponse>(
+        { queryKey: ["eformsign-documents"] },
+        (old) => old ? {
+          ...old,
+          documents: (old.documents || []).filter((d) => d.id !== documentId),
+          total_rows: Math.max(0, (old.total_rows || 0) - 1),
+        } : old,
+      );
+
+      return { previousQueries };
+    },
+    onError: (_err, _id, context) => {
+      context?.previousQueries?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+    },
   });
 }

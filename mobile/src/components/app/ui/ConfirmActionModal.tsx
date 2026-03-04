@@ -46,12 +46,12 @@ export function ConfirmActionModal({
             {description}
           </DialogDescription>
         </DialogHeader>
-        <DialogFooter data-component="confirm-action-modal-actions" className="mt-2">
-          <Button variant="outline" onClick={onCancel} disabled={loading}>
-            {cancelLabel}
-          </Button>
-          <Button variant="destructive" onClick={() => void onConfirm()} disabled={loading}>
+        <DialogFooter data-component="confirm-action-modal-actions" className="mt-2 flex-row gap-2">
+          <Button variant="destructive" onClick={() => void onConfirm()} disabled={loading} className="flex-1">
             {confirmLabel}
+          </Button>
+          <Button variant="outline" onClick={onCancel} disabled={loading} className="flex-1">
+            {cancelLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

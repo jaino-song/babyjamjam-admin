@@ -41,12 +41,14 @@ export function MobileBottomNav() {
     <nav
       data-component="mobile-bottom-nav"
       className={cn(
-        "fixed bottom-4 left-4 right-4 z-40",
+        "fixed left-1/2 z-40 w-[calc(100%-2rem)] max-w-[398px] -translate-x-1/2",
         "grid grid-cols-5 items-end gap-1 p-2",
         "bg-white/80 backdrop-blur-xl rounded-2xl",
         "shadow-v3-hover",
-        "md:hidden"
       )}
+      style={{
+        bottom: "max(calc(1rem + env(safe-area-inset-bottom)), calc(100dvh - var(--mobile-shell-max-height, 932px) + 1rem))",
+      }}
     >
       {activeIndex >= 0 && (
         <div

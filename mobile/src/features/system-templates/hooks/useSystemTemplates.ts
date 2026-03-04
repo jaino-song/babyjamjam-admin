@@ -5,6 +5,21 @@ import { useQuery } from '@tanstack/react-query';
 import { systemTemplateService } from '@/services/system-template.service';
 import type { SystemTemplate } from '../types';
 
+const normalizeSystemTemplateList = (payload: unknown): SystemTemplate[] => {
+    if (Array.isArray(payload)) {
+        return payload;
+    }
+
+    if (payload && typeof payload === 'object') {
+        const nestedList = (payload as { data?: unknown }).data;
+        if (Array.isArray(nestedList)) {
+            return nestedList;
+        }
+    }
+
+    return [];
+};
+
 export const systemTemplateKeys = {
     all: ['system-templates'] as const,
     lists: () => [...systemTemplateKeys.all, 'list'] as const,
@@ -19,7 +34,8 @@ export const systemTemplateKeys = {
 export function useSystemTemplates() {
     return useQuery<SystemTemplate[]>({
         queryKey: systemTemplateKeys.list(),
-        queryFn: () => systemTemplateService.getAll().then((r) => r.data),
+        queryFn: () =>
+            systemTemplateService.getAll().then((r) => normalizeSystemTemplateList(r.data)),
         staleTime: 1000 * 60 * 5,
     });
 }

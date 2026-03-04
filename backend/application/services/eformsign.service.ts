@@ -334,4 +334,40 @@ export class EformsignService {
             skip: 0,
         };
     }
+
+    /**
+     * Delete one or more documents
+     * DELETE /v2.0/api/documents
+     * @param accessToken - eformsign access token
+     * @param documentIds - array of document IDs to delete
+     * @param isPermanent - whether to permanently delete (default: false)
+     */
+    async deleteDocuments(
+        accessToken: string,
+        documentIds: string[],
+        isPermanent: boolean = false
+    ): Promise<any> {
+        const url = new URL(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents`);
+        if (isPermanent) {
+            url.searchParams.set("is_permanent", "true");
+        }
+
+        const response = await fetch(url.toString(), {
+            method: "DELETE",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                document_ids: documentIds,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to delete documents: ${response.status} - ${errorData}`);
+        }
+
+        return await response.json();
+    }
 }

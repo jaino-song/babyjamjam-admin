@@ -64,9 +64,9 @@ export class AuthController {
         const tokens = await this.authService.validateKakaoUser(req.user);
         const code = await this.authService.createAuthCode(tokens);
 
-        console.log(`[Auth] Redirecting to ${frontendURL}/auth/callback (NODE_ENV: ${process.env['NODE_ENV']})`);
+        console.log(`[Auth] Redirecting to ${frontendURL}/callback (NODE_ENV: ${process.env['NODE_ENV']})`);
 
-        res.redirect(`${frontendURL}/auth/callback?code=${code}`);
+        res.redirect(`${frontendURL}/callback?code=${code}`);
     }
 
     @Get("me")

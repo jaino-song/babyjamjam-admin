@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { PageHeader } from "@/components/app/v3";
+import { CardHeader } from "@/components/app/v3";
 import {
   Settings,
   User,
@@ -18,6 +18,8 @@ import { ContentPaper } from "@/components/app/root/content-paper";
 import { VoucherPriceUploadForm } from "@/components/app/settings/VoucherPriceUploadForm";
 import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { settingsApi, AlimtalkProvider } from "@/services/api";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -81,6 +83,7 @@ export default function SettingsPage() {
   });
 
   const { toast } = useToast();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const { data: user } = useGetAuthUser();
   const isOwner = user?.role === "owner";
@@ -147,7 +150,7 @@ export default function SettingsPage() {
 
   return (
     <section data-component="settings" className="space-y-6">
-      <PageHeader title="설정" icon={Settings} />
+      <CardHeader title="설정" icon={Settings} />
 
       <div data-component="settings-content" className="flex flex-col lg:flex-row gap-8">
         <nav data-component="settings-nav" className="lg:w-[220px] shrink-0">
@@ -224,7 +227,7 @@ export default function SettingsPage() {
                   <p className="text-sm font-medium text-foreground">
                     {user?.name || "사용자"}
                   </p>
-                  <p className="text-xs text-muted-foreground">{user?.role || "member"}</p>
+                  <p className="text-xs text-muted-foreground">{user?.role ? t(locale, `roles.${user.role}`) || t(locale, "roles.unknown") : t(locale, "roles.unknown")}</p>
                 </div>
               </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -17,11 +17,12 @@ import {
   UserCog,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { ShortcutGrid } from "@/components/app/v3/ShortcutGrid";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
 
 function initials(name?: string | null) {
   if (!name) return "U";
@@ -32,6 +33,7 @@ function initials(name?: string | null) {
 
 export default function AllMenuPage() {
   const router = useRouter();
+  const locale = useLocale();
   const { data: user, isLoading } = useGetAuthUser();
 
   // Desktop should remain unchanged. If someone navigates here on desktop, bounce back.
@@ -46,7 +48,7 @@ export default function AllMenuPage() {
 
   const shortcuts = useMemo(
     () => [
-      { href: "/chat", label: "AI 챗", icon: Sparkles },
+      { href: "/chat", label: "AI 어시스턴트", icon: Sparkles },
       { href: "/contracts/creation", label: "계약 발송", icon: Send },
       { href: "/clients", label: "고객", icon: Users },
       { href: "/messages", label: "메시지", icon: MessageCircle },
@@ -65,7 +67,7 @@ export default function AllMenuPage() {
       { href: "/settings", label: "설정", desc: "서비스 환경", icon: Settings },
     ];
     if (isAdminOrOwner) {
-      base.push({ href: "/admin", label: "관리자", desc: "피드백/관리", icon: ShieldCheck });
+      base.push({ href: "/admin/feedback", label: "관리자", desc: "피드백/관리", icon: ShieldCheck });
     }
     base.push({ href: "/logout", label: "로그아웃", desc: "계정 로그아웃", icon: LogOut });
     return base;
@@ -78,7 +80,6 @@ export default function AllMenuPage() {
         data-component="all-menu-profile"
         className={cn(
           "bg-white rounded-2xl shadow-v3 p-5",
-          "border border-black/5",
           "opacity-0 animate-v3-slide-up"
         )}
         style={{ animationFillMode: "both" }}
@@ -109,7 +110,7 @@ export default function AllMenuPage() {
                   </p>
                   {user?.role && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-v3-primary-light text-v3-primary shrink-0">
-                      {user.role}
+                      {t(locale, `roles.${user.role}`) || t(locale, "roles.unknown")}
                     </span>
                   )}
                 </div>
@@ -120,13 +121,9 @@ export default function AllMenuPage() {
         </div>
       </section>
 
-      <div
-        className="bg-white rounded-tl-2xl rounded-tr-2xl -mx-4 p-4 opacity-0 animate-v3-slide-up"
-        style={{ animationDelay: "0.1s", animationFillMode: "both" }}
-      >
+      <AllMenuCardContainer>
         <ShortcutGrid shortcuts={shortcuts} className="mb-4" />
 
-        {/* Full nav stack */}
         <section data-component="all-menu-nav" className="space-y-3 pb-2">
           <h2 className="px-1 text-lg font-extrabold tracking-tight text-v3-dark">
             전체 메뉴
@@ -161,7 +158,41 @@ export default function AllMenuPage() {
             })}
           </div>
         </section>
-      </div>
+      </AllMenuCardContainer>
+    </div>
+  );
+}
+
+function AllMenuCardContainer({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [minHeight, setMinHeight] = useState<string | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      const remaining = window.innerHeight - rect.top;
+      setMinHeight(`${Math.max(remaining, 0)}px`);
+    };
+
+    update();
+
+    const observer = new ResizeObserver(update);
+    observer.observe(document.documentElement);
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      data-component="all-menu-card-container"
+      className="bg-white rounded-tl-2xl rounded-tr-2xl -mx-4 -mb-24 p-4 pb-20 opacity-0 animate-v3-slide-up md:-mb-0 md:pb-4"
+      style={{ animationDelay: "0.1s", animationFillMode: "both", minHeight }}
+    >
+      {children}
     </div>
   );
 }

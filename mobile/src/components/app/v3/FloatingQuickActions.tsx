@@ -36,7 +36,7 @@ export function FloatingQuickActions() {
       data-component="floating-quick-actions"
       className={cn(
         "fixed bottom-8 right-6 z-40",
-        "hidden md:flex flex-col items-center gap-4",
+        "hidden flex-col items-center gap-4",
       )}
     >
       {FLOATING_ACTIONS.map((action, idx) => {

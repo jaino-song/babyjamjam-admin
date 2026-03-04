@@ -164,9 +164,6 @@ export function EmployeeAutocomplete({
                     )}
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                    {isLoading && (
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    )}
                     {selectedEmployee && !isLoading && (
                         <button
                             type="button"

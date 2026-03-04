@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
 
 interface NavItem {
   label: string;
@@ -65,6 +67,7 @@ const NAV_SECTIONS: NavSection[] = [
 
 export const V3Sidebar = () => {
   const pathname = usePathname();
+  const locale = useLocale();
   const user = useInitialUser();
 
   const getNavItemName = (href: string) => {
@@ -88,20 +91,20 @@ export const V3Sidebar = () => {
 
   return (
     <aside 
-      className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[280px] bg-white z-40 rounded-tr-2xl rounded-br-2xl shadow-v3 animate-v3-slide-right overflow-hidden"
+      className="hidden flex-col fixed left-0 top-0 h-full w-[280px] bg-white z-40 rounded-tr-2xl rounded-br-2xl shadow-v3 animate-v3-slide-right overflow-hidden"
       aria-label="Sidebar Navigation"
       data-component="sidebar"
     >
       <div className="flex items-center gap-3 px-6 pt-8 pb-6" data-component="sidebar-brand">
         <Image src="/assets/logo.svg" alt="아가잼잼" width={48} height={48} className="w-12 h-12 rounded-2xl shrink-0 shadow-sm" />
         <span className="text-xl font-bold text-gray-900 tracking-tight">
-          아가잼잼 관리자 서비스
+          아가잼잼 관리자
         </span>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-4 py-2 space-y-6 custom-scrollbar" data-component="sidebar-nav">
-        {NAV_SECTIONS.map((section, idx) => (
-          <div key={section.title + idx}>
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.title}>
             <h3 className="px-4 mb-2 text-[0.65rem] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">
               {section.title}
             </h3>
@@ -153,7 +156,7 @@ export const V3Sidebar = () => {
               {user?.name || "GUEST"}
             </span>
             <span className="text-[0.7rem] text-v3-text-muted truncate">
-              {user?.role || "Viewer"}
+              {user?.role ? t(locale, `roles.${user.role}`) || t(locale, "roles.unknown") : t(locale, "roles.unknown")}
             </span>
           </div>
         </div>

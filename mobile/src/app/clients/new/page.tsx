@@ -32,6 +32,10 @@ const GRID_CLS = "grid grid-cols-1 md:grid-cols-2 gap-4";
 const COMPLETED_PILL =
   "inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-v3-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-v3-dark";
 
+const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
+const PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS = 1000;
+const PHONE_DUPLICATE_CHECK_FAILED_MESSAGE = "문제가 발생했어요. 새로고침 해주세요.";
+
 const formatPhoneNumber = (value: string): string => {
   const digits = value.replace(/\D/g, "");
   if (digits.length <= 3) return digits;
@@ -68,10 +72,18 @@ export default function NewClientPage() {
   const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
   const [isCheckingPhoneDuplicate, setIsCheckingPhoneDuplicate] = useState(false);
   const [isPhoneDuplicate, setIsPhoneDuplicate] = useState(false);
+  const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
+  const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
   const floatingErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
-  const phoneInlineMessage = isPhoneDuplicate ? t(locale, "clients.form.error-phone-duplicate") : null;
+  const phoneInlineMessage = phoneDigits.length === 11
+    ? hasPhoneDuplicateCheckFailed
+    ? PHONE_DUPLICATE_CHECK_FAILED_MESSAGE
+    : isPhoneDuplicate
+      ? t(locale, "clients.form.error-phone-duplicate")
+      : null
+    : null;
 
   const showFloatingError = (message: string) => {
     setFloatingError(message);
@@ -107,36 +119,80 @@ export default function NewClientPage() {
 
   useEffect(() => {
     if (phoneDigits.length !== 11) {
-      setIsCheckingPhoneDuplicate(false);
-      setIsPhoneDuplicate(false);
       return;
     }
 
     const abortController = new AbortController();
-    const timeoutId = setTimeout(async () => {
-      setIsCheckingPhoneDuplicate(true);
 
-      try {
-        const response = await api.get("/clients/check-phone", {
-          params: { phone: phoneDigits },
-          signal: abortController.signal,
-        });
+    const waitForRetryDelay = () =>
+      new Promise<void>((resolve) => {
+        const finish = () => {
+          abortController.signal.removeEventListener("abort", handleAbort);
+          resolve();
+        };
 
-        setIsPhoneDuplicate(response.data?.exists === true);
-      } catch {
-        if (!abortController.signal.aborted) {
-          setIsPhoneDuplicate(false);
+        const timeoutId = setTimeout(finish, PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS);
+
+        const handleAbort = () => {
+          clearTimeout(timeoutId);
+          finish();
+        };
+
+        if (abortController.signal.aborted) {
+          handleAbort();
+          return;
         }
-      } finally {
-        if (!abortController.signal.aborted) {
-          setIsCheckingPhoneDuplicate(false);
+
+        abortController.signal.addEventListener("abort", handleAbort, { once: true });
+      });
+
+    const checkPhoneDuplicate = async () => {
+      setIsCheckingPhoneDuplicate(true);
+      setIsPhoneDuplicate(false);
+      setHasPhoneDuplicateCheckFailed(false);
+      setLastCheckedPhoneDigits(null);
+
+      let attempt = 0;
+
+      while (!abortController.signal.aborted && attempt <= PHONE_DUPLICATE_CHECK_MAX_RETRIES) {
+        try {
+          const response = await api.get("/clients/check-phone", {
+            params: { phone: phoneDigits },
+            signal: abortController.signal,
+          });
+
+          if (!abortController.signal.aborted) {
+            setIsPhoneDuplicate(response.data?.exists === true);
+            setHasPhoneDuplicateCheckFailed(false);
+            setLastCheckedPhoneDigits(phoneDigits);
+          }
+          return;
+        } catch {
+          if (abortController.signal.aborted) {
+            return;
+          }
+
+          attempt += 1;
+          if (attempt > PHONE_DUPLICATE_CHECK_MAX_RETRIES) {
+            setIsPhoneDuplicate(false);
+            setHasPhoneDuplicateCheckFailed(true);
+            return;
+          }
+
+          await waitForRetryDelay();
         }
       }
-    }, 450);
+    };
+
+    void checkPhoneDuplicate().finally(() => {
+      if (!abortController.signal.aborted) {
+        setIsCheckingPhoneDuplicate(false);
+      }
+    });
 
     return () => {
-      clearTimeout(timeoutId);
       abortController.abort();
+      setIsCheckingPhoneDuplicate(false);
     };
   }, [phoneDigits]);
 
@@ -176,22 +232,27 @@ export default function NewClientPage() {
     setField(field, value);
   };
 
-  const validateStep = (step: number): boolean => {
+  const isStepSatisfied = (step: number): boolean => {
     switch (step) {
       case 0:
-        if (!store.name.trim()) {
-          showFloatingError(t(locale, "clients.form.error-name-required"));
+        if (!store.name.trim()) return false;
+        if (store.birthday.replace(/\D/g, "").length !== 6) return false;
+        if (!store.dueDate) return false;
+        if (phoneDigits.length !== 11) return false;
+
+        if (isCheckingPhoneDuplicate) {
           return false;
         }
 
-        if (phoneDigits.length === 11 && isCheckingPhoneDuplicate) {
+        if (hasPhoneDuplicateCheckFailed) {
           return false;
         }
 
-        if (phoneDigits.length === 11 && isPhoneDuplicate) {
-          showFloatingError(t(locale, "clients.form.error-phone-duplicate"));
+        if (lastCheckedPhoneDigits !== phoneDigits) {
           return false;
         }
+
+        if (isPhoneDuplicate) return false;
 
         return true;
       case 1:
@@ -203,6 +264,28 @@ export default function NewClientPage() {
       default:
         return true;
     }
+  };
+
+  const validateStep = (step: number): boolean => {
+    if (isStepSatisfied(step)) return true;
+
+    if (step === 0) {
+      if (!store.name.trim()) {
+        showFloatingError(t(locale, "clients.form.error-name-required"));
+      } else if (store.birthday.replace(/\D/g, "").length !== 6) {
+        showFloatingError(t(locale, "clients.form.error-birthday-required"));
+      } else if (!store.dueDate) {
+        showFloatingError(t(locale, "clients.form.error-due-date-required"));
+      } else if (phoneDigits.length !== 11) {
+        showFloatingError(t(locale, "clients.form.error-phone-required"));
+      } else if (hasPhoneDuplicateCheckFailed) {
+        showFloatingError(PHONE_DUPLICATE_CHECK_FAILED_MESSAGE);
+      } else if (isPhoneDuplicate) {
+        showFloatingError(t(locale, "clients.form.error-phone-duplicate"));
+      }
+    }
+
+    return false;
   };
 
   const handleStepChange = (newStep: number) => {
@@ -267,7 +350,11 @@ export default function NewClientPage() {
             }}
           />
           <InputField
-            title={t(locale, "clients.form.birthday")}
+            title={
+              <>
+                {t(locale, "clients.form.birthday")} <span className="text-v3-burgundy">*</span>
+              </>
+            }
             inputProps={{
               value: store.birthday,
               onChange: (e) => setField("birthday", e.target.value),
@@ -276,7 +363,11 @@ export default function NewClientPage() {
             }}
           />
           <InputField
-            title={t(locale, "clients.form.due-date")}
+            title={
+              <>
+                {t(locale, "clients.form.due-date")} <span className="text-v3-burgundy">*</span>
+              </>
+            }
             inputProps={{
               type: "date",
               value: store.dueDate,
@@ -284,10 +375,13 @@ export default function NewClientPage() {
             }}
           />
           <InputField
-            title={t(locale, "clients.form.phone")}
+            title={
+              <>
+                {t(locale, "clients.form.phone")} <span className="text-v3-burgundy">*</span>
+              </>
+            }
             message={phoneInlineMessage}
-            messageTone={isPhoneDuplicate ? "error" : "muted"}
-            inputClassName={cn(isPhoneDuplicate && "border-v3-burgundy focus:border-v3-burgundy")}
+            messageTone={hasPhoneDuplicateCheckFailed || isPhoneDuplicate ? "error" : "muted"}
             inputProps={{
               value: store.phone,
               onChange: (e) => setField("phone", formatPhoneNumber(e.target.value)),
@@ -613,6 +707,7 @@ export default function NewClientPage() {
         backLabel="고객 목록으로 돌아가기"
         completeLabel="등록"
         isSubmitting={createClient.isPending}
+        isNextDisabled={!isStepSatisfied(currentStep)}
       />
 
       <EmployeeFormDialog

@@ -16,7 +16,7 @@ export function PasswordRequirements({
   className,
 }: PasswordRequirementsProps) {
   return (
-    <ul className={cn("space-y-1", className)}>
+      <ul className={cn("flex flex-col gap-1", className)}>
       {requirements.map((req) => (
         <li
           key={req.label}

@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ContentPaper } from "@/components/app/root/content-paper";
+import { CardContainer } from "@/components/auth/card-container";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
@@ -15,9 +15,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Plus, FilePen } from "lucide-react";
+import { HeaderActionButton } from "@/components/app/v3/HeaderActionButton";
 
 
 import { GreetingMessageForm } from "@/components/app/messages/forms/GreetingMessageForm";
@@ -74,19 +74,36 @@ export default function MessagesPage() {
   const SelectedBuiltinForm = builtinType ? FormComponents[builtinType] : null;
 
   return (
-    <section data-component="messages" className="bg-background">
+    <section data-component="messages" className="flex flex-col flex-1 bg-background">
       <section
         data-component="messages-content"
-        className="px-2 sm:px-3 md:px-6 py-3 sm:py-4 mx-auto"
+        className="flex flex-col flex-1 px-2 sm:px-3 md:px-6 py-3 sm:py-4 mx-auto w-full"
       >
-        <ContentPaper
+        <CardContainer
           title={t(locale, "msg-form.title")}
           subtitle={t(locale, "msg-form.select-msg-type")}
           className="flex flex-col"
+          headerActionsLeft={
+            <HeaderActionButton
+              icon={FilePen}
+              label={t(locale, "msg-form.edit-template")}
+              onClick={() => router.push("/messages/templates")}
+              variant="muted"
+              data-component="messages-header-edit"
+            />
+          }
+          headerActionsRight={
+            <HeaderActionButton
+              icon={Plus}
+              label={t(locale, "msg-form.add-template")}
+              onClick={handleCreateTemplate}
+              data-component="messages-header-add"
+            />
+          }
         >
-          <div data-component="messages-header" className="flex items-center justify-end gap-2 pb-6">
+          <div data-component="messages-select" className="pb-6">
             <Select value={selectedValue} onValueChange={handleChange}>
-              <SelectTrigger className="flex-1">
+              <SelectTrigger className="w-full">
                 <SelectValue placeholder="템플릿 선택" />
               </SelectTrigger>
               <SelectContent>
@@ -108,18 +125,8 @@ export default function MessagesPage() {
                     ))}
                   </SelectGroup>
                 )}
-
-                
               </SelectContent>
             </Select>
-            <Button className="w-20 gap-2" onClick={handleCreateTemplate}>
-              <Plus className="h-4 w-4" />
-              {t(locale, "msg-form.add-template")}
-            </Button>
-            <Button variant="outline" className="w-20 gap-2" onClick={() => router.push("/messages/templates")}>
-              <FilePen className="h-4 w-4" />
-              {t(locale, "msg-form.edit-template")}
-            </Button>
           </div>
 
           {isLoadingUserTemplates && (
@@ -131,7 +138,7 @@ export default function MessagesPage() {
           {SelectedBuiltinForm && <SelectedBuiltinForm />}
 
           {selectedUserTemplate && <CustomTemplateForm template={selectedUserTemplate as never} />}
-        </ContentPaper>
+        </CardContainer>
       </section>
     </section>
   );

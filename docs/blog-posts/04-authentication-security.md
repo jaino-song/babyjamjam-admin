@@ -218,7 +218,7 @@ export class AuthService {
 ### 쿠키 설정도 역할 기반으로
 
 ```typescript
-// frontend/app/auth/callback/actions.ts
+// frontend/app/(auth)/callback/actions.ts
 'use server';
 
 export async function exchangeToken(code: string) {
@@ -383,7 +383,7 @@ Safari의 **ITP (Intelligent Tracking Prevention)**가 OAuth 리다이렉트 후
 
 ```typescript
 // 🚨 Safari ITP에 의해 차단됨
-// frontend/app/auth/callback/page.tsx
+// frontend/app/(auth)/callback/page.tsx
 'use client';
 
 export default function AuthCallback() {
@@ -412,7 +412,7 @@ export default function AuthCallback() {
 Server Actions는 **서버에서 실행**되므로 Safari ITP의 영향을 받지 않습니다.
 
 ```typescript
-// frontend/app/auth/callback/actions.ts
+// frontend/app/(auth)/callback/actions.ts
 'use server';
 
 import { cookies } from 'next/headers';
@@ -440,7 +440,7 @@ export async function exchangeToken(code: string) {
 ```
 
 ```typescript
-// frontend/app/auth/callback/page.tsx
+// frontend/app/(auth)/callback/page.tsx
 'use client';
 
 import { exchangeToken } from './actions';

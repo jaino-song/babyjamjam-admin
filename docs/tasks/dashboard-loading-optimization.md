@@ -13,7 +13,7 @@ The dashboard loading after login takes too long. Users experience noticeable de
 ```
 1. User clicks Kakao login → /login page redirects to /auth/kakao
 2. Backend validates Kakao user → Creates/finds user in DB
-3. Backend generates auth code → Redirects to /auth/callback?code=...
+3. Backend generates auth code → Redirects to /callback?code=...
 4. Frontend exchanges code for tokens → Stores in httpOnly cookies
 5. Frontend redirects to /dashboard
 6. Server-side render → Calls getCurrentUser() [API CALL #1]
@@ -26,8 +26,8 @@ The dashboard loading after login takes too long. Users experience noticeable de
 | Component | File Path | Purpose |
 |-----------|-----------|---------|
 | Login Page | `/frontend/app/login/page.tsx` | Initiates OAuth flow |
-| Auth Callback | `/frontend/app/auth/callback/page.tsx` | Handles OAuth redirect |
-| Token Exchange | `/frontend/app/auth/callback/actions.ts` | Exchanges code for JWT tokens |
+| Auth Callback | `/frontend/app/(auth)/callback/page.tsx` | Handles OAuth redirect |
+| Token Exchange | `/frontend/app/(auth)/callback/actions.ts` | Exchanges code for JWT tokens |
 | Dashboard Page | `/frontend/app/dashboard/page.tsx` | Main dashboard (server component) |
 | Header Component | `/frontend/app/(components)/root/Header.tsx` | Navigation with user avatar |
 | getCurrentUser | `/frontend/app/lib/auth/cookies.ts` | Server-side user fetch |
@@ -65,7 +65,7 @@ const { data: user, isLoading } = useGetAuthUser();  // Second fetch - REDUNDANT
 
 ### Issue 2: No Prefetching During Auth Flow (MEDIUM PRIORITY)
 
-**Location:** `/frontend/app/auth/callback/actions.ts`
+**Location:** `/frontend/app/(auth)/callback/actions.ts`
 
 **Problem:**
 After successful token exchange, the user is redirected to dashboard without prefetching any data. The dashboard then has to wait for a full network roundtrip.
@@ -236,12 +236,12 @@ export const useGetAuthUser = (options?: UseGetAuthUserOptions) => {
 ### Solution 3: Prefetch During Auth Callback
 
 **Files to modify:**
-- `/frontend/app/auth/callback/actions.ts`
+- `/frontend/app/(auth)/callback/actions.ts`
 
 **Implementation:**
 
 ```typescript
-// /frontend/app/auth/callback/actions.ts
+// /frontend/app/(auth)/callback/actions.ts
 export async function exchangeToken(code: string) {
   // ... existing token exchange logic ...
 

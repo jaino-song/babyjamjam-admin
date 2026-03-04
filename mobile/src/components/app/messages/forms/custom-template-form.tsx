@@ -7,6 +7,7 @@ import { useFormStore } from "@/stores/form-store";
 import { useTemplateStore } from "@/stores/template-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { useToast } from "@/hooks/use-toast";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { DynamicInput } from "./form-components/dynamic-input";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ interface CustomTemplateFormProps {
 
 export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
     const locale = useLocale();
+    const { toast } = useToast();
     const formStore = useFormStore();
     const { variableValues, setVariableValue } = useTemplateStore();
     const [generatedMessage, setGeneratedMessage] = useState("");
@@ -73,7 +75,7 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
 
     const handleCopy = () => {
         navigator.clipboard.writeText(generatedMessage);
-        alert(t(locale, "common.copy-success-message"));
+        toast({ description: t(locale, "common.copy-success-message") });
     };
 
     return (

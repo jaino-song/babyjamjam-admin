@@ -1,6 +1,7 @@
 package com.imirae.incheon.auth
 
 import com.imirae.incheon.data.remote.AuthService
+import com.imirae.incheon.domain.models.Organization
 import com.imirae.incheon.network.ApiResult
 import com.imirae.incheon.network.TokenProvider
 import com.imirae.incheon.network.platformEngine
@@ -23,6 +24,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 
+sealed class OrganizationsUiState {
+    data object Idle : OrganizationsUiState()
+    data object Loading : OrganizationsUiState()
+    data class Loaded(val organizations: List<Organization>) : OrganizationsUiState()
+    data class Error(val message: String) : OrganizationsUiState()
+}
+
 class AuthManager(
     private val authService: AuthService,
     private val secureStorage: SecureStorage,
@@ -32,6 +40,8 @@ class AuthManager(
     private val stepUpAuth = StepUpAuth(secureStorage)
     private val _authState = MutableStateFlow<AuthState>(AuthState.Initial)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
+    private val _organizationsState = MutableStateFlow<OrganizationsUiState>(OrganizationsUiState.Idle)
+    val organizationsState: StateFlow<OrganizationsUiState> = _organizationsState.asStateFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val refreshMutex = Mutex()
     private var refreshInFlight: Deferred<String?>? = null
@@ -79,12 +89,9 @@ class AuthManager(
             when (val result = authService.login(email, password)) {
                 is ApiResult.Success -> {
                     persistTokens(result.data.accessToken, result.data.refreshToken)
-                    val deviceId = sessionPolicy.getOrCreateDeviceId()
-                    val registered = registerDeviceWithBackend(result.data.accessToken, deviceId)
-                    if (!registered) {
-                        forceLogout(revokeRemote = true)
-                        _authState.value = AuthState.Error("기기 바인딩에 실패했습니다")
-                        return@launch
+                    runCatching {
+                        val deviceId = sessionPolicy.getOrCreateDeviceId()
+                        registerDeviceWithBackend(result.data.accessToken, deviceId)
                     }
 
                     if (result.data.requiresOrgSelection) {
@@ -140,7 +147,27 @@ class AuthManager(
         scope.launch {
             _authState.value = AuthState.Loading
             updateActivity()
-            loadProfile()
+            when (val result = authService.selectOrganization(orgId)) {
+                is ApiResult.Success -> {
+                    persistTokens(result.data.accessToken, result.data.refreshToken ?: secureStorage.getString(refreshTokenKey).orEmpty())
+                    loadProfile()
+                }
+                is ApiResult.Error -> _authState.value = AuthState.Error(result.error.userMessage())
+            }
+        }
+    }
+
+    fun loadOrganizations() {
+        scope.launch {
+            _organizationsState.value = OrganizationsUiState.Loading
+            when (val result = authService.getOrganizations()) {
+                is ApiResult.Success -> {
+                    _organizationsState.value = OrganizationsUiState.Loaded(result.data.organizations)
+                }
+                is ApiResult.Error -> {
+                    _organizationsState.value = OrganizationsUiState.Error(result.error.userMessage())
+                }
+            }
         }
     }
 
@@ -179,8 +206,7 @@ class AuthManager(
                 _authState.value = AuthState.Authenticated(
                     result.data.id,
                     result.data.role,
-                    result.data.organizationId,
-                    result.data.orgRole
+                    result.data.organizationName
                 )
                 updateActivity()
             }

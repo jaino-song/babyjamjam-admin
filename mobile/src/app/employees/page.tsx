@@ -286,7 +286,7 @@ export default function EmployeesPage() {
                 ]}
             />
 
-            <SplitLayout hasSelection={!!selectedEmployee} onBack={() => setSelectedEmployee(null)}>
+            <SplitLayout hasSelection={!!selectedEmployee} onBack={() => setSelectedEmployee(null)} autoHeight>
                 <ListPanel
                     title="직원 목록"
                     tabs={filterItems}

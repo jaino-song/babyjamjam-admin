@@ -142,7 +142,7 @@ describe("AuthController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(302); // Redirect
-                expect(response.headers['location']).toContain(`/auth/callback?code=${authCode}`);
+                expect(response.headers['location']).toContain(`/callback?code=${authCode}`);
                 expect(authService.validateKakaoUser).toHaveBeenCalledWith(mockKakaoUser);
                 // Note: createAuthCode receives the full UserValidationResult object
                 expect(authService.createAuthCode).toHaveBeenCalledWith(validationResult);
@@ -168,7 +168,7 @@ describe("AuthController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(302);
-                expect(response.headers['location']).toBe(`https://app.example.com/auth/callback?code=${authCode}`);
+                expect(response.headers['location']).toBe(`https://app.example.com/callback?code=${authCode}`);
             });
         });
 
