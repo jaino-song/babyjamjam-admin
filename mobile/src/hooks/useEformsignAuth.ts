@@ -72,5 +72,25 @@ export function useEformsignAuth(): UseEformsignAuthReturn {
     checkAndAuthenticate();
   }, [authenticate]);
 
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const checkTokenExpiry = () => {
+      const authTimeStr = safeStorageGetItem("session", "eformsign_auth_time");
+      const authTime = authTimeStr ? parseInt(authTimeStr, 10) : 0;
+      if (authTime <= 0) return;
+
+      const tokenExpiryMs = 60 * 60 * 1000;
+      const tokenAge = Date.now() - authTime;
+
+      if (tokenAge >= tokenExpiryMs - AUTH_BUFFER_MS) {
+        authenticate();
+      }
+    };
+
+    const interval = setInterval(checkTokenExpiry, 60 * 1000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, authenticate]);
+
   return { isAuthenticated, isLoading, error, authenticate };
 }

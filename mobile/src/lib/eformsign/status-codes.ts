@@ -30,6 +30,7 @@ export const REJECTED_CODES = [
   "049", // doc_delete: 문서 삭제
   "061", // doc_reject_participant: 참여자 반려
   "071", // doc_reject_reviewer: 검토자 반려
+  "080", // doc_expired: 문서 만료
 ] as const;
 
 // 대기/진행 중 (In-progress) codes - for reference
@@ -45,7 +46,7 @@ export const IN_PROGRESS_CODES = [
 ] as const;
 
 // Korean status labels
-export type DocumentStatusLabel = "대기" | "완료" | "거부";
+export type DocumentStatusLabel = "대기" | "완료" | "만료";
 
 // Filter types for API calls
 export type DocumentFilterType = "in-progress" | "completed" | "rejected" | null;
@@ -82,7 +83,7 @@ export function mapStatusToLabel(statusCode: string | undefined | null): Documen
     case "completed":
       return "완료";
     case "rejected":
-      return "거부";
+      return "만료";
     default:
       return "대기";
   }
@@ -105,7 +106,7 @@ export function getStatusColor(status: string): BadgeVariant {
   if (lowerStatus.includes("대기") || lowerStatus.includes("pending") || lowerStatus.includes("진행")) {
     return "warning";
   }
-  if (lowerStatus.includes("거부") || lowerStatus.includes("reject")) {
+  if (lowerStatus.includes("만료") || lowerStatus.includes("expired") || lowerStatus.includes("reject")) {
     return "destructive";
   }
   if (lowerStatus.includes("전체") || lowerStatus.includes("all")) {

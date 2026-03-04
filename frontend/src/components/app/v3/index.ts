@@ -29,7 +29,7 @@ export type { WizardStep, SteppedWizardProps } from './SteppedWizard';
 export { SectionNav } from './SectionNav';
 export type { SectionNavItem } from './SectionNav';
 export { Stepper } from './Stepper';
-export type { StepperStep } from './Stepper';
+export type { StepperStep, StepperProps } from './Stepper';
 export { EmptyState } from './EmptyState';
 export { PageSection } from './PageSection';
 export { DetailSkeleton } from './DetailSkeleton';

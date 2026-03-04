@@ -1,8 +1,8 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "아가잼잼 관리자 - 메시지",
-  description: "아가잼잼 관리자 - 메시지",
+  title: "메시지 - 아가잼잼 관리자",
+  description: "메시지 - 아가잼잼 관리자",
 };
 
 export default function MessagesLayout({

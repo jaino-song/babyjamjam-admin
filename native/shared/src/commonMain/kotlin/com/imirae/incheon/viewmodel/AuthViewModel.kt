@@ -2,11 +2,13 @@ package com.imirae.incheon.viewmodel
 
 import com.imirae.incheon.auth.AuthManager
 import com.imirae.incheon.auth.AuthState
+import com.imirae.incheon.auth.OrganizationsUiState
 import com.imirae.incheon.domain.utils.Validation
 import kotlinx.coroutines.flow.StateFlow
 
 class AuthViewModel(private val authManager: AuthManager) {
     val authState: StateFlow<AuthState> = authManager.authState
+    val organizationsState: StateFlow<OrganizationsUiState> = authManager.organizationsState
 
     fun login(email: String, password: String) {
         val e = Validation.validateEmail(email); if (!e.isValid) { return }
@@ -24,4 +26,5 @@ class AuthViewModel(private val authManager: AuthManager) {
     fun forgotPassword(email: String) { if (Validation.validateEmail(email).isValid) authManager.forgotPassword(email) }
     fun resetPassword(token: String, password: String) { if (Validation.validatePasswordStrength(password).isValid) authManager.resetPassword(token, password) }
     fun selectOrganization(orgId: String) { if (orgId.isNotBlank()) authManager.selectOrganization(orgId) }
+    fun loadOrganizations() = authManager.loadOrganizations()
 }

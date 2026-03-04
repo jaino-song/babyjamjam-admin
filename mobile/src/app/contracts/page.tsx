@@ -7,6 +7,7 @@ import {
   Clock,
   CheckCircle2,
   AlertTriangle,
+  MoreVertical,
   Plus,
   Send,
   Calendar,
@@ -17,7 +18,7 @@ import {
   RefreshCw,
   Loader2,
 } from "lucide-react";
-import { useEformsignDocumentsByType } from "@/hooks/useEformsignDocuments";
+import { useDeleteEformsignDocument, useEformsignDocumentsByType } from "@/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
 import { EformsignDocument } from "@/lib/eformsign/types";
@@ -43,7 +44,16 @@ import {
   ListEmptyState,
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
+import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
@@ -107,10 +117,13 @@ function getSignatureProgress(category: "completed" | "rejected" | "in-progress"
 export default function ContractsPage() {
   const [activeTab, setActiveTab] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [deleteTargetDocumentId, setDeleteTargetDocumentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isRetrying, setIsRetrying] = useState(false);
 
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError, authenticate } = useEformsignAuth();
+  const { toast } = useToast();
+  const deleteDocument = useDeleteEformsignDocument();
   const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);
 
   const { data: allData, isLoading: isLoadingAll, refetch: refetchAll } = useEformsignDocumentsByType(isAuthenticated, null);
@@ -181,13 +194,50 @@ export default function ContractsPage() {
   const handleRetry = async () => {
     setIsRetrying(true);
     try {
-      if (authError) {
-        await authenticate();
-      }
+      await authenticate();
       await Promise.all([refetchAll(), refetchInfinite()]);
     } catch {
     } finally {
       setIsRetrying(false);
+    }
+  };
+
+  const handleDeleteRequest = (documentId: string) => {
+    setDeleteTargetDocumentId(documentId);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (deleteTargetDocumentId == null) {
+      return;
+    }
+
+    try {
+      const response = await deleteDocument.mutateAsync(deleteTargetDocumentId);
+      const deleted = response.result?.success_result?.includes(deleteTargetDocumentId);
+
+      if (!deleted) {
+        const failedItem = response.result?.fail_result?.find((item) => item.document_id === deleteTargetDocumentId);
+        throw new Error(failedItem?.message || "문서 삭제에 실패했습니다.");
+      }
+
+      if (selectedDocId === deleteTargetDocumentId) {
+        setSelectedDocId(null);
+      }
+      setDeleteTargetDocumentId(null);
+      toast({
+        title: "문서 삭제 완료",
+        description: "선택한 문서를 삭제했습니다.",
+      });
+    } catch (deleteError) {
+      console.error("Failed to delete contract document:", deleteError);
+      toast({
+        title: "문서 삭제 실패",
+        description:
+          deleteError instanceof Error
+            ? deleteError.message
+            : "문서 삭제 중 오류가 발생했습니다. 다시 시도해주세요.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -201,6 +251,7 @@ export default function ContractsPage() {
               : "문서를 불러오는데 실패했습니다."}
           </p>
           <button
+            type="button"
             onClick={handleRetry}
             disabled={isRetrying}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-v3-burgundy text-white text-[0.85rem] font-medium transition-opacity hover:opacity-90 disabled:opacity-50"
@@ -224,150 +275,172 @@ export default function ContractsPage() {
 
   return (
     <section data-component="contracts" className="space-y-6">
-        <StatsBar
-          name="contracts"
-          isLoading={isInitialLoading}
-          items={[
-            { icon: FileText, value: stats.total, label: "전체 계약", counter: "건" },
-            { icon: Clock, value: stats.pending, label: "대기중", counter: "건", colorIndex: 1 },
-            { icon: CheckCircle2, value: stats.completed, label: "서명완료", counter: "건", colorIndex: 2 },
-            { icon: AlertTriangle, value: stats.expired, label: "만료", counter: "건", colorIndex: 3 },
-          ]}
-        />
+      <StatsBar
+        name="contracts"
+        isLoading={isInitialLoading}
+        items={[
+          { icon: FileText, value: stats.total, label: "전체 계약", counter: "건" },
+          { icon: Clock, value: stats.pending, label: "대기중", counter: "건", colorIndex: 1 },
+          { icon: CheckCircle2, value: stats.completed, label: "서명완료", counter: "건", colorIndex: 2 },
+          { icon: AlertTriangle, value: stats.expired, label: "만료", counter: "건", colorIndex: 3 },
+        ]}
+      />
 
-        <SplitLayout hasSelection={!!selectedDocId} onBack={() => setSelectedDocId(null)}>
-          <ListPanel
-            title="계약 목록"
-            tabs={TAB_ITEMS}
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-            searchValue={searchQuery}
-            onSearchChange={setSearchQuery}
-            searchPlaceholder="고객명, 문서명 검색..."
-            isLoading={isInitialLoading || isContentLoading}
-            headerActions={
-              <HeaderActionButton
-                href="/contracts/creation"
-                icon={Plus}
-                label="서명 요청"
-                data-component="contracts-header-send-contract"
-              />
-            }
-          >
-            {documents.length === 0 && !isInitialLoading && !isContentLoading ? (
-              <ListEmptyState message="계약 문서가 없습니다" />
-            ) : (
-              <AnimatedSlotList<EformsignDocument>
-                items={documents}
-                isLoading={isInitialLoading || isContentLoading}
-                loadingCount={6}
-                className="space-y-2"
-                slotClassName={({ item, isLoading }) => {
-                  const isActive = !isLoading && item && selectedDocument?.id === item.id;
-                  return cn(
-                    "flex items-center gap-3 p-4 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent",
-                    !isLoading && "cursor-pointer",
-                    isActive
-                      ? "bg-v3-primary-light border-2 border-v3-primary"
-                      : !isLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                  );
-                }}
-                onSlotClick={(doc) => setSelectedDocId(doc.id)}
-                // Load more props
-                hasMore={hasNextPage}
-                onLoadMore={fetchNextPage}
-                isFetchingMore={isFetchingNextPage}
-                isInitialLoad={isInitialLoad}
-                render={({ item: doc, isLoading }) => {
-                  // Skeleton state
-                  if (isLoading) {
-                    return (
-                      <>
-                        <div className="w-11 h-11 rounded-2xl shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
-                          <Skeleton className="w-5 h-5 rounded-2xl bg-white/70" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
-                          <Skeleton className="h-3 w-40 bg-v3-dim-white" />
-                        </div>
-                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white shrink-0" />
-                      </>
-                    );
-                  }
-
-                  if (!doc) return null;
-                  const customerName = getCustomerName(doc);
-                  const category = getStatusCategory(doc.current_status?.status_type);
-                  const statusType = mapCategoryToStatusType(category);
-                  const statusLabel = mapStatusToLabel(doc.current_status?.status_type);
-
+      <SplitLayout hasSelection={!!selectedDocId} onBack={() => setSelectedDocId(null)} autoHeight>
+        <ListPanel
+          title="계약 목록"
+          tabs={TAB_ITEMS}
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          searchValue={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchPlaceholder="고객명, 문서명 검색..."
+          isLoading={isInitialLoading || isContentLoading}
+          headerActions={
+            <HeaderActionButton
+              href="/contracts/creation"
+              icon={Plus}
+              label="서명 요청"
+              data-component="contracts-header-send-contract"
+            />
+          }
+        >
+          {documents.length === 0 && !isInitialLoading && !isContentLoading ? (
+            <ListEmptyState message="계약 문서가 없습니다" />
+          ) : (
+            <AnimatedSlotList<EformsignDocument>
+              items={documents}
+              isLoading={isInitialLoading || isContentLoading}
+              loadingCount={6}
+              className="space-y-2"
+              slotClassName={({ item, isLoading }) => {
+                const isActive = !isLoading && item && selectedDocument?.id === item.id;
+                return cn(
+                  "flex items-center gap-3 p-4 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent",
+                  !isLoading && "cursor-pointer",
+                  isActive
+                    ? "bg-v3-primary-light border-2 border-v3-primary"
+                    : !isLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
+                );
+              }}
+              onSlotClick={(doc) => setSelectedDocId(doc.id)}
+              // Load more props
+              hasMore={hasNextPage}
+              onLoadMore={fetchNextPage}
+              isFetchingMore={isFetchingNextPage}
+              isInitialLoad={isInitialLoad}
+              render={({ item: doc, isLoading }) => {
+                // Skeleton state
+                if (isLoading) {
                   return (
                     <>
-                      <div
-                        className={cn(
-                          "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md",
-                          category === "completed"
-                            ? "bg-v3-green-light"
-                            : category === "rejected"
-                              ? "bg-v3-burgundy-light"
-                              : "bg-v3-orange-light"
-                        )}
-                      >
-                        <FileSignature
-                          className={cn(
-                            "w-5 h-5",
-                            category === "completed"
-                              ? "text-v3-green"
-                              : category === "rejected"
-                                ? "text-v3-burgundy"
-                                : "text-v3-orange"
-                          )}
-                        />
+                      <div className="w-11 h-11 rounded-2xl shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
+                        <Skeleton className="w-5 h-5 rounded-2xl bg-white/70" />
                       </div>
-
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="font-bold text-[0.85rem] text-v3-dark truncate">
-                            {customerName}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
-                          {doc.document_name}
-                        </div>
+                        <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
+                        <Skeleton className="h-3 w-40 bg-v3-dim-white" />
                       </div>
-
-                      <div className="shrink-0">
-                        <StatusBadge status={statusType} label={statusLabel} />
-                      </div>
+                      <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white shrink-0" />
                     </>
                   );
-                }}
-              />
-            )}
-          </ListPanel>
+                }
 
-          {isInitialLoading ? (
-            <DetailSkeleton
-              name="contracts-detail-skeleton"
-              headerBadge
-              headerBanner
-              sections={[
-                { titleWidth: "w-16", rows: ["w-1/2", "w-2/3"] },
-                { titleWidth: "w-16", rows: ["w-3/4", "w-1/2", "w-2/3"] },
-                { titleWidth: "w-20", rows: ["w-full"] },
-              ]}
+                if (!doc) return null;
+                const customerName = getCustomerName(doc);
+                const category = getStatusCategory(doc.current_status?.status_type);
+                const statusType = mapCategoryToStatusType(category);
+                const statusLabel = mapStatusToLabel(doc.current_status?.status_type);
+
+                return (
+                  <>
+                    <div
+                      className={cn(
+                        "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md",
+                        category === "completed"
+                          ? "bg-v3-green-light"
+                          : category === "rejected"
+                            ? "bg-v3-burgundy-light"
+                            : "bg-v3-orange-light"
+                      )}
+                    >
+                      <FileSignature
+                        className={cn(
+                          "w-5 h-5",
+                          category === "completed"
+                            ? "text-v3-green"
+                            : category === "rejected"
+                              ? "text-v3-burgundy"
+                              : "text-v3-orange"
+                        )}
+                      />
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="font-bold text-[0.85rem] text-v3-dark truncate">
+                          {customerName}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
+                        {doc.document_name}
+                      </div>
+                    </div>
+
+                    <div className="shrink-0">
+                      <StatusBadge status={statusType} label={statusLabel} />
+                    </div>
+                  </>
+                );
+              }}
             />
-          ) : selectedDocument ? (
-            <ContractDetail document={selectedDocument} />
-          ) : (
-            <EmptyState icon={FileText} message="계약을 선택해주세요" className="min-h-[400px]" />
           )}
-        </SplitLayout>
+        </ListPanel>
+
+        {isInitialLoading ? (
+          <DetailSkeleton
+            name="contracts-detail-skeleton"
+            headerBadge
+            headerBanner
+            sections={[
+              { titleWidth: "w-16", rows: ["w-1/2", "w-2/3"] },
+              { titleWidth: "w-16", rows: ["w-3/4", "w-1/2", "w-2/3"] },
+              { titleWidth: "w-20", rows: ["w-full"] },
+            ]}
+          />
+        ) : selectedDocument ? (
+          <ContractDetail document={selectedDocument} onDeleteRequest={handleDeleteRequest} />
+        ) : (
+          <EmptyState icon={FileText} message="계약을 선택해주세요" className="min-h-[400px]" />
+        )}
+      </SplitLayout>
+
+      <ConfirmActionModal
+        open={deleteTargetDocumentId != null}
+        title="삭제"
+        description="이 문서를 삭제하시겠습니까?"
+        cancelLabel="취소"
+        confirmLabel="삭제"
+        loading={deleteDocument.isPending}
+        onOpenChange={(open) => {
+          if (!open && !deleteDocument.isPending) {
+            setDeleteTargetDocumentId(null);
+          }
+        }}
+        onCancel={() => setDeleteTargetDocumentId(null)}
+        onConfirm={handleDeleteConfirm}
+      />
     </section>
   );
 }
 
-function ContractDetail({ document: doc }: { document: EformsignDocument }) {
+function ContractDetail({
+  document: doc,
+  onDeleteRequest,
+}: {
+  document: EformsignDocument;
+  onDeleteRequest?: (documentId: string) => void;
+}) {
   const customerName = getCustomerName(doc) ?? "–";
   const category = getStatusCategory(doc.current_status?.status_type);
   const statusType = mapCategoryToStatusType(category);
@@ -409,7 +482,7 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
       items.push({
         icon: AlertTriangle,
         iconVariant: "danger",
-        text: "문서가 거부/만료되었습니다",
+        text: "문서가 만료되었습니다",
         time: formatDateTime(doc.updated_date),
       });
     } else {
@@ -454,7 +527,41 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
   );
 
   return (
-    <DetailPanel header={header}>
+    <DetailPanel
+      mobileActions={
+        onDeleteRequest ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                data-component="contracts-detail-mobile-more-trigger"
+                className="h-9 w-9 rounded-full text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+                aria-label="상세 액션 더보기"
+              >
+                <MoreVertical className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              data-component="contracts-detail-mobile-more-content"
+              align="end"
+              sideOffset={8}
+              avoidCollisions
+              className="min-w-[8.5rem]"
+            >
+              <DropdownMenuItem
+                data-component="contracts-detail-mobile-more-delete"
+                variant="destructive"
+                onClick={() => onDeleteRequest(doc.id)}
+              >
+                삭제
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : undefined
+      }
+      header={header}
+    >
       <div data-component="contracts-detail" className="space-y-5">
         <InfoCard title="고객 정보">
           <InfoRow
@@ -493,6 +600,21 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
         <InfoCard title="활동 기록">
           <ActivityTimeline items={activityItems} maxHeight="300px" />
         </InfoCard>
+
+        {onDeleteRequest && (
+          <div
+            data-component="contracts-detail-actions"
+            className="hidden lg:flex gap-3 pt-2"
+          >
+            <Button
+              variant="outline"
+              className="flex-1 rounded-full"
+              onClick={() => onDeleteRequest(doc.id)}
+            >
+              삭제
+            </Button>
+          </div>
+        )}
       </div>
     </DetailPanel>
   );

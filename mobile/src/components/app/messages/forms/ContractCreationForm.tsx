@@ -14,6 +14,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { SteppedWizard } from "@/components/app/v3";
 import type { WizardStep } from "@/components/app/v3";
 import {
@@ -516,6 +523,7 @@ export const ContractCreationForm = () => {
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
   const isStep4Valid = Boolean(startDate && endDate && paymentDate);
+  const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
 
   const getStepValidationMessage = (step: number): string | null => {
     if (step === 0 && !isStep1Valid) {
@@ -643,24 +651,35 @@ export const ContractCreationForm = () => {
             </>
           )}
 
-          <div className="space-y-2">
-            <Label>
+          <div className="space-y-2" data-component="contract-creation-doc-type-field">
+            <Label data-component="contract-creation-doc-type-label">
               {t(locale, "contract-msg.doc-type-label")}
               <span className="text-destructive ml-1">*</span>
             </Label>
-            <select
-              className={SELECT_CLS}
+            <Select
               value={area}
-              onChange={(e) => setArea(e.target.value)}
+              onValueChange={setArea}
               disabled={isAreaTemplatesLoading}
+              data-component="contract-creation-doc-type-select"
             >
-              <option value="">{t(locale, "contract-msg.doc-type-label")}</option>
-              {areaTemplates.map((template) => (
-                <option key={template.areaId} value={template.areaId}>
-                  {template.templateName || template.areaId}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                className="w-full bg-white text-[0.85rem] font-[Pretendard] text-v3-dark"
+                data-component="contract-creation-doc-type-trigger"
+              >
+                <SelectValue placeholder={t(locale, "contract-msg.doc-type-label")} />
+              </SelectTrigger>
+              <SelectContent data-component="contract-creation-doc-type-dropdown">
+                {areaTemplates.map((template) => (
+                  <SelectItem
+                    key={template.areaId}
+                    value={template.areaId}
+                    data-component="contract-creation-doc-type-option"
+                  >
+                    {template.templateName || template.areaId}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       ),
@@ -1024,6 +1043,7 @@ export const ContractCreationForm = () => {
           backLabel="계약 목록으로 돌아가기"
           completeLabel={isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
           isSubmitting={isSubmitting}
+          isNextDisabled={!isCurrentStepValid}
         />
 
         {(submitError || eformsignError) && (

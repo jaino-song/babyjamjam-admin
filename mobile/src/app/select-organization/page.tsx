@@ -5,10 +5,13 @@ import { useRouter } from "next/navigation";
 import { Building2 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
+import { CardHeader } from "@/components/app/v3";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { getUserOrganizations, setCurrentOrganization } from "./actions";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
 
 interface Organization {
     id: string;
@@ -20,6 +23,7 @@ interface Organization {
 
 export default function SelectOrganizationPage() {
     const router = useRouter();
+    const locale = useLocale();
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -47,7 +51,7 @@ export default function SelectOrganizationPage() {
                 setOrganizations(result.organizations || []);
             } catch (err) {
                 console.error("[Select Organization] Error fetching organizations:", err);
-                setError("조직 목록을 불러오는데 실패했습니다.");
+                setError("지점 목록을 불러오는데 실패했습니다.");
             } finally {
                 setLoading(false);
             }
@@ -63,7 +67,7 @@ export default function SelectOrganizationPage() {
             const result = await setCurrentOrganization(organizationId);
 
             if (!result.success) {
-                setError(result.error || "조직 선택에 실패했습니다.");
+                setError(result.error || "지점 선택에 실패했습니다.");
                 setSelecting(null);
                 return;
             }
@@ -72,23 +76,23 @@ export default function SelectOrganizationPage() {
             router.replace("/dashboard");
         } catch (err) {
             console.error("[Select Organization] Error selecting organization:", err);
-            setError("조직 선택에 실패했습니다.");
+            setError("지점 선택에 실패했습니다.");
             setSelecting(null);
         }
     };
 
     if (loading) {
         return (
-            <div data-component="select-org" className="flex flex-col items-center justify-center h-screen gap-4">
+            <div data-component="select-org" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-4">
                 <Spinner size="lg" />
-                <p className="text-foreground">조직 목록을 불러오는 중...</p>
+                <p className="text-foreground">지점 목록을 불러오는 중...</p>
             </div>
         );
     }
 
     if (error) {
         return (
-            <div data-component="select-org" className="flex flex-col items-center justify-center h-screen gap-4 px-4">
+            <div data-component="select-org" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-4 px-4">
                 <div data-component="select-org-error">
                     <p className="text-destructive">{error}</p>
                 </div>
@@ -101,14 +105,14 @@ export default function SelectOrganizationPage() {
 
     if (organizations.length === 0) {
         return (
-            <div data-component="select-org" className="flex flex-col items-center justify-center h-screen gap-6 px-4 text-center">
+            <div data-component="select-org" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-6 px-4 text-center">
                 <Building2 className="w-16 h-16 text-muted-foreground/50" />
                 <div data-component="select-org-empty">
                     <h2 className="text-xl font-bold text-foreground mb-2">
-                        접근 가능한 조직이 없습니다
+                        접근 가능한 지점이 없습니다
                     </h2>
                     <p className="text-muted-foreground">
-                        관리자에게 조직 접근 권한을 요청해주세요.
+                        관리자에게 지점 접근 권한을 요청해주세요.
                     </p>
                     <p className="text-sm text-muted-foreground mt-2">
                         권한이 부여되면 이 페이지를 새로고침하세요.
@@ -147,32 +151,19 @@ export default function SelectOrganizationPage() {
     };
 
     const getRoleLabel = (role: string) => {
-        switch (role) {
-            case "owner":
-                return "소유자";
-            case "admin":
-                return "관리자";
-            default:
-                return "사용자";
-        }
+        return t(locale, `roles.${role}`) || t(locale, "roles.unknown");
     };
 
     return (
-        <div data-component="select-org" className="flex flex-col items-center justify-center min-h-screen gap-6 px-4 py-8">
-            <h1 className="text-2xl font-bold text-foreground">
-                조직 선택
-            </h1>
-            <p className="text-muted-foreground">
-                작업할 조직을 선택해주세요
-            </p>
+        <div data-component="select-org" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-4 px-4">
+            <CardHeader title="지점 선택" subtitle="지점을 선택해주세요" align="center" />
 
             <div data-component="select-org-list" className="flex flex-col gap-3 w-full max-w-md">
                 {organizations.map((org) => (
                     <Card
                         key={org.id}
-                        className={`cursor-pointer transition-all hover-lift ${
-                            selecting ? "opacity-60 cursor-not-allowed" : ""
-                        }`}
+                        className={`cursor-pointer transition-all hover-lift ${selecting ? "opacity-60 cursor-not-allowed" : ""
+                            }`}
                         onClick={() => !selecting && handleSelectOrganization(org.id)}
                     >
                         <CardContent className="p-4">
@@ -194,23 +185,20 @@ export default function SelectOrganizationPage() {
                                         )}
                                     </div>
                                 </div>
-                                <Badge variant={getRoleBadgeVariant(org.role)}>
-                                    {getRoleLabel(org.role)}
-                                </Badge>
+                                {selecting === org.id ? (
+                                    <Spinner size="sm" />
+                                ) : (
+                                    <Badge variant={getRoleBadgeVariant(org.role)}>
+                                        {getRoleLabel(org.role)}
+                                    </Badge>
+                                )}
                             </div>
                         </CardContent>
                     </Card>
                 ))}
             </div>
 
-            {selecting && (
-                <div data-component="select-org-loading" className="flex items-center gap-2 mt-4">
-                    <Spinner size="sm" />
-                    <p className="text-sm text-muted-foreground">
-                        조직 설정 중...
-                    </p>
-                </div>
-            )}
+
         </div>
     );
 }

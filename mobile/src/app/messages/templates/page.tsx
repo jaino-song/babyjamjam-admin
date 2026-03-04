@@ -1,6 +1,7 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { useSystemTemplates } from "@/features/system-templates/hooks";
@@ -61,6 +62,14 @@ export default function TemplatesPage() {
   return (
     <div data-component="messages-templates" className="bg-background">
       <section data-component="messages-templates-content" className="px-2 sm:px-3 md:px-6 py-3 sm:py-4 mx-auto">
+        <div data-component="messages-templates-nav" className="mb-4">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/messages" className="gap-2">
+              <ArrowLeft className="h-4 w-4" />
+              뒤로
+            </Link>
+          </Button>
+        </div>
         <ContentPaper
           title="템플릿 관리"
           subtitle="시스템 및 사용자 정의 메시지 템플릿을 관리합니다"
@@ -92,8 +101,8 @@ export default function TemplatesPage() {
               </TableHeader>
               <TableBody>
                 {isLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i}>
+                  Array.from({ length: 5 }, (_, i) => `loading-row-${i}`).map((loadingRowKey) => (
+                    <TableRow key={loadingRowKey}>
                       <TableCell>
                         <Skeleton className="h-4 w-[60%] mx-auto" />
                       </TableCell>

@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Query, Param, HttpException, HttpStatus, UseGuards } from "@nestjs/common";
+import { Controller, Post, Get, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { ContractDataDto } from "../../application/dto/contract.dto";
 import { AreaTemplateService } from "../../application/services/area-template.service";
@@ -11,7 +11,7 @@ export class EformsignController {
     constructor(
         private readonly eformsignService: EformsignService,
         private readonly areaTemplateService: AreaTemplateService,
-    ) {}
+    ) { }
 
     @Post("generate-signature")
     async generateSignature(@Body() body: { executionTime: number }) {
@@ -189,6 +189,46 @@ export class EformsignController {
             const documents = await this.eformsignService.getRejectedDocuments(accessToken);
             return documents;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            throw new HttpException(
+                { error: message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    /**
+     * Delete one or more documents
+     */
+    @Delete("documents")
+    async deleteDocuments(
+        @Query("accessToken") accessToken: string,
+        @Query("is_permanent") isPermanent: string,
+        @Body() body: { document_ids: string[] }
+    ) {
+        try {
+            if (!accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+            if (!body.document_ids || !Array.isArray(body.document_ids) || body.document_ids.length === 0) {
+                throw new HttpException(
+                    { error: "document_ids array is required and must not be empty" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+            const result = await this.eformsignService.deleteDocuments(
+                accessToken,
+                body.document_ids,
+                isPermanent === "true"
+            );
+            return result;
+        } catch (error) {
+            if (error instanceof HttpException) {
+                throw error;
+            }
             const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
                 { error: message },

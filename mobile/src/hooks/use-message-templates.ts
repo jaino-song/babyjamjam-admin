@@ -8,6 +8,21 @@ import {
     UpdateMessageTemplateRequest 
 } from "@/lib/template/types";
 
+const normalizeTemplateList = (payload: unknown): MessageTemplate[] => {
+    if (Array.isArray(payload)) {
+        return payload;
+    }
+
+    if (payload && typeof payload === "object") {
+        const nestedList = (payload as { data?: unknown }).data;
+        if (Array.isArray(nestedList)) {
+            return nestedList;
+        }
+    }
+
+    return [];
+};
+
 export const templateQueryKeys = {
     all: ["message-templates"] as const,
     lists: () => [...templateQueryKeys.all, "list"] as const,
@@ -20,7 +35,7 @@ export function useMessageTemplates() {
         queryKey: templateQueryKeys.lists(),
         queryFn: async () => {
             const { data } = await api.get("/message-templates");
-            return data;
+            return normalizeTemplateList(data);
         },
         staleTime: 1000 * 60 * 5,
     });

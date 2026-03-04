@@ -21,8 +21,8 @@ const Pretendard = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "아가잼잼 관리자 서비스",
-  description: "아가잼잼 관리자 서비스",
+  title: "아가잼잼 관리자",
+  description: "아가잼잼 관리자",
   manifest: "/manifest.json",
   icons: {
     apple: "/apple-touch-icon.png",
@@ -52,9 +52,12 @@ export default async function RootLayout({
 
   return (
     <html lang={locale}>
-      <body className={`${Pretendard.variable} antialiased min-h-screen`}>
-        <div data-component="app-root">
-          <div data-component="app-providers">
+      <body className={`${Pretendard.variable} antialiased min-h-screen bg-v3-dim-white`}>
+        <div
+          data-component="app-root"
+          className="relative mx-auto h-[min(100dvh,932px)] w-[min(100vw,430px)] max-w-[430px] overflow-x-hidden overflow-y-auto [--mobile-shell-max-height:932px]"
+        >
+          <div data-component="app-providers" className="min-h-full">
             <QueryProvider>
               <LocaleProvider locale={locale}>
                 <UserProvider user={user}>

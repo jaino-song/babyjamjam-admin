@@ -110,7 +110,6 @@ export function useUpdateClient() {
     });
 }
 
-// Delete client mutation
 export function useDeleteClient() {
     const queryClient = useQueryClient();
 
@@ -118,8 +117,30 @@ export function useDeleteClient() {
         mutationFn: async (id: number) => {
             await api.delete(`/clients/${id}`);
         },
-        onSuccess: () => {
-            // Invalidate all client queries (lists + details) using prefix match
+        onMutate: async (id: number) => {
+            await queryClient.cancelQueries({ queryKey: clientQueryKeys.all });
+
+            const previousQueries = queryClient.getQueriesData<PaginatedResponse<Client>>({
+                queryKey: clientQueryKeys.lists(),
+            });
+
+            queryClient.setQueriesData<PaginatedResponse<Client>>(
+                { queryKey: clientQueryKeys.lists() },
+                (old) => old ? {
+                    ...old,
+                    data: old.data.filter((c) => c.id !== id),
+                    total: old.total - 1,
+                } : old,
+            );
+
+            return { previousQueries };
+        },
+        onError: (_err, _id, context) => {
+            context?.previousQueries?.forEach(([queryKey, data]) => {
+                queryClient.setQueryData(queryKey, data);
+            });
+        },
+        onSettled: () => {
             queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
         },
     });

@@ -33,7 +33,7 @@ jest.mock('next/link', () => ({
 const createMockDocument = (
   doc_id: string,
   customer_name: string | null,
-  status: '대기' | '완료' | '거부' = '완료'
+  status: '대기' | '완료' | '만료' = '완료'
 ): any => ({
   id: doc_id,
   document_number: `DOC-${doc_id}`,
@@ -44,7 +44,7 @@ const createMockDocument = (
   last_editor: { recipient_type: '01', id: 'editor@test.com', name: customer_name || 'Editor' },
   updated_date: Date.now(),
   current_status: {
-    status_type: status === '완료' ? '003' : status === '거부' ? '061' : '060',
+    status_type: status === '완료' ? '003' : status === '만료' ? '061' : '060',
     status_doc_type: 'doc',
     status_doc_detail: 'detail',
     step_type: '05',

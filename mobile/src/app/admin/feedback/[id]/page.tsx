@@ -52,7 +52,7 @@ export default function FeedbackDetailPage() {
       <div className="min-h-screen bg-muted/50 p-8">
         <div className="max-w-4xl mx-auto">
           <button
-            onClick={() => router.push('/admin')}
+            onClick={() => router.push('/admin/feedback')}
             className="mb-8 text-primary hover:text-primary/80 font-medium flex items-center gap-2"
           >
             ←
@@ -70,7 +70,7 @@ export default function FeedbackDetailPage() {
     <div data-component="admin-feedback-detail" className="min-h-screen bg-muted/50 p-8">
       <div data-component="admin-feedback-detail-content" className="max-w-4xl mx-auto">
         <button
-          onClick={() => router.push('/admin')}
+          onClick={() => router.push('/admin/feedback')}
           data-component="admin-feedback-detail-back"
           className="mb-8 text-primary hover:text-primary/80 font-medium flex items-center gap-2 transition-colors"
         >

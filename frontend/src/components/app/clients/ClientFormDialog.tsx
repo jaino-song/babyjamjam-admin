@@ -356,7 +356,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     return (
         <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-xl" data-testid="client-form-dialog">
+            <DialogContent data-testid="client-form-dialog">
                 <DialogHeader>
                     <DialogTitle>
                         {isEditMode
@@ -482,14 +482,14 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                             {t(locale, "clients.form.section-service")}
                         </h4>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="space-y-2">
+                        <div className="flex flex-wrap items-end gap-4">
+                            <div className="flex-1 space-y-2">
                                 <Label>{t(locale, "clients.form.voucher-type")}</Label>
                                 <Select
                                     value={formData.type || ""}
                                     onValueChange={handleTypeChange}
                                 >
-                                    <SelectTrigger>
+                                    <SelectTrigger className="w-full">
                                         <SelectValue placeholder={t(locale, "clients.form.voucher-type")} />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -506,19 +506,18 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     </SelectContent>
                                 </Select>
                             </div>
-                            <div className="space-y-2">
+                            <div className="flex-1 space-y-2">
                                 <Label>{t(locale, "clients.form.duration")}</Label>
                                 <div className="relative">
                                     <Select
                                         value={formData.duration?.toString() || ""}
                                         onValueChange={(value) => {
                                             handleChange("duration", value ? Number(value) : null);
-                                            // Reset manual edit flag when duration changes to allow auto-fill
                                             setPricesManuallyEdited(false);
                                         }}
                                         disabled={!formData.type || isPriceLoading}
                                     >
-                                        <SelectTrigger>
+                                        <SelectTrigger className="w-full">
                                             <SelectValue placeholder={t(locale, "clients.form.duration")} />
                                         </SelectTrigger>
                                         <SelectContent>
@@ -554,8 +553,8 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                             )}
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                            <div className="space-y-2">
+                        <div className="flex flex-wrap items-end gap-4">
+                            <div className="flex-1 space-y-2">
                                 <Label htmlFor="fullPrice">{t(locale, "clients.form.full-price")}</Label>
                                 <div className="relative">
                                     <Input
@@ -570,7 +569,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     </span>
                                 </div>
                             </div>
-                            <div className="space-y-2">
+                            <div className="flex-1 space-y-2">
                                 <Label htmlFor="grant">{t(locale, "clients.form.grant")}</Label>
                                 <div className="relative">
                                     <Input
@@ -585,7 +584,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     </span>
                                 </div>
                             </div>
-                            <div className="space-y-2">
+                            <div className="flex-1 space-y-2">
                                 <Label htmlFor="actualPrice">{t(locale, "clients.form.actual-price")}</Label>
                                 <div className="relative">
                                     <Input
@@ -611,14 +610,14 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                             {t(locale, "clients.form.section-contract")}
                         </h4>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                            <div className="space-y-2 sm:col-span-2">
+                        <div className="flex flex-wrap items-end gap-4">
+                            <div className="flex-1 space-y-2">
                                 <Label>{t(locale, "clients.form.contract-status")}</Label>
                                 <Select
                                     value={formData.serviceStatus || ""}
                                     onValueChange={(value) => handleChange("serviceStatus", value)}
                                 >
-                                    <SelectTrigger>
+                                    <SelectTrigger className="w-full">
                                         <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -630,7 +629,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     </SelectContent>
                                 </Select>
                             </div>
-                            <div className="space-y-2">
+                            <div className="flex-1 space-y-2">
                                 <Label htmlFor="startDate">{t(locale, "clients.form.start-date")}</Label>
                                 <Input
                                     id="startDate"
@@ -639,7 +638,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     onChange={(e) => handleChange("startDate", e.target.value)}
                                 />
                             </div>
-                            <div className="space-y-2">
+                            <div className="flex-1 space-y-2">
                                 <Label htmlFor="endDate">{t(locale, "clients.form.end-date")}</Label>
                                 <Input
                                     id="endDate"

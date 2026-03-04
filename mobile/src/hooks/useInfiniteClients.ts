@@ -25,7 +25,12 @@ export function useInfiniteClients({
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
 
   useEffect(() => {
-    setVisibleCount(INITIAL_VISIBLE_COUNT);
+    setVisibleCount((prev) => {
+      if (filter === "all" && search === "" && prev === INITIAL_VISIBLE_COUNT) {
+        return prev;
+      }
+      return INITIAL_VISIBLE_COUNT;
+    });
   }, [filter, search]);
 
   const query = useQuery<PaginatedResponse<Client>>({
@@ -62,11 +67,17 @@ export function useInfiniteClients({
     return allFilteredClients.slice(0, visibleCount);
   }, [allFilteredClients, visibleCount]);
 
-  const hasNextPage = visibleCount < allFilteredClients.length;
+  const hasNextPage =
+    visibleCount < allFilteredClients.length ||
+    (visibleCount === INITIAL_VISIBLE_COUNT &&
+      allFilteredClients.length === INITIAL_VISIBLE_COUNT);
   const isInitialLoad = visibleCount <= INITIAL_VISIBLE_COUNT;
 
   const fetchNextPage = useCallback(() => {
-    setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, allFilteredClients.length));
+    setVisibleCount((prev) => {
+      const next = Math.min(prev + PAGE_SIZE, allFilteredClients.length);
+      return next === prev ? prev + PAGE_SIZE : next;
+    });
   }, [allFilteredClients.length]);
 
   return {

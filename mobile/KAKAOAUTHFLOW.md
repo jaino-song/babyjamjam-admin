@@ -95,7 +95,7 @@ async kakaoCallback(@Req() req: any, @Res() res: Response) {
         ? process.env.PRODUCTION_FRONTEND_URL 
         : process.env.DEVELOPMENT_FRONTEND_URL;
     
-    res.redirect(`${frontendURL}/auth/callback?code=${code}`);
+    res.redirect(`${frontendURL}/callback?code=${code}`);
 }
 ```
 
@@ -175,7 +175,7 @@ async createAuthCode(tokens: { accessToken: string; refreshToken: string }): Pro
 
 ### 3. Frontend Receives Authorization Code
 
-**Route:** `/auth/callback`
+**Route:** `/callback`
 
 The frontend callback page receives the authorization code and exchanges it for tokens using a **Server Action**:
 
@@ -183,7 +183,7 @@ The frontend callback page receives the authorization code and exchanges it for 
 
 **Server Action Implementation:**
 ```typescript
-// frontend/app/auth/callback/actions.ts
+// frontend/app/(auth)/callback/actions.ts
 "use server"
 
 import { cookies } from "next/headers";
@@ -237,7 +237,7 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
 
 **Frontend Page Implementation:**
 ```typescript
-// frontend/app/auth/callback/page.tsx
+// frontend/app/(auth)/callback/page.tsx
 "use client"
 
 import { exchangeToken } from "./actions";
@@ -409,8 +409,8 @@ NODE_ENV=development # or production
 - **DTO:** `backend/interface/dto/token-exchange.dto.ts`
 
 ### Frontend
-- **Callback Page:** `frontend/app/auth/callback/page.tsx`
-- **Server Action:** `frontend/app/auth/callback/actions.ts`
+- **Callback Page:** `frontend/app/(auth)/callback/page.tsx`
+- **Server Action:** `frontend/app/(auth)/callback/actions.ts`
 - **Axios Client:** `frontend/app/lib/axios/client.ts`
 - **Axios Server:** `frontend/app/lib/axios/server.ts`
 - **Next.js Config:** `frontend/next.config.ts` (rewrites configuration)
@@ -441,7 +441,7 @@ http://localhost:3000/login
 5. Monitor network requests:
    - Initial redirect: `GET /auth/kakao`
    - Kakao callback: `GET /auth/kakao/callback`
-   - Frontend redirect: `GET /auth/callback?code=...`
+   - Frontend redirect: `GET /callback?code=...`
    - Token exchange: `POST /api/auth/token`
    - Final redirect: `GET /dashboard`
 
@@ -495,7 +495,7 @@ http://localhost:3000/login
 - Check CORS configuration
 
 **Issue: Infinite redirect loop**
-- Check that `/auth/callback` is not protected by auth middleware
+- Check that `/callback` is not protected by auth middleware
 - Verify cookie path is set to `/`
 - Ensure cookies are being read correctly by middleware
 

@@ -37,7 +37,7 @@ export function AuthCard({
         )}
       >
         {(title || description) && (
-          <CardHeader className={cn("space-y-1 text-center", isV3 && "pt-8 px-8 pb-2")}>
+          <CardHeader className={cn("flex flex-col gap-1 text-center", isV3 && "pt-8 px-8 pb-2")}>
             {title && (
               <CardTitle className={cn("text-2xl font-bold", isV3 && "text-xl font-extrabold text-v3-dark")}>{title}</CardTitle>
             )}

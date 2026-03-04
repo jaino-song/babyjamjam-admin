@@ -2,9 +2,11 @@
 import { useState } from "react";
 import { serviceInfoMsgTemplate } from "../templates/messageTemplate/serviceInfoMsg";
 import { t } from "@/lib/i18n/translations";
+import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
+import { useToast } from "@/hooks/use-toast";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,7 +14,8 @@ import { Button } from "@/components/ui/button";
 
 export const ServiceInfoMessageForm = () => {
   const locale = useLocale();
-  const [name, setName] = useState("");
+  const { toast } = useToast();
+  const { name, setName } = useFormStore();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const { data: systemTemplate } = useSystemTemplate("service_info");
 
@@ -25,7 +28,7 @@ export const ServiceInfoMessageForm = () => {
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    toast({ description: t(locale, "common.copy-success-message") });
   };
 
   return (

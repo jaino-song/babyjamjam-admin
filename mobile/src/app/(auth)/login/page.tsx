@@ -2,16 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { loginWithEmail } from "./actions";
+import { authApi } from "@/services/api";
 import { InputField } from "@/components/app/v3";
 import { CardContainer } from "@/components/auth/card-container";
+import { AlertCard } from "@/components/ui/alert-card";
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { OAuthButtonIcons, OAuthButtons } from "@/components/auth/oauth-buttons";
-import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -34,6 +34,7 @@ const LoginPage = () => {
     const [serverError, setServerError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
+    const [isResendingVerification, setIsResendingVerification] = useState(false);
 
     useEffect(() => {
         const savedAutoLogin = safeStorageGetItem("local", "login:autoLogin") === "true";
@@ -92,7 +93,7 @@ const LoginPage = () => {
                 safeStorageRemoveItem("local", "login:savedEmail");
             }
 
-            const response = await loginWithEmail(result.data.email, result.data.password);
+            const response = await loginWithEmail(result.data.email, result.data.password, autoLogin);
 
             if (response.success) {
                 if (response.requiresOrgSelection) {
@@ -103,6 +104,9 @@ const LoginPage = () => {
             } else {
                 setServerError(response.error || "로그인에 실패했습니다.");
                 if (response.emailVerificationRequired) {
+                    if (result.data.email) {
+                        safeStorageSetItem("local", "auth:verificationEmail", result.data.email);
+                    }
                     setEmailVerificationRequired(true);
                 }
             }
@@ -111,6 +115,34 @@ const LoginPage = () => {
             setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handleResendVerification = async () => {
+        const inputEmail = typeof formData.email === "string" ? formData.email.trim() : "";
+        const savedEmail = safeStorageGetItem("local", "auth:verificationEmail")?.trim() || "";
+        const targetEmail = inputEmail || savedEmail;
+
+        if (!targetEmail || isResendingVerification) {
+            if (!targetEmail) {
+                setServerError("인증 메일을 보낼 이메일을 먼저 입력해 주세요.");
+            }
+            return;
+        }
+
+        setIsResendingVerification(true);
+        try {
+            const response = await authApi.resendVerification(targetEmail);
+            if (response.success) {
+                safeStorageSetItem("local", "auth:verificationEmail", targetEmail);
+                setServerError(response.message || "인증 이메일을 재발송했습니다. 메일함을 확인해 주세요.");
+            } else {
+                setServerError(response.message || "인증 이메일 재발송에 실패했습니다.");
+            }
+        } catch {
+            setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+        } finally {
+            setIsResendingVerification(false);
         }
     };
 
@@ -143,112 +175,104 @@ const LoginPage = () => {
                 subtitle: "auth-login-subtitle",
                 content: "auth-login-content",
             }}
-            className="[&_[data-component='auth-login-content']]:flex [&_[data-component='auth-login-content']]:flex-col [&_[data-component='auth-login-content']]:gap-6"
+            contentClassName="flex flex-col gap-6"
             title={t(locale, "login.title")}
             subtitle={t(locale, "login.subtitle")}
         >
             {/* Error Alert */}
             {serverError && (
-                <Alert
+                <AlertCard
                     variant="destructive"
-                    onClose={() => {
-                        setServerError(null);
-                        setEmailVerificationRequired(false);
+                    data-component="login-error"
+                    dataComponents={{
+                        message: "login-error-message",
+                        actionContainer: "login-error-verify-email",
+                        actionLink: "login-error-verify-email-link",
                     }}
-                >
-                    <div data-component="login-error-message">
-                        {serverError}
-                        {emailVerificationRequired && (
-                            <div data-component="login-error-verify-email" className="mt-2">
-                                <Link
-                                    href="/verify-email"
-                                    className="text-destructive underline hover:no-underline"
-                                >
-                                    인증 이메일 재발송
-                                </Link>
-                            </div>
-                        )}
-                    </div>
-                </Alert>
+                    message={serverError}
+                    messageClassName="pr-2"
+                    actionLabel={emailVerificationRequired ? (isResendingVerification ? "재발송 중..." : "인증 이메일 재발송") : undefined}
+                    actionOnClick={emailVerificationRequired ? handleResendVerification : undefined}
+                />
             )}
 
             {/* Login Form */}
             <form data-component="login-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
-                    <InputField
-                        title="이메일"
-                        message={errors.email}
-                        messageTone="error"
-                        messageId={errors.email ? "login-email-error" : undefined}
-                        className="gap-2"
-                        labelClassName="text-sm"
-                        inputClassName={errors.email ? "border-destructive focus:border-destructive" : undefined}
-                        inputProps={{
-                            id: "login-email",
-                            type: "email",
-                            value: formData.email,
-                            onChange: handleChange("email"),
-                            disabled: isLoading,
-                            autoComplete: "email",
-                            "aria-invalid": !!errors.email,
-                            "aria-describedby": errors.email ? "login-email-error" : undefined,
-                        }}
-                    />
+                <InputField
+                    title="이메일"
+                    message={errors.email}
+                    messageTone="error"
+                    messageId={errors.email ? "login-email-error" : undefined}
+                    className="gap-2"
+                    labelClassName="text-sm"
+                    inputClassName={errors.email ? "border-destructive focus:border-destructive" : undefined}
+                    inputProps={{
+                        id: "login-email",
+                        type: "email",
+                        value: formData.email,
+                        onChange: handleChange("email"),
+                        disabled: isLoading,
+                        autoComplete: "email",
+                        "aria-invalid": !!errors.email,
+                        "aria-describedby": errors.email ? "login-email-error" : undefined,
+                    }}
+                />
 
-                    <InputField
-                        title="비밀번호"
-                        message={errors.password}
-                        messageTone="error"
-                        messageId={errors.password ? "login-password-error" : undefined}
-                        className="gap-2"
-                        labelClassName="text-sm"
-                        inputClassName={errors.password ? "border-destructive focus:border-destructive" : undefined}
-                        inputProps={{
-                            id: "login-password",
-                            type: "password",
-                            value: formData.password,
-                            onChange: handleChange("password"),
-                            disabled: isLoading,
-                            autoComplete: "current-password",
-                            "aria-invalid": !!errors.password,
-                            "aria-describedby": errors.password ? "login-password-error" : undefined,
-                        }}
-                    />
+                <InputField
+                    title="비밀번호"
+                    message={errors.password}
+                    messageTone="error"
+                    messageId={errors.password ? "login-password-error" : undefined}
+                    className="gap-2"
+                    labelClassName="text-sm"
+                    inputClassName={errors.password ? "border-destructive focus:border-destructive" : undefined}
+                    inputProps={{
+                        id: "login-password",
+                        type: "password",
+                        value: formData.password,
+                        onChange: handleChange("password"),
+                        disabled: isLoading,
+                        autoComplete: "current-password",
+                        "aria-invalid": !!errors.password,
+                        "aria-describedby": errors.password ? "login-password-error" : undefined,
+                    }}
+                />
 
-                    <div data-component="login-form-checkboxes" className="flex items-center gap-6 pt-1">
-                        <div data-component="login-form-checkbox-remember-id" className="flex items-center gap-2">
-                            <Checkbox
-                                id="login-remember-id"
-                                checked={rememberId}
-                                onCheckedChange={(checked) => setRememberId(checked === true)}
-                                disabled={isLoading}
-                            />
-                            <Label htmlFor="login-remember-id" className="text-sm text-muted-foreground select-none">
-                                아이디 저장
-                            </Label>
-                        </div>
-
-                        <div data-component="login-form-checkbox-auto-login" className="flex items-center gap-2">
-                            <Checkbox
-                                id="login-auto-login"
-                                checked={autoLogin}
-                                onCheckedChange={(checked) => setAutoLogin(checked === true)}
-                                disabled={isLoading}
-                            />
-                            <Label htmlFor="login-auto-login" className="text-sm text-muted-foreground select-none">
-                                자동 로그인
-                            </Label>
-                        </div>
+                <div data-component="login-form-checkboxes" className="flex items-center gap-6">
+                    <div data-component="login-form-checkbox-remember-id" className="flex items-center gap-2">
+                        <Checkbox
+                            id="login-remember-id"
+                            checked={rememberId}
+                            onCheckedChange={(checked) => setRememberId(checked === true)}
+                            disabled={isLoading}
+                        />
+                        <Label htmlFor="login-remember-id" className="text-sm text-muted-foreground select-none">
+                            아이디 저장
+                        </Label>
                     </div>
 
-                    <Button
-                        data-component="login-submit-button"
-                        type="submit"
-                        size="lg"
-                        className="w-full rounded-2xl"
-                        disabled={isLoading}
-                    >
-                        {isLoading ? <Spinner size="sm" /> : "로그인"}
-                    </Button>
+                    <div data-component="login-form-checkbox-auto-login" className="flex items-center gap-2">
+                        <Checkbox
+                            id="login-auto-login"
+                            checked={autoLogin}
+                            onCheckedChange={(checked) => setAutoLogin(checked === true)}
+                            disabled={isLoading}
+                        />
+                        <Label htmlFor="login-auto-login" className="text-sm text-muted-foreground select-none">
+                            자동 로그인
+                        </Label>
+                    </div>
+                </div>
+
+                <Button
+                    data-component="login-submit-button"
+                    type="submit"
+                    size="lg"
+                    className="w-full rounded-2xl"
+                    disabled={isLoading}
+                >
+                    {isLoading ? <Spinner size="sm" /> : "로그인"}
+                </Button>
             </form>
 
             {/* Divider */}

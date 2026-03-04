@@ -59,7 +59,7 @@ When querying elements, prefer `data-component` first. Fall back to `data-slot` 
 | `/auth/forgot-password` | `auth-forgot-password` |
 | `/auth/reset-password` | `auth-reset-password` |
 | `/auth/verify-email` | `auth-verify-email` |
-| `/auth/callback` | `auth-callback` |
+| `/callback` | `auth-callback` |
 | `/chat` | `chat` |
 | `/files` | `files` |
 | `/select-organization` | `select-org` |

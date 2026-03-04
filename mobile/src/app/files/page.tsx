@@ -143,12 +143,13 @@ export default function FilesPage() {
         ]}
       />
 
-      <SplitLayout>
+      <SplitLayout hasSelection={!!selectedDocument} onBack={() => setSelectedDocId(null)} autoHeight>
         <ListPanel
           title="파일 목록"
           tabs={filterItems}
           activeTab={activeFilter}
           onTabChange={setActiveFilter}
+          tabsVariant="dropdown"
           searchValue={searchQuery}
           onSearchChange={setSearchQuery}
           searchPlaceholder="문서명, 설명, 태그 검색..."

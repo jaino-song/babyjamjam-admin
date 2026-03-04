@@ -1,44 +1,54 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getFeedbackList, getFeedbackStats, FeedbackItem } from '@/lib/api/admin';
-import { useRouter } from 'next/navigation';
+import { getFeedbackList, getFeedbackStats, getFeedbackDetail, FeedbackItem, SessionMessage } from '@/lib/api/admin';
 import { cn } from '@/lib/utils';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { ChevronLeft, ChevronRight, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { MessageSquare, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, AnimatedSlotList, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from '@/components/app/v3';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 type FilterType = 'all' | 'positive' | 'negative';
 
+const filterItems = [
+  { label: '전체', value: 'all' },
+  { label: '긍정적', value: 'positive' },
+  { label: '부정적', value: 'negative' },
+];
+
 export default function AdminFeedbackPage() {
-  const router = useRouter();
-  const [currentPage, setCurrentPage] = useState(1);
   const [filterType, setFilterType] = useState<FilterType>('all');
-  const limit = 20;
+  const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['feedbackStats'],
     queryFn: getFeedbackStats,
   });
 
-  const { data: feedbackData, isLoading: feedbackLoading } = useQuery({
-    queryKey: ['feedbackList', currentPage, filterType],
-    queryFn: () => getFeedbackList(
-      currentPage,
-      limit,
-      filterType === 'all' ? undefined : filterType
-    ),
+  const { data: feedbackData, isLoading: feedbackLoading, error } = useQuery({
+    queryKey: ['feedbackList', 1, filterType],
+    queryFn: () => getFeedbackList(1, 100, filterType === 'all' ? undefined : filterType),
   });
 
-  const handleRowClick = (feedbackId: string) => {
-    router.push(`/admin/feedback/${feedbackId}`);
-  };
+  const feedbackList = feedbackData?.data ?? [];
 
-  const handleFilterChange = (type: FilterType) => {
-    setFilterType(type);
-    setCurrentPage(1);
-  };
+  const filteredList = useMemo(() => {
+    if (!searchQuery.trim()) return feedbackList;
+    const q = searchQuery.trim().toLowerCase();
+    return feedbackList.filter(f =>
+      (f.user.name?.toLowerCase().includes(q)) ||
+      (f.user.email?.toLowerCase().includes(q)) ||
+      (f.comment?.toLowerCase().includes(q))
+    );
+  }, [feedbackList, searchQuery]);
+
+  const selectedFeedback = useMemo(() => {
+    if (!selectedFeedbackId) return null;
+    return filteredList.find(f => f.id === selectedFeedbackId) ?? null;
+  }, [selectedFeedbackId, filteredList]);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -56,242 +66,227 @@ export default function AdminFeedbackPage() {
     return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
   };
 
+  if (error) {
+    return (
+      <div className="p-6">
+        <div data-component="admin-error" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
+          피드백을 불러오는데 실패했습니다.
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <section data-component="admin" className="min-h-screen bg-background p-4 sm:p-6 md:p-8">
-      <div data-component="admin-content" className="max-w-7xl mx-auto">
-        <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-6 sm:mb-8 opacity-0 animate-fade-in">
-          피드백 관리
-        </h1>
+    <PageSection name="admin">
+      <StatsBar
+        name="admin"
+        isLoading={statsLoading}
+        items={[
+          { icon: MessageSquare, value: stats?.total || 0, label: '전체', counter: '건' },
+          { icon: ThumbsUp, value: stats?.positive || 0, label: '긍정적', counter: '건', colorIndex: 1 },
+          { icon: ThumbsDown, value: stats?.negative || 0, label: '부정적', counter: '건', colorIndex: 2 },
+        ]}
+      />
 
-        {/* Stats Cards */}
-        {statsLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-            {[1, 2, 3].map((i) => (
-              <Card key={i} className="opacity-0 animate-fade-in" style={{ animationDelay: `${i * 100}ms` }}>
-                <CardContent className="p-6">
-                  <div className="h-4 bg-muted rounded w-1/2 mb-4 animate-pulse"></div>
-                  <div className="h-8 bg-muted rounded w-1/3 animate-pulse"></div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <div data-component="admin-stats" className="flex flex-wrap gap-4 mb-6 sm:mb-8">
-            <Card className="opacity-0 animate-fade-in hover:shadow-md transition-shadow" style={{ animationDelay: '100ms' }}>
-              <CardContent className="p-6">
-                <p className="text-sm text-muted-foreground mb-2">전체</p>
-                <p className="text-3xl font-bold text-foreground">{stats?.total || 0}</p>
-              </CardContent>
-            </Card>
-            <Card className="opacity-0 animate-fade-in hover:shadow-md transition-shadow" style={{ animationDelay: '200ms' }}>
-              <CardContent className="p-6">
-                <p className="text-sm text-muted-foreground mb-2">긍정적</p>
-                <p className="text-3xl font-bold text-success">{stats?.positive || 0}</p>
-              </CardContent>
-            </Card>
-            <Card className="opacity-0 animate-fade-in hover:shadow-md transition-shadow" style={{ animationDelay: '300ms' }}>
-              <CardContent className="p-6">
-                <p className="text-sm text-muted-foreground mb-2">부정적</p>
-                <p className="text-3xl font-bold text-destructive">{stats?.negative || 0}</p>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Feedback Table */}
-        <Card data-component="admin-feedback-table" className="opacity-0 animate-fade-in" style={{ animationDelay: '400ms' }}>
-          {/* Filter Tabs */}
-          <div data-component="admin-feedback-filters" className="border-b border-border">
-            <div className="flex space-x-8 px-6">
-              {(['all', 'positive', 'negative'] as const).map((type) => (
-                <button
-                  key={type}
-                  onClick={() => handleFilterChange(type)}
-                  className={cn(
-                    "py-4 px-1 border-b-2 font-medium text-sm transition-colors",
-                    filterType === type
-                      ? "border-primary text-primary"
-                      : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
-                  )}
-                >
-                  {type === 'all' ? '전체' : type === 'positive' ? '긍정적' : '부정적'}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {feedbackLoading ? (
-            <div className="p-6">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="border-b border-border py-4">
-                  <div className="grid grid-cols-4 gap-4">
-                    <div className="h-4 bg-muted rounded animate-pulse"></div>
-                    <div className="h-4 bg-muted rounded animate-pulse"></div>
-                    <div className="h-4 bg-muted rounded animate-pulse"></div>
-                    <div className="h-4 bg-muted rounded animate-pulse"></div>
-                  </div>
-                </div>
-              ))}
-            </div>
+      <SplitLayout>
+        <ListPanel
+          title="피드백 목록"
+          tabs={filterItems}
+          activeTab={filterType}
+          onTabChange={(v) => { setFilterType(v as FilterType); setSelectedFeedbackId(null); }}
+          searchValue={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchPlaceholder="사용자, 코멘트 검색..."
+        >
+          {!feedbackLoading && filteredList.length === 0 ? (
+            <ListEmptyState message={searchQuery ? '검색 결과가 없습니다' : '피드백이 없습니다'} />
           ) : (
-            <>
-              <div data-component="admin-feedback-list" className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-border">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        날짜
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        사용자
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        유형
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        코멘트
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-background divide-y divide-border">
-                    {feedbackData?.data.map((feedback: FeedbackItem, index: number) => (
-                      <tr
-                        key={feedback.id}
-                        onClick={() => handleRowClick(feedback.id)}
-                        className={cn(
-                          "hover:bg-muted/50 cursor-pointer transition-colors",
-                          "opacity-0 animate-fade-in"
-                        )}
-                        style={{ animationDelay: `${500 + index * 50}ms` }}
-                      >
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
-                          {formatDate(feedback.createdAt)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
-                          {feedback.user.name || feedback.user.email || '익명'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                          {feedback.type === 'positive' ? (
-                            <ThumbsUp className="h-5 w-5 text-success" />
-                          ) : (
-                            <ThumbsDown className="h-5 w-5 text-destructive" />
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-foreground">
-                          {truncateText(feedback.comment, 50)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {feedbackData && feedbackData.data.length === 0 && (
-                <div className="text-center py-12">
-                  <p className="text-muted-foreground">피드백이 없습니다.</p>
-                </div>
-              )}
-
-              {feedbackData && feedbackData.totalPages > 1 && (
-                <div data-component="admin-feedback-pagination" className="px-6 py-4 flex items-center justify-between border-t border-border">
-                  <div className="flex-1 flex justify-between sm:hidden">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                      disabled={currentPage === 1}
-                    >
-                      이전
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((prev) => Math.min(feedbackData.totalPages, prev + 1))}
-                      disabled={currentPage === feedbackData.totalPages}
-                    >
-                      다음
-                    </Button>
-                  </div>
-                  <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">
-                        전체 <span className="font-medium text-foreground">{feedbackData.total}</span>개 중{' '}
-                        <span className="font-medium text-foreground">{(currentPage - 1) * limit + 1}</span>-
-                        <span className="font-medium text-foreground">
-                          {Math.min(currentPage * limit, feedbackData.total)}
-                        </span>{' '}
-                        표시
+            <AnimatedSlotList<FeedbackItem>
+              items={filteredList}
+              isLoading={feedbackLoading}
+              loadingCount={5}
+              className="space-y-2"
+              slotClassName={({ item, isLoading: slotLoading }) => {
+                const isActive = !slotLoading && item && selectedFeedback?.id === item.id;
+                return cn(
+                  'flex items-center gap-3 p-3 rounded-[14px] transition-all duration-200 bg-white border-2 border-transparent',
+                  !slotLoading && 'cursor-pointer',
+                  isActive
+                    ? 'bg-v3-primary-light border-2 border-v3-primary'
+                    : !slotLoading && 'hover:bg-v3-primary-light/50 hover:border-v3-primary/30'
+                );
+              }}
+              onSlotClick={(feedback) => setSelectedFeedbackId(feedback.id)}
+              render={({ item: feedback, isLoading: slotLoading }) => {
+                if (slotLoading) {
+                  return (
+                    <>
+                      <div className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
+                        <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
+                        <Skeleton className="h-3 w-32 bg-v3-dim-white" />
+                      </div>
+                      <Skeleton className="h-3 w-12 bg-v3-dim-white shrink-0" />
+                    </>
+                  );
+                }
+                if (!feedback) return null;
+                return (
+                  <>
+                    <div className={cn(
+                      'w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0',
+                      feedback.type === 'positive' ? 'bg-emerald-50' : 'bg-red-50'
+                    )}>
+                      {feedback.type === 'positive'
+                        ? <ThumbsUp className="w-4 h-4 text-emerald-500" />
+                        : <ThumbsDown className="w-4 h-4 text-red-500" />
+                      }
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[0.8rem] font-semibold text-v3-dark truncate">
+                        {feedback.user.name || feedback.user.email || '익명'}
+                      </p>
+                      <p className="text-[0.7rem] text-v3-text-muted truncate">
+                        {truncateText(feedback.comment, 30)}
                       </p>
                     </div>
-                    <div>
-                      <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                          disabled={currentPage === 1}
-                          className="rounded-r-none"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                          <span className="sr-only">이전</span>
-                        </Button>
-                        {Array.from({ length: feedbackData.totalPages }, (_, i) => i + 1)
-                          .filter((page) => {
-                            return (
-                              page === 1 ||
-                              page === feedbackData.totalPages ||
-                              (page >= currentPage - 2 && page <= currentPage + 2)
-                            );
-                          })
-                          .map((page, index, array) => {
-                            if (index > 0 && array[index - 1] !== page - 1) {
-                              return (
-                                <span key={`ellipsis-${page}`} className="flex">
-                                  <span className="relative inline-flex items-center px-4 py-2 border border-border bg-background text-sm font-medium text-muted-foreground">
-                                    ...
-                                  </span>
-                                  <Button
-                                    variant={currentPage === page ? "default" : "outline"}
-                                    size="sm"
-                                    onClick={() => setCurrentPage(page)}
-                                    className="rounded-none"
-                                  >
-                                    {page}
-                                  </Button>
-                                </span>
-                              );
-                            }
-                            return (
-                              <Button
-                                key={page}
-                                variant={currentPage === page ? "default" : "outline"}
-                                size="sm"
-                                onClick={() => setCurrentPage(page)}
-                                className="rounded-none"
-                              >
-                                {page}
-                              </Button>
-                            );
-                          })}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setCurrentPage((prev) => Math.min(feedbackData.totalPages, prev + 1))}
-                          disabled={currentPage === feedbackData.totalPages}
-                          className="rounded-l-none"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                          <span className="sr-only">다음</span>
-                        </Button>
-                      </nav>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
+                    <span className="text-[0.65rem] text-v3-text-muted whitespace-nowrap">
+                      {formatDate(feedback.createdAt)}
+                    </span>
+                  </>
+                );
+              }}
+            />
           )}
-        </Card>
+        </ListPanel>
+
+        {feedbackLoading ? (
+          <DetailSkeleton
+            name="admin-detail-skeleton"
+            headerActions={0}
+            sections={[
+              { titleWidth: 'w-16', rows: ['w-1/2', 'w-2/3', 'w-1/3', 'w-1/2'] },
+              { titleWidth: 'w-20', rows: ['w-3/4', 'w-full', 'w-2/3'] },
+            ]}
+          />
+        ) : selectedFeedback ? (
+          <FeedbackDetail feedback={selectedFeedback} formatDate={formatDate} />
+        ) : (
+          <EmptyState name="admin-empty" icon={MessageSquare} message="피드백을 선택하면 상세 정보가 표시됩니다" />
+        )}
+      </SplitLayout>
+    </PageSection>
+  );
+}
+
+function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; formatDate: (d: string) => string }) {
+  const { data: detail, isLoading: detailLoading } = useQuery({
+    queryKey: ['feedbackDetail', feedback.id],
+    queryFn: () => getFeedbackDetail(feedback.id),
+  });
+
+  return (
+    <DetailPanel
+      title={feedback.type === 'positive' ? '긍정적 피드백' : '부정적 피드백'}
+      badges={
+        <span className={cn(
+          'inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold',
+          feedback.type === 'positive'
+            ? 'bg-emerald-50 text-emerald-600'
+            : 'bg-red-50 text-red-600'
+        )}>
+          {feedback.type === 'positive' ? '👍 긍정적' : '👎 부정적'}
+        </span>
+      }
+      subtitle={<>작성일: {formatDate(feedback.createdAt)}</>}
+    >
+      <div className="space-y-5">
+        <InfoCard title="피드백 정보">
+          <InfoRow label="유형" value={feedback.type === 'positive' ? '긍정적' : '부정적'} />
+          <InfoRow label="사용자" value={feedback.user.name || feedback.user.email || '익명'} />
+          <InfoRow label="날짜" value={formatDate(feedback.createdAt)} />
+          <InfoRow label="코멘트" value={feedback.comment || '-'} />
+        </InfoCard>
+
+        {detailLoading ? (
+          <InfoCard title="대화 내역">
+            <div className="space-y-3">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="space-y-2">
+                  <Skeleton className="h-3 w-20 bg-v3-dim-white" />
+                  <Skeleton className="h-12 w-full bg-v3-dim-white rounded-[14px]" />
+                </div>
+              ))}
+            </div>
+          </InfoCard>
+        ) : detail?.session?.messages && detail.session.messages.length > 0 ? (
+          <InfoCard title="대화 내역">
+            <div className="space-y-3">
+              {detail.session.messages.map((message: SessionMessage) => {
+                const isHighlighted = message.id === detail.message.id;
+                const isUser = message.role === 'user';
+
+                return (
+                  <div
+                    key={message.id}
+                    className={cn(
+                      'rounded-[14px] p-3 text-[0.8rem]',
+                      isHighlighted
+                        ? 'ring-2 ring-amber-400 bg-amber-50'
+                        : isUser
+                          ? 'bg-v3-primary-light'
+                          : 'bg-v3-dim-white'
+                    )}
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className={cn(
+                        'text-[0.7rem] font-semibold',
+                        isHighlighted ? 'text-amber-600' : isUser ? 'text-v3-primary' : 'text-v3-text-muted'
+                      )}>
+                        {isUser ? '사용자' : 'AI 어시스턴트'}
+                      </span>
+                      <span className="text-[0.65rem] text-v3-text-muted">
+                        {formatDate(message.timestamp)}
+                      </span>
+                      {isHighlighted && (
+                        <span className="text-[0.65rem] font-bold text-amber-500 ml-auto">⭐ 피드백 대상</span>
+                      )}
+                    </div>
+                    {isUser ? (
+                      <p className="text-v3-text whitespace-pre-wrap break-words">{message.content}</p>
+                    ) : (
+                      <div className="prose prose-sm max-w-none text-v3-text">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed text-[0.8rem]">{children}</p>,
+                            ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1 text-[0.8rem]">{children}</ul>,
+                            ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-1 text-[0.8rem]">{children}</ol>,
+                            li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                            code: ({ className, children }) => {
+                              const isInline = !className;
+                              return isInline ? (
+                                <code className="bg-white/60 text-v3-dark px-1 py-0.5 rounded text-[0.75rem] font-mono">{children}</code>
+                              ) : (
+                                <code className={className}>{children}</code>
+                              );
+                            },
+                            pre: ({ children }) => <pre className="bg-v3-dark text-white p-3 rounded-[10px] overflow-x-auto mb-2 text-[0.75rem]">{children}</pre>,
+                          }}
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </InfoCard>
+        ) : null}
       </div>
-    </section>
+    </DetailPanel>
   );
 }

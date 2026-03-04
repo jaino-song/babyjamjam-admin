@@ -1,6 +1,13 @@
 {
+  "roles": {
+    "owner": "오너",
+    "admin": "지점장",
+    "manager": "매니저",
+    "user": "유저",
+    "unknown": "사용자"
+  },
   "common": {
-    "title": "아가잼잼 관리자 서비스",
+    "title": "아가잼잼 관리자",
     "subtitle": "아날로그에서 디지털로",
     "start": "시작하기",
     "welcome": "환영합니다",
@@ -257,6 +264,10 @@
     "no-data": "등록된 고객이 없습니다.",
     "load-error": "고객 목록을 불러오는데 실패했습니다.",
     "delete-confirm": "정말로 이 고객을 삭제하시겠습니까?",
+    "delete-success": "고객 삭제 완료",
+    "delete-success-description": "선택한 고객을 삭제했습니다.",
+    "delete-fail": "고객 삭제 실패",
+    "delete-fail-description": "고객 삭제 중 오류가 발생했습니다.",
     "table": {
       "name": "이름",
       "phone": "연락처",

@@ -15,6 +15,7 @@ import {
     MoreVertical,
 } from "lucide-react";
 import { useDeleteClient, useClient } from "@/hooks/useClients";
+import { toast } from "@/hooks/use-toast";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import {
@@ -224,8 +225,16 @@ export default function ClientsPage() {
                 setSelectedClient(null);
             }
             setDeleteTargetClientId(null);
+            toast({
+                title: t(locale, "clients.delete-success"),
+                description: t(locale, "clients.delete-success-description"),
+            });
         } catch (err) {
-            console.error("Failed to delete client:", err);
+            toast({
+                title: t(locale, "clients.delete-fail"),
+                description: t(locale, "clients.delete-fail-description"),
+                variant: "destructive",
+            });
         }
     };
 
@@ -362,7 +371,7 @@ export default function ClientsPage() {
                 ]}
             />
 
-	            <SplitLayout hasSelection={!!selectedClient} onBack={() => setSelectedClient(null)}>
+	            <SplitLayout hasSelection={!!selectedClient} onBack={() => setSelectedClient(null)} autoHeight>
 	                <ListPanel
 	                    title="고객 목록"
 	                    tabs={FILTER_CHIPS}

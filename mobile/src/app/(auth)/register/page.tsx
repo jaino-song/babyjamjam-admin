@@ -2,18 +2,17 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { CheckCircle, Link2 } from "lucide-react";
 import { authApi } from "@/services/api";
 import { registerSchema, checkPasswordStrength, type RegisterFormData } from "@/lib/validations/auth";
 import { CardContainer } from "@/components/auth/card-container";
-import { FormField } from "@/components/auth/form-field";
+import { InputField } from "@/components/app/v3";
+import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { PasswordRequirements } from "@/components/auth/password-requirements";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 
-const LABEL_CLS = "text-[0.85rem] font-semibold text-v3-dark";
 const PRIMARY_BTN_CLS =
   "h-[50px] rounded-2xl border-none bg-v3-primary text-[0.85rem] font-bold text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)] transition-all hover:bg-v3-primary-hover hover:-translate-y-px";
 
@@ -122,10 +121,10 @@ export default function RegisterPage() {
             title={cardTitle}
             subtitle={!isSuccess ? "아래의 항목들을 작성해 주세요" : undefined}
             data-component="auth-register"
-            className="border-[1.5px] border-v3-border [&_[data-component='auth-register-header']]:mb-4 [&_[data-component='auth-register-header']]:flex [&_[data-component='auth-register-header']]:flex-col [&_[data-component='auth-register-header']]:items-center [&_[data-component='auth-register-header']]:gap-1 [&_[data-component='auth-register-title']]:!mb-0 [&_[data-component='auth-register-subtitle']]:!mb-0 md:[&_[data-component='auth-register-subtitle']]:!mb-0"
+            className="border-[1.5px] border-v3-border"
         >
             {isSuccess ? (
-                <div data-component="auth-register-success" className="flex flex-col items-center space-y-4 text-center">
+                <div data-component="auth-register-success" className="flex flex-col items-center gap-4 text-center">
                     {accountsLinked ? (
                         <>
                             <div data-component="auth-register-success-icon" className="rounded-full bg-v3-primary-light p-3">
@@ -154,61 +153,76 @@ export default function RegisterPage() {
                     <Button
                         data-component="auth-register-success-login-btn"
                         size="lg"
-                        className={PRIMARY_BTN_CLS + " w-full mt-4"}
+                        className={PRIMARY_BTN_CLS + " w-full"}
                         onClick={() => router.push("/login")}
                     >
                         로그인 페이지로 이동
                     </Button>
                 </div>
             ) : (
-                <div data-component="auth-register-content" className="space-y-6">
+                <div data-component="auth-register-body" className="flex flex-col gap-6">
                     {serverError && (
                         <Alert variant="destructive" onClose={() => setServerError(null)}>
                             {serverError}
                         </Alert>
                     )}
 
-                    <form onSubmit={handleSubmit} data-component="auth-register-form" className="space-y-4">
-                        <FormField
-                            label="이메일"
-                            type="email"
-                            value={formData.email}
-                            onChange={handleChange("email")}
-                            error={errors.email}
-                            disabled={isLoading}
-                            autoComplete="email"
-                            variant="v3"
-                            className="h-[50px]"
-                            labelClassName={LABEL_CLS}
-                            data-component="auth-register-email-field"
+                    <form onSubmit={handleSubmit} data-component="auth-register-form" className="flex flex-col gap-4">
+                        <InputField
+                            title="이메일"
+                            message={errors.email}
+                            messageTone="error"
+                            messageId={errors.email ? "register-email-error" : undefined}
+                            className="gap-2"
+                            inputClassName={errors.email ? "border-destructive focus:border-destructive" : "h-[50px]"}
+                            inputProps={{
+                                id: "register-email",
+                                type: "email",
+                                value: formData.email,
+                                onChange: handleChange("email"),
+                                disabled: isLoading,
+                                autoComplete: "email",
+                                "aria-invalid": !!errors.email,
+                                "aria-describedby": errors.email ? "register-email-error" : undefined,
+                            }}
                         />
 
-                        <FormField
-                            label="이름"
-                            type="text"
-                            value={formData.name}
-                            onChange={handleChange("name")}
-                            error={errors.name}
-                            disabled={isLoading}
-                            autoComplete="name"
-                            variant="v3"
-                            className="h-[50px]"
-                            labelClassName={LABEL_CLS}
-                            data-component="auth-register-name-field"
+                        <InputField
+                            title="이름"
+                            message={errors.name}
+                            messageTone="error"
+                            messageId={errors.name ? "register-name-error" : undefined}
+                            className="gap-2"
+                            inputClassName={errors.name ? "border-destructive focus:border-destructive" : "h-[50px]"}
+                            inputProps={{
+                                id: "register-name",
+                                type: "text",
+                                value: formData.name,
+                                onChange: handleChange("name"),
+                                disabled: isLoading,
+                                autoComplete: "name",
+                                "aria-invalid": !!errors.name,
+                                "aria-describedby": errors.name ? "register-name-error" : undefined,
+                            }}
                         />
 
-                        <FormField
-                            label="비밀번호"
-                            type="password"
-                            value={formData.password}
-                            onChange={handleChange("password")}
-                            error={errors.password}
-                            disabled={isLoading}
-                            autoComplete="new-password"
-                            variant="v3"
-                            className="h-[50px]"
-                            labelClassName={LABEL_CLS}
-                            data-component="auth-register-password-field"
+                        <InputField
+                            title="비밀번호"
+                            message={errors.password}
+                            messageTone="error"
+                            messageId={errors.password ? "register-password-error" : undefined}
+                            className="gap-2"
+                            inputClassName={errors.password ? "border-destructive focus:border-destructive" : "h-[50px]"}
+                            inputProps={{
+                                id: "register-password",
+                                type: "password",
+                                value: formData.password,
+                                onChange: handleChange("password"),
+                                disabled: isLoading,
+                                autoComplete: "new-password",
+                                "aria-invalid": !!errors.password,
+                                "aria-describedby": errors.password ? "register-password-error" : undefined,
+                            }}
                         />
 
                         {formData.password && (
@@ -218,41 +232,42 @@ export default function RegisterPage() {
                             />
                         )}
 
-                        <FormField
-                            label="비밀번호 확인"
-                            type="password"
-                            value={formData.confirmPassword}
-                            onChange={handleChange("confirmPassword")}
-                            error={errors.confirmPassword}
-                            disabled={isLoading}
-                            autoComplete="new-password"
-                            variant="v3"
-                            className="h-[50px]"
-                            labelClassName={LABEL_CLS}
-                            data-component="auth-register-confirm-field"
+                        <InputField
+                            title="비밀번호 확인"
+                            message={errors.confirmPassword}
+                            messageTone="error"
+                            messageId={errors.confirmPassword ? "register-confirm-error" : undefined}
+                            className="gap-2"
+                            inputClassName={errors.confirmPassword ? "border-destructive focus:border-destructive" : "h-[50px]"}
+                            inputProps={{
+                                id: "register-confirm-password",
+                                type: "password",
+                                value: formData.confirmPassword,
+                                onChange: handleChange("confirmPassword"),
+                                disabled: isLoading,
+                                autoComplete: "new-password",
+                                "aria-invalid": !!errors.confirmPassword,
+                                "aria-describedby": errors.confirmPassword ? "register-confirm-error" : undefined,
+                            }}
                         />
 
                         <Button
                             data-component="auth-register-submit-btn"
                             type="submit"
                             size="lg"
-                            className={PRIMARY_BTN_CLS + " w-full mt-2"}
+                            className={PRIMARY_BTN_CLS + " w-full"}
                             disabled={isLoading}
                         >
                             {isLoading ? <Spinner size="sm" /> : "회원가입"}
                         </Button>
                     </form>
 
-                    <p className="text-center text-sm text-muted-foreground">
-                        이미 계정이 있으신가요?{" "}
-                        <Link
-                            href="/login"
-                            className="text-primary font-medium hover:underline"
-                            data-component="auth-register-login-link"
-                        >
-                            로그인
-                        </Link>
-                    </p>
+                    <AuthInlineLink
+                        dataComponent="auth-register-login-link"
+                        href="/login"
+                        prefixText="이미 계정이 있으신가요?"
+                        linkLabel="로그인"
+                    />
                 </div>
             )}
         </CardContainer>

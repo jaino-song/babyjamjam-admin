@@ -29,9 +29,14 @@ export function InputField({
   inputProps,
   renderInput,
 }: InputFieldProps) {
+  const hasErrorMessage = messageTone === "error" && Boolean(message);
+
   const resolvedInputProps: InputProps = {
     ...inputProps,
-    className: inputClassName,
+    className: cn(
+      inputClassName,
+      hasErrorMessage && "border-v3-burgundy bg-v3-burgundy-light focus:border-v3-burgundy",
+    ),
   };
 
   return (

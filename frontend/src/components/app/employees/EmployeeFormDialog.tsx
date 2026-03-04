@@ -229,7 +229,7 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
         >
             <DialogContent
                 data-component="employees-form-dialog"
-                className="max-w-lg max-h-[90vh] overflow-y-auto rounded-lg shadow-xl"
+                className="max-w-lg max-h-[90vh]"
             >
                 <DialogHeader>
                     <DialogTitle>

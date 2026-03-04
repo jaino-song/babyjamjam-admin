@@ -34,8 +34,8 @@ function DropdownMenuTrigger({
 function DropdownMenuContent({
   className,
   side = "bottom",
-  sideOffset = -44,
-  avoidCollisions = false,
+  sideOffset = 4,
+  avoidCollisions = true,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   return (

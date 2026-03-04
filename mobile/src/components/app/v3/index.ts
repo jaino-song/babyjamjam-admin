@@ -6,7 +6,7 @@ export { V3MainContent } from './V3MainContent';
 export { StatMini } from './StatMini';
 export { StatsBar } from './StatsBar';
 export type { StatsBarItem } from './StatsBar';
-export { PageHeader } from './PageHeader';
+export { CardHeader } from './CardHeader';
 export { SearchBox } from './SearchBox';
 export { FilterChips } from './FilterChips';
 export { SearchFilterBar } from './SearchFilterBar';
@@ -41,3 +41,4 @@ export type { DetailTab } from './DetailTabs';
 export { Input } from './Input';
 export type { InputProps } from './Input';
 export { InputField } from './InputField';
+

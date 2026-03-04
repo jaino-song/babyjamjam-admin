@@ -3,10 +3,11 @@
 import * as React from "react";
 
 const TOAST_LIMIT = 1;
-const TOAST_REMOVE_DELAY = 1000000;
+const TOAST_REMOVE_DELAY = 300;
 
 type ToasterToast = {
   id: string;
+  open?: boolean;
   title?: string;
   description?: string;
   action?: React.ReactNode;
@@ -74,7 +75,7 @@ export const reducer = (state: State, action: Action): State => {
     case "ADD_TOAST":
       return {
         ...state,
-        toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT),
+        toasts: [{ ...action.toast, open: true }, ...state.toasts].slice(0, TOAST_LIMIT),
       };
 
     case "UPDATE_TOAST":
@@ -102,6 +103,7 @@ export const reducer = (state: State, action: Action): State => {
           t.id === toastId || toastId === undefined
             ? {
                 ...t,
+                open: false,
               }
             : t
         ),
@@ -152,6 +154,10 @@ function toast({ ...props }: Toast) {
     },
   });
 
+  setTimeout(() => {
+    dismiss();
+  }, 3000);
+
   return {
     id: id,
     dismiss,
@@ -170,7 +176,7 @@ function useToast() {
         listeners.splice(index, 1);
       }
     };
-  }, [state]);
+  }, []);
 
   return {
     ...state,

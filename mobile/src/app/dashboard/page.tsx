@@ -191,6 +191,7 @@ export default function DashboardPage() {
         <SplitLayout
           hasSelection={!!selectedClientData}
           onBack={() => setSelectedClient(null)}
+          autoHeight
         >
           <Block name="dashboard-activities-panel">
             <RecentActivitiesPanel
