@@ -705,8 +705,7 @@ body {
 
 /* Focus visible styles */
 *:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: 2px;
+  outline: none;
 }
 
 /* ========================================

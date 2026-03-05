@@ -21,8 +21,8 @@ const Pretendard = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "인천 아이미래로 백오피스",
-  description: "인천 아이미래로 업무 관리 시스템",
+  title: "아가잼잼 관리자",
+  description: "아가잼잼 관리자",
   manifest: "/manifest.json",
   icons: {
     apple: "/apple-touch-icon.png",
@@ -30,7 +30,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "인천 아이미래로",
+    title: "아가잼잼",
   },
   formatDetection: {
     telephone: false,

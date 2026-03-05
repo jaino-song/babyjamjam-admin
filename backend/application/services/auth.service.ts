@@ -509,6 +509,10 @@ export class AuthService {
         email: string,
         password: string,
         name: string,
+        phone: string,
+        birthDate: string,
+        organizationId: string,
+        role: string,
     ): Promise<RegistrationResult> {
         // Validate password strength
         const passwordValidation = this.validatePasswordStrength(password);
@@ -529,7 +533,6 @@ export class AuthService {
             if (existingUser.kakaoId && !existingUser.passwordHash) {
                 this.logger.log(`Linking email/password to existing Kakao account: ${email}`);
 
-                // Hash password and add to existing account
                 const passwordHash = await this.hashPassword(password);
                 await this.prisma.user.update({
                     where: { id: existingUser.id },
@@ -537,8 +540,8 @@ export class AuthService {
                         passwordHash: passwordHash,
                         authProvider: 'both',
                         name: existingUser.name || name || null,
-                        // Email users need verification, even if they have Kakao
-                        // (This ensures they own the email for password reset etc.)
+                        phone: phone,
+                        birthDate: birthDate,
                         emailVerified: false,
                     },
                 });
@@ -564,22 +567,36 @@ export class AuthService {
             };
         }
 
-        // Hash password
+        const org = await this.prisma.organization.findUnique({
+            where: { id: organizationId },
+        });
+        if (!org) {
+            throw new BadRequestException('유효하지 않은 지점입니다.');
+        }
+
         const passwordHash = await this.hashPassword(password);
 
-        // Create user
         const user = await this.prisma.user.create({
             data: {
                 email: email.toLowerCase(),
                 name: name || null,
+                phone: phone,
+                birthDate: birthDate,
                 passwordHash: passwordHash,
-                role: 'user',
+                role: role,
                 authProvider: 'email',
                 emailVerified: false,
             },
         });
 
-        // Generate and send verification email
+        await this.prisma.user_organization.create({
+            data: {
+                userId: user.id,
+                organizationId: organizationId,
+                role: 'user',
+            },
+        });
+
         await this.sendVerificationEmail(user.id, user.email!);
 
         return {

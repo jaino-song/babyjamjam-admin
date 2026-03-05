@@ -1,4 +1,11 @@
 {
+  "roles": {
+    "owner": "Owner",
+    "admin": "Branch Manager",
+    "manager": "Manager",
+    "user": "User",
+    "unknown": "User"
+  },
   "common": {
     "title": "Imirae Incheon Back Office",
     "subtitle": "Analog to Digital",

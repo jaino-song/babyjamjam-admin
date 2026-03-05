@@ -9,6 +9,22 @@ const passwordSchema = z
     .regex(/[0-9]/, '비밀번호에 숫자가 포함되어야 합니다.')
     .regex(/[^A-Za-z0-9]/, '비밀번호에 특수문자가 포함되어야 합니다.');
 
+// Phone number validation (Korean format)
+const phoneSchema = z
+    .string()
+    .min(1, '전화번호는 필수입니다.')
+    .regex(/^01[016789]-?\d{3,4}-?\d{4}$/, '유효한 전화번호를 입력해주세요. (예: 010-1234-5678)');
+
+// Birth date validation (YYYY-MM-DD)
+const birthDateSchema = z
+    .string()
+    .min(1, '생년월일은 필수입니다.')
+    .regex(/^\d{4}-\d{2}-\d{2}$/, '유효한 생년월일을 입력해주세요. (예: 1990-01-01)')
+    .refine((date) => {
+        const parsed = new Date(date);
+        return !isNaN(parsed.getTime()) && parsed < new Date();
+    }, '유효한 생년월일을 입력해주세요.');
+
 // Registration schema
 export const registerSchema = z.object({
     email: z
@@ -18,6 +34,10 @@ export const registerSchema = z.object({
     password: passwordSchema,
     confirmPassword: z.string().min(1, '비밀번호 확인은 필수입니다.'),
     name: z.string().min(1, '이름은 필수입니다.'),
+    phone: phoneSchema,
+    birthDate: birthDateSchema,
+    organizationId: z.string().min(1, '지점을 선택해주세요.'),
+    role: z.enum(['admin', 'manager', 'user'], { message: '역할을 선택해주세요.' }),
 }).refine((data) => data.password === data.confirmPassword, {
     message: '비밀번호가 일치하지 않습니다.',
     path: ['confirmPassword'],

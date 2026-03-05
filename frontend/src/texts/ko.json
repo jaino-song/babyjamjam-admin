@@ -1,4 +1,11 @@
 {
+  "roles": {
+    "owner": "오너",
+    "admin": "지점장",
+    "manager": "매니저",
+    "user": "유저",
+    "unknown": "사용자"
+  },
   "common": {
     "title": "인천 아이미래로 백오피스",
     "subtitle": "아날로그에서 디지털로",

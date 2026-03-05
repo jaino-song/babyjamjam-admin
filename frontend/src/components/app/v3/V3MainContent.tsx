@@ -12,10 +12,11 @@ export function V3MainContent({ children }: { children: React.ReactNode }) {
     <main
       data-component="main-content"
       className={cn(
-        "min-h-screen bg-v3-dim-white",
-        "p-4 md:p-8",
+        "h-screen overflow-auto bg-v3-dim-white",
+        "p-4 md:p-8 md:pr-24",
         "pb-24 md:pb-8",
-        excluded ? "pt-4 md:pt-8" : "pt-20 md:pt-8 md:ml-[280px]"
+        excluded ? "pt-4 md:pt-8" : "pt-20 md:pt-8 md:ml-[280px]",
+        "[&>*]:h-full"
       )}
     >
       {children}

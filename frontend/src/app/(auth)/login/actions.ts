@@ -24,7 +24,7 @@ interface LoginResult {
     emailVerificationRequired?: boolean;
 }
 
-export async function loginWithEmail(email: string, password: string): Promise<LoginResult> {
+export async function loginWithEmail(email: string, password: string, autoLogin = true): Promise<LoginResult> {
     try {
         console.log("[Server Action] Logging in with email");
 
@@ -51,21 +51,46 @@ export async function loginWithEmail(email: string, password: string): Promise<L
             console.error("[Server Action] Failed to decode token");
         }
 
-        cookieStore.set("auth_token", data.accessToken, {
+        const authCookieBaseOptions = {
             httpOnly: true,
             secure: isSecureCookie,
             sameSite: "lax",
             path: "/",
-            maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-        });
+        } as const;
 
-        cookieStore.set("refresh_token", data.refreshToken, {
+        if (autoLogin) {
+            cookieStore.set("auth_token", data.accessToken, {
+                ...authCookieBaseOptions,
+                maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
+            });
+        } else {
+            cookieStore.set("auth_token", data.accessToken, authCookieBaseOptions);
+        }
+
+        const refreshCookieBaseOptions = {
             httpOnly: true,
             secure: isSecureCookie,
             sameSite: "lax",
             path: "/",
-            maxAge: 7 * 24 * 60 * 60,
-        });
+        } as const;
+
+        if (autoLogin) {
+            cookieStore.set("refresh_token", data.refreshToken, {
+                ...refreshCookieBaseOptions,
+                maxAge: 7 * 24 * 60 * 60,
+            });
+        } else {
+            cookieStore.set("refresh_token", data.refreshToken, refreshCookieBaseOptions);
+        }
+
+        if (autoLogin) {
+            cookieStore.set("auto_login", "1", {
+                ...authCookieBaseOptions,
+                maxAge: 30 * 24 * 60 * 60,
+            });
+        } else {
+            cookieStore.set("auto_login", "0", authCookieBaseOptions);
+        }
 
         console.log("[Server Action] Email login successful");
         console.log("[Server Action] requiresOrgSelection:", data.requiresOrgSelection);
