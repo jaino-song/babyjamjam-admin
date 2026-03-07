@@ -56,19 +56,21 @@ export function DocumentEditModal({
   const { data: categories = [] } = useDocumentCategories();
 
   useEffect(() => {
-    if (doc) {
-      setName(doc.name || "");
-      setDescription(doc.description || "");
-      setCategory(doc.categoryId || "");
-      setTags(doc.tags || []);
-    } else {
-      setName("");
-      setDescription("");
-      setCategory("");
-      setTags([]);
-    }
-    setTagInput("");
-  }, [doc, open]);
+    queueMicrotask(() => {
+      if (doc) {
+        setName(doc.name || "");
+        setDescription(doc.description || "");
+        setCategory(doc.categoryId || "");
+        setTags(doc.tags || []);
+      } else {
+        setName("");
+        setDescription("");
+        setCategory("");
+        setTags([]);
+      }
+      setTagInput("");
+    });
+  }, [doc]);
 
   const handleSave = async () => {
     if (!doc) return;

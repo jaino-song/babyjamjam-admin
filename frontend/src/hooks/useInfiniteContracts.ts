@@ -65,13 +65,18 @@ export function useInfiniteContracts({
 
   // Reset visible count when filter changes
   useEffect(() => {
+    const nextFilterType = filterType;
+
     if (fetchTimerRef.current) {
       clearTimeout(fetchTimerRef.current);
       fetchTimerRef.current = null;
     }
 
-    setVisibleCount(INITIAL_VISIBLE_COUNT);
-    setIsFetchingNextPage(false);
+    queueMicrotask(() => {
+      void nextFilterType;
+      setVisibleCount(INITIAL_VISIBLE_COUNT);
+      setIsFetchingNextPage(false);
+    });
   }, [filterType]);
 
   useEffect(() => {
@@ -96,11 +101,13 @@ export function useInfiniteContracts({
   });
 
   // Process and filter all documents
-  const allFilteredDocuments = useMemo(() => {
-    if (!query.data?.documents) return [];
+  const queryDocuments = query.data?.documents;
+
+  const allFilteredDocuments = (() => {
+    if (!queryDocuments) return [];
 
     // Filter by status type
-    let docs = filterByActualStatus(query.data.documents, filterType);
+    let docs = filterByActualStatus(queryDocuments, filterType);
 
     // Filter out excluded names
     if (excludedNames.length > 0) {
@@ -112,7 +119,7 @@ export function useInfiniteContracts({
 
     // Sort by created_date
     return sortByCreatedDate(docs);
-  }, [query.data?.documents, filterType, excludedNames]);
+  })();
 
   // Slice to visible count
   const documents = useMemo(() => {
@@ -123,7 +130,7 @@ export function useInfiniteContracts({
   const hasNextPage = visibleCount < allFilteredDocuments.length;
 
   // Load more function - just increases visible count
-  const fetchNextPage = useCallback(() => {
+  const fetchNextPage = () => {
     if (isFetchingNextPage || !hasNextPage) return;
 
     setIsFetchingNextPage(true);
@@ -137,7 +144,7 @@ export function useInfiniteContracts({
       setIsFetchingNextPage(false);
       fetchTimerRef.current = null;
     }, FETCHING_SKELETON_DURATION_MS);
-  }, [allFilteredDocuments.length, hasNextPage, isFetchingNextPage]);
+  };
 
   return {
     documents,

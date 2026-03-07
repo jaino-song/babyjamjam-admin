@@ -160,7 +160,7 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                     name: "테스트 직원",
                     workArea: ["인천 연수구"],
                     phone: "010-1234-5678",
-                    grade: "1급",
+                    grade: "프리미엄",
                     openToNextWork: true,
                 });
                 mockRepository.setData([employee]);
@@ -174,7 +174,7 @@ describe("ListEmployeesByWorkAreaUsecase", () => {
                     id: 1,
                     name: "테스트 직원",
                     phone: "010-1234-5678",
-                    grade: "1급",
+                    grade: "프리미엄",
                     openToNextWork: true,
                 });
             });

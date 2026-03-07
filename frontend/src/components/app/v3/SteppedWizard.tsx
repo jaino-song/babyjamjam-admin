@@ -24,6 +24,7 @@ export interface SteppedWizardProps {
   prevLabel?: string;
   completeLabel?: string;
   isSubmitting?: boolean;
+  isNextDisabled?: boolean;
   className?: string;
 }
 
@@ -184,11 +185,13 @@ export function SteppedWizard({
   prevLabel = "이전",
   completeLabel = "완료",
   isSubmitting = false,
+  isNextDisabled = false,
   className,
 }: SteppedWizardProps) {
   const isMobile = useIsMobile();
   const isFirstStep = currentStep === 0;
   const isLastStep = currentStep === steps.length - 1;
+  const isNextButtonDisabled = isSubmitting || isNextDisabled;
   const currentStepData = steps[currentStep];
 
   const handleNext = () => {
@@ -292,7 +295,7 @@ export function SteppedWizard({
           <button
             type="button"
             onClick={handleNext}
-            disabled={isSubmitting}
+            disabled={isNextButtonDisabled}
             className={cn(
               "inline-flex items-center justify-center gap-1.5 rounded-[14px] border-none",
               "bg-v3-primary text-[0.8rem] md:text-[0.85rem] font-bold text-white transition-all",

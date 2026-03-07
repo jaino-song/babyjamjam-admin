@@ -9,7 +9,6 @@ import {
     CheckCircle,
     Clock,
     Briefcase,
-    Calendar,
     MoreVertical,
 } from "lucide-react";
 import {
@@ -43,11 +42,12 @@ import {
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { cn } from "@/lib/utils";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
 
 const filterItems = [
     { label: "전체", value: "all" },
-    { label: "활성", value: "active" },
-    { label: "비활성", value: "inactive" },
+    { label: "근무 가능", value: "active" },
+    { label: "근무 불가", value: "inactive" },
 ];
 
 const DETAIL_SECTION_ORDER = ["basic", "work"] as const;
@@ -60,47 +60,33 @@ const isDetailSectionKey = (section: string): section is DetailSectionKey =>
     DETAIL_SECTION_ORDER.includes(section as DetailSectionKey);
 
 const EMPLOYEE_STATUS_LABEL: Record<EmployeeStatus, string> = {
-    available: "가용",
+    available: "근무 가능",
     working: "근무중",
-    unavailable: "비가용",
+    unavailable: "근무 불가",
 };
 
 function getGradeBadge(grade: string) {
-    switch (grade) {
-        case "1급":
-            return (
-                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-amber-100 text-amber-700">
-                    A등급
-                </span>
-            );
-        case "2급":
-            return (
-                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-v3-green-light text-v3-green">
-                    B등급
-                </span>
-            );
-        case "3급":
-        default:
-            return (
-                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-v3-primary-light text-v3-primary">
-                    C등급
-                </span>
-            );
-    }
+    const { label, className } = getEmployeeGradeBadgeStyle(grade);
+
+    return (
+        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${className}`}>
+            {label}
+        </span>
+    );
 }
 
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
     if (openToNextWork) {
         return (
             <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-v3-green-light text-v3-green">
-                활성
+                근무 가능
             </span>
         );
     }
 
     return (
         <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-gray-100 text-v3-text-muted">
-            비활성
+            근무 불가
         </span>
     );
 }
@@ -281,7 +267,7 @@ export default function EmployeesPage() {
                 items={[
                     { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
                     { icon: CheckCircle, value: stats.active, label: "활성", counter: "명", colorIndex: 2 },
-                    { icon: Clock, value: stats.available, label: "가용", counter: "명", colorIndex: 1 },
+                    { icon: Clock, value: stats.available, label: "근무 가능", counter: "명", colorIndex: 1 },
                     { icon: Briefcase, value: stats.working, label: "배정됨", counter: "명", colorIndex: 3 },
                 ]}
             />
@@ -434,7 +420,7 @@ export default function EmployeesPage() {
                                             {selectedEmployee.name}
                                         </h2>
                                         <p className="text-[0.8rem] text-v3-text-muted mt-1">
-                                            {selectedEmployee.grade} · {EMPLOYEE_STATUS_LABEL[selectedEmployee.status]}
+                                            {normalizeEmployeeGrade(selectedEmployee.grade)} · {EMPLOYEE_STATUS_LABEL[selectedEmployee.status]}
                                         </p>
                                         <div className="mt-2 flex flex-wrap gap-1.5">
                                             {getGradeBadge(selectedEmployee.grade)}
@@ -490,7 +476,7 @@ export default function EmployeesPage() {
                                     {activeSection === "work" && (
                                         <>
                                             <InfoCard title="업무 정보">
-                                                <InfoRow label="등급" value={selectedEmployee.grade} />
+                                                <InfoRow label="등급" value={normalizeEmployeeGrade(selectedEmployee.grade)} />
                                                 <InfoRow
                                                     label="다음 업무 가능"
                                                     value={selectedEmployee.openToNextWork ? "가능" : "불가"}

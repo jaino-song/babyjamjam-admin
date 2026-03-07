@@ -150,8 +150,8 @@ describe("ListEmployeesOpenToNextWorkUsecase", () => {
             it("should preserve different grades among available employees", async () => {
                 // Arrange
                 const employees = [
-                    EmployeeFactory.createAvailable({ id: 1, grade: "1급" }),
-                    EmployeeFactory.createAvailable({ id: 2, grade: "2급" }),
+                    EmployeeFactory.createAvailable({ id: 1, grade: "프리미엄" }),
+                    EmployeeFactory.createAvailable({ id: 2, grade: "베스트" }),
                     EmployeeFactory.createAvailable({ id: 3, grade: "특급" }),
                 ];
                 mockRepository.setData(employees);
@@ -161,8 +161,8 @@ describe("ListEmployeesOpenToNextWorkUsecase", () => {
 
                 // Assert
                 expect(result).toHaveLength(3);
-                expect(result.map(e => e.grade)).toContain("1급");
-                expect(result.map(e => e.grade)).toContain("2급");
+                expect(result.map(e => e.grade)).toContain("프리미엄");
+                expect(result.map(e => e.grade)).toContain("베스트");
                 expect(result.map(e => e.grade)).toContain("특급");
             });
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
     Users,
     CheckCircle,
@@ -10,6 +11,9 @@ import {
     Phone,
     Calendar,
     MapPin,
+    MoreVertical,
+    Pencil,
+    Trash2,
 } from "lucide-react";
 import {
     Employee,
@@ -32,57 +36,50 @@ import {
     ListEmptyState,
 } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
+import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
 
 const filterItems = [
     { label: "전체", value: "all" },
-    { label: "활성", value: "active" },
-    { label: "비활성", value: "inactive" },
+    { label: "근무 가능", value: "active" },
+    { label: "근무 불가", value: "inactive" },
 ];
 
 const EMPLOYEE_STATUS_LABEL: Record<EmployeeStatus, string> = {
-    available: "가용",
+    available: "근무 가능",
     working: "근무중",
-    unavailable: "비가용",
+    unavailable: "근무 불가",
 };
 
 function getGradeBadge(grade: string) {
-    switch (grade) {
-        case "1급":
-            return (
-                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-amber-100 text-amber-700">
-                    A등급
-                </span>
-            );
-        case "2급":
-            return (
-                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-v3-green-light text-v3-green">
-                    B등급
-                </span>
-            );
-        case "3급":
-        default:
-            return (
-                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-v3-primary-light text-v3-primary">
-                    C등급
-                </span>
-            );
-    }
+    const { label, className } = getEmployeeGradeBadgeStyle(grade);
+
+    return (
+        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${className}`}>
+            {label}
+        </span>
+    );
 }
 
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
     if (openToNextWork) {
         return (
             <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-v3-green-light text-v3-green">
-                활성
+                근무 가능
             </span>
         );
     }
 
     return (
         <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-gray-100 text-v3-text-muted">
-            비활성
+            근무 불가
         </span>
     );
 }
@@ -110,6 +107,7 @@ function formatPhoneNumber(phone: string | null | undefined): string {
 }
 
 export default function EmployeesPage() {
+    const router = useRouter();
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState("all");
     const [formDialogOpen, setFormDialogOpen] = useState(false);
@@ -136,8 +134,7 @@ export default function EmployeesPage() {
     }, [allEmployees]);
 
     const handleAddNew = () => {
-        setEditingEmployee(null);
-        setFormDialogOpen(true);
+        router.push("/employees/new");
     };
 
     const handleSelectEmployee = (employee: Employee) => {
@@ -179,7 +176,7 @@ export default function EmployeesPage() {
                 items={[
                     { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
                     { icon: CheckCircle, value: stats.active, label: "활성", counter: "명", colorIndex: 2 },
-                    { icon: Clock, value: stats.available, label: "가용", counter: "명", colorIndex: 1 },
+                    { icon: Clock, value: stats.available, label: "근무 가능", counter: "명", colorIndex: 1 },
                     { icon: Briefcase, value: stats.working, label: "배정됨", counter: "명", colorIndex: 3 },
                 ]}
             />
@@ -232,10 +229,10 @@ export default function EmployeesPage() {
                                 if (slotLoading) {
                                     return (
                                         <>
-                                            <div className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
+                                            <div data-component="employees-list-item-avatar-skeleton" className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
                                                 <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
                                             </div>
-                                            <div className="flex-1 min-w-0">
+                                            <div data-component="employees-list-item-info-skeleton" className="flex-1 min-w-0">
                                                 <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
                                                 <Skeleton className="h-3 w-40 bg-v3-dim-white" />
                                             </div>
@@ -248,18 +245,18 @@ export default function EmployeesPage() {
 
                                 return (
                                     <>
-                                        <div className="w-11 h-11 rounded-[14px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-md">
+                                        <div data-component="employees-list-item-avatar" className="w-11 h-11 rounded-[14px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-md">
                                             {getInitials(employee.name)}
                                         </div>
 
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-0.5">
+                                        <div data-component="employees-list-item-info" className="flex-1 min-w-0">
+                                            <div data-component="employees-list-item-name-row" className="flex items-center gap-2 mb-0.5">
                                                 <span className="font-bold text-[0.85rem] text-v3-dark truncate">
                                                     {employee.name}
                                                 </span>
                                                 {getGradeBadge(employee.grade)}
                                             </div>
-                                            <div className="flex items-center gap-3 text-[0.7rem] text-v3-text-muted">
+                                            <div data-component="employees-list-item-meta-row" className="flex items-center gap-3 text-[0.7rem] text-v3-text-muted">
                                                 <span className="flex items-center gap-1 truncate">
                                                     <Phone className="w-3 h-3" />
                                                     {formatPhoneNumber(employee.phone)}
@@ -271,7 +268,7 @@ export default function EmployeesPage() {
                                             </div>
                                         </div>
 
-                                        <div className="shrink-0">
+                                        <div data-component="employees-list-item-status" className="shrink-0">
                                             {getOpenToNextWorkBadge(employee.openToNextWork)}
                                         </div>
                                     </>
@@ -311,7 +308,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
     return (
         <DetailPanel
             avatar={
-                <div className="w-16 h-16 rounded-[20px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0">
+                <div data-component="employees-detail-avatar" className="w-16 h-16 rounded-[20px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0">
                     {getInitials(employee.name)}
                 </div>
             }
@@ -328,6 +325,33 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                     등록일 {formatDate(employee.registeredDate)}
                 </span>
             }
+            trailing={
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <button
+                            type="button"
+                            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
+                        >
+                            <MoreVertical className="w-5 h-5 text-v3-text-muted" />
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[140px]">
+                        <DropdownMenuItem onClick={() => onEdit(employee)} className="gap-2">
+                            <Pencil className="w-4 h-4" />
+                            수정
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                            onClick={() => {
+                                void onDelete(employee.id);
+                            }}
+                            className="gap-2 text-destructive focus:text-destructive"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                            삭제
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            }
         >
             <div data-component="employees-detail" className="space-y-5">
                 <InfoCard title="기본 정보">
@@ -337,7 +361,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                 </InfoCard>
 
                 <InfoCard title="업무 정보">
-                    <InfoRow label="등급" value={employee.grade} />
+                    <InfoRow label="등급" value={normalizeEmployeeGrade(employee.grade)} />
                     <InfoRow
                         label="다음 업무 가능"
                         value={employee.openToNextWork ? "가능" : "불가"}
@@ -345,13 +369,13 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                     <InfoRow
                         label="근무 지역"
                         value={
-                            <div className="flex flex-wrap gap-1.5">
+                            <div data-component="employees-detail-work-area-tags" className="flex flex-wrap gap-1.5">
                                 {employee.workArea.map((area) => (
                                     <span
                                         key={area}
                                         className="inline-flex items-center rounded-full bg-v3-primary-light text-v3-primary px-2 py-0.5 text-[0.7rem] font-medium"
                                     >
-                                        {area}
+                                        {formatWorkAreaLabel(area)}
                                     </span>
                                 ))}
                             </div>
@@ -362,25 +386,6 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                 <InfoCard title="등록 정보">
                     <InfoRow label="등록일" value={formatDate(employee.registeredDate)} />
                 </InfoCard>
-
-                <div data-component="employees-detail-actions" className="flex gap-3 pt-2">
-                    <Button
-                        variant="outline"
-                        className="flex-1 rounded-full"
-                        onClick={() => {
-                            void onDelete(employee.id);
-                        }}
-                    >
-                        삭제
-                    </Button>
-                    <Button
-                        variant="v3"
-                        className="flex-1 rounded-full"
-                        onClick={() => onEdit(employee)}
-                    >
-                        수정
-                    </Button>
-                </div>
             </div>
         </DetailPanel>
     );

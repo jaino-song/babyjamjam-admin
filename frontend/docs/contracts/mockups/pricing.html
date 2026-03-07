@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>인천 아이미래로 - 비용</title>
+  <style>
+    :root {
+      --color-primary-50:#FFF5F5;--color-primary-100:#FFE0E6;--color-primary-200:#FFC2CC;--color-primary-300:#FFA3B3;--color-primary-400:#FF8599;--color-primary-500:#E8637A;--color-primary-600:#D14D64;--color-primary-700:#B3384E;
+      --color-secondary-50:#F2F8F4;--color-secondary-100:#E0F0E5;--color-secondary-500:#6BAD80;--color-secondary-600:#559468;--color-secondary-700:#3F7A50;
+      --color-accent-50:#FFFBF0;--color-accent-100:#FFF3D6;--color-accent-500:#F0B840;--color-accent-700:#B38318;
+      --color-neutral-0:#FFFFFF;--color-neutral-50:#FDFCFB;--color-neutral-100:#F7F5F3;--color-neutral-200:#EDE9E5;--color-neutral-300:#DDD7D1;--color-neutral-400:#B8AFA7;--color-neutral-500:#93897E;--color-neutral-600:#6E6559;--color-neutral-700:#4A4238;--color-neutral-800:#332C24;--color-neutral-900:#1C1814;
+      --color-bg-primary:#FDFCFB;--color-bg-secondary:#FFF5F5;--color-bg-cream:#FFF9F0;--color-bg-card:#FFFFFF;
+      --font-heading:'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--font-body:'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+      --text-xs:0.75rem;--text-sm:0.875rem;--text-base:1rem;--text-lg:1.125rem;--text-xl:1.25rem;--text-2xl:1.5rem;--text-3xl:1.875rem;--text-4xl:2.25rem;--text-5xl:3rem;
+      --font-regular:400;--font-medium:500;--font-semibold:600;--font-bold:700;
+      --leading-tight:1.25;--leading-snug:1.375;--leading-normal:1.5;--leading-relaxed:1.625;
+      --space-1:0.25rem;--space-2:0.5rem;--space-3:0.75rem;--space-4:1rem;--space-5:1.25rem;--space-6:1.5rem;--space-8:2rem;--space-10:2.5rem;--space-12:3rem;--space-16:4rem;--space-20:5rem;--space-24:6rem;
+      --radius-sm:8px;--radius-md:12px;--radius-lg:16px;--radius-xl:24px;--radius-full:9999px;
+      --shadow-sm:0 1px 2px rgba(28,24,20,0.05);--shadow-md:0 4px 12px rgba(28,24,20,0.08);--shadow-lg:0 8px 24px rgba(28,24,20,0.12);--shadow-xl:0 16px 48px rgba(28,24,20,0.16);
+      --ease-default:cubic-bezier(0.4,0,0.2,1);--ease-out:cubic-bezier(0,0,0.2,1);--duration-fast:150ms;--duration-normal:300ms;--duration-slow:500ms;
+    }
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes skeletonPulse{0%,100%{opacity:1}50%{opacity:0.5}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important}}
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{font-family:var(--font-body);font-size:var(--text-base);line-height:var(--leading-normal);color:var(--color-neutral-800);background:var(--color-bg-primary);-webkit-font-smoothing:antialiased}
+    a{color:inherit;text-decoration:none}img{max-width:100%;height:auto;display:block}ul{list-style:none}
+    button{font-family:inherit;cursor:pointer;border:none;background:none}
+    .container{max-width:1200px;margin:0 auto;padding:0 var(--space-6)}
+    .skip-link{position:absolute;top:-100%;left:var(--space-4);padding:var(--space-2) var(--space-4);background:var(--color-primary-500);color:white;border-radius:var(--radius-md);z-index:1000;font-size:var(--text-sm)}.skip-link:focus{top:var(--space-4)}
+
+    /* NAV */
+    [data-component="nav"]{position:fixed;top:0;left:0;right:0;height:72px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:1px solid var(--color-neutral-200);z-index:100}
+    [data-component="nav-container"]{max-width:1200px;margin:0 auto;padding:0 var(--space-6);height:100%;display:flex;align-items:center;justify-content:space-between}
+    [data-component="nav-logo"]{font-size:var(--text-xl);font-weight:var(--font-bold);color:var(--color-primary-600);display:flex;align-items:center;gap:var(--space-2)}
+    [data-component="nav-logo"] .logo-icon{width:36px;height:36px;background:var(--color-primary-500);border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;color:white;font-size:var(--text-lg)}
+    [data-component="nav-links"]{display:flex;gap:var(--space-1)}
+    [data-component="nav-links-item"] a{display:block;padding:var(--space-2) var(--space-4);font-size:var(--text-base);font-weight:var(--font-medium);color:var(--color-neutral-600);border-radius:var(--radius-md);transition:all var(--duration-fast) var(--ease-default)}
+    [data-component="nav-links-item"] a:hover{color:var(--color-primary-500);background:var(--color-primary-50)}
+    [data-component="nav-links-item"].active a{color:var(--color-primary-600);background:var(--color-primary-50)}
+    [data-component="nav-cta"]{background:var(--color-primary-500);color:white;padding:10px 20px;border-radius:var(--radius-md);font-size:var(--text-sm);font-weight:var(--font-semibold);transition:all var(--duration-fast) var(--ease-default)}
+    [data-component="nav-cta"]:hover{background:var(--color-primary-600);transform:translateY(-1px)}
+    [data-component="nav-mobile-toggle"]{display:none;width:44px;height:44px;align-items:center;justify-content:center;border-radius:var(--radius-md);color:var(--color-neutral-700)}
+
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);font-weight:var(--font-semibold);border-radius:var(--radius-md);transition:all var(--duration-fast) var(--ease-default);white-space:nowrap}
+    .btn-primary{background:var(--color-primary-500);color:white;padding:12px 24px;font-size:var(--text-base)}.btn-primary:hover{background:var(--color-primary-600);transform:translateY(-1px);box-shadow:var(--shadow-md)}
+    .btn-outline{background:transparent;color:var(--color-primary-500);border:2px solid var(--color-primary-500);padding:10px 22px;font-size:var(--text-base)}.btn-outline:hover{background:var(--color-primary-50)}
+    .btn-lg{padding:16px 32px;font-size:var(--text-lg)}
+    .badge{display:inline-flex;align-items:center;padding:4px 12px;border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:var(--font-medium)}
+    .badge-primary{background:var(--color-primary-100);color:var(--color-primary-700)}
+    .badge-accent{background:var(--color-accent-100);color:var(--color-accent-700)}
+
+    /* PAGE HEADER */
+    .page-header{padding-top:calc(72px + var(--space-16));padding-bottom:var(--space-16);background:linear-gradient(135deg,var(--color-bg-secondary) 0%,var(--color-bg-cream) 100%);text-align:center}
+    .page-header-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .page-header-desc{font-size:var(--text-lg);color:var(--color-neutral-600);max-width:600px;margin:0 auto;line-height:var(--leading-relaxed)}
+
+    /* PRICING SECTION */
+    .section-header{text-align:center;margin-bottom:var(--space-12);animation:fadeInUp var(--duration-normal) var(--ease-out)}
+    .section-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .section-subtitle{font-size:var(--text-lg);color:var(--color-neutral-500);max-width:600px;margin:0 auto;line-height:var(--leading-relaxed)}
+
+    [data-component="pricing"]{padding:var(--space-20) 0;background:var(--color-neutral-0)}
+    [data-component="pricing-grid"]{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-6);align-items:start}
+    .pricing-card{background:var(--color-bg-card);border:2px solid var(--color-neutral-200);border-radius:var(--radius-md);padding:var(--space-8);position:relative;transition:all var(--duration-normal) var(--ease-default);animation:fadeInUp var(--duration-normal) var(--ease-out);animation-fill-mode:both}
+    .pricing-card:nth-child(1){animation-delay:0ms}
+    .pricing-card:nth-child(2){animation-delay:100ms}
+    .pricing-card:nth-child(3){animation-delay:200ms}
+    .pricing-card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg)}
+    .pricing-card.featured{border-color:var(--color-primary-400);box-shadow:var(--shadow-lg);transform:scale(1.02)}
+    .pricing-card.featured:hover{transform:scale(1.02) translateY(-4px);box-shadow:var(--shadow-xl)}
+    .pricing-popular{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--color-primary-500);color:white;padding:4px 16px;border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:var(--font-semibold);white-space:nowrap}
+    .pricing-header{text-align:center;margin-bottom:var(--space-6);padding-bottom:var(--space-6);border-bottom:1px solid var(--color-neutral-200)}
+    .pricing-name{font-size:var(--text-xl);font-weight:var(--font-semibold);color:var(--color-neutral-800);margin-bottom:var(--space-2)}
+    .pricing-duration{font-size:var(--text-sm);color:var(--color-neutral-500);margin-bottom:var(--space-4)}
+    .pricing-price{display:flex;align-items:baseline;justify-content:center;gap:var(--space-1)}
+    .pricing-amount{font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900)}
+    .pricing-unit{font-size:var(--text-base);color:var(--color-neutral-500)}
+    .pricing-note{font-size:var(--text-xs);color:var(--color-neutral-400);margin-top:var(--space-2)}
+    .pricing-features{display:flex;flex-direction:column;gap:var(--space-3);margin-bottom:var(--space-8)}
+    .pricing-feature{display:flex;align-items:center;gap:var(--space-3);font-size:var(--text-sm);color:var(--color-neutral-700)}
+    .pricing-feature .check{color:var(--color-secondary-500);font-weight:var(--font-bold);flex-shrink:0}
+    .pricing-feature .cross{color:var(--color-neutral-300);flex-shrink:0}
+    .pricing-cta{width:100%}
+
+    /* GOVERNMENT SUPPORT INFO */
+    [data-component="gov-support"]{padding:var(--space-20) 0;background:var(--color-bg-cream)}
+    .gov-support-card{background:white;border-radius:var(--radius-md);padding:var(--space-10);box-shadow:var(--shadow-md);display:grid;grid-template-columns:1fr 1fr;gap:var(--space-10);align-items:center;animation:fadeInUp var(--duration-normal) var(--ease-out)}
+    .gov-support-text h2{font-family:var(--font-heading);font-size:var(--text-3xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .gov-support-text p{font-size:var(--text-base);color:var(--color-neutral-600);line-height:var(--leading-relaxed);margin-bottom:var(--space-6)}
+    .gov-support-list{display:flex;flex-direction:column;gap:var(--space-3)}
+    .gov-support-item{display:flex;gap:var(--space-3);align-items:flex-start}
+    .gov-support-item .icon{width:36px;height:36px;border-radius:var(--radius-full);background:var(--color-secondary-100);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:var(--text-sm)}
+    .gov-support-item .text{font-size:var(--text-sm);color:var(--color-neutral-700);line-height:var(--leading-relaxed)}
+    .gov-support-item .text strong{display:block;font-weight:var(--font-semibold);color:var(--color-neutral-800);margin-bottom:2px}
+    .gov-actions{display:flex;gap:var(--space-4);flex-wrap:wrap}
+
+    /* FAQ */
+    [data-component="faq"]{padding:var(--space-20) 0;background:var(--color-neutral-0)}
+    .faq-list{max-width:800px;margin:0 auto;display:flex;flex-direction:column;gap:var(--space-4)}
+    .faq-item{background:var(--color-bg-card);border:1px solid var(--color-neutral-200);border-radius:var(--radius-md);overflow:hidden;animation:fadeInUp var(--duration-normal) var(--ease-out);animation-fill-mode:both}
+    .faq-item:nth-child(1){animation-delay:0ms}.faq-item:nth-child(2){animation-delay:50ms}.faq-item:nth-child(3){animation-delay:100ms}.faq-item:nth-child(4){animation-delay:150ms}.faq-item:nth-child(5){animation-delay:200ms}
+    .faq-question{display:flex;justify-content:space-between;align-items:center;padding:var(--space-5) var(--space-6);cursor:pointer;font-weight:var(--font-semibold);color:var(--color-neutral-800);font-size:var(--text-base)}
+    .faq-question:hover{background:var(--color-neutral-50)}
+    .faq-arrow{color:var(--color-neutral-400);transition:transform var(--duration-fast)}
+    .faq-answer{padding:0 var(--space-6) var(--space-5);font-size:var(--text-sm);color:var(--color-neutral-600);line-height:var(--leading-relaxed);border-top:1px solid var(--color-neutral-100)}
+
+    /* CTA */
+    [data-component="cta"]{padding:var(--space-20) 0;background:linear-gradient(135deg,var(--color-primary-50) 0%,var(--color-bg-cream) 100%);text-align:center}
+    .cta-content{max-width:640px;margin:0 auto}
+    .cta-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .cta-desc{font-size:var(--text-lg);color:var(--color-neutral-600);margin-bottom:var(--space-8);line-height:var(--leading-relaxed)}
+    .cta-actions{display:flex;gap:var(--space-4);justify-content:center;flex-wrap:wrap}
+    .cta-phone{display:flex;align-items:center;gap:var(--space-2);font-size:var(--text-lg);font-weight:var(--font-semibold);color:var(--color-neutral-700);margin-top:var(--space-6);justify-content:center}
+
+    /* FOOTER */
+    [data-component="footer"]{background:var(--color-neutral-800);color:var(--color-neutral-300);padding:var(--space-16) 0 0}
+    [data-component="footer-container"]{max-width:1200px;margin:0 auto;padding:0 var(--space-6);display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:var(--space-10);padding-bottom:var(--space-12);border-bottom:1px solid var(--color-neutral-700)}
+    .footer-logo{font-size:var(--text-xl);font-weight:var(--font-bold);color:var(--color-neutral-0);margin-bottom:var(--space-4)}
+    .footer-desc{font-size:var(--text-sm);line-height:var(--leading-relaxed);color:var(--color-neutral-400);margin-bottom:var(--space-4)}
+    .footer-social{display:flex;gap:var(--space-3)}.footer-social a{width:36px;height:36px;border-radius:var(--radius-full);background:var(--color-neutral-700);display:flex;align-items:center;justify-content:center;font-size:var(--text-sm);transition:background var(--duration-fast)}.footer-social a:hover{background:var(--color-primary-500)}
+    .footer-section-title{font-size:var(--text-sm);font-weight:var(--font-semibold);color:var(--color-neutral-0);margin-bottom:var(--space-4);text-transform:uppercase;letter-spacing:0.05em}
+    .footer-links{display:flex;flex-direction:column;gap:var(--space-3)}.footer-links a{font-size:var(--text-sm);color:var(--color-neutral-400);transition:color var(--duration-fast)}.footer-links a:hover{color:var(--color-primary-300)}
+    .footer-contact-item{display:flex;align-items:flex-start;gap:var(--space-2);font-size:var(--text-sm);color:var(--color-neutral-400);margin-bottom:var(--space-3);line-height:var(--leading-relaxed)}
+    [data-component="footer-bottom"]{max-width:1200px;margin:0 auto;padding:var(--space-6);display:flex;justify-content:space-between;align-items:center}
+    .footer-copyright{font-size:var(--text-xs);color:var(--color-neutral-500)}
+    .footer-legal{display:flex;gap:var(--space-4)}.footer-legal a{font-size:var(--text-xs);color:var(--color-neutral-500);transition:color var(--duration-fast)}.footer-legal a:hover{color:var(--color-neutral-300)}
+
+    @media(max-width:1023px){
+      [data-component="nav-links"],[data-component="nav-cta"]{display:none}[data-component="nav-mobile-toggle"]{display:flex}
+      [data-component="pricing-grid"]{grid-template-columns:1fr;max-width:420px;margin:0 auto}
+      .pricing-card.featured{transform:none}.pricing-card.featured:hover{transform:translateY(-4px)}
+      .gov-support-card{grid-template-columns:1fr}
+      [data-component="footer-container"]{grid-template-columns:1fr 1fr;gap:var(--space-8)}
+      .section-title,.page-header-title,.cta-title{font-size:var(--text-3xl)}
+    }
+    @media(max-width:767px){
+      .container{padding:0 var(--space-4)}
+      [data-component="nav"]{height:60px}
+      .page-header{padding-top:calc(60px + var(--space-12));padding-bottom:var(--space-12)}
+      [data-component="footer-container"]{grid-template-columns:1fr}
+      [data-component="footer-bottom"]{flex-direction:column;gap:var(--space-4);text-align:center}
+      .gov-actions{flex-direction:column}
+    }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">본문으로 건너뛰기</a>
+
+  <!-- Organism: NavigationBar -->
+  <nav data-component="nav" role="navigation" aria-label="주 내비게이션">
+    <div data-component="nav-container">
+      <a href="/" data-component="nav-logo"><span class="logo-icon" aria-hidden="true">&#9829;</span>아이미래로</a>
+      <ul data-component="nav-links">
+        <li data-component="nav-links-item"><a href="/">홈</a></li>
+        <li data-component="nav-links-item"><a href="/introduction">소개</a></li>
+        <li data-component="nav-links-item"><a href="/program">산후관리서비스</a></li>
+        <li data-component="nav-links-item" class="active"><a href="/plan" aria-current="page">비용</a></li>
+        <li data-component="nav-links-item"><a href="/reviews">후기</a></li>
+        <li data-component="nav-links-item"><a href="/contact">문의하기</a></li>
+      </ul>
+      <button data-component="nav-cta">상담 신청</button>
+      <button data-component="nav-mobile-toggle" aria-label="메뉴 열기"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+    </div>
+  </nav>
+
+  <main id="main-content">
+
+    <!-- Page Header -->
+    <section class="page-header" data-component="pricing-header">
+      <div class="container">
+        <span class="badge badge-primary" data-component="pricing-header-badge">Pricing</span>
+        <h1 class="page-header-title" data-component="pricing-header-title">서비스 비용 안내</h1>
+        <p class="page-header-desc" data-component="pricing-header-desc">합리적인 비용으로 최고의 산후관리 서비스를 제공합니다. 정부지원 바우처 사용이 가능합니다.</p>
+      </div>
+    </section>
+
+    <!-- Organism: PricingTable -->
+    <section data-component="pricing" aria-label="서비스 비용">
+      <div class="container">
+        <div data-component="pricing-grid">
+          <!-- Pricing Card: Standard -->
+          <div class="pricing-card" data-component="pricing-grid-card">
+            <div class="pricing-header">
+              <div class="pricing-name">스탠다드</div>
+              <div class="pricing-duration">10일 (주 5일)</div>
+              <div class="pricing-price">
+                <span class="pricing-amount">1,200,000</span>
+                <span class="pricing-unit">원</span>
+              </div>
+              <div class="pricing-note">정부지원 시 본인부담금 별도 안내</div>
+            </div>
+            <div class="pricing-features">
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 산모 건강관리 (기본)</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 신생아 돌봄 (목욕, 수유지원)</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 기본 가사 지원</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 산모 영양식 1식 준비</div>
+              <div class="pricing-feature"><span class="cross" aria-hidden="true">&#8212;</span><span style="color:var(--color-neutral-400)">산후 체조 프로그램</span></div>
+              <div class="pricing-feature"><span class="cross" aria-hidden="true">&#8212;</span><span style="color:var(--color-neutral-400)">일일 보고서</span></div>
+            </div>
+            <button class="btn btn-outline pricing-cta" data-component="pricing-grid-card-cta">상담 신청</button>
+          </div>
+
+          <!-- Pricing Card: Premium (Featured) -->
+          <div class="pricing-card featured" data-component="pricing-grid-card">
+            <div class="pricing-popular" data-component="pricing-grid-card-popular">가장 인기</div>
+            <div class="pricing-header">
+              <div class="pricing-name">프리미엄</div>
+              <div class="pricing-duration">15일 (주 5일)</div>
+              <div class="pricing-price">
+                <span class="pricing-amount">1,800,000</span>
+                <span class="pricing-unit">원</span>
+              </div>
+              <div class="pricing-note">정부지원 시 본인부담금 별도 안내</div>
+            </div>
+            <div class="pricing-features">
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 산모 건강관리 (전문)</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 신생아 돌봄 (목욕, 수유, 건강체크)</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 전체 가사 지원</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 산모 영양식 2식 준비</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 산후 체조 프로그램</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 일일 보고서</div>
+            </div>
+            <button class="btn btn-primary pricing-cta" data-component="pricing-grid-card-cta">상담 신청</button>
+          </div>
+
+          <!-- Pricing Card: VIP -->
+          <div class="pricing-card" data-component="pricing-grid-card">
+            <div class="pricing-header">
+              <div class="pricing-name">VIP</div>
+              <div class="pricing-duration">20일 (주 5일)</div>
+              <div class="pricing-price">
+                <span class="pricing-amount">2,400,000</span>
+                <span class="pricing-unit">원</span>
+              </div>
+              <div class="pricing-note">정부지원 시 본인부담금 별도 안내</div>
+            </div>
+            <div class="pricing-features">
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 산모 건강관리 (프리미엄)</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 신생아 전담 돌봄</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 전체 가사 지원 + 큰 아이 돌봄</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 산모 영양식 3식 준비</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 산후 체조 + 마사지</div>
+              <div class="pricing-feature"><span class="check" aria-hidden="true">&#10003;</span> 일일 보고서 + 주간 상담</div>
+            </div>
+            <button class="btn btn-outline pricing-cta" data-component="pricing-grid-card-cta">상담 신청</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Government Support Section -->
+    <section data-component="gov-support" aria-label="정부지원 안내">
+      <div class="container">
+        <div class="gov-support-card" data-component="gov-support-card">
+          <div class="gov-support-text">
+            <span class="badge badge-accent" data-component="gov-support-badge">정부지원</span>
+            <h2>산모·신생아 건강관리<br>정부지원 바우처</h2>
+            <p>정부에서 지원하는 산모·신생아 건강관리 바우처를 사용하시면 합리적인 비용으로 전문 산후관리 서비스를 이용하실 수 있습니다.</p>
+            <div class="gov-support-list">
+              <div class="gov-support-item">
+                <div class="icon" aria-hidden="true">&#128100;</div>
+                <div class="text"><strong>지원 대상</strong>산모·신생아 건강관리 지원사업 대상자 (소득 기준에 따라 차등 지원)</div>
+              </div>
+              <div class="gov-support-item">
+                <div class="icon" aria-hidden="true">&#128176;</div>
+                <div class="text"><strong>지원 금액</strong>서비스 유형에 따라 최대 월 840,000원까지 지원 (본인부담금 별도)</div>
+              </div>
+              <div class="gov-support-item">
+                <div class="icon" aria-hidden="true">&#128203;</div>
+                <div class="text"><strong>신청 방법</strong>복지로 홈페이지 또는 주민센터에서 신청 가능</div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:var(--space-4);align-items:center">
+            <div style="width:200px;height:200px;border-radius:var(--radius-xl);background:linear-gradient(135deg,var(--color-secondary-100),var(--color-accent-100));display:flex;align-items:center;justify-content:center;font-size:72px" aria-hidden="true">&#127981;</div>
+            <div class="gov-actions">
+              <a href="https://www.bokjiro.go.kr/ssis-tbu/twatbz/mkclAsis/mkclInsertPwnbPage.do" target="_blank" rel="noopener noreferrer" class="btn btn-primary" data-component="gov-support-check">자격 조회하기</a>
+              <a href="https://www.bokjiro.go.kr/ssis-tbu/twataa/wlfareInfo/moveTWAT52011M.do?wlfareInfoReldBizId=WII00000460" target="_blank" rel="noopener noreferrer" class="btn btn-outline" data-component="gov-support-apply">바우처 신청하기</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section data-component="faq" aria-label="자주 묻는 질문">
+      <div class="container">
+        <div class="section-header">
+          <span class="badge badge-primary" data-component="faq-badge">FAQ</span>
+          <h2 class="section-title" data-component="faq-title">자주 묻는 질문</h2>
+          <p class="section-subtitle" data-component="faq-subtitle">비용 관련 궁금한 점을 확인해 보세요</p>
+        </div>
+        <div class="faq-list" data-component="faq-list">
+          <div class="faq-item" data-component="faq-list-item">
+            <div class="faq-question">
+              <span>정부지원 바우처로 비용을 얼마나 줄일 수 있나요?</span>
+              <span class="faq-arrow" aria-hidden="true">&#9660;</span>
+            </div>
+            <div class="faq-answer">소득 기준에 따라 지원 금액이 달라지며, 일반형 기준 최대 월 840,000원까지 지원됩니다. 본인부담금은 소득 구간에 따라 차등 적용되며, 상담 시 정확한 금액을 안내해 드립니다.</div>
+          </div>
+          <div class="faq-item" data-component="faq-list-item">
+            <div class="faq-question">
+              <span>서비스 기간을 연장하거나 변경할 수 있나요?</span>
+              <span class="faq-arrow" aria-hidden="true">&#9660;</span>
+            </div>
+            <div class="faq-answer">네, 서비스 이용 중 기간 연장이나 변경이 가능합니다. 다만, 관리사 스케줄 조정이 필요하므로 가능한 빨리 문의해 주시면 최대한 맞춰드립니다.</div>
+          </div>
+          <div class="faq-item" data-component="faq-list-item">
+            <div class="faq-question">
+              <span>쌍둥이인 경우 추가 비용이 있나요?</span>
+              <span class="faq-arrow" aria-hidden="true">&#9660;</span>
+            </div>
+            <div class="faq-answer">다태아의 경우 추가 비용이 발생할 수 있으며, 정부지원 바우처도 추가 지원이 가능합니다. 정확한 비용은 상담을 통해 안내해 드립니다.</div>
+          </div>
+          <div class="faq-item" data-component="faq-list-item">
+            <div class="faq-question">
+              <span>결제 방법은 어떻게 되나요?</span>
+              <span class="faq-arrow" aria-hidden="true">&#9660;</span>
+            </div>
+            <div class="faq-answer">계좌이체 또는 카드결제가 가능하며, 정부지원 바우처를 함께 사용하실 경우 국민행복카드로 결제하시면 됩니다.</div>
+          </div>
+          <div class="faq-item" data-component="faq-list-item">
+            <div class="faq-question">
+              <span>서비스 중도 취소 시 환불이 되나요?</span>
+              <span class="faq-arrow" aria-hidden="true">&#9660;</span>
+            </div>
+            <div class="faq-answer">서비스 시작 전 전액 환불이 가능하며, 서비스 이용 중에는 남은 일수에 대해 일할 환불이 가능합니다. 자세한 환불 정책은 이용약관을 참고해 주세요.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section data-component="cta" aria-label="상담 신청">
+      <div class="container">
+        <div class="cta-content">
+          <h2 class="cta-title">맞춤 비용 상담을<br>받아보세요</h2>
+          <p class="cta-desc">정부지원 바우처 자격 확인부터 맞춤 서비스 비용까지<br>친절하게 안내해 드립니다.</p>
+          <div class="cta-actions">
+            <button class="btn btn-primary btn-lg" data-component="cta-actions-primary">무료 상담 신청</button>
+          </div>
+          <div class="cta-phone"><span aria-hidden="true">&#128222;</span><a href="tel:032-442-5992">(032) 442-5992</a></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Organism: Footer -->
+  <footer data-component="footer" role="contentinfo">
+    <div data-component="footer-container">
+      <div data-component="footer-brand"><div class="footer-logo">아이미래로</div><p class="footer-desc">인천 남동구에서 산모와 신생아의 건강한 시작을 함께하는 산후관리 전문 기관입니다.</p><div class="footer-social"><a href="https://www.instagram.com/imirae_incheon/" target="_blank" rel="noopener noreferrer" aria-label="인스타그램">IG</a><a href="https://blog.naver.com/imirae-incheon" target="_blank" rel="noopener noreferrer" aria-label="네이버 블로그">NB</a></div></div>
+      <div><h4 class="footer-section-title">서비스</h4><nav class="footer-links"><a href="/program">산후관리서비스</a><a href="/plan">비용 안내</a><a href="/reviews">고객 후기</a><a href="/contact">문의하기</a></nav></div>
+      <div><h4 class="footer-section-title">회사</h4><nav class="footer-links"><a href="/introduction">회사 소개</a><a href="/disclaimer">이용약관</a></nav></div>
+      <div><h4 class="footer-section-title">연락처</h4><div class="footer-contact-item"><span aria-hidden="true">&#128222;</span><span>(032) 442-5992</span></div><div class="footer-contact-item"><span aria-hidden="true">&#9993;</span><span>forchildrenbysongs@gmail.com</span></div><div class="footer-contact-item"><span aria-hidden="true">&#128205;</span><span>인천광역시 남동구 구월남로 120 백세빌딩 302호</span></div></div>
+    </div>
+    <div data-component="footer-bottom"><p class="footer-copyright">&copy; 2026 인천 아이미래로. All rights reserved.</p><div class="footer-legal"><a href="/disclaimer">이용약관</a><a href="/disclaimer">개인정보처리방침</a></div></div>
+  </footer>
+</body>
+</html>

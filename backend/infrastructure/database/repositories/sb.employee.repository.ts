@@ -98,7 +98,10 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async findByGrade(organizationid: string, grade: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { grade, organizationId: organizationid },
+            where: {
+                grade,
+                organizationId: organizationid,
+            },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }

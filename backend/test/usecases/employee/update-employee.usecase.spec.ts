@@ -26,7 +26,7 @@ describe("UpdateEmployeeUsecase", () => {
                 const employee = EmployeeFactory.create({
                     id: 1,
                     name: "원래 이름",
-                    grade: "1급",
+                    grade: "프리미엄",
                 });
                 mockRepository.setData([employee]);
 
@@ -35,7 +35,7 @@ describe("UpdateEmployeeUsecase", () => {
 
                 // Assert
                 expect(result.name).toBe("새 이름");
-                expect(result.grade).toBe("1급");
+                expect(result.grade).toBe("프리미엄");
             });
 
             it("should update only workArea", async () => {
@@ -72,7 +72,7 @@ describe("UpdateEmployeeUsecase", () => {
                 // Arrange
                 const employee = EmployeeFactory.create({
                     id: 1,
-                    grade: "2급",
+                    grade: "베스트",
                 });
                 mockRepository.setData([employee]);
 

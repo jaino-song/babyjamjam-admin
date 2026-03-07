@@ -87,12 +87,14 @@ export const PriceInfoMessageForm = () => {
 
   // Sync local state with Zustand store when store changes
   useEffect(() => {
-    setFormData(prev => ({
-      ...prev,
-      name: name,
-      duration: voucherDuration,
-      type: voucherType,
-    }));
+    queueMicrotask(() => {
+      setFormData(prev => ({
+        ...prev,
+        name: name,
+        duration: voucherDuration,
+        type: voucherType,
+      }));
+    });
   }, [name, voucherType, voucherDuration]);
 
   // Bank account info query
@@ -347,4 +349,3 @@ export const PriceInfoMessageForm = () => {
     </div>
   );
 };
-

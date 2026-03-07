@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { AxiosError } from "axios";
+import { getAuthToken } from "@/lib/api/route-utils";
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
+type AuthErrorResponse = {
+    message?: string;
+};
 
 export async function GET(request: NextRequest) {
     try {
@@ -17,10 +19,11 @@ export async function GET(request: NextRequest) {
         });
         
         return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[API] Error fetching current user:", error.message);
-        const status = error.response?.status || 500;
-        const message = error.response?.data?.message || "Failed to fetch user";
+    } catch (error) {
+        const axiosError = error as AxiosError<AuthErrorResponse>;
+        console.error("[API] Error fetching current user:", axiosError.message);
+        const status = axiosError.response?.status || 500;
+        const message = axiosError.response?.data?.message || "Failed to fetch user";
         return NextResponse.json({ error: message }, { status });
     }
 }

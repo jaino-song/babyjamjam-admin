@@ -107,7 +107,7 @@ export function ListPanel({
                   key={tab.value}
                   onClick={() => onTabChange?.(tab.value)}
                   className={`text-[0.8rem] pb-2 px-3 transition-colors ${activeTab === tab.value
-                    ? "text-v3-primary font-semibold border-b-2 border-v3-primary"
+                    ? "text-v3-primary font-semibold border-b-2 tab-active-underline"
                     : "text-v3-text-muted hover:text-v3-text"
                     }`}
                 >
@@ -121,6 +121,7 @@ export function ListPanel({
               value={searchValue!}
               onChange={onSearchChange!}
               placeholder={searchPlaceholder}
+              className={tabsVariant === "inline" ? "pb-2" : undefined}
             />
           )}
         </div>

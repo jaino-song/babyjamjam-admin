@@ -13,6 +13,7 @@ import {
     ListEmployeesUsecase,
     UpdateEmployeeUsecase,
 } from "application/usecases/employee";
+import { normalizeEmployeeGrade } from "domain/constants/employee-grade.constants";
 import { EmployeeEntity } from "domain/entities/employee.entity";
 
 export type EmployeeUpdateParams = {
@@ -49,7 +50,7 @@ export class EmployeeService {
             params.name,
             params.workArea,
             params.phone,
-            params.grade,
+            normalizeEmployeeGrade(params.grade),
             params.openToNextWork,
             params.registeredDate ? new Date(params.registeredDate) : undefined,
         );
@@ -60,7 +61,10 @@ export class EmployeeService {
     }
 
     update(organizationid: string, id: number, params: EmployeeUpdateParams): Promise<EmployeeEntity> {
-        return this.updateEmployeeUsecase.execute(organizationid, id, params);
+        return this.updateEmployeeUsecase.execute(organizationid, id, {
+            ...params,
+            grade: params.grade === undefined ? undefined : normalizeEmployeeGrade(params.grade),
+        });
     }
 
     delete(organizationid: string, id: number): Promise<void> {
@@ -76,7 +80,7 @@ export class EmployeeService {
     }
 
     findByGrade(organizationid: string, grade: string): Promise<EmployeeEntity[]> {
-        return this.listEmployeesByGradeUsecase.execute(organizationid, grade);
+        return this.listEmployeesByGradeUsecase.execute(organizationid, normalizeEmployeeGrade(grade));
     }
 
     findByOpenStatus(organizationid: string, openToNextWork: boolean): Promise<EmployeeEntity[]> {

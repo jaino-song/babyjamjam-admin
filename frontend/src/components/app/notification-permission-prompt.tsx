@@ -9,7 +9,9 @@ export function NotificationPermissionPrompt() {
         if (typeof window === 'undefined') return;
         if (!('Notification' in window)) return;
         if (Notification.permission === 'default') {
-            setShowBanner(true);
+            queueMicrotask(() => {
+                setShowBanner(true);
+            });
         }
     }, []);
 
@@ -38,12 +40,14 @@ export function NotificationPermissionPrompt() {
                 </p>
                 <div className="flex gap-2 mt-2">
                     <button
+                        type="button"
                         onClick={handleEnable}
                         className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
                     >
                         허용
                     </button>
                     <button
+                        type="button"
                         onClick={handleDismiss}
                         className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
                     >
@@ -52,6 +56,7 @@ export function NotificationPermissionPrompt() {
                 </div>
             </div>
             <button
+                type="button"
                 onClick={handleDismiss}
                 className="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                 aria-label="닫기"

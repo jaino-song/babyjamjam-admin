@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>인천 아이미래로 - 이용약관</title>
+  <style>
+    :root {
+      --color-primary-50:#FFF5F5;--color-primary-100:#FFE0E6;--color-primary-500:#E8637A;--color-primary-600:#D14D64;--color-primary-700:#B3384E;
+      --color-secondary-50:#F2F8F4;--color-secondary-100:#E0F0E5;--color-secondary-700:#3F7A50;
+      --color-neutral-0:#FFFFFF;--color-neutral-50:#FDFCFB;--color-neutral-100:#F7F5F3;--color-neutral-200:#EDE9E5;--color-neutral-300:#DDD7D1;--color-neutral-400:#B8AFA7;--color-neutral-500:#93897E;--color-neutral-600:#6E6559;--color-neutral-700:#4A4238;--color-neutral-800:#332C24;--color-neutral-900:#1C1814;
+      --color-bg-primary:#FDFCFB;--color-bg-secondary:#FFF5F5;--color-bg-cream:#FFF9F0;--color-bg-card:#FFFFFF;
+      --font-heading:'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--font-body:'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+      --text-xs:0.75rem;--text-sm:0.875rem;--text-base:1rem;--text-lg:1.125rem;--text-xl:1.25rem;--text-2xl:1.5rem;--text-3xl:1.875rem;--text-4xl:2.25rem;
+      --font-regular:400;--font-medium:500;--font-semibold:600;--font-bold:700;
+      --leading-tight:1.25;--leading-normal:1.5;--leading-relaxed:1.625;
+      --space-1:0.25rem;--space-2:0.5rem;--space-3:0.75rem;--space-4:1rem;--space-5:1.25rem;--space-6:1.5rem;--space-8:2rem;--space-10:2.5rem;--space-12:3rem;--space-16:4rem;--space-20:5rem;
+      --radius-sm:8px;--radius-md:12px;--radius-lg:16px;--radius-full:9999px;
+      --shadow-sm:0 1px 2px rgba(28,24,20,0.05);--shadow-md:0 4px 12px rgba(28,24,20,0.08);
+      --ease-default:cubic-bezier(0.4,0,0.2,1);--ease-out:cubic-bezier(0,0,0.2,1);--duration-fast:150ms;--duration-normal:300ms;
+    }
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important}}
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{font-family:var(--font-body);font-size:var(--text-base);line-height:var(--leading-normal);color:var(--color-neutral-800);background:var(--color-bg-primary);-webkit-font-smoothing:antialiased}
+    a{color:inherit;text-decoration:none}ul,ol{list-style:none}
+    button{font-family:inherit;cursor:pointer;border:none;background:none}
+    .container{max-width:1200px;margin:0 auto;padding:0 var(--space-6)}
+    .skip-link{position:absolute;top:-100%;left:var(--space-4);padding:var(--space-2) var(--space-4);background:var(--color-primary-500);color:white;border-radius:var(--radius-md);z-index:1000;font-size:var(--text-sm)}.skip-link:focus{top:var(--space-4)}
+
+    /* NAV */
+    [data-component="nav"]{position:fixed;top:0;left:0;right:0;height:72px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:1px solid var(--color-neutral-200);z-index:100}
+    [data-component="nav-container"]{max-width:1200px;margin:0 auto;padding:0 var(--space-6);height:100%;display:flex;align-items:center;justify-content:space-between}
+    [data-component="nav-logo"]{font-size:var(--text-xl);font-weight:var(--font-bold);color:var(--color-primary-600);display:flex;align-items:center;gap:var(--space-2)}
+    [data-component="nav-logo"] .logo-icon{width:36px;height:36px;background:var(--color-primary-500);border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;color:white;font-size:var(--text-lg)}
+    [data-component="nav-links"]{display:flex;gap:var(--space-1)}
+    [data-component="nav-links-item"] a{display:block;padding:var(--space-2) var(--space-4);font-size:var(--text-base);font-weight:var(--font-medium);color:var(--color-neutral-600);border-radius:var(--radius-md);transition:all var(--duration-fast) var(--ease-default)}
+    [data-component="nav-links-item"] a:hover{color:var(--color-primary-500);background:var(--color-primary-50)}
+    [data-component="nav-links-item"].active a{color:var(--color-primary-600);background:var(--color-primary-50)}
+    [data-component="nav-cta"]{background:var(--color-primary-500);color:white;padding:10px 20px;border-radius:var(--radius-md);font-size:var(--text-sm);font-weight:var(--font-semibold);transition:all var(--duration-fast) var(--ease-default)}
+    [data-component="nav-cta"]:hover{background:var(--color-primary-600)}
+    [data-component="nav-mobile-toggle"]{display:none;width:44px;height:44px;align-items:center;justify-content:center;border-radius:var(--radius-md);color:var(--color-neutral-700)}
+    .badge{display:inline-flex;align-items:center;padding:4px 12px;border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:var(--font-medium)}
+    .badge-primary{background:var(--color-primary-100);color:var(--color-primary-700)}
+
+    .page-header{padding-top:calc(72px + var(--space-16));padding-bottom:var(--space-16);background:linear-gradient(135deg,var(--color-bg-secondary) 0%,var(--color-bg-cream) 100%);text-align:center}
+    .page-header-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .page-header-desc{font-size:var(--text-lg);color:var(--color-neutral-600);max-width:600px;margin:0 auto;line-height:var(--leading-relaxed)}
+
+    /* TERMS CONTENT */
+    [data-component="terms"]{padding:var(--space-20) 0;background:var(--color-neutral-0)}
+    .terms-container{max-width:800px;margin:0 auto}
+    .terms-toc{background:var(--color-neutral-100);border-radius:var(--radius-md);padding:var(--space-6);margin-bottom:var(--space-10);animation:fadeInUp var(--duration-normal) var(--ease-out)}
+    .terms-toc-title{font-size:var(--text-lg);font-weight:var(--font-semibold);color:var(--color-neutral-800);margin-bottom:var(--space-4)}
+    .terms-toc-list{display:flex;flex-direction:column;gap:var(--space-2)}
+    .terms-toc-list a{font-size:var(--text-sm);color:var(--color-primary-600);transition:color var(--duration-fast);display:flex;gap:var(--space-2);align-items:center}
+    .terms-toc-list a:hover{color:var(--color-primary-500);text-decoration:underline}
+    .terms-toc-list .num{font-weight:var(--font-semibold);min-width:24px}
+    .terms-section{margin-bottom:var(--space-10);animation:fadeInUp var(--duration-normal) var(--ease-out);animation-fill-mode:both}
+    .terms-section:nth-child(2){animation-delay:50ms}.terms-section:nth-child(3){animation-delay:100ms}
+    .terms-section:nth-child(4){animation-delay:150ms}.terms-section:nth-child(5){animation-delay:200ms}
+    .terms-section h2{font-family:var(--font-heading);font-size:var(--text-2xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--color-neutral-200)}
+    .terms-section h3{font-size:var(--text-lg);font-weight:var(--font-semibold);color:var(--color-neutral-800);margin-bottom:var(--space-3);margin-top:var(--space-6)}
+    .terms-section p{font-size:var(--text-sm);color:var(--color-neutral-600);line-height:var(--leading-relaxed);margin-bottom:var(--space-3)}
+    .terms-section ol{counter-reset:item;padding-left:var(--space-4)}
+    .terms-section ol li{counter-increment:item;font-size:var(--text-sm);color:var(--color-neutral-600);line-height:var(--leading-relaxed);margin-bottom:var(--space-2);padding-left:var(--space-2)}
+    .terms-section ol li::before{content:counter(item) ". ";font-weight:var(--font-semibold);color:var(--color-neutral-700)}
+    .terms-meta{background:var(--color-neutral-100);border-radius:var(--radius-md);padding:var(--space-6);margin-top:var(--space-10);text-align:center}
+    .terms-meta p{font-size:var(--text-sm);color:var(--color-neutral-500);margin-bottom:var(--space-1)}
+
+    /* FOOTER */
+    [data-component="footer"]{background:var(--color-neutral-800);color:var(--color-neutral-300);padding:var(--space-16) 0 0}
+    [data-component="footer-container"]{max-width:1200px;margin:0 auto;padding:0 var(--space-6);display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:var(--space-10);padding-bottom:var(--space-12);border-bottom:1px solid var(--color-neutral-700)}
+    .footer-logo{font-size:var(--text-xl);font-weight:var(--font-bold);color:var(--color-neutral-0);margin-bottom:var(--space-4)}
+    .footer-desc{font-size:var(--text-sm);line-height:var(--leading-relaxed);color:var(--color-neutral-400);margin-bottom:var(--space-4)}
+    .footer-social{display:flex;gap:var(--space-3)}.footer-social a{width:36px;height:36px;border-radius:var(--radius-full);background:var(--color-neutral-700);display:flex;align-items:center;justify-content:center;font-size:var(--text-sm);transition:background var(--duration-fast)}.footer-social a:hover{background:var(--color-primary-500)}
+    .footer-section-title{font-size:var(--text-sm);font-weight:var(--font-semibold);color:var(--color-neutral-0);margin-bottom:var(--space-4);text-transform:uppercase;letter-spacing:0.05em}
+    .footer-links{display:flex;flex-direction:column;gap:var(--space-3)}.footer-links a{font-size:var(--text-sm);color:var(--color-neutral-400);transition:color var(--duration-fast)}.footer-links a:hover{color:var(--color-primary-300)}
+    .footer-contact-item{display:flex;align-items:flex-start;gap:var(--space-2);font-size:var(--text-sm);color:var(--color-neutral-400);margin-bottom:var(--space-3);line-height:var(--leading-relaxed)}
+    [data-component="footer-bottom"]{max-width:1200px;margin:0 auto;padding:var(--space-6);display:flex;justify-content:space-between;align-items:center}
+    .footer-copyright{font-size:var(--text-xs);color:var(--color-neutral-500)}
+    .footer-legal{display:flex;gap:var(--space-4)}.footer-legal a{font-size:var(--text-xs);color:var(--color-neutral-500);transition:color var(--duration-fast)}.footer-legal a:hover{color:var(--color-neutral-300)}
+
+    @media(max-width:1023px){
+      [data-component="nav-links"],[data-component="nav-cta"]{display:none}[data-component="nav-mobile-toggle"]{display:flex}
+      [data-component="footer-container"]{grid-template-columns:1fr 1fr;gap:var(--space-8)}
+      .page-header-title{font-size:var(--text-3xl)}
+    }
+    @media(max-width:767px){
+      .container{padding:0 var(--space-4)}
+      [data-component="nav"]{height:60px}
+      .page-header{padding-top:calc(60px + var(--space-12));padding-bottom:var(--space-12)}
+      [data-component="footer-container"]{grid-template-columns:1fr}
+      [data-component="footer-bottom"]{flex-direction:column;gap:var(--space-4);text-align:center}
+    }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">본문으로 건너뛰기</a>
+
+  <nav data-component="nav" role="navigation" aria-label="주 내비게이션">
+    <div data-component="nav-container">
+      <a href="/" data-component="nav-logo"><span class="logo-icon" aria-hidden="true">&#9829;</span>아이미래로</a>
+      <ul data-component="nav-links">
+        <li data-component="nav-links-item"><a href="/">홈</a></li>
+        <li data-component="nav-links-item"><a href="/introduction">소개</a></li>
+        <li data-component="nav-links-item"><a href="/program">산후관리서비스</a></li>
+        <li data-component="nav-links-item"><a href="/plan">비용</a></li>
+        <li data-component="nav-links-item"><a href="/reviews">후기</a></li>
+        <li data-component="nav-links-item"><a href="/contact">문의하기</a></li>
+      </ul>
+      <button data-component="nav-cta">상담 신청</button>
+      <button data-component="nav-mobile-toggle" aria-label="메뉴 열기"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+    </div>
+  </nav>
+
+  <main id="main-content">
+
+    <section class="page-header" data-component="terms-header">
+      <div class="container">
+        <span class="badge badge-primary" data-component="terms-header-badge">Legal</span>
+        <h1 class="page-header-title" data-component="terms-header-title">이용약관</h1>
+        <p class="page-header-desc" data-component="terms-header-desc">인천 아이미래로 서비스 이용에 관한 약관입니다</p>
+      </div>
+    </section>
+
+    <section data-component="terms" aria-label="이용약관">
+      <div class="container">
+        <div class="terms-container">
+
+          <!-- Table of Contents -->
+          <div class="terms-toc" data-component="terms-toc">
+            <div class="terms-toc-title">목차</div>
+            <div class="terms-toc-list">
+              <a href="#article-1"><span class="num">1</span> 목적</a>
+              <a href="#article-2"><span class="num">2</span> 용어의 정의</a>
+              <a href="#article-3"><span class="num">3</span> 서비스의 내용</a>
+              <a href="#article-4"><span class="num">4</span> 서비스 이용 계약</a>
+              <a href="#article-5"><span class="num">5</span> 서비스 비용 및 결제</a>
+              <a href="#article-6"><span class="num">6</span> 취소 및 환불</a>
+              <a href="#article-7"><span class="num">7</span> 이용자의 의무</a>
+              <a href="#article-8"><span class="num">8</span> 회사의 의무</a>
+              <a href="#article-9"><span class="num">9</span> 개인정보 보호</a>
+              <a href="#article-10"><span class="num">10</span> 면책 사항</a>
+            </div>
+          </div>
+
+          <!-- Articles -->
+          <div class="terms-section" id="article-1" data-component="terms-section">
+            <h2>제1조 (목적)</h2>
+            <p>본 약관은 인천 아이미래로(이하 "회사")가 제공하는 산후관리 서비스의 이용에 관한 기본적인 사항을 규정함을 목적으로 합니다.</p>
+          </div>
+
+          <div class="terms-section" id="article-2" data-component="terms-section">
+            <h2>제2조 (용어의 정의)</h2>
+            <ol>
+              <li>"서비스"란 회사가 제공하는 산모·신생아 건강관리 서비스를 말합니다.</li>
+              <li>"이용자"란 본 약관에 동의하고 서비스를 이용하는 자를 말합니다.</li>
+              <li>"관리사"란 회사에 소속되어 산후관리 서비스를 직접 제공하는 전문 인력을 말합니다.</li>
+              <li>"정부지원 바우처"란 산모·신생아 건강관리 지원사업에 따라 정부가 지원하는 서비스 이용권을 말합니다.</li>
+            </ol>
+          </div>
+
+          <div class="terms-section" id="article-3" data-component="terms-section">
+            <h2>제3조 (서비스의 내용)</h2>
+            <p>회사가 제공하는 서비스의 내용은 다음과 같습니다.</p>
+            <ol>
+              <li>산모 건강관리: 산후 체조, 마사지, 영양식 관리, 산후 우울증 예방 케어</li>
+              <li>신생아 돌봄: 목욕, 수유 지원, 건강 체크, 위생 관리</li>
+              <li>가사 지원: 식사 준비, 세탁, 청소, 가정환경 관리</li>
+            </ol>
+          </div>
+
+          <div class="terms-section" id="article-4" data-component="terms-section">
+            <h2>제4조 (서비스 이용 계약)</h2>
+            <ol>
+              <li>서비스 이용 계약은 이용자가 회사에 서비스 이용을 신청하고, 회사가 이를 승낙함으로써 성립합니다.</li>
+              <li>이용자는 상담을 통해 서비스 유형, 기간, 시작일 등을 결정합니다.</li>
+              <li>회사는 관리사 배정 상황에 따라 서비스 시작일을 조정할 수 있습니다.</li>
+            </ol>
+          </div>
+
+          <div class="terms-section" id="article-5" data-component="terms-section">
+            <h2>제5조 (서비스 비용 및 결제)</h2>
+            <ol>
+              <li>서비스 비용은 회사가 정한 요금표에 따릅니다.</li>
+              <li>정부지원 바우처를 사용하는 경우, 본인부담금은 소득 구간에 따라 차등 적용됩니다.</li>
+              <li>결제는 계좌이체, 카드결제, 국민행복카드로 가능합니다.</li>
+              <li>서비스 시작 전 전액 결제를 원칙으로 하며, 분할 결제는 상담 시 협의합니다.</li>
+            </ol>
+          </div>
+
+          <div class="terms-section" id="article-6" data-component="terms-section">
+            <h2>제6조 (취소 및 환불)</h2>
+            <ol>
+              <li>서비스 시작 전 취소 시 전액 환불합니다.</li>
+              <li>서비스 이용 중 취소 시 남은 일수에 대해 일할 계산하여 환불합니다.</li>
+              <li>이용자의 귀책 사유로 인한 서비스 중단 시 환불 금액에서 위약금(잔여 서비스 비용의 10%)을 공제할 수 있습니다.</li>
+              <li>천재지변 등 불가항력적 사유로 인한 서비스 중단 시 전액 환불합니다.</li>
+            </ol>
+          </div>
+
+          <div class="terms-section" id="article-7" data-component="terms-section">
+            <h2>제7조 (이용자의 의무)</h2>
+            <ol>
+              <li>이용자는 관리사에게 안전한 서비스 환경을 제공해야 합니다.</li>
+              <li>이용자는 서비스 일정 변경 시 최소 24시간 전에 회사에 통보해야 합니다.</li>
+              <li>이용자는 관리사에게 계약 범위 외의 업무를 요구할 수 없습니다.</li>
+              <li>이용자는 관리사에 대한 부당한 대우나 폭언, 폭행 등을 해서는 안 됩니다.</li>
+            </ol>
+          </div>
+
+          <div class="terms-section" id="article-8" data-component="terms-section">
+            <h2>제8조 (회사의 의무)</h2>
+            <ol>
+              <li>회사는 자격을 갖춘 전문 관리사를 배정하여 양질의 서비스를 제공합니다.</li>
+              <li>회사는 관리사에 대한 정기적인 교육과 관리를 실시합니다.</li>
+              <li>회사는 서비스 제공 중 발생한 문제에 대해 신속하게 대응합니다.</li>
+              <li>관리사의 사유로 서비스가 중단될 경우, 회사는 대체 관리사를 배정합니다.</li>
+            </ol>
+          </div>
+
+          <div class="terms-section" id="article-9" data-component="terms-section">
+            <h2>제9조 (개인정보 보호)</h2>
+            <ol>
+              <li>회사는 이용자의 개인정보를 「개인정보보호법」에 따라 보호합니다.</li>
+              <li>수집하는 개인정보: 성명, 연락처, 주소, 출산 예정일 등 서비스 제공에 필요한 정보</li>
+              <li>수집된 개인정보는 서비스 제공 목적으로만 사용하며, 이용자의 동의 없이 제3자에게 제공하지 않습니다.</li>
+              <li>이용자는 언제든지 자신의 개인정보에 대한 열람, 수정, 삭제를 요청할 수 있습니다.</li>
+            </ol>
+          </div>
+
+          <div class="terms-section" id="article-10" data-component="terms-section">
+            <h2>제10조 (면책 사항)</h2>
+            <ol>
+              <li>회사는 천재지변, 전쟁, 감염병 대유행 등 불가항력적 사유로 서비스를 제공하지 못하는 경우 책임을 지지 않습니다.</li>
+              <li>이용자의 고의 또는 과실로 발생한 손해에 대해 회사는 책임을 지지 않습니다.</li>
+              <li>본 약관에 명시되지 않은 사항은 관련 법령 및 상관례에 따릅니다.</li>
+            </ol>
+          </div>
+
+          <div class="terms-meta" data-component="terms-meta">
+            <p><strong>시행일:</strong> 2024년 1월 1일</p>
+            <p><strong>최종 수정일:</strong> 2025년 6월 1일</p>
+            <p>문의: forchildrenbysongs@gmail.com | (032) 442-5992</p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer data-component="footer" role="contentinfo">
+    <div data-component="footer-container">
+      <div data-component="footer-brand"><div class="footer-logo">아이미래로</div><p class="footer-desc">인천 남동구에서 산모와 신생아의 건강한 시작을 함께하는 산후관리 전문 기관입니다.</p><div class="footer-social"><a href="https://www.instagram.com/imirae_incheon/" target="_blank" rel="noopener noreferrer" aria-label="인스타그램">IG</a><a href="https://blog.naver.com/imirae-incheon" target="_blank" rel="noopener noreferrer" aria-label="네이버 블로그">NB</a></div></div>
+      <div><h4 class="footer-section-title">서비스</h4><nav class="footer-links"><a href="/program">산후관리서비스</a><a href="/plan">비용 안내</a><a href="/reviews">고객 후기</a><a href="/contact">문의하기</a></nav></div>
+      <div><h4 class="footer-section-title">회사</h4><nav class="footer-links"><a href="/introduction">회사 소개</a><a href="/disclaimer">이용약관</a></nav></div>
+      <div><h4 class="footer-section-title">연락처</h4><div class="footer-contact-item"><span aria-hidden="true">&#128222;</span><span>(032) 442-5992</span></div><div class="footer-contact-item"><span aria-hidden="true">&#9993;</span><span>forchildrenbysongs@gmail.com</span></div><div class="footer-contact-item"><span aria-hidden="true">&#128205;</span><span>인천광역시 남동구 구월남로 120 백세빌딩 302호</span></div></div>
+    </div>
+    <div data-component="footer-bottom"><p class="footer-copyright">&copy; 2026 인천 아이미래로. All rights reserved.</p><div class="footer-legal"><a href="/disclaimer">이용약관</a><a href="/disclaimer">개인정보처리방침</a></div></div>
+  </footer>
+</body>
+</html>

@@ -754,7 +754,7 @@
             "id": "indirect-018",
             "category": "indirect",
             "description": "Informal for grade-based filtering",
-            "input": "1급 분들 알려줘",
+            "input": "프리미엄 분들 알려줘",
             "expectedIntent": "employees_by_grade",
             "expectedTools": [
                 "getemployeesbygrade"

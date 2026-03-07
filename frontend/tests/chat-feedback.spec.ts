@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
 
 const mock_auth_response = {
   id: 'test-user',
@@ -13,12 +13,17 @@ const mock_chat_messages = [
   { role: 'assistant', content: '안녕하세요! 무엇을 도와드릴까요?', timestamp: '2026-01-19t10:00:01.000z' },
 ];
 
-const setupAuthMocks = async (page: any) => {
+type FeedbackPayload = {
+  type?: string;
+  comment?: string;
+};
+
+const setupAuthMocks = async (page: Page) => {
   await page.addInitScript(() => {
     (window as typeof window & { __e2e_auth__?: boolean }).__e2e_auth__ = true;
   });
 
-  await page.route('**/api/auth/me', async (route: any) => {
+  await page.route('**/api/auth/me', async (route: Route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -26,7 +31,7 @@ const setupAuthMocks = async (page: any) => {
     });
   });
 
-  await page.route('**/auth/me', async (route: any) => {
+  await page.route('**/auth/me', async (route: Route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -67,11 +72,11 @@ test.describe('chat message feedback', () => {
 
   test('should send positive feedback on thumbs up click', async ({ page }) => {
     let feedbackCalled = false;
-    let feedbackData: any = null;
+    let feedbackData: FeedbackPayload | null = null;
 
     await page.route('**/api/ai/chat/feedback', async (route) => {
       feedbackCalled = true;
-      feedbackData = route.request().postDataJSON();
+      feedbackData = route.request().postDataJSON() as FeedbackPayload;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -90,7 +95,7 @@ test.describe('chat message feedback', () => {
 
     await expect(() => {
       expect(feedbackCalled).toBe(true);
-      expect(feedbackData.type).toBe('positive');
+      expect(feedbackData?.type).toBe('positive');
     }).toPass({ timeout: 5000 });
   });
 
@@ -125,10 +130,10 @@ test.describe('chat message feedback', () => {
   });
 
   test('should send negative feedback with comment', async ({ page }) => {
-    let feedbackData: any = null;
+    let feedbackData: FeedbackPayload | null = null;
 
     await page.route('**/api/ai/chat/feedback', async (route) => {
-      feedbackData = route.request().postDataJSON();
+      feedbackData = route.request().postDataJSON() as FeedbackPayload;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -147,8 +152,8 @@ test.describe('chat message feedback', () => {
     await page.getByRole('button', { name: '제출' }).click();
 
     await expect(() => {
-      expect(feedbackData.type).toBe('negative');
-      expect(feedbackData.comment).toBe('응답이 부정확해요');
+      expect(feedbackData?.type).toBe('negative');
+      expect(feedbackData?.comment).toBe('응답이 부정확해요');
     }).toPass({ timeout: 5000 });
   });
 });

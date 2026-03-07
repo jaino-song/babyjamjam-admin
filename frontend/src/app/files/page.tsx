@@ -18,6 +18,8 @@ import { AddCategoryModal } from "@/components/app/documents/add-category-modal"
 import { formatDate } from "@/components/app/documents/document-list";
 import { toast } from "@/hooks/use-toast";
 
+const RECENT_WINDOW_START = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
 export default function FilesPage() {
   const [activeFilter, setActiveFilter] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -61,8 +63,7 @@ export default function FilesPage() {
   const stats = useMemo(() => {
     const total = documents.length;
     const recentCount = documents.filter(d => {
-      const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      return new Date(d.createdAt).getTime() > weekAgo;
+      return new Date(d.createdAt).getTime() > RECENT_WINDOW_START;
     }).length;
     return { total, categoryCount: categories.length, recentCount };
   }, [documents, categories]);

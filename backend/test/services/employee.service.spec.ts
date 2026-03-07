@@ -96,7 +96,7 @@ describe("EmployeeService", () => {
                 name: "테스트 직원",
                 workArea: ["인천 연수구"],
                 phone: "010-1234-5678",
-                grade: "1급",
+                grade: "프리미엄",
                 openToNextWork: true,
             };
             const mockEmployee = EmployeeFactory.create({ id: 1, ...params });
@@ -124,7 +124,7 @@ describe("EmployeeService", () => {
                 name: "테스트 직원",
                 workArea: ["서울"],
                 phone: "010-0000-0000",
-                grade: "2급",
+                grade: "베스트",
                 openToNextWork: false,
                 registeredDate: "2024-06-15",
             };
@@ -152,7 +152,7 @@ describe("EmployeeService", () => {
                 name: "테스트 직원",
                 workArea: ["서울"],
                 phone: "010-0000-0000",
-                grade: "2급",
+                grade: "베스트",
                 openToNextWork: false,
             };
             const mockEmployee = EmployeeFactory.create({ id: 1 });
@@ -211,7 +211,7 @@ describe("EmployeeService", () => {
             // Arrange
             const updateParams = {
                 name: "수정된 이름",
-                grade: "특급",
+                grade: "스탠다드",
             };
             const mockEmployee = EmployeeFactory.create({ id: 3, ...updateParams });
             updateUsecase.execute.mockResolvedValue(mockEmployee);
@@ -323,12 +323,13 @@ describe("EmployeeService", () => {
             listByGradeUsecase.execute.mockResolvedValue(mockEmployees);
 
             // Act
-            const result = await service.findByGrade(organizationId, "특급");
+            const result = await service.findByGrade(organizationId, "프리미엄");
 
             // Assert
-            expect(listByGradeUsecase.execute).toHaveBeenCalledWith(organizationId, "특급");
+            expect(listByGradeUsecase.execute).toHaveBeenCalledWith(organizationId, "프리미엄");
             expect(result).toBe(mockEmployees);
         });
+
     });
 
     // ============================================

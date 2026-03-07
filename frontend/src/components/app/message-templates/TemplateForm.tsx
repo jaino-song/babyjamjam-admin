@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Save, Loader2 } from "lucide-react";
 import { useDebouncedCallback } from "use-debounce";
@@ -40,7 +40,6 @@ export function TemplateForm({ mode, initialData, onSubmit, isPending }: Templat
     const [content, setContent] = useState(initialData?.content || "");
     const [variables, setVariables] = useState<TemplateVariable[]>(initialData?.variables || []);
     const [detectedKeys, setDetectedKeys] = useState<string[]>([]);
-    const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
     const validateVariables = useCallback((contentVars: string[], definedVars: TemplateVariable[]) => {
         const errors: string[] = [];
@@ -87,10 +86,14 @@ export function TemplateForm({ mode, initialData, onSubmit, isPending }: Templat
         debouncedDetect(content);
     }, [content, debouncedDetect]);
 
-    useEffect(() => {
-        const errors = validateVariables(detectedKeys, variables);
-        setValidationErrors(errors);
-    }, [detectedKeys, variables, validateVariables]);
+    const validationErrors = useMemo(
+        () => validateVariables(detectedKeys, variables),
+        [detectedKeys, variables, validateVariables]
+    );
+    const uniqueValidationErrors = useMemo(
+        () => Array.from(new Set(validationErrors)),
+        [validationErrors]
+    );
 
     const handleVariableChange = (key: string, field: keyof TemplateVariable, value: string | boolean) => {
         setVariables(prev =>
@@ -179,8 +182,8 @@ export function TemplateForm({ mode, initialData, onSubmit, isPending }: Templat
                             <AlertTitle className="font-semibold">변수 불일치 오류</AlertTitle>
                             <AlertDescription>
                                 <ul className="mt-2 space-y-1">
-                                    {validationErrors.map((err, i) => (
-                                        <li key={i}>• {err}</li>
+                                    {uniqueValidationErrors.map((err) => (
+                                        <li key={err}>• {err}</li>
                                     ))}
                                 </ul>
                                 <p className="mt-2 text-sm text-muted-foreground">

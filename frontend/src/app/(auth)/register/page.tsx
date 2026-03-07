@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import axios from "axios";
 import { CheckCircle, Link2 } from "lucide-react";
 import { authApi } from "@/services/api";
 import { registerSchema, checkPasswordStrength, type RegisterFormData } from "@/lib/validations/auth";
@@ -114,10 +115,10 @@ export default function RegisterPage() {
             } else {
                 setServerError(response.message || "회원가입에 실패했습니다.");
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Registration error:", err);
             // Check if this is an axios error with response data
-            const errorData = err?.response?.data;
+            const errorData = axios.isAxiosError(err) ? err.response?.data : undefined;
             if (errorData?.errors) {
                 // Password validation errors from backend
                 setServerError(errorData.errors.join('\n'));

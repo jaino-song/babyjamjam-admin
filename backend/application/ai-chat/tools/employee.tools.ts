@@ -210,7 +210,7 @@ export const getEmployeesByGradeSchema: FunctionDeclaration = {
     description: `Get employees by grade level.
 
 USE THIS TOOL when user asks:
-- "1급 관리사", "특급 이모님", "등급별 관리사"
+- "프리미엄 관리사", "베스트 이모님", "스탠다드 관리사", "등급별 관리사"
 
 SYNONYMS: 제공인력 = 관리사 = 이모님 = 직원 = employee`,
     parameters: {
@@ -218,7 +218,7 @@ SYNONYMS: 제공인력 = 관리사 = 이모님 = 직원 = employee`,
         properties: {
             grade: {
                 type: "string",
-                description: "Grade level to filter by (등급, e.g., '1급', '2급', '특급')",
+                description: "Grade level to filter by (등급, e.g., '프리미엄', '베스트', '스탠다드')",
             },
         },
         required: ["grade"],

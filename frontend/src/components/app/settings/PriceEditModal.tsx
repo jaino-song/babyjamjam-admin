@@ -45,9 +45,11 @@ export function PriceEditModal({
   // item이 변경되면 폼 값 초기화
   useEffect(() => {
     if (item) {
-      setFullPrice(String(parsePrice(item.fullPrice)));
-      setGrant(String(parsePrice(item.grant)));
-      setActualPrice(String(parsePrice(item.actualPrice)));
+      queueMicrotask(() => {
+        setFullPrice(String(parsePrice(item.fullPrice)));
+        setGrant(String(parsePrice(item.grant)));
+        setActualPrice(String(parsePrice(item.actualPrice)));
+      });
     }
   }, [item]);
 

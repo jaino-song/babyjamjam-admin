@@ -3,6 +3,8 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
+import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
+import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { Employee, employeeQueryKeys } from "./useEmployees";
 
 const INITIAL_VISIBLE_COUNT = 6;
@@ -18,9 +20,15 @@ export function useInfiniteEmployees({
   search = "",
 }: UseInfiniteEmployeesOptions = {}) {
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
+  const normalizePhoneDigits = useCallback((value: string) => value.replace(/\D/g, ""), []);
 
   useEffect(() => {
-    setVisibleCount(INITIAL_VISIBLE_COUNT);
+    const resetKey = `${filter}:${search}`;
+
+    queueMicrotask(() => {
+      void resetKey;
+      setVisibleCount(INITIAL_VISIBLE_COUNT);
+    });
   }, [filter, search]);
 
   const query = useQuery<Employee[]>({
@@ -43,17 +51,25 @@ export function useInfiniteEmployees({
     }
 
     if (search.trim()) {
-      const q = search.toLowerCase();
+      const query = search.trim();
+      const lowerQuery = query.toLowerCase();
+      const phoneQuery = normalizePhoneDigits(query);
+
       list = list.filter(
-        (e) =>
-          e.name.toLowerCase().includes(q) ||
-          e.phone.includes(q) ||
-          e.workArea.some((a) => a.toLowerCase().includes(q))
+        (employee) =>
+          matchesKoreanSearch(employee.name, query) ||
+          (phoneQuery.length > 0 && normalizePhoneDigits(employee.phone).includes(phoneQuery)) ||
+          employee.workArea.some((area) => {
+            const formattedArea = formatWorkAreaLabel(area).toLowerCase();
+            const rawArea = area.toLowerCase();
+
+            return rawArea.includes(lowerQuery) || formattedArea.includes(lowerQuery);
+          })
       );
     }
 
     return list;
-  }, [query.data, filter, search]);
+  }, [query.data, filter, normalizePhoneDigits, search]);
 
   const employees = useMemo(() => {
     return allFilteredEmployees.slice(0, visibleCount);

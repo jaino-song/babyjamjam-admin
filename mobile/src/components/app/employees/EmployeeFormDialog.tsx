@@ -40,6 +40,7 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DEFAULT_EMPLOYEE_GRADE, EMPLOYEE_GRADES, normalizeEmployeeGrade } from "@/features/employees/grade";
 
 interface EmployeeFormDialogProps {
     open: boolean;
@@ -49,7 +50,7 @@ interface EmployeeFormDialogProps {
 }
 
 const WORK_AREAS = ["인천 연수구", "인천 남동구", "인천 부평구", "인천 계양구", "인천 미추홀구", "인천 서구"];
-const GRADES = ["1급", "2급", "3급"];
+const GRADES = EMPLOYEE_GRADES;
 
 interface FormData {
     name: string;
@@ -63,7 +64,7 @@ const initialFormData: FormData = {
     name: "",
     workArea: [],
     phone: "",
-    grade: "3급", // Default to 3급
+    grade: DEFAULT_EMPLOYEE_GRADE,
     openToNextWork: true,
 };
 
@@ -96,24 +97,37 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
     const isFormValid = formData.name.trim() && isPhoneValid && isWorkAreaValid;
 
     useEffect(() => {
-        if (employee) {
-            setFormData({
+        if (!open) {
+            return;
+        }
+
+        let cancelled = false;
+        const nextFormData = employee
+            ? {
                 name: employee.name,
                 workArea: employee.workArea,
                 phone: employee.phone,
-                grade: employee.grade,
+                grade: normalizeEmployeeGrade(employee.grade),
                 openToNextWork: employee.openToNextWork,
-            });
-        } else {
-            // In create mode, use prefillName from store if available
-            setFormData({
+            }
+            : {
                 ...initialFormData,
                 name: prefillName || "",
-            });
-        }
-        // Reset touched state and error when dialog opens
-        setTouched({ phone: false, workArea: false });
-        setError(null);
+            };
+
+        queueMicrotask(() => {
+            if (cancelled) {
+                return;
+            }
+
+            setFormData(nextFormData);
+            setTouched({ phone: false, workArea: false });
+            setError(null);
+        });
+
+        return () => {
+            cancelled = true;
+        };
     }, [employee, open, prefillName]);
 
     const handleChange = <K extends keyof FormData>(field: K, value: FormData[K]) => {

@@ -68,11 +68,13 @@ export function EmployeeAutocomplete({
     const showDropdown = isFocused && inputValue.trim().length > 0;
 
     useEffect(() => {
-        if (selectedEmployee) {
-            setInputValue(selectedEmployee.name);
-        } else if (value === null || value === undefined) {
-            setInputValue("");
-        }
+        queueMicrotask(() => {
+            if (selectedEmployee) {
+                setInputValue(selectedEmployee.name);
+            } else if (value === null || value === undefined) {
+                setInputValue("");
+            }
+        });
     }, [selectedEmployee, value]);
 
     useEffect(() => {
@@ -86,7 +88,11 @@ export function EmployeeAutocomplete({
     }, []);
 
     useEffect(() => {
-        setHighlightedIndex(-1);
+        const nextOptionsCount = filteredEmployees.length;
+        queueMicrotask(() => {
+            void nextOptionsCount;
+            setHighlightedIndex(-1);
+        });
     }, [filteredEmployees]);
 
     const handleSelect = (employee: Employee) => {
@@ -194,9 +200,10 @@ export function EmployeeAutocomplete({
                                 {t(locale, "clients.form.no-employee-found")}
                             </div>
                         ) : (
-                            <div className="max-h-[200px] overflow-y-auto py-1">
-                                {filteredEmployees.map((employee, index) => (
-                                    <div
+                                <div className="max-h-[200px] overflow-y-auto py-1">
+                                    {filteredEmployees.map((employee, index) => (
+                                    <button
+                                        type="button"
                                         key={employee.id}
                                         onMouseDown={(e) => {
                                             e.preventDefault();
@@ -204,7 +211,7 @@ export function EmployeeAutocomplete({
                                         }}
                                         onMouseEnter={() => setHighlightedIndex(index)}
                                         className={cn(
-                                            "flex flex-col items-start gap-1 px-3 py-2 cursor-pointer transition-colors",
+                                            "flex w-full flex-col items-start gap-1 px-3 py-2 text-left cursor-pointer transition-colors",
                                             highlightedIndex === index && "bg-accent",
                                             selectedEmployee?.id === employee.id && "bg-accent/50"
                                         )}
@@ -221,7 +228,7 @@ export function EmployeeAutocomplete({
                                         <span className="text-xs text-muted-foreground ml-6">
                                             {employee.workArea.join(", ")} · {employee.phone}
                                         </span>
-                                    </div>
+                                    </button>
                                 ))}
                             </div>
                         )}
@@ -229,14 +236,15 @@ export function EmployeeAutocomplete({
                         {allowManualEntry && (
                             <>
                                 <div className="h-px bg-border" />
-                                <div
+                                <button
+                                    type="button"
                                     onMouseDown={(e) => {
                                         e.preventDefault();
                                         handleManualEntry();
                                     }}
                                     onMouseEnter={() => setHighlightedIndex(filteredEmployees.length)}
                                     className={cn(
-                                        "flex flex-col w-full py-3 px-3 cursor-pointer transition-colors",
+                                        "flex w-full flex-col py-3 px-3 text-left cursor-pointer transition-colors",
                                         highlightedIndex === filteredEmployees.length && "bg-accent"
                                     )}
                                     data-testid="employee-autocomplete-add-button"
@@ -250,7 +258,7 @@ export function EmployeeAutocomplete({
                                     <span className="text-xs text-muted-foreground mt-1 ml-6">
                                         {t(locale, "contract-msg.employee-manual-entry-description")}
                                     </span>
-                                </div>
+                                </button>
                             </>
                         )}
                     </div>

@@ -35,21 +35,23 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
 
     useEffect(() => {
         const keys = extractVariables(content);
-        setDetectedKeys(keys);
+        queueMicrotask(() => {
+            setDetectedKeys(keys);
 
-        setVariables(prev => {
-            const existingKeys = new Set(prev.map(v => v.key));
-            const newVars = keys
-                .filter(key => !existingKeys.has(key))
-                .map(key => ({
-                    key,
-                    label: key,
-                    type: "text" as const,
-                    required: true
-                }));
+            setVariables(prev => {
+                const existingKeys = new Set(prev.map(v => v.key));
+                const newVars = keys
+                    .filter(key => !existingKeys.has(key))
+                    .map(key => ({
+                        key,
+                        label: key,
+                        type: "text" as const,
+                        required: true
+                    }));
 
-            const filtered = prev.filter(v => keys.includes(v.key));
-            return [...filtered, ...newVars];
+                const filtered = prev.filter(v => keys.includes(v.key));
+                return [...filtered, ...newVars];
+            });
         });
     }, [content]);
 

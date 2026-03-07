@@ -102,7 +102,6 @@ export function NotificationBell({ className }: { className?: string }) {
     const router = useRouter();
     const [isOpen, setIsOpen] = useState(false);
     const [subscribeLoading, setSubscribeLoading] = useState(false);
-    const [mounted, setMounted] = useState(false);
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogFilterType, setDialogFilterType] = useState<FilterType | null>(null);
@@ -121,11 +120,6 @@ export function NotificationBell({ className }: { className?: string }) {
     const { data: unreadCount = 0 } = useUnreadCount(isSubscribed);
     const { data: notificationsData, isLoading: notificationsLoading } = useNotifications(10, 0, isSubscribed);
     const notifications = Array.isArray(notificationsData) ? notificationsData : [];
-
-    // Track client-side mount for hydration-safe rendering
-    useEffect(() => {
-        setMounted(true);
-    }, []);
 
     // Lock body scroll when modal is open
     useEffect(() => {
@@ -300,12 +294,13 @@ export function NotificationBell({ className }: { className?: string }) {
                                     </span>
                                 </div>
                                 {group.notifications.map((notification) => (
-                                    <div
+                                    <button
+                                        type="button"
                                         key={notification.id}
                                         onClick={() => handleNotificationClick(notification)}
                                         data-testid={notification.isRead ? 'notification-item' : 'notification-item-unread'}
                                         className={`
-                                            px-4 py-3 cursor-pointer border-b transition-colors
+                                            w-full px-4 py-3 cursor-pointer border-b transition-colors text-left
                                             ${notification.isRead ? 'bg-transparent' : 'bg-accent'}
                                             hover:bg-accent/80
                                         `}
@@ -321,7 +316,7 @@ export function NotificationBell({ className }: { className?: string }) {
                                         <p className="text-xs text-muted-foreground truncate mt-1">
                                             {notification.body}
                                         </p>
-                                    </div>
+                                    </button>
                                 ))}
                             </div>
                         ))}
@@ -335,8 +330,10 @@ export function NotificationBell({ className }: { className?: string }) {
 
     return (
         <>
-            {mounted && createPortal(
-                <div 
+            {isOpen && typeof document !== "undefined" && createPortal(
+                <button
+                    type="button"
+                    aria-label="닫기"
                     className={`fixed inset-0 top-16 bg-black/30 backdrop-blur-[4px] z-40 sm:hidden transition-all duration-300 ${isOpen ? 'opacity-100 visible' : 'opacity-0 invisible'}`}
                     onClick={() => setIsOpen(false)}
                 />,

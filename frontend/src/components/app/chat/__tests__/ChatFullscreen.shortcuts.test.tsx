@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import React from "react";
+import { ChatFullscreen } from "../ChatFullscreen";
 
 const mockSendMessage = jest.fn();
 
@@ -40,7 +41,6 @@ describe("ChatFullscreen shortcut chips", () => {
     });
 
     test("renders shortcut chips above input", () => {
-        const { ChatFullscreen } = require("../ChatFullscreen");
         render(<ChatFullscreen open onClose={jest.fn()} />);
 
         expect(screen.getByText("산모 등록")).toBeInTheDocument();
@@ -49,7 +49,6 @@ describe("ChatFullscreen shortcut chips", () => {
     });
 
     test("clicking chips sends the chip label as message", () => {
-        const { ChatFullscreen } = require("../ChatFullscreen");
         render(<ChatFullscreen open onClose={jest.fn()} />);
 
         fireEvent.click(screen.getByText("산모 등록"));
