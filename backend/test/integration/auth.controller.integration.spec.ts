@@ -22,6 +22,7 @@ describe("AuthController (Integration)", () => {
         email: "test@example.com",
         profileImage: "https://example.com/profile.jpg",
         role: "user",
+        organizationName: null,
     };
 
     const mockTokens = {
@@ -229,7 +230,7 @@ describe("AuthController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(response.body).toEqual({});
+                expect(response.body).toEqual({ organizationName: null });
             });
         });
 
