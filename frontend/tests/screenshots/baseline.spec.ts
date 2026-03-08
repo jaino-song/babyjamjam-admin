@@ -1,9 +1,9 @@
 import { test as base } from '@playwright/test';
 
 const test = base.extend({
-  storageState: async ({}, use) => {
+  storageState: async (_args, runStorageState) => {
     // Override storageState to empty since auth.json doesn't exist
-    await use(undefined);
+    await runStorageState(undefined);
   }
 });
 

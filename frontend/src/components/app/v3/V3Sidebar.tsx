@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -19,6 +20,8 @@ import {
 import { useInitialUser } from "@/providers/UserProvider";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
 
 interface NavItem {
   label: string;
@@ -37,7 +40,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "메인",
     items: [
       { label: "대시보드", href: "/dashboard", icon: LayoutDashboard },
-      { label: "서비스 일정", href: "/schedule", icon: Calendar },
+      // { label: "서비스 일정", href: "/schedule", icon: Calendar },
     ],
   },
   {
@@ -45,7 +48,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "고객", href: "/clients", icon: Users },
       { label: "직원", href: "/employees", icon: UserCheck },
-      { label: "통계", href: "/analytics", icon: BarChart3 },
+      // { label: "통계", href: "/analytics", icon: BarChart3 },
     ],
   },
   {
@@ -74,6 +77,7 @@ const NAV_SECTIONS: NavSection[] = [
 export const V3Sidebar = () => {
   const pathname = usePathname();
   const user = useInitialUser();
+  const locale = useLocale();
 
   const getNavItemName = (href: string) => {
     const segment = href.split("/").filter(Boolean).pop() || "";
@@ -101,11 +105,11 @@ export const V3Sidebar = () => {
       data-component="sidebar"
     >
       <div className="flex items-center gap-3 px-6 pt-8 pb-6" data-component="sidebar-brand">
-        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-v3-primary shrink-0 shadow-sm">
-          <LayoutDashboard className="w-6 h-6 text-white" strokeWidth={2} />
+        <div className="flex items-center justify-center w-12 h-12 rounded-xl shrink-0 shadow-sm overflow-hidden">
+          <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={48} height={48} className="w-full h-full object-cover" />
         </div>
-        <span className="text-xl font-bold text-gray-900 tracking-tight">
-          케어허브
+        <span className="text-xl font-bold text-v3-primary tracking-tight">
+          아가잼잼
         </span>
       </div>
 
@@ -163,7 +167,7 @@ export const V3Sidebar = () => {
               {user?.name || "GUEST"}
             </span>
             <span className="text-[0.7rem] text-v3-text-muted truncate">
-              {user?.role || "Viewer"}
+              {user?.role ? t(locale, `roles.${user.role}`) || t(locale, "roles.unknown") : t(locale, "roles.unknown")}
             </span>
           </div>
         </div>

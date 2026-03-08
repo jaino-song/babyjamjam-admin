@@ -2,13 +2,17 @@
   "name": "imirae-incheon-back-office",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "magi": "./bin/magi"
+  },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "jest"
+    "test": "jest",
+    "magi": "node ./bin/magi"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",
@@ -54,6 +58,8 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@openai/agents": "^0.5.4",
+    "@openai/codex-sdk": "^0.111.0",
     "@playwright/test": "^1.56.1",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.6.3",

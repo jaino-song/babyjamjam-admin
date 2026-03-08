@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
 
 const MOCK_AUTH_RESPONSE = {
   id: 'test-user',
@@ -8,12 +8,12 @@ const MOCK_AUTH_RESPONSE = {
   role: 'admin',
 };
 
-const setupAuthMocks = async (page: any) => {
+const setupAuthMocks = async (page: Page) => {
   await page.addInitScript(() => {
     (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
   });
 
-  await page.route('**/api/auth/me', async (route: any) => {
+  await page.route('**/api/auth/me', async (route: Route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -21,7 +21,7 @@ const setupAuthMocks = async (page: any) => {
     });
   });
 
-  await page.route('**/auth/me', async (route: any) => {
+  await page.route('**/auth/me', async (route: Route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

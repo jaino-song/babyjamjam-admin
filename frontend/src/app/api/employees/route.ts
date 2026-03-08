@@ -1,12 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { AxiosError } from "axios";
+import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
+type BackendErrorPayload = {
+    message?: string;
+    error?: string;
+} & Record<string, unknown>;
 
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
+function employeeMutationErrorResponse(error: unknown, fallbackMessage: string) {
+    const axiosError = error as AxiosError<BackendErrorPayload>;
+    console.error("[API] Employee mutation error:", axiosError.response?.data || axiosError.message);
+
+    if (axiosError.response?.data) {
+        return NextResponse.json(axiosError.response.data, { status: axiosError.response.status || 500 });
+    }
+
+    return NextResponse.json(
+        { message: axiosError.message || fallbackMessage, error: "Internal Server Error" },
+        { status: 500 }
+    );
 }
 
 // GET /api/employees - Get all employees
@@ -32,11 +45,7 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error("[API] Error fetching employees:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch employees" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch employees");
     }
 }
 
@@ -61,16 +70,8 @@ export async function POST(request: NextRequest) {
         }
 
         return NextResponse.json(response.data, { status: 201 });
-    } catch (error: any) {
-        console.error("[API] Error creating employee:", error.response?.data || error.message);
-        // Pass through actual backend error response or create error object
-        if (error.response?.data) {
-            return NextResponse.json(error.response.data, { status: error.response.status || 500 });
-        }
-        return NextResponse.json(
-            { message: error.message || "Failed to create employee", error: "Internal Server Error" },
-            { status: 500 }
-        );
+    } catch (error) {
+        return employeeMutationErrorResponse(error, "Failed to create employee");
     }
 }
 
@@ -105,15 +106,8 @@ export async function PATCH(request: NextRequest) {
         }
 
         return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[API] Error updating employee:", error.response?.data || error.message);
-        if (error.response?.data) {
-            return NextResponse.json(error.response.data, { status: error.response.status || 500 });
-        }
-        return NextResponse.json(
-            { message: error.message || "Failed to update employee", error: "Internal Server Error" },
-            { status: 500 }
-        );
+    } catch (error) {
+        return employeeMutationErrorResponse(error, "Failed to update employee");
     }
 }
 
@@ -151,10 +145,6 @@ export async function DELETE(request: NextRequest) {
 
         return NextResponse.json({ success: true });
     } catch (error) {
-        console.error("[API] Error deleting employee:", error);
-        return NextResponse.json(
-            { error: "Failed to delete employee" },
-            { status: 500 }
-        );
+        return errorResponse(error, "delete employee");
     }
 }

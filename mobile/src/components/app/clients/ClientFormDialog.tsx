@@ -15,7 +15,7 @@ import {
 } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
-import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
+import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
 import {

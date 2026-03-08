@@ -1,4 +1,6 @@
-import { IsArray, IsBoolean, IsDateString, IsOptional, IsString } from "class-validator";
+import { Transform } from "class-transformer";
+import { IsArray, IsBoolean, IsDateString, IsIn, IsOptional, IsString } from "class-validator";
+import { EMPLOYEE_GRADES, normalizeEmployeeGrade } from "domain/constants/employee-grade.constants";
 
 export class CreateEmployeeDto {
     @IsString()
@@ -12,6 +14,8 @@ export class CreateEmployeeDto {
     phone!: string;
 
     @IsString()
+    @Transform(({ value }) => typeof value === "string" ? normalizeEmployeeGrade(value) : value)
+    @IsIn(EMPLOYEE_GRADES)
     grade!: string;
 
     @IsBoolean()
@@ -38,6 +42,8 @@ export class UpdateEmployeeDto {
 
     @IsOptional()
     @IsString()
+    @Transform(({ value }) => typeof value === "string" ? normalizeEmployeeGrade(value) : value)
+    @IsIn(EMPLOYEE_GRADES)
     grade?: string;
 
     @IsOptional()
@@ -57,4 +63,3 @@ export class EmployeesByRegisteredRangeDto {
     @IsDateString()
     endDate!: string;
 }
-

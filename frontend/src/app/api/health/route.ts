@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 
 export async function GET() {
-    const results: any = {
+    const results: Record<string, unknown> = {
         timestamp: new Date().toISOString(),
         environment: process.env.NODE_ENV,
         backendURL: serverAPIClient.defaults.baseURL,
@@ -40,8 +40,9 @@ export async function GET() {
                 responseTime: `${duration}ms`,
             }
         });
-    } catch (error: any) {
-        console.error("[Health Check] Backend unreachable:", error.message);
+    } catch (error) {
+        const healthError = error as { message?: string; code?: string };
+        console.error("[Health Check] Backend unreachable:", healthError.message);
 
         return NextResponse.json({
             ...results,
@@ -49,8 +50,8 @@ export async function GET() {
             message: "Backend unreachable",
             backend: {
                 reachable: false,
-                error: error.message,
-                code: error.code,
+                error: healthError.message,
+                code: healthError.code,
             }
         }, { status: 503 });
     }

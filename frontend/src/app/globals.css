@@ -705,8 +705,7 @@ body {
 
 /* Focus visible styles */
 *:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: 2px;
+  outline: none;
 }
 
 /* ========================================
@@ -794,6 +793,10 @@ body {
 
 .hover-border:hover {
   border-color: hsl(var(--primary) / 0.5);
+}
+
+.tab-active-underline {
+  border-bottom-color: hsl(var(--v3-primary)) !important;
 }
 
 /* Icon hover bounce effect */

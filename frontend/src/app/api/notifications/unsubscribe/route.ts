@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
@@ -21,11 +14,7 @@ export async function POST(request: NextRequest) {
             headers: getAuthHeaders(token),
         });
         return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[API] Error unsubscribing from notifications:", error.message);
-        return NextResponse.json(
-            { error: "Failed to unsubscribe from notifications" },
-            { status: error.response?.status || 500 }
-        );
+    } catch (error) {
+        return errorResponse(error, "unsubscribe from notifications");
     }
 }

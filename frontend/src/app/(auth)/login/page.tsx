@@ -7,7 +7,8 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { loginWithEmail } from "./actions";
-import { AuthCard } from "@/components/auth/auth-card";
+import { CardContainer } from "@/components/auth/auth-card";
+import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { Button } from "@/components/ui/button";
@@ -89,7 +90,7 @@ const LoginPage = () => {
                 safeStorageRemoveItem("local", "login:savedEmail");
             }
 
-            const response = await loginWithEmail(result.data.email, result.data.password);
+            const response = await loginWithEmail(result.data.email, result.data.password, autoLogin);
 
             if (response.success) {
                 if (response.requiresOrgSelection) {
@@ -112,11 +113,20 @@ const LoginPage = () => {
     };
 
     return (
-        <AuthCard
+        <CardContainer
+            data-component="auth-login"
+            dataComponents={{
+                container: "auth-login-container",
+                card: "auth-login-card",
+                header: "auth-login-header",
+                title: "auth-login-title",
+                subtitle: "auth-login-subtitle",
+                content: "auth-login-content",
+            }}
+            contentClassName="flex flex-col gap-6"
             title={t(locale, "login.title")}
-            description={t(locale, "login.subtitle")}
+            subtitle={t(locale, "login.subtitle")}
         >
-            <div data-component="login" className="space-y-6">
                 {/* Error Alert */}
                 {serverError && (
                     <Alert
@@ -215,27 +225,21 @@ const LoginPage = () => {
                 {/* OAuth Buttons */}
                 <OAuthButtons disabled={isLoading} />
 
-                <div data-component="login-forgot" className="flex justify-end">
-                    <Link
-                        href="/forgot-password"
-                        className="text-sm text-muted-foreground hover:text-primary transition-colors"
-                    >
-                        비밀번호를 잊으셨나요?
-                    </Link>
-                </div>
+                <AuthInlineLink
+                    dataComponent="login-forgot"
+                    href="/forgot-password"
+                    prefixText="비밀번호를 잊으셨나요?"
+                    linkLabel="비밀번호 찾기"
+                />
 
                 {/* Register Link */}
-                <p className="text-center text-sm text-muted-foreground">
-                    계정이 없으신가요?{" "}
-                    <Link
-                        href="/register"
-                        className="text-primary font-medium hover:underline"
-                    >
-                        회원가입
-                    </Link>
-                </p>
-            </div>
-        </AuthCard>
+                <AuthInlineLink
+                    dataComponent="login-register-link"
+                    href="/register"
+                    prefixText="계정이 없으신가요?"
+                    linkLabel="회원가입"
+                />
+        </CardContainer>
     );
 };
 

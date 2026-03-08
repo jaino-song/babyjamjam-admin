@@ -31,7 +31,7 @@ describe("EmployeeController (Integration)", () => {
             overrides.name ?? "Test Employee",
             overrides.workArea ?? ["Seoul", "Incheon"],
             overrides.phone ?? "010-1234-5678",
-            overrides.grade ?? "A",
+            overrides.grade ?? "프리미엄",
             overrides.openToNextWork ?? true,
             overrides.registeredDate ?? new Date("2025-01-01"),
         );
@@ -103,7 +103,7 @@ describe("EmployeeController (Integration)", () => {
                     name: "New Employee",
                     workArea: ["Seoul"],
                     phone: "010-9999-8888",
-                    grade: "B",
+                    grade: "베스트",
                     openToNextWork: true,
                 };
                 const createdEmployee = createMockEmployee({ id: 5, ...createDto });
@@ -121,7 +121,7 @@ describe("EmployeeController (Integration)", () => {
                     expect.objectContaining({
                         name: "New Employee",
                         workArea: ["Seoul"],
-                        grade: "B",
+                        grade: "베스트",
                     }),
                 );
             });
@@ -134,7 +134,7 @@ describe("EmployeeController (Integration)", () => {
                     name: "Dated Employee",
                     workArea: ["Busan"],
                     phone: "010-1111-2222",
-                    grade: "A",
+                    grade: "프리미엄",
                     openToNextWork: false,
                     registeredDate: "2025-06-15",
                 };
@@ -265,20 +265,20 @@ describe("EmployeeController (Integration)", () => {
         it("should return employees by grade", async () => {
             // Arrange
             const employees = [
-                createMockEmployee({ id: 1, grade: "A" }),
-                createMockEmployee({ id: 2, grade: "A" }),
+                createMockEmployee({ id: 1, grade: "프리미엄" }),
+                createMockEmployee({ id: 2, grade: "프리미엄" }),
             ];
             employeeService.findByGrade.mockResolvedValue(employees);
 
             // Act
             const response = await request(app.getHttpServer())
                 .get("/employees/grade")
-                .query({ grade: "A" });
+                .query({ grade: "프리미엄" });
 
             // Assert
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(2);
-            expect(employeeService.findByGrade).toHaveBeenCalledWith(expect.any(String), "A");
+            expect(employeeService.findByGrade).toHaveBeenCalledWith(expect.any(String), "프리미엄");
         });
     });
 
@@ -457,7 +457,7 @@ describe("EmployeeController (Integration)", () => {
                 // Arrange
                 const updateDto = {
                     name: "Updated Name",
-                    grade: "S",
+                    grade: "스탠다드",
                 };
                 const updatedEmployee = createMockEmployee({ id: 3, ...updateDto });
                 employeeService.update.mockResolvedValue(updatedEmployee);
@@ -475,7 +475,7 @@ describe("EmployeeController (Integration)", () => {
                     3,
                     expect.objectContaining({
                         name: "Updated Name",
-                        grade: "S",
+                        grade: "스탠다드",
                     }),
                 );
             });

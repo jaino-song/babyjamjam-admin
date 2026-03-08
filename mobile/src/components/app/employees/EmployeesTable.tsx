@@ -52,9 +52,9 @@ const getStatusBadge = (status: EmployeeStatus | undefined, locale: Locale) => {
 
 const statusFilterOptions: FilterOption[] = [
     { label: "전체", value: null, color: "default" },
-    { label: "가능", value: "available", color: "success" },
+    { label: "근무 가능", value: "available", color: "success" },
     { label: "근무중", value: "working", color: "warning" },
-    { label: "불가", value: "unavailable", color: "default" },
+    { label: "근무 불가", value: "unavailable", color: "default" },
 ];
 
 export function EmployeesTable() {

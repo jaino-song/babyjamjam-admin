@@ -23,14 +23,14 @@ describe("ListEmployeesByGradeUsecase", () => {
             it("should return employees with matching grade", async () => {
                 // Arrange
                 const employees = [
-                    EmployeeFactory.create({ id: 1, grade: "1급" }),
-                    EmployeeFactory.create({ id: 2, grade: "2급" }),
-                    EmployeeFactory.create({ id: 3, grade: "1급" }),
+                    EmployeeFactory.create({ id: 1, grade: "프리미엄" }),
+                    EmployeeFactory.create({ id: 2, grade: "베스트" }),
+                    EmployeeFactory.create({ id: 3, grade: "프리미엄" }),
                 ];
                 mockRepository.setData(employees);
 
                 // Act
-                const result = await usecase.execute(organizationId, "1급");
+                const result = await usecase.execute(organizationId, "프리미엄");
 
                 // Assert
                 expect(result).toHaveLength(2);
@@ -41,8 +41,8 @@ describe("ListEmployeesByGradeUsecase", () => {
             it("should return empty array when no matching grade", async () => {
                 // Arrange
                 const employees = [
-                    EmployeeFactory.create({ id: 1, grade: "1급" }),
-                    EmployeeFactory.create({ id: 2, grade: "2급" }),
+                    EmployeeFactory.create({ id: 1, grade: "프리미엄" }),
+                    EmployeeFactory.create({ id: 2, grade: "베스트" }),
                 ];
                 mockRepository.setData(employees);
 
@@ -57,7 +57,7 @@ describe("ListEmployeesByGradeUsecase", () => {
                 // Arrange - empty repository
 
                 // Act
-                const result = await usecase.execute(organizationId, "1급");
+                const result = await usecase.execute(organizationId, "프리미엄");
 
                 // Assert
                 expect(result).toEqual([]);
@@ -68,12 +68,12 @@ describe("ListEmployeesByGradeUsecase", () => {
         // Different Grade Types
         // ============================================
         describe("different grade types", () => {
-            it.each(["1급", "2급", "3급", "특급"])("should correctly filter grade %s", async (grade) => {
+            it.each(["프리미엄", "베스트", "스탠다드", "특급"])("should correctly filter grade %s", async (grade) => {
                 // Arrange
                 const employees = [
-                    EmployeeFactory.create({ id: 1, grade: "1급" }),
-                    EmployeeFactory.create({ id: 2, grade: "2급" }),
-                    EmployeeFactory.create({ id: 3, grade: "3급" }),
+                    EmployeeFactory.create({ id: 1, grade: "프리미엄" }),
+                    EmployeeFactory.create({ id: 2, grade: "베스트" }),
+                    EmployeeFactory.create({ id: 3, grade: "스탠다드" }),
                     EmployeeFactory.create({ id: 4, grade: "특급" }),
                 ];
                 mockRepository.setData(employees);
@@ -126,8 +126,8 @@ describe("ListEmployeesByGradeUsecase", () => {
             it("should not perform partial matching", async () => {
                 // Arrange
                 const employees = [
-                    EmployeeFactory.create({ id: 1, grade: "1급" }),
-                    EmployeeFactory.create({ id: 2, grade: "특1급" }),
+                    EmployeeFactory.create({ id: 1, grade: "프리미엄" }),
+                    EmployeeFactory.create({ id: 2, grade: "특프리미엄" }),
                 ];
                 mockRepository.setData(employees);
 

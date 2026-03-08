@@ -76,11 +76,13 @@ export function ClientAutocomplete({
 
     // Sync inputValue when selectedClient changes (e.g., after creating a new client)
     useEffect(() => {
-        if (selectedClient) {
-            setInputValue(selectedClient.name);
-        } else if (value === null) {
-            setInputValue("");
-        }
+        queueMicrotask(() => {
+            if (selectedClient) {
+                setInputValue(selectedClient.name);
+            } else if (value === null) {
+                setInputValue("");
+            }
+        });
     }, [selectedClient, value]);
 
     // Filter clients based on input - Korean IME compatible
@@ -220,8 +222,9 @@ export function ClientAutocomplete({
                         {allowManualEntry && (
                             <>
                                 <CommandSeparator />
-                                <div
-                                    className="flex flex-col w-full py-3 px-3 cursor-pointer hover:bg-accent transition-colors"
+                                <button
+                                    type="button"
+                                    className="flex w-full flex-col py-3 px-3 text-left hover:bg-accent transition-colors"
                                     onClick={handleManualEntry}
                                 >
                                     <div className="flex items-center gap-2">
@@ -233,7 +236,7 @@ export function ClientAutocomplete({
                                     <span className="text-xs text-muted-foreground mt-1">
                                         {t(locale, "contract-msg.manual-entry-description")}
                                     </span>
-                                </div>
+                                </button>
                             </>
                         )}
                     </Command>

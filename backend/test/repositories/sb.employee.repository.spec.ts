@@ -21,7 +21,7 @@ describe("SbEmployeeRepository", () => {
         name: "Alice",
         workArea: ["Incheon"],
         phone: "010-1234-5678",
-        grade: "A",
+        grade: "프리미엄",
         openToNextWork: true,
         companyRegisteredDate: new Date("2024-01-01T00:00:00.000Z"),
         primaryEmployeeSchedules: [],
@@ -45,7 +45,7 @@ describe("SbEmployeeRepository", () => {
             overrides.name ?? "Test Employee",
             overrides.workArea ?? ["Seoul"],
             overrides.phone ?? "010-0000-0000",
-            overrides.grade ?? "B",
+            overrides.grade ?? "베스트",
             overrides.openToNextWork ?? false,
             overrides.registeredDate ?? new Date("2024-02-01T00:00:00.000Z"),
         );
@@ -90,10 +90,11 @@ describe("SbEmployeeRepository", () => {
                     name: "Alice",
                     workArea: ["Incheon"],
                     phone: "010-1234-5678",
-                    grade: "A",
+                    grade: "프리미엄",
                     openToNextWork: true,
                 });
             });
+
         });
 
         describe("given no employee exists with the specified id", () => {
@@ -237,7 +238,7 @@ describe("SbEmployeeRepository", () => {
                     name: "Test Employee",
                     workArea: ["Seoul"],
                     phone: "010-0000-0000",
-                    grade: "B",
+                    grade: "베스트",
                     openToNextWork: false,
                 });
                 // Mock findFirst for ID generation (returns last employee with id: 4)
@@ -258,7 +259,7 @@ describe("SbEmployeeRepository", () => {
                         name: "Test Employee",
                         workArea: ["Seoul"],
                         phone: "010-0000-0000",
-                        grade: "B",
+                        grade: "베스트",
                         openToNextWork: false,
                         companyRegisteredDate: new Date("2024-02-01T00:00:00.000Z"),
                         organizationId: organizationId,
@@ -300,7 +301,7 @@ describe("SbEmployeeRepository", () => {
                     "Charlie",
                     ["Busan"],
                     "010-2222-0000",
-                    "C",
+                    "스탠다드",
                     true,
                     new Date("2023-12-31T00:00:00.000Z"),
                 );
@@ -309,7 +310,7 @@ describe("SbEmployeeRepository", () => {
                     name: "Charlie",
                     workArea: ["Busan"],
                     phone: "010-2222-0000",
-                    grade: "C",
+                    grade: "스탠다드",
                 });
                 employeeModel.update.mockResolvedValue(updatedRow);
 
@@ -323,7 +324,7 @@ describe("SbEmployeeRepository", () => {
                         name: "Charlie",
                         workArea: ["Busan"],
                         phone: "010-2222-0000",
-                        grade: "C",
+                        grade: "스탠다드",
                         openToNextWork: true,
                     },
                 });
@@ -379,17 +380,18 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByGrade(organizationId, "A");
+                await repository.findByGrade(organizationId, "프리미엄");
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { grade: "A", organizationId: organizationId },
+                    where: { grade: "프리미엄", organizationId: organizationId },
                 });
             });
+
         });
 
         describe("given different grades", () => {
-            it.each(["A", "B", "C", "D"])("should filter by grade %s", async (grade) => {
+            it.each(["프리미엄", "베스트", "스탠다드", "D"])("should filter by grade %s", async (grade) => {
                 // Arrange
                 employeeModel.findMany.mockResolvedValue([]);
 

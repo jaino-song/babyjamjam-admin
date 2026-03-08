@@ -1,7 +1,36 @@
 import { api } from "@/lib/api/client";
 import { isAxiosError } from "axios";
-import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 import { EformsignDeleteDocumentsResponse, EformsignDocumentsResponse } from '@/lib/eformsign/types';
+
+export interface ContractDataDto {
+  customerName: string;
+  customerContact: string;
+  customerDOB: string;
+  customerAddress: string;
+  caretaker1Name: string;
+  caretaker1Contact: string;
+  type: string;
+  days: string;
+  area: string;
+  contractDuration: string;
+  startYear: string;
+  startMonth: string;
+  startDay: string;
+  startDate: string;
+  endYear: string;
+  endMonth: string;
+  endDay: string;
+  endDate: string;
+  paymentYear: string;
+  paymentMonth: string;
+  paymentDay: string;
+  receiptYear: string;
+  receiptMonth: string;
+  receiptDay: string;
+  fullPrice: string;
+  grant: string;
+  actualPrice: string;
+}
 import { safeStorageSetItem } from "@/lib/safe-storage";
 
 // Auth API response types

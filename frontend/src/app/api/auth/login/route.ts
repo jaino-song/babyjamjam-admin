@@ -20,7 +20,12 @@ interface APIErrorResponse {
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { data, status } = await serverAPIClient.post("/auth/login", body);
+        const { autoLogin = true, ...loginPayload } = body as {
+            email: string;
+            password: string;
+            autoLogin?: boolean;
+        };
+        const { data, status } = await serverAPIClient.post("/auth/login", loginPayload);
 
         // If login failed, return the response
         if (!data.success || !data.accessToken) {
@@ -41,21 +46,31 @@ export async function POST(request: NextRequest) {
 
         const isPrivileged = ["owner", "admin", "manager"].includes(role);
 
-        cookieStore.set("auth_token", data.accessToken, {
+        const baseCookieOptions = {
             httpOnly: true,
             secure: isSecureCookie,
-            sameSite: "lax",
+            sameSite: "lax" as const,
             path: "/",
-            maxAge: isPrivileged ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-        });
+        };
 
-        cookieStore.set("refresh_token", data.refreshToken, {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-            maxAge: isPrivileged ? 7 * 24 * 60 * 60 : 1 * 24 * 60 * 60,
-        });
+        if (autoLogin) {
+            cookieStore.set("auth_token", data.accessToken, {
+                ...baseCookieOptions,
+                maxAge: isPrivileged ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
+            });
+            cookieStore.set("refresh_token", data.refreshToken, {
+                ...baseCookieOptions,
+                maxAge: isPrivileged ? 7 * 24 * 60 * 60 : 1 * 24 * 60 * 60,
+            });
+            cookieStore.set("auto_login", "1", {
+                ...baseCookieOptions,
+                maxAge: 30 * 24 * 60 * 60,
+            });
+        } else {
+            cookieStore.set("auth_token", data.accessToken, baseCookieOptions);
+            cookieStore.set("refresh_token", data.refreshToken, baseCookieOptions);
+            cookieStore.set("auto_login", "0", baseCookieOptions);
+        }
 
         return NextResponse.json({
             success: true,

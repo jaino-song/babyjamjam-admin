@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>인천 아이미래로 - 소개</title>
+  <style>
+    /* ============================================
+       DESIGN TOKENS
+       ============================================ */
+    :root {
+      --color-primary-50: #FFF5F5; --color-primary-100: #FFE0E6; --color-primary-200: #FFC2CC;
+      --color-primary-300: #FFA3B3; --color-primary-400: #FF8599; --color-primary-500: #E8637A;
+      --color-primary-600: #D14D64; --color-primary-700: #B3384E; --color-primary-800: #8C2339;
+      --color-secondary-50: #F2F8F4; --color-secondary-100: #E0F0E5; --color-secondary-200: #C1E1CB;
+      --color-secondary-300: #A3D2B1; --color-secondary-500: #6BAD80; --color-secondary-600: #559468;
+      --color-secondary-700: #3F7A50;
+      --color-accent-50: #FFFBF0; --color-accent-100: #FFF3D6; --color-accent-500: #F0B840;
+      --color-accent-700: #B38318;
+      --color-neutral-0: #FFFFFF; --color-neutral-50: #FDFCFB; --color-neutral-100: #F7F5F3;
+      --color-neutral-200: #EDE9E5; --color-neutral-300: #DDD7D1; --color-neutral-400: #B8AFA7;
+      --color-neutral-500: #93897E; --color-neutral-600: #6E6559; --color-neutral-700: #4A4238;
+      --color-neutral-800: #332C24; --color-neutral-900: #1C1814;
+      --color-bg-primary: #FDFCFB; --color-bg-secondary: #FFF5F5; --color-bg-cream: #FFF9F0;
+      --color-bg-card: #FFFFFF;
+      --font-heading: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      --font-body: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      --text-xs: 0.75rem; --text-sm: 0.875rem; --text-base: 1rem; --text-lg: 1.125rem;
+      --text-xl: 1.25rem; --text-2xl: 1.5rem; --text-3xl: 1.875rem; --text-4xl: 2.25rem;
+      --text-5xl: 3rem;
+      --font-regular: 400; --font-medium: 500; --font-semibold: 600; --font-bold: 700;
+      --leading-tight: 1.25; --leading-snug: 1.375; --leading-normal: 1.5; --leading-relaxed: 1.625;
+      --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem;
+      --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-10: 2.5rem;
+      --space-12: 3rem; --space-16: 4rem; --space-20: 5rem; --space-24: 6rem;
+      --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px; --radius-xl: 24px; --radius-full: 9999px;
+      --shadow-sm: 0 1px 2px rgba(28,24,20,0.05); --shadow-md: 0 4px 12px rgba(28,24,20,0.08);
+      --shadow-lg: 0 8px 24px rgba(28,24,20,0.12); --shadow-xl: 0 16px 48px rgba(28,24,20,0.16);
+      --ease-default: cubic-bezier(0.4,0,0.2,1); --ease-out: cubic-bezier(0,0,0.2,1);
+      --duration-fast: 150ms; --duration-normal: 300ms; --duration-slow: 500ms;
+    }
+
+    @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+    @keyframes fadeInUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes skeletonPulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important}}
+
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{font-family:var(--font-body);font-size:var(--text-base);line-height:var(--leading-normal);color:var(--color-neutral-800);background:var(--color-bg-primary);-webkit-font-smoothing:antialiased}
+    a{color:inherit;text-decoration:none} img{max-width:100%;height:auto;display:block} ul{list-style:none}
+    button{font-family:inherit;cursor:pointer;border:none;background:none}
+    .container{max-width:1200px;margin:0 auto;padding:0 var(--space-6)}
+    .section{padding:var(--space-20) 0}
+    .skip-link{position:absolute;top:-100%;left:var(--space-4);padding:var(--space-2) var(--space-4);background:var(--color-primary-500);color:white;border-radius:var(--radius-md);z-index:1000;font-size:var(--text-sm)}
+    .skip-link:focus{top:var(--space-4)}
+
+    /* NAV */
+    [data-component="nav"]{position:fixed;top:0;left:0;right:0;height:72px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:1px solid var(--color-neutral-200);z-index:100;animation:fadeIn var(--duration-normal) var(--ease-out)}
+    [data-component="nav-container"]{max-width:1200px;margin:0 auto;padding:0 var(--space-6);height:100%;display:flex;align-items:center;justify-content:space-between}
+    [data-component="nav-logo"]{font-size:var(--text-xl);font-weight:var(--font-bold);color:var(--color-primary-600);display:flex;align-items:center;gap:var(--space-2)}
+    [data-component="nav-logo"] .logo-icon{width:36px;height:36px;background:var(--color-primary-500);border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;color:white;font-size:var(--text-lg)}
+    [data-component="nav-links"]{display:flex;gap:var(--space-1)}
+    [data-component="nav-links-item"] a{display:block;padding:var(--space-2) var(--space-4);font-size:var(--text-base);font-weight:var(--font-medium);color:var(--color-neutral-600);border-radius:var(--radius-md);transition:all var(--duration-fast) var(--ease-default)}
+    [data-component="nav-links-item"] a:hover{color:var(--color-primary-500);background:var(--color-primary-50)}
+    [data-component="nav-links-item"].active a{color:var(--color-primary-600);background:var(--color-primary-50)}
+    [data-component="nav-cta"]{background:var(--color-primary-500);color:white;padding:10px 20px;border-radius:var(--radius-md);font-size:var(--text-sm);font-weight:var(--font-semibold);transition:all var(--duration-fast) var(--ease-default)}
+    [data-component="nav-cta"]:hover{background:var(--color-primary-600);transform:translateY(-1px);box-shadow:var(--shadow-md)}
+    [data-component="nav-mobile-toggle"]{display:none;width:44px;height:44px;align-items:center;justify-content:center;border-radius:var(--radius-md);color:var(--color-neutral-700)}
+
+    /* BUTTONS */
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);font-weight:var(--font-semibold);border-radius:var(--radius-md);transition:all var(--duration-fast) var(--ease-default);white-space:nowrap}
+    .btn-primary{background:var(--color-primary-500);color:white;padding:12px 24px;font-size:var(--text-base)}
+    .btn-primary:hover{background:var(--color-primary-600);transform:translateY(-1px);box-shadow:var(--shadow-md)}
+    .btn-outline{background:transparent;color:var(--color-primary-500);border:2px solid var(--color-primary-500);padding:10px 22px;font-size:var(--text-base)}
+    .btn-outline:hover{background:var(--color-primary-50)}
+    .btn-lg{padding:16px 32px;font-size:var(--text-lg)}
+    .badge{display:inline-flex;align-items:center;padding:4px 12px;border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:var(--font-medium)}
+    .badge-primary{background:var(--color-primary-100);color:var(--color-primary-700)}
+    .badge-secondary{background:var(--color-secondary-100);color:var(--color-secondary-700)}
+
+    /* PAGE HEADER */
+    .page-header{padding-top:calc(72px + var(--space-16));padding-bottom:var(--space-16);background:linear-gradient(135deg,var(--color-bg-secondary) 0%,var(--color-bg-cream) 100%);text-align:center;animation:fadeIn var(--duration-normal) var(--ease-out)}
+    .page-header-badge{margin-bottom:var(--space-4)}
+    .page-header-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .page-header-desc{font-size:var(--text-lg);color:var(--color-neutral-600);max-width:600px;margin:0 auto;line-height:var(--leading-relaxed)}
+
+    /* PHILOSOPHY SECTION */
+    [data-component="philosophy"]{padding:var(--space-20) 0;background:var(--color-neutral-0)}
+    [data-component="philosophy-content"]{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-16);align-items:center}
+    .philosophy-visual{display:flex;justify-content:center;align-items:center;animation:fadeIn var(--duration-slow) var(--ease-out)}
+    .philosophy-image{width:100%;max-width:440px;aspect-ratio:4/3;background:linear-gradient(135deg,var(--color-primary-100),var(--color-secondary-100));border-radius:var(--radius-xl);display:flex;align-items:center;justify-content:center;font-size:80px;position:relative;overflow:hidden}
+    .philosophy-image::after{content:'';position:absolute;bottom:0;left:0;right:0;height:40%;background:linear-gradient(to top,var(--color-primary-100),transparent);opacity:0.5}
+    .philosophy-text{animation:fadeInUp var(--duration-slow) var(--ease-out)}
+    .philosophy-text h2{font-family:var(--font-heading);font-size:var(--text-3xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-6);line-height:var(--leading-tight)}
+    .philosophy-text p{font-size:var(--text-base);color:var(--color-neutral-600);line-height:var(--leading-relaxed);margin-bottom:var(--space-4)}
+
+    /* CEO QUOTE */
+    [data-component="ceo-quote"]{padding:var(--space-16) 0;background:var(--color-bg-cream)}
+    .quote-container{max-width:800px;margin:0 auto;text-align:center;animation:fadeInUp var(--duration-normal) var(--ease-out)}
+    .quote-mark{font-size:var(--text-5xl);color:var(--color-primary-300);line-height:1;margin-bottom:var(--space-4)}
+    .quote-text{font-size:var(--text-2xl);font-weight:var(--font-medium);color:var(--color-neutral-800);line-height:var(--leading-relaxed);margin-bottom:var(--space-6);font-style:italic}
+    .quote-author{display:flex;align-items:center;justify-content:center;gap:var(--space-3)}
+    .quote-avatar{width:56px;height:56px;border-radius:var(--radius-full);background:var(--color-primary-100);display:flex;align-items:center;justify-content:center;font-size:24px}
+    .quote-info{text-align:left}
+    .quote-name{font-size:var(--text-base);font-weight:var(--font-semibold);color:var(--color-neutral-800)}
+    .quote-role{font-size:var(--text-sm);color:var(--color-neutral-500)}
+
+    /* STATS */
+    [data-component="stats"]{padding:var(--space-16) 0;background:var(--color-primary-500);color:white}
+    [data-component="stats-grid"]{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-8);text-align:center}
+    [data-component="stats-grid-stat"]{animation:fadeInUp var(--duration-normal) var(--ease-out);animation-fill-mode:both}
+    [data-component="stats-grid-stat"]:nth-child(1){animation-delay:0ms}
+    [data-component="stats-grid-stat"]:nth-child(2){animation-delay:100ms}
+    [data-component="stats-grid-stat"]:nth-child(3){animation-delay:200ms}
+    [data-component="stats-grid-stat"]:nth-child(4){animation-delay:300ms}
+    .stat-value{font-size:var(--text-5xl);font-weight:var(--font-bold);line-height:1;margin-bottom:var(--space-2)}
+    .stat-label{font-size:var(--text-base);opacity:0.9}
+
+    /* CERTIFICATIONS */
+    [data-component="certifications"]{padding:var(--space-20) 0;background:var(--color-bg-primary)}
+    .section-header{text-align:center;margin-bottom:var(--space-12);animation:fadeInUp var(--duration-normal) var(--ease-out)}
+    .section-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .section-subtitle{font-size:var(--text-lg);color:var(--color-neutral-500);max-width:600px;margin:0 auto;line-height:var(--leading-relaxed)}
+    .cert-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-6)}
+    .cert-card{background:var(--color-bg-card);border:1px solid var(--color-neutral-200);border-radius:var(--radius-md);padding:var(--space-8);text-align:center;transition:all var(--duration-normal) var(--ease-default);animation:fadeInUp var(--duration-normal) var(--ease-out);animation-fill-mode:both}
+    .cert-card:nth-child(1){animation-delay:0ms}
+    .cert-card:nth-child(2){animation-delay:100ms}
+    .cert-card:nth-child(3){animation-delay:200ms}
+    .cert-card:nth-child(4){animation-delay:300ms}
+    .cert-card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg)}
+    .cert-icon{font-size:48px;margin-bottom:var(--space-4)}
+    .cert-name{font-size:var(--text-base);font-weight:var(--font-semibold);color:var(--color-neutral-800);margin-bottom:var(--space-2)}
+    .cert-desc{font-size:var(--text-sm);color:var(--color-neutral-500)}
+
+    /* VALUES */
+    [data-component="values"]{padding:var(--space-20) 0;background:var(--color-secondary-50)}
+    .values-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-6)}
+    .value-card{background:white;border-radius:var(--radius-md);padding:var(--space-8);text-align:center;box-shadow:var(--shadow-sm);animation:fadeInUp var(--duration-normal) var(--ease-out);animation-fill-mode:both}
+    .value-card:nth-child(1){animation-delay:0ms}
+    .value-card:nth-child(2){animation-delay:100ms}
+    .value-card:nth-child(3){animation-delay:200ms}
+    .value-icon{width:64px;height:64px;margin:0 auto var(--space-4);border-radius:var(--radius-full);display:flex;align-items:center;justify-content:center;font-size:28px}
+    .value-title{font-size:var(--text-xl);font-weight:var(--font-semibold);color:var(--color-neutral-800);margin-bottom:var(--space-3)}
+    .value-desc{font-size:var(--text-sm);color:var(--color-neutral-500);line-height:var(--leading-relaxed)}
+
+    /* TIMELINE */
+    [data-component="timeline"]{padding:var(--space-20) 0;background:var(--color-neutral-0)}
+    .timeline{max-width:700px;margin:0 auto;position:relative}
+    .timeline::before{content:'';position:absolute;left:20px;top:0;bottom:0;width:2px;background:var(--color-primary-200)}
+    .timeline-item{display:flex;gap:var(--space-6);margin-bottom:var(--space-8);position:relative;animation:fadeInUp var(--duration-normal) var(--ease-out);animation-fill-mode:both}
+    .timeline-item:nth-child(1){animation-delay:0ms}
+    .timeline-item:nth-child(2){animation-delay:100ms}
+    .timeline-item:nth-child(3){animation-delay:200ms}
+    .timeline-item:nth-child(4){animation-delay:300ms}
+    .timeline-item:nth-child(5){animation-delay:400ms}
+    .timeline-dot{width:42px;height:42px;border-radius:var(--radius-full);background:var(--color-primary-500);display:flex;align-items:center;justify-content:center;color:white;font-weight:var(--font-bold);font-size:var(--text-sm);flex-shrink:0;z-index:1}
+    .timeline-content{padding-top:var(--space-2)}
+    .timeline-year{font-size:var(--text-sm);font-weight:var(--font-semibold);color:var(--color-primary-500);margin-bottom:var(--space-1)}
+    .timeline-title{font-size:var(--text-lg);font-weight:var(--font-semibold);color:var(--color-neutral-800);margin-bottom:var(--space-1)}
+    .timeline-desc{font-size:var(--text-sm);color:var(--color-neutral-500);line-height:var(--leading-relaxed)}
+
+    /* CTA */
+    [data-component="cta"]{padding:var(--space-20) 0;background:linear-gradient(135deg,var(--color-primary-50) 0%,var(--color-bg-cream) 100%);text-align:center}
+    .cta-content{max-width:640px;margin:0 auto;animation:fadeInUp var(--duration-normal) var(--ease-out)}
+    .cta-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .cta-desc{font-size:var(--text-lg);color:var(--color-neutral-600);margin-bottom:var(--space-8);line-height:var(--leading-relaxed)}
+    .cta-actions{display:flex;gap:var(--space-4);justify-content:center;flex-wrap:wrap}
+
+    /* FOOTER */
+    [data-component="footer"]{background:var(--color-neutral-800);color:var(--color-neutral-300);padding:var(--space-16) 0 0}
+    [data-component="footer-container"]{max-width:1200px;margin:0 auto;padding:0 var(--space-6);display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:var(--space-10);padding-bottom:var(--space-12);border-bottom:1px solid var(--color-neutral-700)}
+    .footer-logo{font-size:var(--text-xl);font-weight:var(--font-bold);color:var(--color-neutral-0);margin-bottom:var(--space-4)}
+    .footer-desc{font-size:var(--text-sm);line-height:var(--leading-relaxed);color:var(--color-neutral-400);margin-bottom:var(--space-4)}
+    .footer-social{display:flex;gap:var(--space-3)}
+    .footer-social a{width:36px;height:36px;border-radius:var(--radius-full);background:var(--color-neutral-700);display:flex;align-items:center;justify-content:center;font-size:var(--text-sm);transition:background var(--duration-fast) var(--ease-default)}
+    .footer-social a:hover{background:var(--color-primary-500)}
+    .footer-section-title{font-size:var(--text-sm);font-weight:var(--font-semibold);color:var(--color-neutral-0);margin-bottom:var(--space-4);text-transform:uppercase;letter-spacing:0.05em}
+    .footer-links{display:flex;flex-direction:column;gap:var(--space-3)}
+    .footer-links a{font-size:var(--text-sm);color:var(--color-neutral-400);transition:color var(--duration-fast) var(--ease-default)}
+    .footer-links a:hover{color:var(--color-primary-300)}
+    .footer-contact-item{display:flex;align-items:flex-start;gap:var(--space-2);font-size:var(--text-sm);color:var(--color-neutral-400);margin-bottom:var(--space-3);line-height:var(--leading-relaxed)}
+    [data-component="footer-bottom"]{max-width:1200px;margin:0 auto;padding:var(--space-6);display:flex;justify-content:space-between;align-items:center}
+    .footer-copyright{font-size:var(--text-xs);color:var(--color-neutral-500)}
+    .footer-legal{display:flex;gap:var(--space-4)}
+    .footer-legal a{font-size:var(--text-xs);color:var(--color-neutral-500);transition:color var(--duration-fast)}
+    .footer-legal a:hover{color:var(--color-neutral-300)}
+
+    /* RESPONSIVE */
+    @media(max-width:1023px){
+      [data-component="nav-links"],[data-component="nav-cta"]{display:none}
+      [data-component="nav-mobile-toggle"]{display:flex}
+      [data-component="philosophy-content"]{grid-template-columns:1fr}
+      .philosophy-visual{order:-1}
+      [data-component="stats-grid"]{grid-template-columns:repeat(2,1fr);gap:var(--space-6)}
+      .cert-grid{grid-template-columns:repeat(2,1fr)}
+      .values-grid{grid-template-columns:1fr}
+      [data-component="footer-container"]{grid-template-columns:1fr 1fr;gap:var(--space-8)}
+      .section-title{font-size:var(--text-3xl)}
+      .page-header-title{font-size:var(--text-3xl)}
+    }
+    @media(max-width:767px){
+      .container{padding:0 var(--space-4)}
+      .section{padding:var(--space-12) 0}
+      [data-component="nav"]{height:60px}
+      .page-header{padding-top:calc(60px + var(--space-12));padding-bottom:var(--space-12)}
+      .stat-value{font-size:var(--text-4xl)}
+      .cert-grid{grid-template-columns:1fr 1fr}
+      [data-component="footer-container"]{grid-template-columns:1fr}
+      [data-component="footer-bottom"]{flex-direction:column;gap:var(--space-4);text-align:center}
+      .quote-text{font-size:var(--text-xl)}
+    }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">본문으로 건너뛰기</a>
+
+  <!-- Organism: NavigationBar -->
+  <nav data-component="nav" role="navigation" aria-label="주 내비게이션">
+    <div data-component="nav-container">
+      <a href="/" data-component="nav-logo" aria-label="인천 아이미래로 홈">
+        <span class="logo-icon" aria-hidden="true">&#9829;</span>아이미래로
+      </a>
+      <ul data-component="nav-links">
+        <li data-component="nav-links-item"><a href="/">홈</a></li>
+        <li data-component="nav-links-item" class="active"><a href="/introduction" aria-current="page">소개</a></li>
+        <li data-component="nav-links-item"><a href="/program">산후관리서비스</a></li>
+        <li data-component="nav-links-item"><a href="/plan">비용</a></li>
+        <li data-component="nav-links-item"><a href="/reviews">후기</a></li>
+        <li data-component="nav-links-item"><a href="/contact">문의하기</a></li>
+      </ul>
+      <button data-component="nav-cta">상담 신청</button>
+      <button data-component="nav-mobile-toggle" aria-label="메뉴 열기" aria-expanded="false">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <main id="main-content">
+
+    <!-- Page Header -->
+    <section class="page-header" data-component="about-header" aria-label="소개 페이지 헤더">
+      <div class="container">
+        <span class="badge badge-primary page-header-badge" data-component="about-header-badge">About Us</span>
+        <h1 class="page-header-title" data-component="about-header-title">인천 아이미래로를<br>소개합니다</h1>
+        <p class="page-header-desc" data-component="about-header-desc">엄마와 아기의 건강한 시작을 함께하는 인천 남동구 산후관리 전문 기관</p>
+      </div>
+    </section>
+
+    <!-- Organism: Philosophy Section -->
+    <section data-component="philosophy" aria-label="경영 철학">
+      <div class="container">
+        <div data-component="philosophy-content">
+          <div class="philosophy-visual" aria-hidden="true">
+            <div class="philosophy-image">&#128104;&#8205;&#128105;&#8205;&#128103;</div>
+          </div>
+          <div class="philosophy-text">
+            <span class="badge badge-primary" data-component="philosophy-badge">우리의 철학</span>
+            <h2>아이의 미래를 위한<br>따뜻한 첫 걸음</h2>
+            <p>인천 아이미래로는 "아이의 미래가 밝은 세상"이라는 비전 아래 설립되었습니다. 산모와 신생아 모두에게 가장 안전하고 따뜻한 환경을 제공하는 것이 저희의 사명입니다.</p>
+            <p>15년 이상의 산후관리 경험과 체계적인 교육 시스템을 바탕으로, 매 가정에 맞춤형 케어를 제공합니다. 단순한 서비스 제공을 넘어 산모의 정서적 안정까지 돌보는 것이 저희 아이미래로의 차별점입니다.</p>
+            <p>모든 관리사는 국가자격증을 보유하고 정기 보수교육을 이수하여, 항상 최신의 전문 케어를 제공할 수 있도록 하고 있습니다.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Organism: CEO Quote -->
+    <section data-component="ceo-quote" aria-label="대표 인사말">
+      <div class="container">
+        <div class="quote-container">
+          <div class="quote-mark" aria-hidden="true">"</div>
+          <blockquote class="quote-text" data-component="ceo-quote-text">
+            "모든 아이의 시작이 따뜻하고 건강하길 바라는 마음으로, 한 가정 한 가정에 정성을 다하겠습니다. 엄마와 아기의 미래를 함께 만들어 나가는 것이 저희의 약속입니다."
+          </blockquote>
+          <div class="quote-author">
+            <div class="quote-avatar" data-component="ceo-quote-avatar" aria-hidden="true">&#128105;&#8205;&#128188;</div>
+            <div class="quote-info">
+              <div class="quote-name" data-component="ceo-quote-name">송영란 대표</div>
+              <div class="quote-role" data-component="ceo-quote-role">인천 아이미래로 대표이사</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Stats Section -->
+    <section data-component="stats" aria-label="실적 통계">
+      <div class="container">
+        <div data-component="stats-grid">
+          <div data-component="stats-grid-stat">
+            <div class="stat-value">2,500+</div>
+            <div class="stat-label">누적 서비스 건수</div>
+          </div>
+          <div data-component="stats-grid-stat">
+            <div class="stat-value">15년+</div>
+            <div class="stat-label">산후관리 경력</div>
+          </div>
+          <div data-component="stats-grid-stat">
+            <div class="stat-value">98%</div>
+            <div class="stat-label">고객 만족도</div>
+          </div>
+          <div data-component="stats-grid-stat">
+            <div class="stat-value">50+</div>
+            <div class="stat-label">전문 관리사</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Core Values Section -->
+    <section data-component="values" aria-label="핵심 가치">
+      <div class="container">
+        <div class="section-header">
+          <span class="badge badge-secondary" data-component="values-badge">핵심 가치</span>
+          <h2 class="section-title" data-component="values-title">아이미래로가 지키는 약속</h2>
+          <p class="section-subtitle" data-component="values-subtitle">세 가지 핵심 가치를 바탕으로 최고의 서비스를 제공합니다</p>
+        </div>
+        <div class="values-grid">
+          <!-- Molecule: Card (Value) -->
+          <div class="value-card" data-component="values-grid-card">
+            <div class="value-icon" style="background:var(--color-primary-100)" aria-hidden="true">&#128150;</div>
+            <h3 class="value-title">따뜻한 돌봄</h3>
+            <p class="value-desc">산모와 신생아에게 가족과 같은 따뜻함으로 다가갑니다. 정서적 안정과 신체 회복을 동시에 돌봅니다.</p>
+          </div>
+          <div class="value-card" data-component="values-grid-card">
+            <div class="value-icon" style="background:var(--color-secondary-100)" aria-hidden="true">&#127891;</div>
+            <h3 class="value-title">전문적인 케어</h3>
+            <p class="value-desc">국가자격증을 보유한 전문 관리사가 체계적인 교육과 최신 기법으로 최고 수준의 서비스를 제공합니다.</p>
+          </div>
+          <div class="value-card" data-component="values-grid-card">
+            <div class="value-icon" style="background:var(--color-accent-100)" aria-hidden="true">&#129309;</div>
+            <h3 class="value-title">신뢰와 소통</h3>
+            <p class="value-desc">투명한 운영과 열린 소통으로 고객과의 신뢰 관계를 쌓아갑니다. 매일 서비스 보고서를 제공합니다.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Certifications Section -->
+    <section data-component="certifications" aria-label="인증 및 수상">
+      <div class="container">
+        <div class="section-header">
+          <span class="badge badge-primary" data-component="certifications-badge">인증 및 수상</span>
+          <h2 class="section-title" data-component="certifications-title">검증된 전문성</h2>
+          <p class="section-subtitle" data-component="certifications-subtitle">다양한 인증과 수상 이력으로 전문성을 증명합니다</p>
+        </div>
+        <div class="cert-grid">
+          <div class="cert-card" data-component="certifications-grid-card">
+            <div class="cert-icon" aria-hidden="true">&#127942;</div>
+            <div class="cert-name">산모·신생아 건강관리<br>우수 제공기관</div>
+            <div class="cert-desc">보건복지부 인증</div>
+          </div>
+          <div class="cert-card" data-component="certifications-grid-card">
+            <div class="cert-icon" aria-hidden="true">&#128200;</div>
+            <div class="cert-name">서비스 품질 인증</div>
+            <div class="cert-desc">인천광역시 남동구</div>
+          </div>
+          <div class="cert-card" data-component="certifications-grid-card">
+            <div class="cert-icon" aria-hidden="true">&#128587;&#8205;&#9792;&#65039;</div>
+            <div class="cert-name">산후관리사<br>국가자격 보유</div>
+            <div class="cert-desc">전체 관리사 100%</div>
+          </div>
+          <div class="cert-card" data-component="certifications-grid-card">
+            <div class="cert-icon" aria-hidden="true">&#128153;</div>
+            <div class="cert-name">고객 만족 우수상</div>
+            <div class="cert-desc">3년 연속 수상</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Timeline Section -->
+    <section data-component="timeline" aria-label="연혁">
+      <div class="container">
+        <div class="section-header">
+          <span class="badge badge-primary" data-component="timeline-badge">연혁</span>
+          <h2 class="section-title" data-component="timeline-title">아이미래로의 발자취</h2>
+        </div>
+        <div class="timeline">
+          <div class="timeline-item" data-component="timeline-item">
+            <div class="timeline-dot">1</div>
+            <div class="timeline-content">
+              <div class="timeline-year">2010</div>
+              <div class="timeline-title">인천 아이미래로 설립</div>
+              <div class="timeline-desc">인천 남동구에서 산후관리 전문 기관으로 첫 발을 내딛다</div>
+            </div>
+          </div>
+          <div class="timeline-item" data-component="timeline-item">
+            <div class="timeline-dot">2</div>
+            <div class="timeline-content">
+              <div class="timeline-year">2014</div>
+              <div class="timeline-title">정부지원 바우처 사업자 선정</div>
+              <div class="timeline-desc">산모·신생아 건강관리 정부지원 바우처 제공기관으로 선정</div>
+            </div>
+          </div>
+          <div class="timeline-item" data-component="timeline-item">
+            <div class="timeline-dot">3</div>
+            <div class="timeline-content">
+              <div class="timeline-year">2018</div>
+              <div class="timeline-title">누적 서비스 1,000건 달성</div>
+              <div class="timeline-desc">인천 지역 산후관리 서비스 1,000건 돌파</div>
+            </div>
+          </div>
+          <div class="timeline-item" data-component="timeline-item">
+            <div class="timeline-dot">4</div>
+            <div class="timeline-content">
+              <div class="timeline-year">2022</div>
+              <div class="timeline-title">서비스 품질 인증 획득</div>
+              <div class="timeline-desc">우수 제공기관 인증 및 고객 만족 우수상 수상</div>
+            </div>
+          </div>
+          <div class="timeline-item" data-component="timeline-item">
+            <div class="timeline-dot">5</div>
+            <div class="timeline-content">
+              <div class="timeline-year">2025</div>
+              <div class="timeline-title">누적 서비스 2,500건 돌파</div>
+              <div class="timeline-desc">전문 관리사 50명 이상, 고객 만족도 98% 유지</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section data-component="cta" aria-label="상담 신청">
+      <div class="container">
+        <div class="cta-content">
+          <h2 class="cta-title">아이미래로와 함께<br>건강한 시작을 준비하세요</h2>
+          <p class="cta-desc">무료 상담을 통해 맞춤 서비스를 안내받으실 수 있습니다.</p>
+          <div class="cta-actions">
+            <button class="btn btn-primary btn-lg" data-component="cta-actions-primary">무료 상담 신청</button>
+            <a href="/contact" class="btn btn-outline btn-lg" data-component="cta-actions-secondary">문의하기</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Organism: Footer -->
+  <footer data-component="footer" role="contentinfo">
+    <div data-component="footer-container">
+      <div data-component="footer-brand">
+        <div class="footer-logo">아이미래로</div>
+        <p class="footer-desc">인천 남동구에서 산모와 신생아의 건강한 시작을 함께하는 산후관리 전문 기관입니다.</p>
+        <div class="footer-social"><a href="https://www.instagram.com/imirae_incheon/" target="_blank" rel="noopener noreferrer" aria-label="인스타그램">IG</a><a href="https://blog.naver.com/imirae-incheon" target="_blank" rel="noopener noreferrer" aria-label="네이버 블로그">NB</a></div>
+      </div>
+      <div><h4 class="footer-section-title">서비스</h4><nav class="footer-links"><a href="/program">산후관리서비스</a><a href="/plan">비용 안내</a><a href="/reviews">고객 후기</a><a href="/contact">문의하기</a></nav></div>
+      <div><h4 class="footer-section-title">회사</h4><nav class="footer-links"><a href="/introduction">회사 소개</a><a href="/disclaimer">이용약관</a></nav></div>
+      <div><h4 class="footer-section-title">연락처</h4><div class="footer-contact-item"><span aria-hidden="true">&#128222;</span><span>(032) 442-5992</span></div><div class="footer-contact-item"><span aria-hidden="true">&#9993;</span><span>forchildrenbysongs@gmail.com</span></div><div class="footer-contact-item"><span aria-hidden="true">&#128205;</span><span>인천광역시 남동구 구월남로 120 백세빌딩 302호</span></div></div>
+    </div>
+    <div data-component="footer-bottom">
+      <p class="footer-copyright">&copy; 2026 인천 아이미래로. All rights reserved.</p>
+      <div class="footer-legal"><a href="/disclaimer">이용약관</a><a href="/disclaimer">개인정보처리방침</a></div>
+    </div>
+  </footer>
+</body>
+</html>

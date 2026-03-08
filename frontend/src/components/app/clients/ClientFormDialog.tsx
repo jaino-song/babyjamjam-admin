@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
-import { EmployeeFormDialog } from "../employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
-import type { Employee } from "@/hooks/useEmployees";
 import {
     Client,
     CreateClientDto,
@@ -92,12 +91,17 @@ const formatDateForInput = (dateString: string | null | undefined): string => {
 };
 
 export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFormDialogProps) {
+    const router = useRouter();
+    const searchParams = useSearchParams();
     const locale = useLocale();
     const isEditMode = !!client;
 
     // Read pre-filled name from Zustand store (when opened from ClientAutocomplete)
     const prefillName = useClientDialogStore((state) => state.prefillName);
     const clearPrefillName = useClientDialogStore((state) => state.clearPrefillName);
+    const draft = useClientDialogStore((state) => state.draft);
+    const setDraft = useClientDialogStore((state) => state.setDraft);
+    const clearDraft = useClientDialogStore((state) => state.clearDraft);
 
     const createClient = useCreateClient();
     const updateClient = useUpdateClient();
@@ -127,10 +131,6 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     const [error, setError] = useState<string | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
 
-    // State for EmployeeFormDialog
-    const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
-    const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
-
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
 
@@ -156,12 +156,14 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     // Auto-fill prices when type and duration are selected (only if not manually edited)
     useEffect(() => {
         if (selectedPriceInfo && !pricesManuallyEdited) {
-            setFormData(prev => ({
-                ...prev,
-                fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                grant: parsePrice(selectedPriceInfo.grant),
-                actualPrice: parsePrice(selectedPriceInfo.actualPrice),
-            }));
+            queueMicrotask(() => {
+                setFormData(prev => ({
+                    ...prev,
+                    fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                    grant: parsePrice(selectedPriceInfo.grant),
+                    actualPrice: parsePrice(selectedPriceInfo.actualPrice),
+                }));
+            });
         }
     }, [selectedPriceInfo, pricesManuallyEdited]);
 
@@ -183,10 +185,19 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     // Reset form when dialog opens/closes or client changes
     useEffect(() => {
         if (open) {
-            setPricesManuallyEdited(false); // Reset manual edit flag
-            if (client) {
-                // Employee info now comes directly from client (via backend schedule lookup)
-                setFormData({
+            const employeeCreatedId = searchParams.get("employeeCreatedId");
+            const employeeTarget = searchParams.get("target");
+            const parsedEmployeeId = employeeCreatedId ? Number(employeeCreatedId) : null;
+            const hasReturnedEmployee =
+                parsedEmployeeId !== null &&
+                !Number.isNaN(parsedEmployeeId) &&
+                (employeeTarget === "primary" || employeeTarget === "secondary");
+
+            let nextFormData = draft?.formData ?? null;
+            let nextPricesManuallyEdited = draft?.pricesManuallyEdited ?? false;
+
+            if (!nextFormData && client) {
+                nextFormData = {
                     name: client.name,
                     birthday: client.birthday || "",
                     dueDate: formatDateForInput(client.dueDate),
@@ -205,20 +216,18 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
                     serviceStatus: client.serviceStatus || "waiting",
-                });
-                // In edit mode, consider prices as manually set
-                if (client.fullPrice || client.grant || client.actualPrice) {
-                    setPricesManuallyEdited(true);
-                }
-            } else {
-                // In create mode, use prefillName from store if available
-                setFormData({
+                };
+                nextPricesManuallyEdited = Boolean(client.fullPrice || client.grant || client.actualPrice);
+            }
+
+            if (!nextFormData) {
+                nextFormData = {
                     name: prefillName || "",
                     birthday: "",
                     dueDate: "",
                     address: "",
                     phone: "",
-                    primaryEmployeeId: null, // null means "not selected yet"
+                    primaryEmployeeId: null,
                     secondaryEmployeeId: null,
                     type: "",
                     duration: null,
@@ -231,13 +240,32 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     voucherClient: true,
                     breastPump: false,
                     serviceStatus: "waiting",
-                });
-                // Clear the prefill name after using it
+                };
                 clearPrefillName();
             }
-            setError(null);
+
+            if (hasReturnedEmployee && parsedEmployeeId !== null) {
+                nextFormData = {
+                    ...nextFormData,
+                    primaryEmployeeId:
+                        employeeTarget === "primary" ? parsedEmployeeId : nextFormData.primaryEmployeeId,
+                    secondaryEmployeeId:
+                        employeeTarget === "secondary" ? parsedEmployeeId : nextFormData.secondaryEmployeeId,
+                };
+            }
+
+            queueMicrotask(() => {
+                setFormData(nextFormData);
+                setPricesManuallyEdited(nextPricesManuallyEdited);
+                setError(null);
+
+                if (hasReturnedEmployee) {
+                    clearDraft();
+                    router.replace("/clients?openClientForm=1");
+                }
+            });
         }
-    }, [open, client]);
+    }, [clearDraft, clearPrefillName, client, draft, open, prefillName, router, searchParams]);
 
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setFormData(prev => ({ ...prev, [field]: value }));
@@ -334,6 +362,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     serviceStatus: formData.serviceStatus,
                 };
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
+                clearDraft();
                 onSuccess?.(updatedClient);
             } else {
                 const createDto: CreateClientDto = {
@@ -343,6 +372,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     endDate: formData.endDate || null,
                 };
                 const newClient = await createClient.mutateAsync(createDto);
+                clearDraft();
                 onSuccess?.(newClient);
             }
             onClose();
@@ -354,8 +384,18 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     const isSubmitting = createClient.isPending || updateClient.isPending;
 
+    const handleDialogClose = () => {
+        clearDraft();
+
+        if (searchParams.get("openClientForm") === "1") {
+            router.replace("/clients");
+        }
+
+        onClose();
+    };
+
     return (
-        <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+        <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && handleDialogClose()}>
             <DialogContent data-testid="client-form-dialog">
                 <DialogHeader>
                     <DialogTitle>
@@ -456,8 +496,12 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
                                 allowManualEntry
                                 onManualEntry={() => {
-                                    setEmployeeDialogTarget("primary");
-                                    setIsEmployeeDialogOpen(true);
+                                    setDraft({
+                                        formData,
+                                        pricesManuallyEdited,
+                                        client: client ?? null,
+                                    });
+                                    router.push("/employees/new?returnTo=/clients?openClientForm=1&target=primary");
                                 }}
                             />
                             <EmployeeAutocomplete
@@ -467,8 +511,12 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
                                 allowManualEntry
                                 onManualEntry={() => {
-                                    setEmployeeDialogTarget("secondary");
-                                    setIsEmployeeDialogOpen(true);
+                                    setDraft({
+                                        formData,
+                                        pricesManuallyEdited,
+                                        client: client ?? null,
+                                    });
+                                    router.push("/employees/new?returnTo=/clients?openClientForm=1&target=secondary");
                                 }}
                             />
                         </div>
@@ -694,7 +742,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 </div>
 
                 <DialogFooter data-component="clients-form-dialog-actions">
-                    <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
+                    <Button variant="outline" onClick={handleDialogClose} disabled={isSubmitting}>
                         {t(locale, "common.cancel")}
                     </Button>
                     <Button onClick={handleSubmit} disabled={isSubmitting}>
@@ -708,22 +756,6 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     </Button>
                 </DialogFooter>
 
-                {/* Nested EmployeeFormDialog for adding new employees */}
-                <EmployeeFormDialog
-                    open={isEmployeeDialogOpen}
-                    onClose={() => {
-                        setIsEmployeeDialogOpen(false);
-                        setEmployeeDialogTarget(null);
-                    }}
-                    onSuccess={(newEmployee: Employee) => {
-                        // Auto-select the newly created employee in the appropriate field
-                        if (employeeDialogTarget === "primary") {
-                            handleChange("primaryEmployeeId", newEmployee.id);
-                        } else if (employeeDialogTarget === "secondary") {
-                            handleChange("secondaryEmployeeId", newEmployee.id);
-                        }
-                    }}
-                />
             </DialogContent>
         </Dialog>
     );

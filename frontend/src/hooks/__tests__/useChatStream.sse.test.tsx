@@ -21,11 +21,16 @@ function createSSEStream(chunks: string[]): ReadableStream<Uint8Array> {
 
 describe("useChatStream SSE parsing", () => {
     const originalFetch = globalThis.fetch;
+    const assignGlobalEncoding = () => {
+        Object.assign(globalThis, {
+            TextEncoder,
+            TextDecoder: TextDecoder as unknown as typeof globalThis.TextDecoder,
+        });
+    };
 
     beforeEach(() => {
         localStorage.clear();
-        (globalThis as any).TextEncoder = TextEncoder;
-        (globalThis as any).TextDecoder = TextDecoder;
+        assignGlobalEncoding();
         globalThis.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
             if (url.includes("/api/ai/chat/stream")) {

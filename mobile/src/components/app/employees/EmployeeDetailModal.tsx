@@ -4,6 +4,7 @@ import { Pencil, Trash2, X } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Employee } from "@/hooks/useEmployees";
+import { normalizeEmployeeGrade } from "@/features/employees/grade";
 
 import {
     Dialog,
@@ -131,7 +132,7 @@ export function EmployeeDetailModal({
                                 </div>
                             }
                         />
-                        <InfoRow label={t(locale, "employees.form.grade")} value={employee.grade} />
+                        <InfoRow label={t(locale, "employees.form.grade")} value={normalizeEmployeeGrade(employee.grade)} />
                         <InfoRow
                             label={t(locale, "employees.form.open-to-next-work")}
                             value={getStatusBadge(employee.openToNextWork)}

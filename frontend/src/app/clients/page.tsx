@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Users, Plus, Phone, MessageSquare, FileText, ClipboardList, Clock, UserCheck, AlertTriangle, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { Users, Plus, Clock, UserCheck, AlertTriangle, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -13,14 +13,13 @@ import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
-    PageHeader,
     StatsBar,
     SplitLayout,
     ListPanel,
@@ -115,6 +114,7 @@ export default function ClientsPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const clientIdParam = searchParams.get("id");
+    const shouldOpenClientFormFromUrl = searchParams.get("openClientForm") === "1";
 
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
@@ -123,6 +123,7 @@ export default function ClientsPage() {
     const [activeFilter, setActiveFilter] = useState("all");
     const [activeDetailTab, setActiveDetailTab] = useState<string>("basic");
     const [detailModalOpen, setDetailModalOpen] = useState(false);
+    const clientDialogDraft = useClientDialogStore((state) => state.draft);
 
 
     const { data, isLoading } = useClients(1, 50);
@@ -132,13 +133,9 @@ export default function ClientsPage() {
         clientIdParam ? Number(clientIdParam) : 0
     );
 
-    useEffect(() => {
-        if (clientIdParam && clientFromParam) {
-            setSelectedClient(clientFromParam);
-        }
-    }, [clientIdParam, clientFromParam]);
+    const activeSelectedClient = selectedClient ?? (clientIdParam ? clientFromParam ?? null : null);
 
-    const clients = data?.data || [];
+    const clients = useMemo(() => data?.data || [], [data?.data]);
     const total = data?.total || 0;
 
     const filteredClients = useMemo(() => {
@@ -167,6 +164,10 @@ export default function ClientsPage() {
     };
 
     const handleSelectClient = (client: Client) => {
+        if (clientIdParam) {
+            router.replace("/clients");
+        }
+
         setSelectedClient(client);
     };
 
@@ -179,7 +180,7 @@ export default function ClientsPage() {
         if (window.confirm(t(locale, "clients.delete-confirm"))) {
             try {
                 await deleteClient.mutateAsync(id);
-                if (selectedClient?.id === id) {
+                if (activeSelectedClient?.id === id) {
                     setSelectedClient(null);
                 }
             } catch (err) {
@@ -191,6 +192,10 @@ export default function ClientsPage() {
     const handleFormDialogClose = () => {
         setFormDialogOpen(false);
         setEditingClient(null);
+
+        if (shouldOpenClientFormFromUrl) {
+            router.replace("/clients");
+        }
     };
 
     const handleDetailModalClose = () => {
@@ -213,7 +218,16 @@ export default function ClientsPage() {
                 ]}
             />
 
-	            <SplitLayout hasSelection={!!selectedClient} onBack={() => setSelectedClient(null)}>
+            <SplitLayout
+                hasSelection={!!activeSelectedClient}
+                onBack={() => {
+                    if (clientIdParam) {
+                        router.replace("/clients");
+                    }
+
+                    setSelectedClient(null);
+                }}
+            >
 	                <ListPanel
 	                    title="고객 목록"
 	                    tabs={FILTER_CHIPS}
@@ -233,7 +247,7 @@ export default function ClientsPage() {
 	                        />
 	                    }
 	                >
-	                    <div className="space-y-2">
+	                    <div data-component="clients-list-content" className="space-y-2">
 	                    {!isLoading && filteredClients.length === 0 ? (
 	                            <ListEmptyState message={t(locale, "clients.no-data")} />
 	                        ) : (
@@ -247,8 +261,8 @@ export default function ClientsPage() {
 	                                        cn(
 	                                            "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
 	                                            !isLoading &&
-	                                                item &&
-	                                                (selectedClient?.id === item.id
+                                                item &&
+                                                (activeSelectedClient?.id === item.id
 	                                                    ? "bg-v3-primary-light border-2 border-v3-primary"
 	                                                    : "bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30")
 	                                        )
@@ -259,12 +273,13 @@ export default function ClientsPage() {
 	                                        return (
 	                                            <>
 	                                                {isLoading ? (
-	                                                    <div className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
+	                                                    <div data-component="clients-list-item-avatar-skeleton" className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
 	                                                        <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
 	                                                    </div>
 	                                                ) : (
 	                                                    client && (
 	                                                        <div
+	                                                            data-component="clients-list-item-avatar"
 	                                                            className={cn(
 	                                                                "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
 	                                                                getAvatarGradient(client.name)
@@ -275,8 +290,8 @@ export default function ClientsPage() {
 	                                                    )
 	                                                )}
 
-	                                                <div className="flex-1 min-w-0">
-	                                                    <div className="flex items-center gap-2 mb-0.5">
+	                                                <div data-component="clients-list-item-info" className="flex-1 min-w-0">
+	                                                    <div data-component="clients-list-item-name-row" className="flex items-center gap-2 mb-0.5">
 	                                                        {isLoading ? (
 	                                                            <>
 	                                                                <Skeleton className="h-4 w-28 bg-v3-dim-white" />
@@ -300,7 +315,7 @@ export default function ClientsPage() {
 	                                                    {isLoading ? (
 	                                                        <Skeleton className="h-3 w-52 bg-v3-dim-white" />
 	                                                    ) : (
-	                                                        <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
+	                                                        <div data-component="clients-list-item-meta-row" className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
 	                                                            {client?.phone && <span>{client.phone}</span>}
 	                                                            {client?.address && (
 	                                                                <span className="truncate">
@@ -311,7 +326,7 @@ export default function ClientsPage() {
 	                                                    )}
 	                                                </div>
 
-	                                                <div className="shrink-0">
+	                                                <div data-component="clients-list-item-status" className="shrink-0">
 	                                                    {isLoading ? (
 	                                                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
 	                                                    ) : (
@@ -332,58 +347,59 @@ export default function ClientsPage() {
 	                    </div>
 	                </ListPanel>
 
-                {selectedClient ? (
+                {activeSelectedClient ? (
                     <DetailPanel
                         avatar={
                             <div
+                                data-component="clients-detail-avatar"
                                 className={cn(
                                     "w-16 h-16 rounded-[20px] flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
-                                    getAvatarGradient(selectedClient.name)
+                                    getAvatarGradient(activeSelectedClient.name)
                                 )}
                             >
-                                {selectedClient.name.charAt(0)}
+                                {activeSelectedClient.name.charAt(0)}
                             </div>
                         }
-                        title={selectedClient.name}
+                        title={activeSelectedClient.name}
                         badges={
                             <>
                                 <StatusBadge
                                     status={mapServiceStatusToV3(
-                                        selectedClient.serviceStatus
+                                        activeSelectedClient.serviceStatus
                                     )}
                                     label={getStatusLabel(
-                                        selectedClient.serviceStatus
+                                        activeSelectedClient.serviceStatus
                                     )}
                                 />
-                                {selectedClient.breastPump && (
+                                {activeSelectedClient.breastPump && (
                                     <StatusBadge status="breastPump" />
                                 )}
-                                {selectedClient.careCenter && (
+                                {activeSelectedClient.careCenter && (
                                     <StatusBadge status="careCenter" />
                                 )}
                             </>
                         }
                         subtitle={
                             <>
-                                {selectedClient.type || "일반"} ·{" "}
-                                {selectedClient.duration
-                                    ? `${selectedClient.duration}일`
+                                {activeSelectedClient.type || "일반"} ·{" "}
+                                {activeSelectedClient.duration
+                                    ? `${activeSelectedClient.duration}일`
                                     : "-"}
                             </>
                         }
                         trailing={
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                    <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors">
+                                    <button type="button" className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors">
                                         <MoreVertical className="w-5 h-5 text-v3-text-muted" />
                                     </button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end" className="min-w-[140px]">
-                                    <DropdownMenuItem onClick={() => handleEdit(selectedClient)} className="gap-2">
+                                    <DropdownMenuItem onClick={() => handleEdit(activeSelectedClient)} className="gap-2">
                                         <Pencil className="w-4 h-4" />
                                         {t(locale, "common.edit")}
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleDelete(selectedClient.id)} className="gap-2 text-destructive focus:text-destructive">
+                                    <DropdownMenuItem onClick={() => handleDelete(activeSelectedClient.id)} className="gap-2 text-destructive focus:text-destructive">
                                         <Trash2 className="w-4 h-4" />
                                         {t(locale, "common.delete")}
                                     </DropdownMenuItem>
@@ -404,27 +420,27 @@ export default function ClientsPage() {
                     >
                         <div data-component="clients-detail-content" className="space-y-4">
                             {activeDetailTab === "basic" && (
-                                <div className="grid grid-cols-2 gap-4">
+                                <div data-component="clients-detail-basic-grid" className="grid grid-cols-2 gap-4">
                                     <InfoCard title="고객 정보" className="col-start-1 row-start-1 row-end-3">
                                         <InfoRow
                                             label={t(locale, "clients.form.name")}
-                                            value={selectedClient.name}
+                                            value={activeSelectedClient.name}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.birthday")}
-                                            value={selectedClient.birthday || "-"}
+                                            value={activeSelectedClient.birthday || "-"}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.due-date")}
-                                            value={formatDate(selectedClient.dueDate)}
+                                            value={formatDate(activeSelectedClient.dueDate)}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.phone")}
-                                            value={selectedClient.phone || "-"}
+                                            value={activeSelectedClient.phone || "-"}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.address")}
-                                            value={selectedClient.address || "-"}
+                                            value={activeSelectedClient.address || "-"}
                                         />
                                     </InfoCard>
 
@@ -432,14 +448,14 @@ export default function ClientsPage() {
                                         <InfoRow
                                             label={t(locale, "clients.form.primary-employee")}
                                             value={
-                                                selectedClient.primaryEmployee?.name ??
+                                                activeSelectedClient.primaryEmployee?.name ??
                                                 "-"
                                             }
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.secondary-employee")}
                                             value={
-                                                selectedClient.secondaryEmployee
+                                                activeSelectedClient.secondaryEmployee
                                                     ?.name ?? "-"
                                             }
                                         />
@@ -448,38 +464,38 @@ export default function ClientsPage() {
                                     <InfoCard title="서비스 정보" className="col-start-2 row-start-1 row-end-5">
                                         <InfoRow
                                             label={t(locale, "clients.form.voucher-type")}
-                                            value={selectedClient.type || "-"}
+                                            value={activeSelectedClient.type || "-"}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.duration")}
                                             value={
-                                                selectedClient.duration
-                                                    ? `${selectedClient.duration}일`
+                                                activeSelectedClient.duration
+                                                    ? `${activeSelectedClient.duration}일`
                                                     : "-"
                                             }
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.start-date")}
-                                            value={formatDate(selectedClient.startDate)}
+                                            value={formatDate(activeSelectedClient.startDate)}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.end-date")}
-                                            value={formatDate(selectedClient.endDate)}
+                                            value={formatDate(activeSelectedClient.endDate)}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.full-price")}
                                             value={formatPrice(
-                                                selectedClient.fullPrice
+                                                activeSelectedClient.fullPrice
                                             )}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.grant")}
-                                            value={formatPrice(selectedClient.grant)}
+                                            value={formatPrice(activeSelectedClient.grant)}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.actual-price")}
                                             value={formatPrice(
-                                                selectedClient.actualPrice
+                                                activeSelectedClient.actualPrice
                                             )}
                                         />
                                     </InfoCard>
@@ -489,13 +505,13 @@ export default function ClientsPage() {
                             )}
 
                             {activeDetailTab === "contracts" && (
-                                <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+                                <div data-component="clients-detail-contracts-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
                                     계약서 정보가 없습니다
                                 </div>
                             )}
 
                             {activeDetailTab === "alimtalk" && (
-                                <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+                                <div data-component="clients-detail-alimtalk-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
                                     알림톡 발송 현황이 없습니다
                                 </div>
                             )}
@@ -506,18 +522,18 @@ export default function ClientsPage() {
                 )}
             </SplitLayout>
 
-            <ClientDetailModal
-                open={detailModalOpen}
-                onClose={handleDetailModalClose}
-                client={selectedClient}
-                onEdit={handleEdit}
-                onDelete={handleDelete}
-            />
+                <ClientDetailModal
+                    open={detailModalOpen}
+                    onClose={handleDetailModalClose}
+                    client={activeSelectedClient}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                />
 
             <ClientFormDialog
-                open={formDialogOpen}
+                open={formDialogOpen || shouldOpenClientFormFromUrl}
                 onClose={handleFormDialogClose}
-                client={editingClient}
+                client={editingClient ?? clientDialogDraft?.client ?? null}
             />
         </PageSection>
     );

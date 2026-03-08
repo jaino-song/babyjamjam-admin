@@ -1,0 +1,304 @@
+@import "tailwindcss";
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
+
+/* ============================================
+   DESIGN TOKENS
+   ============================================ */
+:root {
+  /* Primary - Warm Rose */
+  --color-primary-50: #FFF5F5;
+  --color-primary-100: #FFE0E6;
+  --color-primary-200: #FFC2CC;
+  --color-primary-300: #FFA3B3;
+  --color-primary-400: #FF8599;
+  --color-primary-500: #E8637A;
+  --color-primary-600: #D14D64;
+  --color-primary-700: #B3384E;
+  --color-primary-800: #8C2339;
+  --color-primary-900: #661024;
+
+  /* Secondary - Soft Sage Green */
+  --color-secondary-50: #F2F8F4;
+  --color-secondary-100: #E0F0E5;
+  --color-secondary-200: #C1E1CB;
+  --color-secondary-300: #A3D2B1;
+  --color-secondary-400: #84C397;
+  --color-secondary-500: #6BAD80;
+  --color-secondary-600: #559468;
+  --color-secondary-700: #3F7A50;
+  --color-secondary-800: #2A6138;
+  --color-secondary-900: #144720;
+
+  /* Accent - Warm Amber */
+  --color-accent-50: #FFFBF0;
+  --color-accent-100: #FFF3D6;
+  --color-accent-200: #FFE7AD;
+  --color-accent-300: #FFDB85;
+  --color-accent-400: #FFCF5C;
+  --color-accent-500: #F0B840;
+  --color-accent-600: #D9A020;
+  --color-accent-700: #B38318;
+  --color-accent-800: #8C6610;
+  --color-accent-900: #664A08;
+
+  /* Neutrals - Warm Gray */
+  --color-neutral-0: #FFFFFF;
+  --color-neutral-50: #FDFCFB;
+  --color-neutral-100: #F7F5F3;
+  --color-neutral-200: #EDE9E5;
+  --color-neutral-300: #DDD7D1;
+  --color-neutral-400: #B8AFA7;
+  --color-neutral-500: #93897E;
+  --color-neutral-600: #6E6559;
+  --color-neutral-700: #4A4238;
+  --color-neutral-800: #332C24;
+  --color-neutral-900: #1C1814;
+
+  /* Semantic */
+  --color-success: #4CAF50;
+  --color-warning: #FF9800;
+  --color-error: #F44336;
+  --color-info: #2196F3;
+
+  /* Background */
+  --color-bg-primary: #FDFCFB;
+  --color-bg-secondary: #FFF5F5;
+  --color-bg-cream: #FFF9F0;
+  --color-bg-card: #FFFFFF;
+  --color-bg-overlay: rgba(28, 24, 20, 0.5);
+
+  /* Typography */
+  --font-heading: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-body: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+  --text-5xl: 3rem;
+  --font-regular: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+  --leading-tight: 1.25;
+  --leading-snug: 1.375;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+  --leading-loose: 2;
+  --tracking-tight: -0.025em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.025em;
+
+  /* Spacing */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* Layout */
+  --nav-height: 72px;
+
+  /* Border Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(28, 24, 20, 0.05);
+  --shadow-md: 0 4px 12px rgba(28, 24, 20, 0.08);
+  --shadow-lg: 0 8px 24px rgba(28, 24, 20, 0.12);
+  --shadow-xl: 0 16px 48px rgba(28, 24, 20, 0.16);
+
+  /* Animation */
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+  --duration-slow: 500ms;
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ============================================
+   REDUCED MOTION
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--color-neutral-800);
+  background: var(--color-bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+ul {
+  list-style: none;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+/* ============================================
+   FOCUS STYLES
+   ============================================ */
+:focus-visible {
+  outline: 2px solid var(--color-primary-400);
+  outline-offset: 2px;
+}
+
+/* ============================================
+   SKIP LINK
+   ============================================ */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-primary-500);
+  color: white;
+  border-radius: var(--radius-md);
+  z-index: 1000;
+  font-size: var(--text-sm);
+}
+
+.skip-link:focus {
+  top: var(--space-4);
+}
+
+/* ============================================
+   CONTAINER
+   ============================================ */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+}
+
+@media (max-width: 767px) {
+  :root {
+    --nav-height: 60px;
+  }
+  .container {
+    padding: 0 var(--space-4);
+  }
+}
+
+/* ============================================
+   COMPONENT MOUNT ANIMATIONS
+   ============================================ */
+.animate-fade-in {
+  animation: fadeIn var(--duration-normal) var(--ease-out);
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp var(--duration-normal) var(--ease-out);
+  animation-fill-mode: both;
+}
+
+.animate-fade-in-scale {
+  animation: fadeInScale var(--duration-normal) var(--ease-out);
+}
+
+/* Stagger delays */
+.stagger-1 { animation-delay: 0ms; }
+.stagger-2 { animation-delay: 100ms; }
+.stagger-3 { animation-delay: 200ms; }
+.stagger-4 { animation-delay: 300ms; }
+.stagger-5 { animation-delay: 400ms; }
+.stagger-6 { animation-delay: 500ms; }
+.stagger-7 { animation-delay: 600ms; }
+.stagger-8 { animation-delay: 700ms; }
+.stagger-9 { animation-delay: 800ms; }

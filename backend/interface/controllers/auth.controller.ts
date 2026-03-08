@@ -116,6 +116,10 @@ export class AuthController {
             body.email,
             body.password,
             body.name,
+            body.phone,
+            body.birthDate,
+            body.organizationId,
+            body.role,
         );
 
         // Reset rate limit on successful registration
@@ -226,6 +230,16 @@ export class AuthController {
     async getUserOrganizations(@Request() req: any) {
         const organizations = await this.authService.getUserOrganizations(req.user.userId);
         return { organizations };
+    }
+
+    @Get("organizations/all")
+    async getAllActiveOrganizations() {
+        const organizations = await this.prisma.organization.findMany({
+            where: { isActive: true },
+            select: { id: true, name: true },
+            orderBy: { name: 'asc' },
+        });
+        return organizations;
     }
 
     @Post("select-organization")

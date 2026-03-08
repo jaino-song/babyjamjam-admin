@@ -1,18 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import axios from "axios";
 import { CheckCircle, Link2 } from "lucide-react";
 import { authApi } from "@/services/api";
 import { registerSchema, checkPasswordStrength, type RegisterFormData } from "@/lib/validations/auth";
-import { AuthCard } from "@/components/auth/auth-card";
+import { CardContainer } from "@/components/auth/auth-card";
+import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
+import { SelectField } from "@/components/auth/select-field";
 import { PasswordRequirements } from "@/components/auth/password-requirements";
+import { REGISTERABLE_ROLE_OPTIONS } from "@/lib/constants/roles";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
-import { Card, CardContent } from "@/components/ui/card";
+
 
 export default function RegisterPage() {
     const router = useRouter();
@@ -21,18 +24,46 @@ export default function RegisterPage() {
         password: "",
         confirmPassword: "",
         name: "",
+        phone: "",
+        birthDate: "",
+        organizationId: "",
+        role: undefined,
     });
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [serverError, setServerError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
     const [accountsLinked, setAccountsLinked] = useState(false);
+    const [organizations, setOrganizations] = useState<{ value: string; label: string }[]>([]);
+    const [isLoadingOrgs, setIsLoadingOrgs] = useState(true);
+
+    useEffect(() => {
+        authApi.getOrganizations()
+            .then((orgs) => {
+                setOrganizations(orgs.map((org) => ({ value: org.id, label: org.name })));
+            })
+            .catch(() => {
+                setOrganizations([]);
+            })
+            .finally(() => setIsLoadingOrgs(false));
+    }, []);
 
     const passwordStrength = checkPasswordStrength(formData.password || "");
 
     const handleChange = (field: keyof RegisterFormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
         setFormData((prev) => ({ ...prev, [field]: e.target.value }));
-        // Clear field error on change
+        if (errors[field]) {
+            setErrors((prev) => {
+                const newErrors = { ...prev };
+                delete newErrors[field];
+                return newErrors;
+            });
+        }
+        setServerError(null);
+    };
+
+    const handleSelectChange = (field: keyof RegisterFormData) => (value: string) => {
+        setFormData((prev) => ({ ...prev, [field]: value }));
         if (errors[field]) {
             setErrors((prev) => {
                 const newErrors = { ...prev };
@@ -65,11 +96,15 @@ export default function RegisterPage() {
         setIsLoading(true);
 
         try {
-            const response = await authApi.register(
-                result.data.email,
-                result.data.password,
-                result.data.name
-            );
+            const response = await authApi.register({
+                email: result.data.email,
+                password: result.data.password,
+                name: result.data.name,
+                phone: result.data.phone,
+                birthDate: result.data.birthDate,
+                organizationId: result.data.organizationId,
+                role: result.data.role,
+            });
 
             if (response.success) {
                 // Check if accounts were linked (Kakao + email now both available)
@@ -80,10 +115,10 @@ export default function RegisterPage() {
             } else {
                 setServerError(response.message || "회원가입에 실패했습니다.");
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Registration error:", err);
             // Check if this is an axios error with response data
-            const errorData = err?.response?.data;
+            const errorData = axios.isAxiosError(err) ? err.response?.data : undefined;
             if (errorData?.errors) {
                 // Password validation errors from backend
                 setServerError(errorData.errors.join('\n'));
@@ -97,139 +132,186 @@ export default function RegisterPage() {
         }
     };
 
-    // Success State
-    if (isSuccess) {
-        return (
-            <div data-component="auth-register" className="flex min-h-screen items-center justify-center px-4 py-8">
-                <Card className="w-full max-w-[400px] animate-scale-in">
-                    <CardContent className="pt-6">
-                        <div data-component="auth-register-success" className="flex flex-col items-center space-y-4 text-center">
-                            {accountsLinked ? (
-                                <>
-                                    <div data-component="auth-register-success-icon" className="rounded-full bg-primary/10 p-3">
-                                        <Link2 className="h-12 w-12 text-primary" />
-                                    </div>
-                                    <h2 className="text-2xl font-bold">계정이 연결되었습니다!</h2>
-                                    <p className="text-muted-foreground">
-                                        기존 카카오 계정에 비밀번호가 추가되었습니다.
-                                        <br />
-                                        이메일을 확인하여 계정을 활성화하면
-                                        <br />
-                                        카카오와 이메일 모두로 로그인할 수 있습니다.
-                                    </p>
-                                </>
-                            ) : (
-                                <>
-                                    <div data-component="auth-register-success-icon" className="rounded-full bg-success/10 p-3">
-                                        <CheckCircle className="h-12 w-12 text-success" />
-                                    </div>
-                                    <h2 className="text-2xl font-bold">회원가입 완료!</h2>
-                                    <p className="text-muted-foreground">
-                                        인증 이메일이 발송되었습니다.
-                                        <br />
-                                        이메일을 확인하여 계정을 활성화해 주세요.
-                                    </p>
-                                </>
-                            )}
-                            <Button
-                                data-component="auth-register-success-login-btn"
-                                size="lg"
-                                className="w-full mt-4"
-                                onClick={() => router.push("/login")}
-                            >
-                                로그인 페이지로 이동
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
-        );
-    }
+    const getCardTitle = () => {
+        if (!isSuccess) return "회원가입";
+        return accountsLinked ? "계정이 연결되었습니다!" : "회원가입 완료!";
+    };
 
     return (
-        <AuthCard title="회원가입" data-component="auth-register">
-            <div data-component="auth-register-content" className="space-y-6">
-                {serverError && (
-                    <Alert variant="destructive" onClose={() => setServerError(null)}>
-                        {serverError}
-                    </Alert>
-                )}
-
-                <form onSubmit={handleSubmit} data-component="auth-register-form" className="space-y-4">
-                    <FormField
-                        label="이메일"
-                        type="email"
-                        value={formData.email}
-                        onChange={handleChange("email")}
-                        error={errors.email}
-                        disabled={isLoading}
-                        autoComplete="email"
-                        data-component="auth-register-email-field"
-                    />
-
-                    <FormField
-                        label="이름"
-                        type="text"
-                        value={formData.name}
-                        onChange={handleChange("name")}
-                        error={errors.name}
-                        disabled={isLoading}
-                        autoComplete="name"
-                        data-component="auth-register-name-field"
-                    />
-
-                    <FormField
-                        label="비밀번호"
-                        type="password"
-                        value={formData.password}
-                        onChange={handleChange("password")}
-                        error={errors.password}
-                        disabled={isLoading}
-                        autoComplete="new-password"
-                        data-component="auth-register-password-field"
-                    />
-
-                    {/* Password Requirements */}
-                    {formData.password && (
-                        <PasswordRequirements
-                            requirements={passwordStrength.requirements}
-                            className="animate-fade-in"
-                        />
+        <CardContainer
+            data-component="auth-register"
+            dataComponents={{
+                container: "auth-register-container",
+                card: "auth-register-card",
+                header: "auth-register-header",
+                title: "auth-register-title",
+                subtitle: "auth-register-subtitle",
+                content: "auth-register-content",
+            }}
+            contentClassName="flex flex-col gap-6"
+            title={getCardTitle()}
+        >
+            {isSuccess ? (
+                <div data-component="auth-register-success" className="flex flex-col items-center gap-6 text-center">
+                    {accountsLinked ? (
+                        <>
+                            <div data-component="auth-register-success-icon" className="rounded-full bg-primary/10 p-3">
+                                <Link2 className="h-12 w-12 text-primary" />
+                            </div>
+                            <p className="text-muted-foreground">
+                                기존 카카오 계정에 비밀번호가 추가되었습니다.
+                                <br />
+                                이메일을 확인하여 계정을 활성화하면
+                                <br />
+                                카카오와 이메일 모두로 로그인할 수 있습니다.
+                            </p>
+                        </>
+                    ) : (
+                        <>
+                            <div data-component="auth-register-success-icon" className="rounded-full bg-success/10 p-3">
+                                <CheckCircle className="h-12 w-12 text-success" />
+                            </div>
+                            <p className="text-muted-foreground">
+                                인증 이메일이 발송되었습니다.
+                                <br />
+                                이메일을 확인하여 계정을 활성화해 주세요.
+                            </p>
+                        </>
+                    )}
+                    <Button
+                        data-component="auth-register-success-login-btn"
+                        size="lg"
+                        className="w-full rounded-2xl"
+                        onClick={() => router.push("/login")}
+                    >
+                        로그인 페이지로 이동
+                    </Button>
+                </div>
+            ) : (
+                <>
+                    {serverError && (
+                        <Alert variant="destructive" onClose={() => setServerError(null)}>
+                            {serverError}
+                        </Alert>
                     )}
 
-                    <FormField
-                        label="비밀번호 확인"
-                        type="password"
-                        value={formData.confirmPassword}
-                        onChange={handleChange("confirmPassword")}
-                        error={errors.confirmPassword}
-                        disabled={isLoading}
-                        autoComplete="new-password"
-                        data-component="auth-register-confirm-field"
-                    />
+                    <form onSubmit={handleSubmit} data-component="auth-register-form" className="flex flex-col gap-4">
+                        <FormField
+                            label="이메일"
+                            type="email"
+                            value={formData.email}
+                            onChange={handleChange("email")}
+                            error={errors.email}
+                            disabled={isLoading}
+                            autoComplete="email"
+                            data-component="auth-register-email-field"
+                        />
 
-                    <Button
-                        data-component="auth-register-submit-btn"
-                        type="submit"
-                        size="lg"
-                        className="w-full mt-2"
-                        disabled={isLoading}
-                    >
-                        {isLoading ? <Spinner size="sm" /> : "회원가입"}
-                    </Button>
-                </form>
+                        <FormField
+                            label="이름"
+                            type="text"
+                            value={formData.name}
+                            onChange={handleChange("name")}
+                            error={errors.name}
+                            disabled={isLoading}
+                            autoComplete="name"
+                            data-component="auth-register-name-field"
+                        />
 
-                <p className="text-center text-sm text-muted-foreground">
-                    이미 계정이 있으신가요?{" "}
-                    <Link
+                        <FormField
+                            label="비밀번호"
+                            type="password"
+                            value={formData.password}
+                            onChange={handleChange("password")}
+                            error={errors.password}
+                            disabled={isLoading}
+                            autoComplete="new-password"
+                            data-component="auth-register-password-field"
+                        />
+
+                        {formData.password && (
+                            <PasswordRequirements
+                                requirements={passwordStrength.requirements}
+                                className="animate-fade-in"
+                            />
+                        )}
+
+                        <FormField
+                            label="비밀번호 확인"
+                            type="password"
+                            value={formData.confirmPassword}
+                            onChange={handleChange("confirmPassword")}
+                            error={errors.confirmPassword}
+                            disabled={isLoading}
+                            autoComplete="new-password"
+                            data-component="auth-register-confirm-field"
+                        />
+
+                        <FormField
+                            label="전화번호"
+                            type="tel"
+                            value={formData.phone}
+                            onChange={handleChange("phone")}
+                            error={errors.phone}
+                            disabled={isLoading}
+                            autoComplete="tel"
+                            placeholder="010-1234-5678"
+                            data-component="auth-register-phone-field"
+                        />
+
+                        <FormField
+                            label="생년월일"
+                            type="text"
+                            value={formData.birthDate}
+                            onChange={handleChange("birthDate")}
+                            error={errors.birthDate}
+                            disabled={isLoading}
+                            autoComplete="bday"
+                            placeholder="1990-01-01"
+                            data-component="auth-register-birthdate-field"
+                        />
+
+                        <SelectField
+                            label="지점명"
+                            value={formData.organizationId}
+                            onValueChange={handleSelectChange("organizationId")}
+                            options={organizations}
+                            placeholder={isLoadingOrgs ? "지점 목록 불러오는 중..." : "지점을 선택해주세요"}
+                            error={errors.organizationId}
+                            disabled={isLoading || isLoadingOrgs}
+                            data-component="auth-register-organization-field"
+                        />
+
+                        <SelectField
+                            label="역할"
+                            value={formData.role}
+                            onValueChange={handleSelectChange("role")}
+                            options={REGISTERABLE_ROLE_OPTIONS}
+                            placeholder="역할을 선택해주세요"
+                            error={errors.role}
+                            disabled={isLoading}
+                            data-component="auth-register-role-field"
+                        />
+
+                        <Button
+                            data-component="auth-register-submit-btn"
+                            type="submit"
+                            size="lg"
+                            className="w-full rounded-2xl"
+                            disabled={isLoading}
+                        >
+                            {isLoading ? <Spinner size="sm" /> : "회원가입"}
+                        </Button>
+                    </form>
+
+                    <AuthInlineLink
+                        dataComponent="auth-register-login-link"
                         href="/login"
-                        className="text-primary font-medium hover:underline"
-                        data-component="auth-register-login-link"
-                    >
-                        로그인
-                    </Link>
-                </p>
-            </div>
-        </AuthCard>
+                        prefixText="이미 계정이 있으신가요?"
+                        linkLabel="로그인"
+                    />
+                </>
+            )}
+        </CardContainer>
     );
 }

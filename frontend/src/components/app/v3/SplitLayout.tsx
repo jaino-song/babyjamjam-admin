@@ -11,17 +11,26 @@ interface SplitLayoutProps {
   children: React.ReactNode;
   hasSelection?: boolean;
   onBack?: () => void;
+  columns?: 2 | 3;
+  activePanel?: number;
 }
 
-export function SplitLayout({ children, hasSelection = false, onBack }: SplitLayoutProps) {
+function getDesktopGridClass(columns: 2 | 3): string {
+  if (columns === 3) return "grid-cols-1 lg:grid-cols-3";
+  return "grid-cols-1 lg:grid-cols-[380px_1fr]";
+}
+
+export function SplitLayout({
+  children,
+  hasSelection = false,
+  onBack,
+  columns = 2,
+  activePanel = 0,
+}: SplitLayoutProps) {
   const isMobile = useIsMobile();
 
-  // Extract ListPanel and DetailPanel from children
   const childArray = React.Children.toArray(children);
-  const listPanel = childArray[0];
-  const detailPanel = childArray[1];
 
-  // Handler for back button in DetailPanel
   const goToList = useCallback(() => {
     onBack?.();
   }, [onBack]);
@@ -31,13 +40,12 @@ export function SplitLayout({ children, hasSelection = false, onBack }: SplitLay
     [goToList, isMobile]
   );
 
-  // Desktop: render as grid (original behavior)
   if (!isMobile) {
     return (
       <SplitLayoutContext.Provider value={contextValue}>
         <div
           data-component="split-layout"
-          className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 flex-1 h-full min-h-0 pr-15"
+          className={`grid ${getDesktopGridClass(columns)} gap-6 flex-1 h-full min-h-0`}
         >
           {children}
         </div>
@@ -45,16 +53,25 @@ export function SplitLayout({ children, hasSelection = false, onBack }: SplitLay
     );
   }
 
-  // Mobile: carousel with horizontal slide transition
+  const mobileOffset = columns === 3
+    ? activePanel
+    : hasSelection ? 1 : 0;
+
   return (
     <SplitLayoutContext.Provider value={contextValue}>
       <div data-component="split-layout" className="w-full h-full min-h-0 overflow-hidden relative">
         <div
           className="absolute inset-0 flex transition-transform duration-300 ease-out"
-          style={{ transform: hasSelection ? "translateX(-100%)" : "translateX(0)" }}
+          style={{ transform: `translateX(-${mobileOffset * 100}%)` }}
         >
-          <div className="w-full h-full min-h-0 flex-shrink-0">{listPanel}</div>
-          <div className="w-full h-full min-h-0 flex-shrink-0 overflow-y-auto">{detailPanel}</div>
+          {childArray.map((child) => {
+            const key = (child as React.ReactElement).key ?? crypto.randomUUID();
+            return (
+              <div key={key} className="w-full h-full min-h-0 flex-shrink-0 overflow-y-auto">
+                {child}
+              </div>
+            );
+          })}
         </div>
       </div>
     </SplitLayoutContext.Provider>

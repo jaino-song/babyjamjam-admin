@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useEmployees, Employee } from "./useEmployees";
+import { useEmployees } from "./useEmployees";
+import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
+import { matchesKoreanSearch } from "@/lib/search/korean-search";
 
 const INITIAL_VISIBLE_COUNT = 6;
 const PAGE_SIZE = 6;
@@ -26,15 +28,22 @@ export function useInfiniteEmployees({
 
   const { data: employees = [], isLoading } = useEmployees();
 
+  const normalizePhoneDigits = useCallback((value: string) => value.replace(/\D/g, ""), []);
+
   // Reset visible count when filter/search changes
   useEffect(() => {
+    const resetKey = `${filter}:${search}`;
+
     if (fetchTimerRef.current) {
       clearTimeout(fetchTimerRef.current);
       fetchTimerRef.current = null;
     }
 
-    setVisibleCount(INITIAL_VISIBLE_COUNT);
-    setIsFetchingNextPage(false);
+    queueMicrotask(() => {
+      void resetKey;
+      setVisibleCount(INITIAL_VISIBLE_COUNT);
+      setIsFetchingNextPage(false);
+    });
   }, [filter, search]);
 
   // Cleanup timer on unmount
@@ -57,17 +66,25 @@ export function useInfiniteEmployees({
     }
 
     if (search.trim()) {
-      const q = search.toLowerCase();
+      const query = search.trim();
+      const lowerQuery = query.toLowerCase();
+      const phoneQuery = normalizePhoneDigits(query);
+
       list = list.filter(
-        (e) =>
-          e.name.toLowerCase().includes(q) ||
-          e.phone.includes(q) ||
-          e.workArea.some((a) => a.toLowerCase().includes(q))
+        (employee) =>
+          matchesKoreanSearch(employee.name, query) ||
+          (phoneQuery.length > 0 && normalizePhoneDigits(employee.phone).includes(phoneQuery)) ||
+          employee.workArea.some((area) => {
+            const formattedArea = formatWorkAreaLabel(area).toLowerCase();
+            const rawArea = area.toLowerCase();
+
+            return rawArea.includes(lowerQuery) || formattedArea.includes(lowerQuery);
+          })
       );
     }
 
     return list;
-  }, [employees, filter, search]);
+  }, [employees, filter, normalizePhoneDigits, search]);
 
   // Slice to visible count
   const visibleEmployees = useMemo(() => {

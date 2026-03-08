@@ -21,7 +21,7 @@ describe("CreateEmployeeUsecase", () => {
             const name = "테스트 직원";
             const workArea = ["인천 연수구", "인천 남동구"];
             const phone = "010-1234-5678";
-            const grade = "1급";
+            const grade = "프리미엄";
             const openToNextWork = true;
             const registeredDate = new Date("2024-01-15");
 
@@ -42,7 +42,7 @@ describe("CreateEmployeeUsecase", () => {
             expect(result.name).toBe("테스트 직원");
             expect(result.workArea).toEqual(["인천 연수구", "인천 남동구"]);
             expect(result.phone).toBe("010-1234-5678");
-            expect(result.grade).toBe("1급");
+            expect(result.grade).toBe("프리미엄");
             expect(result.openToNextWork).toBe(true);
         });
 
@@ -51,7 +51,7 @@ describe("CreateEmployeeUsecase", () => {
             const name = "신규 직원";
             const workArea = ["서울 강남구"];
             const phone = "010-9999-8888";
-            const grade = "2급";
+            const grade = "베스트";
             const openToNextWork = false;
 
             // Act
@@ -72,9 +72,9 @@ describe("CreateEmployeeUsecase", () => {
 
         it("should auto-increment employee id for multiple creates", async () => {
             // Arrange & Act
-            const emp1 = await usecase.execute(organizationId, "직원1", ["지역A"], "010-0000-0001", "1급", true);
-            const emp2 = await usecase.execute(organizationId, "직원2", ["지역B"], "010-0000-0002", "2급", false);
-            const emp3 = await usecase.execute(organizationId, "직원3", ["지역C"], "010-0000-0003", "3급", true);
+            const emp1 = await usecase.execute(organizationId, "직원1", ["지역A"], "010-0000-0001", "프리미엄", true);
+            const emp2 = await usecase.execute(organizationId, "직원2", ["지역B"], "010-0000-0002", "베스트", false);
+            const emp3 = await usecase.execute(organizationId, "직원3", ["지역C"], "010-0000-0003", "스탠다드", true);
 
             // Assert
             expect(emp1.id).toBe(1);
@@ -92,7 +92,7 @@ describe("CreateEmployeeUsecase", () => {
                 "다지역 담당",
                 workAreas,
                 "010-1111-2222",
-                "1급",
+                "프리미엄",
                 true,
             );
 

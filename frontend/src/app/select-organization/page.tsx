@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { getRoleLabel } from "@/lib/constants/roles";
 import { getUserOrganizations, setCurrentOrganization } from "./actions";
 
 interface Organization {
@@ -146,16 +147,7 @@ export default function SelectOrganizationPage() {
         }
     };
 
-    const getRoleLabel = (role: string) => {
-        switch (role) {
-            case "owner":
-                return "소유자";
-            case "admin":
-                return "관리자";
-            default:
-                return "사용자";
-        }
-    };
+
 
     return (
         <div data-component="select-org" className="flex flex-col items-center justify-center min-h-screen gap-6 px-4 py-8">
@@ -194,23 +186,20 @@ export default function SelectOrganizationPage() {
                                         )}
                                     </div>
                                 </div>
-                                <Badge variant={getRoleBadgeVariant(org.role)}>
-                                    {getRoleLabel(org.role)}
-                                </Badge>
+                                {selecting === org.id ? (
+                                    <Spinner size="sm" />
+                                ) : (
+                                    <Badge variant={getRoleBadgeVariant(org.role)}>
+                                        {getRoleLabel(org.role)}
+                                    </Badge>
+                                )}
                             </div>
                         </CardContent>
                     </Card>
                 ))}
             </div>
 
-            {selecting && (
-                <div data-component="select-org-loading" className="flex items-center gap-2 mt-4">
-                    <Spinner size="sm" />
-                    <p className="text-sm text-muted-foreground">
-                        조직 설정 중...
-                    </p>
-                </div>
-            )}
+
         </div>
     );
 }

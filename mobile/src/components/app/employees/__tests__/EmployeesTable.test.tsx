@@ -32,7 +32,7 @@ const mockEmployees: Employee[] = [
     phone: '01012345678',
     status: 'available',
     workArea: ['인천 남동구'],
-    grade: '1급',
+    grade: '프리미엄',
     openToNextWork: true,
     registeredDate: '2026-02-01T00:00:00.000Z',
   },
@@ -42,7 +42,7 @@ const mockEmployees: Employee[] = [
     phone: '01087654321',
     status: 'working',
     workArea: ['인천 연수구'],
-    grade: '2급',
+    grade: '베스트',
     openToNextWork: false,
     registeredDate: '2026-02-02T00:00:00.000Z',
   },
@@ -52,7 +52,7 @@ const mockEmployees: Employee[] = [
     phone: '01055556666',
     status: 'unavailable',
     workArea: ['인천 부평구'],
-    grade: '3급',
+    grade: '스탠다드',
     openToNextWork: false,
     registeredDate: '2026-02-03T00:00:00.000Z',
   },
@@ -208,7 +208,7 @@ describe('EmployeesTable', () => {
       expect(screen.getByText('전체')).toBeInTheDocument();
 
       await user.click(screen.getByRole('combobox'));
-      expect(await screen.findByRole('option', { name: '가능' })).toBeInTheDocument();
+      expect(await screen.findByRole('option', { name: '근무 가능' })).toBeInTheDocument();
     });
 
     it('filters employees by status when filter is selected', async () => {
@@ -216,7 +216,7 @@ describe('EmployeesTable', () => {
       render(<EmployeesTable />);
 
       await user.click(screen.getByRole('combobox'));
-      await user.click(await screen.findByRole('option', { name: '가능' }));
+      await user.click(await screen.findByRole('option', { name: '근무 가능' }));
 
       expect(screen.getByText('김철수')).toBeInTheDocument();
       expect(screen.queryByText('이영희')).not.toBeInTheDocument();

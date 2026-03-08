@@ -34,6 +34,8 @@ const E2E_USER: AuthUser = {
     role: 'admin',
 };
 
+const INITIAL_DATA_UPDATED_AT = Date.now();
+
 export const useGetAuthUser = (options?: UseGetAuthUserOptions) => {
     const pathname = usePathname();
     // Disable auth query on public auth pages (login, register, forgot-password, etc.)
@@ -51,6 +53,6 @@ export const useGetAuthUser = (options?: UseGetAuthUserOptions) => {
         // initialData가 있으면 바로 사용 (duplicate fetch 방지)
         initialData: options?.initialData ?? (isE2E ? E2E_USER : undefined),
         // initialData가 있으면 stale로 간주하지 않음
-        initialDataUpdatedAt: options?.initialData || isE2E ? Date.now() : undefined,
+        initialDataUpdatedAt: options?.initialData || isE2E ? INITIAL_DATA_UPDATED_AT : undefined,
     });
 }

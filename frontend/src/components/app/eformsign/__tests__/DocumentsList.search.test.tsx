@@ -34,7 +34,7 @@ const createMockDocument = (
   doc_id: string,
   customer_name: string | null,
   status: '대기' | '완료' | '거부' = '완료'
-): any => ({
+): EformsignDocumentView => ({
   id: doc_id,
   document_number: `DOC-${doc_id}`,
   template: { id: 'template-1', name: 'Test Template' },
@@ -61,7 +61,7 @@ const createMockDocument = (
   histories: [],
   recipients: [],
   detail_template_info: [],
-});
+} as unknown as EformsignDocumentView);
 
 const openSearchField = () => {
   const searchIconButton = screen.getByRole('button', { name: /search/i });

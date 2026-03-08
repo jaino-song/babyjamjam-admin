@@ -8,7 +8,7 @@ describe("EmployeeEntity", () => {
         name: "테스트 직원",
         workArea: ["인천 연수구", "인천 남동구"],
         phone: "010-1234-5678",
-        grade: "1급",
+        grade: "프리미엄",
         openToNextWork: true,
         registeredDate: new Date("2024-01-15"),
     };
@@ -34,7 +34,7 @@ describe("EmployeeEntity", () => {
             expect(employee.name).toBe("테스트 직원");
             expect(employee.workArea).toEqual(["인천 연수구", "인천 남동구"]);
             expect(employee.phone).toBe("010-1234-5678");
-            expect(employee.grade).toBe("1급");
+            expect(employee.grade).toBe("프리미엄");
             expect(employee.openToNextWork).toBe(true);
             expect(employee.registeredDate).toEqual(new Date("2024-01-15"));
         });
@@ -79,7 +79,7 @@ describe("EmployeeEntity", () => {
                 "테스트 직원",
                 ["서울"],
                 "010-0000-0000",
-                "2급",
+                "베스트",
                 false,
             );
 
@@ -99,7 +99,7 @@ describe("EmployeeEntity", () => {
                 "테스트 직원",
                 ["서울"],
                 "010-0000-0000",
-                "2급",
+                "베스트",
                 false,
                 customDate,
             );
@@ -114,7 +114,7 @@ describe("EmployeeEntity", () => {
                 "신입 직원",
                 [],
                 "010-1111-2222",
-                "3급",
+                "스탠다드",
                 true,
             );
 
@@ -203,7 +203,7 @@ describe("EmployeeEntity", () => {
                 "가용 직원",
                 ["서울"],
                 "010-0000-0000",
-                "1급",
+                "프리미엄",
                 true,
             );
 
@@ -217,7 +217,7 @@ describe("EmployeeEntity", () => {
                 "비가용 직원",
                 ["서울"],
                 "010-0000-0000",
-                "1급",
+                "프리미엄",
                 false,
             );
 
@@ -233,7 +233,7 @@ describe("EmployeeEntity", () => {
                 "직원",
                 ["서울"],
                 "010-0000-0000",
-                "1급",
+                "프리미엄",
                 true,
             );
             expect(employee.openToNextWork).toBe(true);
@@ -252,7 +252,7 @@ describe("EmployeeEntity", () => {
                 "직원",
                 ["서울"],
                 "010-0000-0000",
-                "1급",
+                "프리미엄",
                 false,
             );
 
@@ -269,7 +269,7 @@ describe("EmployeeEntity", () => {
                 "직원",
                 ["서울"],
                 "010-0000-0000",
-                "1급",
+                "프리미엄",
                 true,
             );
 
@@ -294,7 +294,7 @@ describe("EmployeeEntity", () => {
                     "원래 이름",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -306,7 +306,7 @@ describe("EmployeeEntity", () => {
                 expect(employee.name).toBe("새 이름");
                 expect(employee.workArea).toEqual(["서울"]);
                 expect(employee.phone).toBe("010-1111-1111");
-                expect(employee.grade).toBe("1급");
+                expect(employee.grade).toBe("프리미엄");
                 expect(employee.openToNextWork).toBe(true);
             });
 
@@ -317,7 +317,7 @@ describe("EmployeeEntity", () => {
                     "직원",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -337,7 +337,7 @@ describe("EmployeeEntity", () => {
                     "직원",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -356,7 +356,7 @@ describe("EmployeeEntity", () => {
                     "직원",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -375,7 +375,7 @@ describe("EmployeeEntity", () => {
                     "직원",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -396,7 +396,7 @@ describe("EmployeeEntity", () => {
                     "원래 이름",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -427,7 +427,7 @@ describe("EmployeeEntity", () => {
                     "원래 이름",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -439,7 +439,7 @@ describe("EmployeeEntity", () => {
                 expect(employee.name).toBe("원래 이름");
                 expect(employee.workArea).toEqual(["서울"]);
                 expect(employee.phone).toBe("010-1111-1111");
-                expect(employee.grade).toBe("1급");
+                expect(employee.grade).toBe("프리미엄");
                 expect(employee.openToNextWork).toBe(true);
             });
 
@@ -450,7 +450,7 @@ describe("EmployeeEntity", () => {
                     "원래 이름",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -469,7 +469,7 @@ describe("EmployeeEntity", () => {
                     "직원",
                     ["서울", "부산"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -490,7 +490,7 @@ describe("EmployeeEntity", () => {
                     "직원",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     new Date("2024-01-01"),
                 );
@@ -510,7 +510,7 @@ describe("EmployeeEntity", () => {
                     "직원",
                     ["서울"],
                     "010-1111-1111",
-                    "1급",
+                    "프리미엄",
                     true,
                     originalDate,
                 );
@@ -535,7 +535,7 @@ describe("EmployeeEntity", () => {
                 "직원 A",
                 ["서울"],
                 "010-1111-1111",
-                "1급",
+                "프리미엄",
                 true,
                 new Date("2024-01-01"),
             );
@@ -544,7 +544,7 @@ describe("EmployeeEntity", () => {
                 "직원 B",
                 ["부산"],
                 "010-2222-2222",
-                "2급",
+                "베스트",
                 false,
                 new Date("2024-02-01"),
             );
@@ -560,7 +560,7 @@ describe("EmployeeEntity", () => {
                 "직원",
                 ["서울"],
                 "010-1111-1111",
-                "1급",
+                "프리미엄",
                 true,
                 new Date("2024-01-01"),
             );
@@ -569,7 +569,7 @@ describe("EmployeeEntity", () => {
                 "직원",
                 ["서울"],
                 "010-1111-1111",
-                "1급",
+                "프리미엄",
                 true,
                 new Date("2024-01-01"),
             );

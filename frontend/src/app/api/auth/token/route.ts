@@ -74,8 +74,8 @@ export async function POST(request: NextRequest) {
         if (error instanceof Error) {
             console.error("Error Name:", error.name);
             console.error("Error Message:", error.message);
-            if ('code' in error) {
-                console.error("Error Code:", (error as any).code);
+            if ("code" in error) {
+                console.error("Error Code:", (error as { code?: string }).code);
             }
         }
 

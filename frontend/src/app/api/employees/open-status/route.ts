@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 
 export async function PATCH(request: NextRequest) {
     try {
@@ -29,11 +22,7 @@ export async function PATCH(request: NextRequest) {
             headers: getAuthHeaders(token),
         });
         return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[API] Error updating employee open status:", error.message);
-        return NextResponse.json(
-            { error: "Failed to update employee open status" },
-            { status: error.response?.status || 500 }
-        );
+    } catch (error) {
+        return errorResponse(error, "update employee open status");
     }
 }

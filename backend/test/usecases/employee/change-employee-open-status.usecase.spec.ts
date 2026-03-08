@@ -77,7 +77,7 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
             const employee = EmployeeFactory.create({
                 id: 1,
                 name: "원본 이름",
-                grade: "1급",
+                grade: "프리미엄",
                 openToNextWork: true,
             });
             mockRepository.setData([employee]);
@@ -87,7 +87,7 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
 
             // Assert
             expect(result.name).toBe("원본 이름");
-            expect(result.grade).toBe("1급");
+            expect(result.grade).toBe("프리미엄");
             expect(result.openToNextWork).toBe(false);
         });
 

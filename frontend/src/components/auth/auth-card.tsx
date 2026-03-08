@@ -1,31 +1,101 @@
 import * as React from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-interface AuthCardProps {
+interface CardContainerProps {
   children: React.ReactNode;
-  title: string;
-  description?: string;
+  title?: string;
+  subtitle?: string;
   className?: string;
+  contentClassName?: string;
+  disableAnimation?: boolean;
+  headerActionsLeft?: React.ReactNode;
+  headerActionsRight?: React.ReactNode;
   "data-component"?: string;
+  dataComponents?: {
+    container?: string;
+    card?: string;
+    headerActions?: string;
+    header?: string;
+    title?: string;
+    subtitle?: string;
+    content?: string;
+  };
 }
 
-export function AuthCard({ children, title, description, className, "data-component": dataComponent }: AuthCardProps) {
+export function CardContainer({
+  children,
+  title,
+  subtitle,
+  className,
+  contentClassName,
+  disableAnimation = false,
+  headerActionsLeft,
+  headerActionsRight,
+  "data-component": dataComponent,
+  dataComponents,
+}: CardContainerProps) {
+  const hasHeader = Boolean(title || subtitle);
+  const hasHeaderActions = Boolean(headerActionsLeft || headerActionsRight);
+  const componentName = dataComponent ?? "card-container";
+  const componentSlots = {
+    container: dataComponents?.container ?? `${componentName}-container`,
+    card: dataComponents?.card ?? `${componentName}-card`,
+    headerActions: dataComponents?.headerActions ?? `${componentName}-header-actions`,
+    header: dataComponents?.header ?? `${componentName}-header`,
+    title: dataComponents?.title ?? `${componentName}-title`,
+    subtitle: dataComponents?.subtitle ?? `${componentName}-subtitle`,
+    content: dataComponents?.content ?? `${componentName}-content`,
+  };
+
   return (
-    <div data-component={dataComponent} className="flex min-h-screen items-center justify-center px-4 py-8">
+    <div
+      data-component={componentSlots.container}
+      className="flex min-h-screen w-full items-center justify-center px-4 py-8"
+    >
       <Card
+        data-component={componentSlots.card}
         className={cn(
-          "w-full max-w-[400px] animate-scale-in shadow-lg",
+          "w-full max-w-[440px] rounded-2xl border-none bg-white text-foreground shadow-v3 p-6",
+          "flex flex-col overflow-hidden gap-6",
+          !disableAnimation && "animate-scale-in",
           className
         )}
       >
-        <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-2xl font-bold">{title}</CardTitle>
-          {description && (
-            <CardDescription className="text-base">{description}</CardDescription>
-          )}
-        </CardHeader>
-        <CardContent>{children}</CardContent>
+        {hasHeaderActions && (
+          <div
+            data-component={componentSlots.headerActions}
+            className="flex items-center justify-between"
+          >
+            <div>{headerActionsLeft}</div>
+            <div>{headerActionsRight}</div>
+          </div>
+        )}
+
+        {hasHeader && (
+          <CardHeader
+            data-component={componentSlots.header}
+            className="p-0 flex flex-col gap-1 text-center"
+          >
+            {title && (
+              <h2 data-component={componentSlots.title} className="text-2xl md:text-xl font-extrabold text-v3-dark">
+                {title}
+              </h2>
+            )}
+            {subtitle && (
+              <p data-component={componentSlots.subtitle} className="text-xs md:text-[0.8rem] text-v3-text-muted">
+                {subtitle}
+              </p>
+            )}
+          </CardHeader>
+        )}
+
+        <div
+          data-component={componentSlots.content}
+          className={cn(contentClassName)}
+        >
+          {children}
+        </div>
       </Card>
     </div>
   );

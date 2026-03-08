@@ -11,14 +11,8 @@ import { ContentPaper } from "@/components/app/root/content-paper";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 
-export default function EditTemplatePage() {
-    const params = useParams();
-    const id = params.id as string;
-    const locale = useLocale();
-
-    const { data: template, isLoading, error } = useMessageTemplate(id);
-
-    const BackButton = () => (
+function BackButton() {
+    return (
         <div data-component="messages-template-edit-nav" className="mb-4">
             <Button variant="ghost" size="icon" asChild>
                 <Link href="/messages/templates">
@@ -27,6 +21,14 @@ export default function EditTemplatePage() {
             </Button>
         </div>
     );
+}
+
+export default function EditTemplatePage() {
+    const params = useParams();
+    const id = params.id as string;
+    const locale = useLocale();
+
+    const { data: template, isLoading, error } = useMessageTemplate(id);
 
     if (isLoading) {
         return (
@@ -77,4 +79,3 @@ export default function EditTemplatePage() {
         </div>
     );
 }
-

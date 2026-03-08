@@ -21,6 +21,25 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
     const { variableValues, setVariableValue } = useTemplateStore();
     const [generatedMessage, setGeneratedMessage] = useState("");
 
+    const formStoreSetters: Partial<Record<keyof typeof FORM_STORE_MAPPING, (value: string) => void>> = {
+        name: formStore.setName,
+        phone: formStore.setPhone,
+        address: formStore.setAddress,
+        birthday: formStore.setBirthday,
+        employeeName: formStore.setEmployeeName,
+        employeePhone: formStore.setEmployeePhone,
+        employee2Name: formStore.setEmployee2Name,
+        employee2Phone: formStore.setEmployee2Phone,
+        startDate: formStore.setStartDate,
+        endDate: formStore.setEndDate,
+        fullPrice: formStore.setFullPrice,
+        grant: formStore.setGrant,
+        actualPrice: formStore.setActualPrice,
+        area: formStore.setArea,
+        voucherType: formStore.setVoucherType,
+        voucherDuration: formStore.setVoucherDuration,
+    };
+
     const FORM_STORE_MAPPING: Record<string, keyof typeof formStore> = {
         name: "name",
         phone: "phone",
@@ -51,8 +70,7 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
     const handleVariableChange = (key: string, value: string) => {
         const storeKey = FORM_STORE_MAPPING[key];
         if (storeKey) {
-            const setterName = `set${storeKey.charAt(0).toUpperCase()}${storeKey.slice(1)}`;
-            const setter = (formStore as any)[setterName];
+            const setter = formStoreSetters[storeKey];
             if (typeof setter === "function") {
                 setter(value);
                 return;

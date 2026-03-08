@@ -81,8 +81,10 @@ export function ClientsTable() {
 
     useEffect(() => {
         if (clientIdParam && clientFromParam) {
-            setSelectedClient(clientFromParam);
-            setDetailModalOpen(true);
+            queueMicrotask(() => {
+                setSelectedClient(clientFromParam);
+                setDetailModalOpen(true);
+            });
         }
     }, [clientIdParam, clientFromParam]);
 

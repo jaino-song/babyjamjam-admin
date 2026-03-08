@@ -1,4 +1,5 @@
 import { EmployeeEntity } from "domain/entities/employee.entity";
+import { normalizeEmployeeGrade } from "domain/constants/employee-grade.constants";
 
 type EmployeeRow = {
     id: number;
@@ -17,7 +18,7 @@ export class EmployeeMapper {
             row.name,
             row.workArea,
             row.phone,
-            row.grade,
+            normalizeEmployeeGrade(row.grade),
             row.openToNextWork,
             row.companyRegisteredDate ?? new Date(),
         );
@@ -29,7 +30,7 @@ export class EmployeeMapper {
             name: entity.name,
             workArea: entity.workArea,
             phone: entity.phone,
-            grade: entity.grade,
+            grade: normalizeEmployeeGrade(entity.grade),
             openToNextWork: entity.openToNextWork,
             companyRegisteredDate: entity.registeredDate,
         };
@@ -40,10 +41,9 @@ export class EmployeeMapper {
             name: entity.name,
             workArea: entity.workArea,
             phone: entity.phone,
-            grade: entity.grade,
+            grade: normalizeEmployeeGrade(entity.grade),
             openToNextWork: entity.openToNextWork,
         };
     }
 }
-
 
