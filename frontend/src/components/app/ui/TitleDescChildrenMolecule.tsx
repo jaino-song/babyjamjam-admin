@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-interface TitleDescChildrenMoleculeProps extends React.HTMLAttributes<HTMLElement> {
+interface TitleDescChildrenMoleculeProps extends Omit<React.HTMLAttributes<HTMLElement>, "title"> {
     title: React.ReactNode;
     description?: React.ReactNode;
     children: React.ReactNode;
