@@ -470,6 +470,7 @@ export const ContractCreationForm = () => {
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
   const isStep4Valid = Boolean(startDate && endDate && paymentDate);
   const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
+  const hasVoucherPricingSelection = Boolean(voucherType && voucherDuration);
 
   const getStepValidationMessage = (step: number): string | null => {
     if (step === 0 && !isStep1Valid) {
@@ -775,106 +776,111 @@ export const ContractCreationForm = () => {
       label: stepLabels[2] ?? "바우처 정보",
       content: (
         <div className="flex flex-col gap-6">
-          <div className="space-y-2 max-w-[120px]">
-            <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-year-label")}</Label>
-            <select
-              className={SELECT_CLS}
-              value={String(voucherYear)}
-              onChange={(e) => handleVoucherYearChange(Number(e.target.value))}
-              disabled={isVoucherYearsLoading}
-            >
-              {voucherYears.map((year) => (
-                <option key={year} value={String(year)}>
-                  {year}년
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-2">
-            <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-type-label")}</Label>
-            <select className={SELECT_CLS} value={voucherType} onChange={(e) => handleVoucherTypeChange(e.target.value)}>
-              <option value="">{t(locale, "price-info-msg.voucher-type-label")}</option>
-              {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-                <optgroup key={groupName} label={groupName}>
-                  {Object.entries(types).map(([typeValue, typeData]) => (
-                    <option key={typeValue} value={typeValue}>
-                      {typeData.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-
-          {voucherType && voucherPriceInfos.length > 0 && (
-            <div className="space-y-2">
-              <Label className={LABEL_CLS}>{t(locale, "price-info-msg.duration-label")}</Label>
+          <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-4">
+            <div className="space-y-2 md:w-[120px] md:flex-none">
+              <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-year-label")}</Label>
               <select
                 className={SELECT_CLS}
-                value={voucherDuration}
-                onChange={(e) => handleDurationChange(e.target.value)}
-                disabled={isVoucherPriceInfosLoading}
+                value={String(voucherYear)}
+                onChange={(e) => handleVoucherYearChange(Number(e.target.value))}
+                disabled={isVoucherYearsLoading}
               >
-                <option value="">{t(locale, "price-info-msg.duration-label")}</option>
-                {voucherPriceInfos.map((v) => (
-                  <option key={v.duration} value={v.duration}>
-                    {v.duration}일
+                {voucherYears.map((year) => (
+                  <option key={year} value={String(year)}>
+                    {year}년
                   </option>
                 ))}
               </select>
             </div>
-          )}
 
-          {voucherType && isVoucherPriceInfosLoading && (
-            <div className="flex justify-center">
-              <Spinner className="h-5 w-5 text-primary" />
-            </div>
-          )}
-
-          {voucherDuration && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label className={LABEL_CLS}>{t(locale, "contract-msg.full-price-label")}</Label>
-                <div className="relative">
-                  <Input
-                    variant="v3"
-                    value={formatPrice(fullPrice)}
-                    onChange={(e) => setFullPrice(parsePrice(e.target.value))}
-                    placeholder="0"
-                    className={`${INPUT_CLS} pr-12`}
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">원</span>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label className={LABEL_CLS}>{t(locale, "contract-msg.grant-label")}</Label>
-                <div className="relative">
-                  <Input
-                    variant="v3"
-                    value={formatPrice(grant)}
-                    onChange={(e) => setGrant(parsePrice(e.target.value))}
-                    placeholder="0"
-                    className={`${INPUT_CLS} pr-12`}
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">원</span>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label className={LABEL_CLS}>{t(locale, "contract-msg.actual-price-label")}</Label>
-                <div className="relative">
-                  <Input
-                    variant="v3"
-                    value={formatPrice(actualPrice)}
-                    onChange={(e) => setActualPrice(parsePrice(e.target.value))}
-                    placeholder="0"
-                    className={`${INPUT_CLS} pr-12`}
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">원</span>
-                </div>
+            <div className="space-y-2 flex-1 min-w-0">
+              <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-type-label")}</Label>
+              <div className="relative">
+                <select
+                  className={`${SELECT_CLS} ${isVoucherPriceInfosLoading ? "bg-none pr-11" : ""}`}
+                  value={voucherType}
+                  onChange={(e) => handleVoucherTypeChange(e.target.value)}
+                >
+                  <option value="">{t(locale, "price-info-msg.voucher-type-label")}</option>
+                  {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                    <optgroup key={groupName} label={groupName}>
+                      {Object.entries(types).map(([typeValue, typeData]) => (
+                        <option key={typeValue} value={typeValue}>
+                          {typeData.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                {isVoucherPriceInfosLoading && (
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2">
+                    <Spinner className="h-4 w-4 text-primary" />
+                  </span>
+                )}
               </div>
             </div>
-          )}
+
+            {voucherType && voucherPriceInfos.length > 0 && (
+              <div className="space-y-2 flex-1 min-w-0">
+                <Label className={LABEL_CLS}>{t(locale, "price-info-msg.duration-label")}</Label>
+                <select
+                  className={SELECT_CLS}
+                  value={voucherDuration}
+                  onChange={(e) => handleDurationChange(e.target.value)}
+                  disabled={isVoucherPriceInfosLoading}
+                >
+                  <option value="">{t(locale, "price-info-msg.duration-label")}</option>
+                  {voucherPriceInfos.map((v) => (
+                    <option key={v.duration} value={v.duration}>
+                      {v.duration}일
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <Label className={LABEL_CLS}>{t(locale, "contract-msg.full-price-label")}</Label>
+              <div className="relative">
+                <Input
+                  variant="v3"
+                  value={formatPrice(hasVoucherPricingSelection ? fullPrice : 0)}
+                  onChange={(e) => setFullPrice(parsePrice(e.target.value))}
+                  placeholder="0"
+                  className={`${INPUT_CLS} pr-12`}
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">원</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className={LABEL_CLS}>{t(locale, "contract-msg.grant-label")}</Label>
+              <div className="relative">
+                <Input
+                  variant="v3"
+                  value={formatPrice(hasVoucherPricingSelection ? grant : 0)}
+                  onChange={(e) => setGrant(parsePrice(e.target.value))}
+                  placeholder="0"
+                  className={`${INPUT_CLS} pr-12`}
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">원</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className={LABEL_CLS}>{t(locale, "contract-msg.actual-price-label")}</Label>
+              <div className="relative">
+                <Input
+                  variant="v3"
+                  value={formatPrice(hasVoucherPricingSelection ? actualPrice : 0)}
+                  onChange={(e) => setActualPrice(parsePrice(e.target.value))}
+                  placeholder="0"
+                  className={`${INPUT_CLS} pr-12`}
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">원</span>
+              </div>
+            </div>
+          </div>
         </div>
       ),
       summary: (
@@ -891,7 +897,7 @@ export const ContractCreationForm = () => {
               {voucherDuration}일
             </span>
           )}
-          {actualPrice && (
+          {hasVoucherPricingSelection && actualPrice && (
             <span className={COMPLETED_PILL}>
               <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
               {formatPrice(actualPrice)}원
@@ -903,8 +909,8 @@ export const ContractCreationForm = () => {
     {
       label: stepLabels[3] ?? "계약 정보",
       content: (
-        <div className="flex flex-col gap-6">
-          <div className="space-y-2">
+        <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-4">
+          <div className="space-y-2 flex-1 min-w-0">
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.start-date-label")}</Label>
             <Input
               variant="v3"
@@ -914,7 +920,7 @@ export const ContractCreationForm = () => {
               className={INPUT_CLS}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 flex-1 min-w-0">
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.end-date-label")}</Label>
             <Input
               variant="v3"
@@ -924,7 +930,7 @@ export const ContractCreationForm = () => {
               className={INPUT_CLS}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 flex-1 min-w-0">
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.payment-date-label")}</Label>
             <Input
               variant="v3"
@@ -966,7 +972,7 @@ export const ContractCreationForm = () => {
           onStepChange={handleStepChange}
           onComplete={handleWizardComplete}
           onBack={() => router.push("/contracts")}
-          backLabel="계약 목록으로 돌아가기"
+          backLabel="전자문서 목록으로 돌아가기"
           completeLabel={isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
           isSubmitting={isSubmitting}
           isNextDisabled={!isCurrentStepValid}
