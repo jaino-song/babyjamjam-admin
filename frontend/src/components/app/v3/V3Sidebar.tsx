@@ -6,13 +6,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  BarChart3,
   Users,
   UserCheck,
-  Calendar,
   FileText,
   FolderOpen,
-  Bell,
   Settings,
   LucideIcon,
   Calculator

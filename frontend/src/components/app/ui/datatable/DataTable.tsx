@@ -43,9 +43,11 @@ export function DataTable<T extends Record<string, unknown>>({
   hideToolbar = false,
   emptyMessage = "데이터가 없습니다",
   className,
-  sx: _sx, // Kept for backward compatibility, ignored
+  sx, // Kept for backward compatibility, ignored
   skeletonRowCount = 5,
 }: DataTableProps<T>) {
+  void sx;
+
   const [internalPage, setInternalPage] = useState(0);
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const [internalFilterValue, setInternalFilterValue] = useState<string | null>(null);

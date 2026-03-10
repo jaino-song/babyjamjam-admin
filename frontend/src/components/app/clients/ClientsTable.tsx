@@ -70,7 +70,7 @@ export function ClientsTable() {
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
-    const { data, isLoading, error } = useClients(
+    const { data, isLoading } = useClients(
         page + 1,
         rowsPerPage,
         searchQuery.trim() ? searchQuery.trim() : undefined
@@ -140,7 +140,7 @@ export function ClientsTable() {
         setPage(newPage);
     };
 
-    const clients = data?.data || [];
+    const clients = useMemo(() => data?.data ?? [], [data?.data]);
     const filteredClients = useMemo(() => {
         if (!statusFilter) return clients;
         return clients.filter((client) => client.serviceStatus === statusFilter);

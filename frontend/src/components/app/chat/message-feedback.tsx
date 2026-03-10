@@ -19,8 +19,6 @@ interface MessageFeedbackProps {
 }
 
 export function MessageFeedback({
-    messageId: _messageId,
-    sessionId: _sessionId,
     onSubmitFeedback
 }: MessageFeedbackProps) {
     const [feedbackGiven, setFeedbackGiven] = useState<"positive" | "negative" | null>(null);
