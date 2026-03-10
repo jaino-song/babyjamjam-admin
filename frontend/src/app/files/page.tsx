@@ -1,16 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FolderOpen, FileText, Image, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
+import { FolderOpen, FileText, Image as ImageIcon, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
 import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, PageSection, DetailSkeleton, ListEmptyState, DetailActions } from "@/components/app/v3";
-import type { DetailAction } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useDocuments, useUploadDocument, useUpdateDocument, useDeleteDocument, Document } from "@/hooks/use-documents";
-import { useDocumentCategories, useCreateDocumentCategory, DocumentCategory } from "@/hooks/use-document-categories";
+import { useDocumentCategories, useCreateDocumentCategory } from "@/hooks/use-document-categories";
 import { DocumentDropzone } from "@/components/app/documents/document-dropzone";
 import DocumentPreviewModal from "@/components/app/documents/document-preview-modal";
 import { DocumentEditModal } from "@/components/app/documents/document-edit-modal";
@@ -75,7 +74,7 @@ export default function FilesPage() {
 
   function getFileIcon(mimeType: string) {
     if (mimeType.includes("pdf")) return <FileText className="w-4 h-4 text-v3-burgundy" />;
-    if (mimeType.includes("image")) return <Image className="w-4 h-4 text-v3-primary" />;
+    if (mimeType.includes("image")) return <ImageIcon className="w-4 h-4 text-v3-primary" />;
     return <File className="w-4 h-4 text-v3-text-muted" />;
   }
 
@@ -127,7 +126,7 @@ export default function FilesPage() {
 
   if (error) {
     return (
-      <div className="p-6">
+      <div data-component="files-error-container" className="p-6">
         <div data-component="files-error" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
           문서를 불러오는데 실패했습니다.
         </div>
@@ -189,10 +188,10 @@ export default function FilesPage() {
                 if (slotLoading) {
                   return (
                     <>
-                      <div className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
+                      <div data-component="files-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
                         <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
                       </div>
-                      <div className="flex-1 min-w-0">
+                      <div data-component="files-list-item-skeleton-content" className="flex-1 min-w-0">
                         <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
                         <Skeleton className="h-3 w-32 bg-v3-dim-white" />
                       </div>
@@ -203,10 +202,10 @@ export default function FilesPage() {
                 if (!doc) return null;
                 return (
                   <>
-                    <div className="w-9 h-9 rounded-[10px] bg-v3-primary-light flex items-center justify-center shrink-0">
+                    <div data-component="files-list-item-icon" className="w-9 h-9 rounded-[10px] bg-v3-primary-light flex items-center justify-center shrink-0">
                       {getFileIcon(doc.mimeType)}
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div data-component="files-list-item-content" className="flex-1 min-w-0">
                       <p className="text-[0.8rem] font-semibold text-v3-dark truncate">{doc.name}</p>
                       <p className="text-[0.7rem] text-v3-text-muted truncate">{getCategoryLabel(doc.categoryId)}</p>
                     </div>
@@ -230,7 +229,6 @@ export default function FilesPage() {
         ) : selectedDocument ? (
           <FileDetail
             document={selectedDocument}
-            categories={categories}
             getCategoryLabel={getCategoryLabel}
             onPreview={() => setPreviewDoc(selectedDocument)}
             onEdit={() => setEditDoc(selectedDocument)}
@@ -250,7 +248,7 @@ export default function FilesPage() {
             </DialogTitle>
             <DialogDescription className="sr-only">파일을 업로드합니다</DialogDescription>
           </DialogHeader>
-          <div className="mt-2">
+          <div data-component="files-upload-content" className="mt-2">
             <DocumentDropzone onUpload={handleUpload} isLoading={uploadMutation.isPending} uploadProgress={uploadProgress} />
           </div>
           <DialogFooter>
@@ -296,9 +294,8 @@ export default function FilesPage() {
   );
 }
 
-function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, onEdit, onDelete }: {
+function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDelete }: {
   document: Document;
-  categories: DocumentCategory[];
   getCategoryLabel: (id: string) => string;
   onPreview: () => void;
   onEdit: () => void;
@@ -324,7 +321,7 @@ function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, on
         />
       }
     >
-      <div className="space-y-5">
+      <div data-component="files-detail-content" className="space-y-5">
         <InfoCard title="파일 정보">
           <InfoRow label="파일명" value={doc.name} />
           <InfoRow label="형식" value={doc.mimeType} />
@@ -341,7 +338,7 @@ function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, on
 
         {doc.tags && doc.tags.length > 0 && (
           <InfoCard title="태그">
-            <div className="flex flex-wrap gap-2">
+            <div data-component="files-detail-tags" className="flex flex-wrap gap-2">
               {doc.tags.map(tag => (
                 <span key={tag} className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
                   {tag}

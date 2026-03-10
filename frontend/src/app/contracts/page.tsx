@@ -7,7 +7,6 @@ import {
   Clock,
   CheckCircle2,
   AlertTriangle,
-  Plus,
   Send,
   Calendar,
   User,
@@ -23,9 +22,9 @@ import {
   DocumentFilterType,
   mapStatusToLabel,
   getStatusCategory,
+  normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import {
-  PageHeader,
   StatsBar,
   SplitLayout,
   ListPanel,
@@ -42,7 +41,6 @@ import {
   DetailSkeleton,
   ListEmptyState,
 } from "@/components/app/v3";
-import type { StatsBarItem } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -92,28 +90,6 @@ function mapCategoryToStatusType(category: "completed" | "rejected" | "in-progre
       return "expired";
     case "in-progress":
       return "pending";
-  }
-}
-
-function mapCategoryToBannerStyle(category: "completed" | "rejected" | "in-progress") {
-  switch (category) {
-    case "completed":
-      return "bg-v3-green-light text-v3-green border border-v3-green/20";
-    case "rejected":
-      return "bg-v3-burgundy-light text-v3-burgundy border border-v3-burgundy/20";
-    case "in-progress":
-      return "bg-v3-orange-light text-v3-orange border border-v3-orange/20";
-  }
-}
-
-function mapCategoryToLabel(category: "completed" | "rejected" | "in-progress"): string {
-  switch (category) {
-    case "completed":
-      return "서명 완료";
-    case "rejected":
-      return "만료 / 거부";
-    case "in-progress":
-      return "서명 대기중";
   }
 }
 
@@ -175,18 +151,34 @@ export default function ContractsPage() {
       return name && !EXCLUDED_CUSTOMER_NAMES.includes(name);
     });
 
-    let pending = 0;
     let completed = 0;
+    let sendRequired = 0;
+    let drafting = 0;
     let expired = 0;
 
     for (const doc of allDocs) {
+      const normalizedStatus = normalizeStatusCode(doc.current_status?.status_type);
       const cat = getStatusCategory(doc.current_status?.status_type);
-      if (cat === "in-progress") pending++;
-      else if (cat === "completed") completed++;
-      else if (cat === "rejected") expired++;
+
+      if (cat === "completed") {
+        completed++;
+        continue;
+      }
+
+      if (cat === "rejected") {
+        expired++;
+        continue;
+      }
+
+      if (normalizedStatus === "001") {
+        drafting++;
+        continue;
+      }
+
+      sendRequired++;
     }
 
-    return { total: allDocs.length, pending, completed, expired };
+    return { completed, sendRequired, drafting, expired };
   }, [allData?.documents]);
 
   const selectedDocument = useMemo(() => {
@@ -201,8 +193,8 @@ export default function ContractsPage() {
 
   if (authError || error) {
     return (
-      <div className="p-6">
-        <div className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
+      <div data-component="contracts-error-container" className="p-6">
+        <div data-component="contracts-error-banner" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
           {authError
             ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
             : "문서를 불러오는데 실패했습니다."}
@@ -217,10 +209,10 @@ export default function ContractsPage() {
           name="contracts"
           isLoading={isInitialLoading}
           items={[
-            { icon: FileText, value: stats.total, label: "전체 계약", counter: "건" },
-            { icon: Clock, value: stats.pending, label: "대기중", counter: "건", colorIndex: 1 },
-            { icon: CheckCircle2, value: stats.completed, label: "서명완료", counter: "건", colorIndex: 2 },
-            { icon: AlertTriangle, value: stats.expired, label: "만료", counter: "건", colorIndex: 3 },
+            { icon: CheckCircle2, value: stats.completed, label: "완료", counter: "건", colorIndex: 2 },
+            { icon: Send, value: stats.sendRequired, label: "발송 필요", counter: "건", colorIndex: 1 },
+            { icon: FileText, value: stats.drafting, label: "작성 대기중", counter: "건" },
+            { icon: AlertTriangle, value: stats.expired, label: "기간 만료", counter: "건", colorIndex: 3 },
           ]}
         />
 
@@ -238,8 +230,8 @@ export default function ContractsPage() {
             headerActions={
               <HeaderActionButton
                 href="/contracts/creation"
-                icon={Plus}
-                label="서명 요청"
+                icon={Send}
+                label="전자문서 발송"
                 data-component="contracts-header-send-contract"
               />
             }
@@ -272,10 +264,10 @@ export default function ContractsPage() {
                   if (isLoading) {
                     return (
                       <>
-                        <div className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
+                        <div data-component="contracts-list-item-skeleton-icon" className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
                           <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div data-component="contracts-list-item-skeleton-content" className="flex-1 min-w-0">
                           <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
                           <Skeleton className="h-3 w-40 bg-v3-dim-white" />
                         </div>
@@ -293,6 +285,7 @@ export default function ContractsPage() {
                   return (
                     <>
                       <div
+                        data-component="contracts-list-item-icon"
                         className={cn(
                           "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0 shadow-md",
                           category === "completed"
@@ -314,18 +307,18 @@ export default function ContractsPage() {
                         />
                       </div>
 
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
+                      <div data-component="contracts-list-item-content" className="flex-1 min-w-0">
+                        <div data-component="contracts-list-item-title-row" className="flex items-center gap-2 mb-0.5">
                           <span className="font-bold text-[0.85rem] text-v3-dark truncate">
                             {customerName}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
+                        <div data-component="contracts-list-item-subtitle" className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
                           {doc.document_name}
                         </div>
                       </div>
 
-                      <div className="shrink-0">
+                      <div data-component="contracts-list-item-status" className="shrink-0">
                         <StatusBadge status={statusType} label={statusLabel} />
                       </div>
                     </>

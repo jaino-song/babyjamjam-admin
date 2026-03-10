@@ -186,7 +186,7 @@ export default function DashboardPage() {
       data-component="dashboard"
       className="flex flex-col gap-6 h-[calc(100dvh-11rem)] md:h-[calc(100dvh-4rem)]"
     >
-      <div className="shrink-0">
+      <div data-component="dashboard-hero" className="shrink-0">
         <HeroBanner
           title={user?.name ? `${user?.name} 님` : "다시 로그인 해주세요"}
           subtitle={user?.organizationName ?? ""}
@@ -232,6 +232,7 @@ export default function DashboardPage() {
             <DetailPanel
               avatar={
                 <div
+                  data-component="dashboard-detail-avatar"
                   className={cn(
                     "w-16 h-16 rounded-[20px] flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
                     getAvatarGradient(selectedClientData.name)
@@ -290,9 +291,9 @@ export default function DashboardPage() {
                 />
               }
             >
-              <div className="space-y-4">
+              <div data-component="dashboard-detail-content" className="space-y-4">
                 {activeDetailTab === "basic" && (
-                  <div className="grid grid-cols-2 gap-4">
+                  <div data-component="dashboard-detail-basic-grid" className="grid grid-cols-2 gap-4">
                     <InfoCard title={t(locale, "clients.form.customer-info") || "고객 정보"} className="col-start-1 row-start-1 row-end-3">
                       <InfoRow label={t(locale, "clients.form.name")} value={selectedClientData.name} />
                       <InfoRow label={t(locale, "clients.form.birthday")} value={selectedClientData.birthday || "-"} />
@@ -319,13 +320,13 @@ export default function DashboardPage() {
                 )}
 
                 {activeDetailTab === "contracts" && (
-                  <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+                  <div data-component="dashboard-detail-contracts-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
                     계약서 정보가 없습니다
                   </div>
                 )}
 
                 {activeDetailTab === "alimtalk" && (
-                  <div className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+                  <div data-component="dashboard-detail-alimtalk-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
                     알림톡 발송 현황이 없습니다
                   </div>
                 )}
@@ -336,7 +337,7 @@ export default function DashboardPage() {
               name="dashboard-detail-empty"
               className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center h-full"
             >
-              <div className="text-center text-v3-text-muted">
+              <div data-component="dashboard-detail-empty-message" className="text-center text-v3-text-muted">
                 <p className="text-[0.8rem] font-semibold">
                   항목을 선택하면 상세 정보가 표시됩니다
                 </p>
