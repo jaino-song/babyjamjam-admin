@@ -3,14 +3,14 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-interface TitleDescChildrenMoleculeProps extends React.HTMLAttributes<HTMLElement> {
+type TitleDescChildrenMoleculeProps = Omit<React.ComponentPropsWithoutRef<"section">, "title"> & {
     title: React.ReactNode;
     description?: React.ReactNode;
     children: React.ReactNode;
     bodyClassName?: string;
     titleClassName?: string;
     descriptionClassName?: string;
-}
+};
 
 export function TitleDescChildrenMolecule({
     title,
