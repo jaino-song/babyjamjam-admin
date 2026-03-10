@@ -8,22 +8,6 @@ const MOCK_ADMIN_USER = {
   role: 'admin',
 };
 
-const MOCK_REGULAR_USER = {
-  id: 'regular-user',
-  name: '일반 사용자',
-  email: 'user@example.com',
-  profile_image: '',
-  role: 'user',
-};
-
-const MOCK_OWNER_USER = {
-  id: 'owner-user',
-  name: '소유자',
-  email: 'owner@example.com',
-  profile_image: '',
-  role: 'owner',
-};
-
 type MockUser = typeof MOCK_ADMIN_USER;
 
 const setupAuthMocks = async (page: Page, user: MockUser) => {

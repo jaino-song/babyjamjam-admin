@@ -252,7 +252,6 @@ test.describe('Client Creation Flow', () => {
             await page.waitForTimeout(500);
 
             // Price fields should have values (check if not empty)
-            const priceInputs = dialog.locator('input').filter({ has: page.locator('text=원') });
             // Note: The actual price inputs may be text fields without specific markers
         });
 
@@ -280,7 +279,6 @@ test.describe('Client Creation Flow', () => {
             await page.waitForTimeout(500);
 
             // Should show auto-filled indicator chip
-            const autoFilledChip = dialog.locator('.MuiChip-root').filter({ hasText: /자동|auto/i });
             // The chip may or may not appear depending on locale
         });
 
@@ -326,12 +324,8 @@ test.describe('Client Creation Flow', () => {
             await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
         });
 
-        test('should have voucherClient toggle defaulted to ON', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
+        test('should have voucherClient toggle defaulted to ON', async () => {
             // Find the switch for voucherClient
-            const voucherSwitch = dialog.locator('[role="checkbox"]').first();
-
             // Should be checked by default (based on form default value)
             // Note: The exact state depends on the default value in the form
         });

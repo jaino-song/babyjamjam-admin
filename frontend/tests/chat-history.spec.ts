@@ -66,7 +66,6 @@ test.describe('Chat History Persistence', () => {
         });
 
         await page.route('**/api/ai/chat/stream', async (route) => {
-            const encoder = new TextEncoder();
             const chunks = [
                 'event: message\ndata: {"type":"chunk","content":"테스트 "}\n\n',
                 'event: message\ndata: {"type":"chunk","content":"응답입니다."}\n\n',

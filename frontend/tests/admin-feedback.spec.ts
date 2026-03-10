@@ -9,15 +9,6 @@ const MOCK_ADMIN_USER = {
   role: 'admin',
 };
 
-// Mock for regular user
-const MOCK_REGULAR_USER = {
-  id: 'regular-user',
-  name: '일반 사용자',
-  email: 'user@example.com',
-  profile_image: '',
-  role: 'user',
-};
-
 // Mock feedback data
 const MOCK_FEEDBACK_LIST = {
   data: [

@@ -114,7 +114,6 @@ test.describe("Chat live stream smoke", () => {
     page.on("console", (msg) => {
       // Useful when debugging auth/stream issues locally.
       if (["warning", "error"].includes(msg.type())) {
-        // eslint-disable-next-line no-console
         console.log(`[browser:${msg.type()}] ${msg.text()}`);
       }
     });
@@ -140,7 +139,6 @@ test.describe("Chat live stream smoke", () => {
     ).toHaveCount(0, { timeout: 20000 });
 
     const ttfbMs = Date.now() - start;
-    // eslint-disable-next-line no-console
     console.log(`[chat-live] time-to-first-response-ms=${ttfbMs}`);
   });
 

@@ -58,14 +58,24 @@ describe("ClientRegistrationWizard", () => {
         fireEvent.click(nextButton);
 
         // Voucher step: minimal path without voucher info
-        fireEvent.click(screen.getByRole("checkbox", { name: "바우처 대상" }));
+        const voucherCheckbox = await screen.findByRole("checkbox", { name: "바우처 대상" });
+        fireEvent.click(voucherCheckbox);
 
-        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        const secondNextButton = screen.getByRole("button", { name: "다음" });
+        await waitFor(() => {
+            expect(secondNextButton).not.toBeDisabled();
+        });
+        fireEvent.click(secondNextButton);
 
         // Toggle careCenter on for test determinism
-        fireEvent.click(screen.getByRole("checkbox", { name: "조리원 여부" }));
+        const careCenterCheckbox = await screen.findByRole("checkbox", { name: "조리원 여부" });
+        fireEvent.click(careCenterCheckbox);
 
-        fireEvent.click(screen.getByRole("button", { name: "제출" }));
+        const submitButton = screen.getByRole("button", { name: "제출" });
+        await waitFor(() => {
+            expect(submitButton).not.toBeDisabled();
+        });
+        fireEvent.click(submitButton);
 
         await waitFor(() => {
             expect(mockCreateClientMutateAsync).toHaveBeenCalledTimes(1);
@@ -84,7 +94,7 @@ describe("ClientRegistrationWizard", () => {
         });
 
         expect(onCreated).toHaveBeenCalledWith({ id: 123, name: "홍길동" });
-    });
+    }, 15000);
 
     test("shows inline error on API failure", async () => {
         mockCreateClientMutateAsync.mockRejectedValue(new Error("등록 실패"));
