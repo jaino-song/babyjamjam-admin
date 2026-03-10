@@ -32,7 +32,7 @@ const AUTH_ONLY_ROUTES = [
   "/select-organization",
 ];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Skip public routes
