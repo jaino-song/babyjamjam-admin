@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useCallback, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Loader2, Plus, X } from "lucide-react";
 import {
   FileText,
@@ -26,24 +25,21 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
-type TemplateGroup = "builtin" | "user";
-
 interface TemplateListItem {
   id: string;
   label: string;
   subtitle?: string;
   icon: typeof FileText;
-  group: TemplateGroup;
 }
 
 const BUILTIN_TEMPLATES: TemplateListItem[] = [
-  { id: "builtin:greeting", label: "인사 메시지", icon: MessageCircle, group: "builtin" },
-  { id: "builtin:service-info", label: "서비스 안내", icon: Briefcase, group: "builtin" },
-  { id: "builtin:price-info", label: "요금 안내", icon: CreditCard, group: "builtin" },
-  { id: "builtin:reminder", label: "리마인더", icon: Bell, group: "builtin" },
-  { id: "builtin:thanks", label: "감사 메시지", icon: Heart, group: "builtin" },
-  { id: "builtin:survey", label: "설문", icon: ClipboardList, group: "builtin" },
-  { id: "builtin:info", label: "안내 메시지", icon: Info, group: "builtin" },
+  { id: "builtin:greeting", label: "인사 메시지", icon: MessageCircle },
+  { id: "builtin:service-info", label: "서비스 안내", icon: Briefcase },
+  { id: "builtin:price-info", label: "요금 안내", icon: CreditCard },
+  { id: "builtin:reminder", label: "리마인더", icon: Bell },
+  { id: "builtin:thanks", label: "감사 메시지", icon: Heart },
+  { id: "builtin:survey", label: "설문", icon: ClipboardList },
+  { id: "builtin:info", label: "안내 메시지", icon: Info },
 ];
 
 const formatDate = (dateString: string): string => {
@@ -73,7 +69,7 @@ function BuiltinTemplateDetail({ templateKey }: { templateKey: string }) {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center items-center py-16">
+      <div data-component="messages-templates-builtin-loading" className="flex justify-center items-center py-16">
         <Loader2 className="h-6 w-6 animate-spin text-v3-primary" />
       </div>
     );
@@ -81,7 +77,7 @@ function BuiltinTemplateDetail({ templateKey }: { templateKey: string }) {
 
   if (!template) {
     return (
-      <div className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-[0.8rem] text-v3-text-muted">
+      <div data-component="messages-templates-builtin-error" className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-[0.8rem] text-v3-text-muted">
         템플릿을 불러올 수 없습니다.
       </div>
     );
@@ -112,9 +108,9 @@ function BuiltinTemplateDetail({ templateKey }: { templateKey: string }) {
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
+    <div data-component="messages-templates-builtin-detail" className="flex flex-col gap-6">
+      <div data-component="messages-templates-builtin-header" className="flex items-center justify-between">
+        <div data-component="messages-templates-builtin-title-group">
           <h3 className="text-base font-bold text-v3-dark">{template.name}</h3>
           {template.description && (
             <p className="text-[0.75rem] text-v3-text-muted mt-0.5">{template.description}</p>
@@ -124,9 +120,9 @@ function BuiltinTemplateDetail({ templateKey }: { templateKey: string }) {
       </div>
 
       {template.requiredVariables?.length > 0 && (
-        <div>
+        <div data-component="messages-templates-builtin-required">
           <p className="text-[0.8rem] font-semibold text-v3-dark mb-2">필수 변수</p>
-          <div className="flex flex-wrap gap-1.5">
+          <div data-component="messages-templates-builtin-required-list" className="flex flex-wrap gap-1.5">
             {template.requiredVariables.map((v) => (
               <span
                 key={v.key}
@@ -140,7 +136,7 @@ function BuiltinTemplateDetail({ templateKey }: { templateKey: string }) {
         </div>
       )}
 
-      <div>
+      <div data-component="messages-templates-builtin-content">
         <p className="text-[0.8rem] font-semibold text-v3-dark mb-2">템플릿 내용</p>
         <textarea
           rows={10}
@@ -151,11 +147,11 @@ function BuiltinTemplateDetail({ templateKey }: { templateKey: string }) {
         />
       </div>
 
-      <div>
+      <div data-component="messages-templates-builtin-custom-variables">
         <p className="text-[0.8rem] font-semibold text-v3-dark mb-2">커스텀 변수</p>
 
         {customVariables.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-3">
+          <div data-component="messages-templates-builtin-custom-list" className="flex flex-wrap gap-1.5 mb-3">
             {customVariables.map((v) => (
               <span
                 key={v.key}
@@ -174,8 +170,8 @@ function BuiltinTemplateDetail({ templateKey }: { templateKey: string }) {
           </div>
         )}
 
-        <div className="rounded-[14px] p-3">
-          <div className="flex gap-2 mb-2">
+        <div data-component="messages-templates-builtin-custom-editor" className="rounded-[14px] p-3">
+          <div data-component="messages-templates-builtin-custom-fields" className="flex gap-2 mb-2">
             <input
               placeholder="변수 키"
               value={newVarKey}
@@ -203,7 +199,7 @@ function BuiltinTemplateDetail({ templateKey }: { templateKey: string }) {
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div data-component="messages-templates-builtin-actions" className="flex justify-end">
         <button
           type="button"
           onClick={handleSave}
@@ -240,7 +236,7 @@ function UserTemplateDetail({ templateId }: { templateId: string }) {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center items-center py-16">
+      <div data-component="messages-templates-user-loading" className="flex justify-center items-center py-16">
         <Loader2 className="h-6 w-6 animate-spin text-v3-primary" />
       </div>
     );
@@ -248,7 +244,7 @@ function UserTemplateDetail({ templateId }: { templateId: string }) {
 
   if (!template) {
     return (
-      <div className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-[0.8rem] text-v3-text-muted">
+      <div data-component="messages-templates-user-error" className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-[0.8rem] text-v3-text-muted">
         템플릿을 불러올 수 없습니다.
       </div>
     );
@@ -267,8 +263,8 @@ function UserTemplateDetail({ templateId }: { templateId: string }) {
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
+    <div data-component="messages-templates-user-detail" className="flex flex-col gap-6">
+      <div data-component="messages-templates-user-name-field">
         <p className="text-[0.8rem] font-semibold text-v3-dark mb-2">
           템플릿 이름 <span className="text-red-500">*</span>
         </p>
@@ -280,7 +276,7 @@ function UserTemplateDetail({ templateId }: { templateId: string }) {
         />
       </div>
 
-      <div>
+      <div data-component="messages-templates-user-content-field">
         <p className="text-[0.8rem] font-semibold text-v3-dark mb-2">
           템플릿 내용 <span className="text-red-500">*</span>
         </p>
@@ -293,7 +289,7 @@ function UserTemplateDetail({ templateId }: { templateId: string }) {
         />
       </div>
 
-      <div className="flex justify-end">
+      <div data-component="messages-templates-user-actions" className="flex justify-end">
         <button
           type="button"
           onClick={handleSave}
@@ -314,12 +310,10 @@ function UserTemplateDetail({ templateId }: { templateId: string }) {
 }
 
 export default function TemplatesPage() {
-  const router = useRouter();
-  const [activeGroup, setActiveGroup] = useState<TemplateGroup>("builtin");
   const [selectedValue, setSelectedValue] = useState<string | null>("builtin:greeting");
 
   const { data: userTemplatesData, isLoading: isLoadingUser } = useMessageTemplates(1, 100);
-  const userList = userTemplatesData?.data ?? [];
+  const userList = useMemo(() => userTemplatesData?.data ?? [], [userTemplatesData]);
 
   const userItems = useMemo<TemplateListItem[]>(
     () =>
@@ -328,48 +322,17 @@ export default function TemplatesPage() {
         label: t.name,
         subtitle: formatDate(t.updatedAt),
         icon: FileText,
-        group: "user",
       })),
     [userList],
   );
 
-  const tabs = useMemo(
-    () => [
-      { value: "builtin", label: "기본 템플릿" },
-      {
-        value: "user",
-        label: userItems.length > 0 ? `사용자 템플릿 (${userItems.length})` : "사용자 템플릿",
-      },
-    ],
-    [userItems.length],
-  );
-
-  const visibleItems = activeGroup === "builtin" ? BUILTIN_TEMPLATES : userItems;
-  const isListLoading = activeGroup === "user" && isLoadingUser;
-
-  const handleGroupChange = useCallback(
-    (value: string) => {
-      if (value !== "builtin" && value !== "user") return;
-
-      const nextGroup = value as TemplateGroup;
-      setActiveGroup(nextGroup);
-
-      setSelectedValue((previous) => {
-        if (nextGroup === "builtin") {
-          if (previous?.startsWith("builtin:")) return previous;
-          return BUILTIN_TEMPLATES[0]?.id ?? null;
-        }
-
-        if (previous?.startsWith("user:")) return previous;
-        return userItems[0]?.id ?? null;
-      });
-    },
+  const visibleItems = useMemo(
+    () => [...BUILTIN_TEMPLATES, ...userItems],
     [userItems],
   );
 
   const handleTemplateSelect = useCallback((id: string) => {
     setSelectedValue(id);
-    setActiveGroup(id.startsWith("user:") ? "user" : "builtin");
   }, []);
 
   const isBuiltin = selectedValue?.startsWith("builtin:") ?? false;
@@ -381,11 +344,8 @@ export default function TemplatesPage() {
       <SplitLayout hasSelection={!!selectedValue} onBack={() => setSelectedValue(null)}>
         <ListPanel
           title="템플릿 수정"
-          tabs={tabs}
-          activeTab={activeGroup}
-          onTabChange={handleGroupChange}
           headerActions={
-            <div className="flex items-center gap-1.5">
+            <div data-component="messages-templates-header-actions" className="flex items-center gap-1.5">
               <HeaderActionButton
                 icon={Plus}
                 label="새 템플릿"
@@ -400,73 +360,69 @@ export default function TemplatesPage() {
             </div>
           }
         >
-          <div className="space-y-2 pb-2">
-            {!isListLoading && visibleItems.length === 0 ? (
-              <div className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-[0.8rem] text-v3-text-muted">
-                {activeGroup === "builtin"
-                  ? "등록된 기본 템플릿이 없습니다."
-                  : "등록된 사용자 템플릿이 없습니다."}
-              </div>
-            ) : (
-              <AnimatedSlotList<TemplateListItem>
-                items={visibleItems}
-                isLoading={isListLoading}
-                loadingCount={6}
-                className="space-y-2"
-                slotClassName={({ item, isLoading }) =>
-                  cn(
-                    "flex items-center gap-3 p-3 rounded-[16px] border-2 text-left transition-all duration-200",
-                    !isLoading && item?.id === selectedValue
-                      ? "bg-v3-primary-light border-v3-primary"
-                      : "bg-white border-transparent",
-                    !isLoading && "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
-                  )
-                }
-                onSlotClick={(item) => handleTemplateSelect(item.id)}
-                render={({ item, isLoading: isSlotLoading }) => {
-                  if (isSlotLoading) {
-                    return (
-                      <>
-                        <div className="w-9 h-9 rounded-[12px] bg-v3-dim-white flex items-center justify-center shrink-0">
-                          <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
-                        </div>
-                        <div className="flex-1 min-w-0 space-y-1.5">
-                          <Skeleton className="h-4 w-32 bg-v3-dim-white" />
-                          <Skeleton className="h-3 w-20 bg-v3-dim-white" />
-                        </div>
-                      </>
-                    );
-                  }
-
-                  if (!item) return null;
-                  const Icon = item.icon;
-
+          <div data-component="messages-templates-list" className="space-y-2 pb-2">
+            <AnimatedSlotList<TemplateListItem>
+              items={visibleItems}
+              isLoading={false}
+              className="space-y-2"
+              slotClassName={({ item }) =>
+                cn(
+                  "flex items-center gap-3 p-3 rounded-[16px] border-2 text-left transition-all duration-200",
+                  item?.id === selectedValue
+                    ? "bg-v3-primary-light border-v3-primary"
+                    : "bg-white border-transparent",
+                  "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
+                )
+              }
+              onSlotClick={(item) => handleTemplateSelect(item.id)}
+              render={({ item, isLoading: isSlotLoading }) => {
+                if (isSlotLoading) {
                   return (
                     <>
-                      <div className="w-9 h-9 rounded-[12px] bg-v3-dim-white text-v3-text-muted flex items-center justify-center shrink-0">
-                        <Icon className="w-4 h-4" />
+                      <div data-component="messages-templates-list-skeleton-icon" className="w-9 h-9 rounded-[12px] bg-v3-dim-white flex items-center justify-center shrink-0">
+                        <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <span className="text-[0.8rem] font-semibold text-v3-dark truncate block">
-                          {item.label}
-                        </span>
-                        {item.subtitle && (
-                          <span className="text-[0.7rem] text-v3-text-muted">
-                            {item.subtitle}
-                          </span>
-                        )}
+                      <div data-component="messages-templates-list-skeleton-text" className="flex-1 min-w-0 space-y-1.5">
+                        <Skeleton className="h-4 w-32 bg-v3-dim-white" />
+                        <Skeleton className="h-3 w-20 bg-v3-dim-white" />
                       </div>
                     </>
                   );
-                }}
-              />
-            )}
+                }
+
+                if (!item) return null;
+                const Icon = item.icon;
+
+                return (
+                  <>
+                    <div data-component="messages-templates-list-item-icon" className="w-9 h-9 rounded-[12px] bg-v3-dim-white text-v3-text-muted flex items-center justify-center shrink-0">
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <div data-component="messages-templates-list-item-text" className="flex-1 min-w-0">
+                      <span className="text-[0.8rem] font-semibold text-v3-dark truncate block">
+                        {item.label}
+                      </span>
+                      {item.subtitle && (
+                        <span className="text-[0.7rem] text-v3-text-muted">
+                          {item.subtitle}
+                        </span>
+                      )}
+                    </div>
+                  </>
+                );
+              }}
+            />
+            {isLoadingUser ? (
+              <div data-component="messages-templates-list-loading" className="rounded-[16px] border border-dashed border-v3-border p-4 text-[0.76rem] text-v3-text-muted">
+                사용자 템플릿을 불러오는 중입니다.
+              </div>
+            ) : null}
           </div>
         </ListPanel>
 
         <DetailPanel>
           {!selectedValue && (
-            <div className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-[0.8rem] text-v3-text-muted">
+            <div data-component="messages-templates-detail-empty" className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-[0.8rem] text-v3-text-muted">
               왼쪽 목록에서 템플릿을 선택해 주세요.
             </div>
           )}
