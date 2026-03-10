@@ -407,14 +407,11 @@ export const ContractCreationForm = () => {
         finalClientId ?? undefined
       );
 
-      console.log("Document option generated:", documentOption);
       setIsDialogOpen(true);
 
       setTimeout(() => {
         openDocument(documentOption, "eformsign_iframe", {
           onSuccess: async (response) => {
-            console.log("Document created successfully:", response);
-
             if (finalClientId && response.document_id) {
               try {
                 await eformsignApi.createDocRecord({
@@ -445,9 +442,6 @@ export const ContractCreationForm = () => {
             console.error("Document creation failed:", response);
             setSubmitError(`문서 생성 실패: ${response.message}`);
             handleDialogClose();
-          },
-          onAction: (response) => {
-            console.log("Document action:", response);
           },
         });
       }, 500);

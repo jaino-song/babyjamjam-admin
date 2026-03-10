@@ -244,7 +244,6 @@ export function usePushNotification() {
             const registration = await navigator.serviceWorker.register('/sw.js', {
                 scope: '/',
             });
-            console.log('[Push] Service Worker registered:', registration.scope);
             return registration;
         } catch (err) {
             console.error('[Push] Service Worker registration failed:', err);
@@ -293,8 +292,6 @@ export function usePushNotification() {
                 isSubscribed: true,
                 isLoading: false,
             }));
-
-            console.log('[Push] Successfully subscribed');
             return true;
         } catch (err) {
             console.error('[Push] Subscription failed:', err);
@@ -329,8 +326,6 @@ export function usePushNotification() {
                 isSubscribed: false,
                 isLoading: false,
             }));
-
-            console.log('[Push] Successfully unsubscribed');
             return true;
         } catch (err) {
             console.error('[Push] Unsubscription failed:', err);

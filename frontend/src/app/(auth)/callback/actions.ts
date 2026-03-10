@@ -19,8 +19,6 @@ interface APIErrorResponse {
 
 export async function exchangeToken(code: string): Promise<{ success: boolean; error?: string; requiresOrgSelection?: boolean }> {
     try {
-        console.log("[Server Action] Exchanging token for code");
-        
         if (!code) {
             return { success: false, error: "Authorization Code Required" };
         }
@@ -53,9 +51,6 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
             path: "/",
             maxAge: 7 * 24 * 60 * 60,
         });
-
-        console.log("[Server Action] Token exchange successful");
-        console.log("[Server Action] requiresOrgSelection:", data.requiresOrgSelection);
 
         return { success: true, requiresOrgSelection: data.requiresOrgSelection || false };
     } catch (error) {
