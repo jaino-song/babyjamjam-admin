@@ -1,0 +1,37 @@
+{
+  "name": "imirae-incheon",
+  "private": true,
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "dev:fe": "pnpm --filter imirae-incheon-back-office dev",
+    "dev:be": "pnpm --filter imirae-incheon-backend start:dev",
+    "dev:mobile": "pnpm --filter babyjamjam-admin dev",
+    "build:fe": "pnpm --filter imirae-incheon-back-office build",
+    "build:be": "pnpm --filter imirae-incheon-backend build",
+    "build:mobile": "pnpm --filter babyjamjam-admin build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint"
+  },
+  "pnpm": {
+    "overrides": {
+      "glob": "10.5.0",
+      "qs": "6.14.1",
+      "lodash": "4.17.23",
+      "passport-oauth2": "1.8.0",
+      "tmp": "0.2.5",
+      "diff": "4.0.4",
+      "webpack": "5.105.0"
+    },
+    "onlyBuiltDependencies": [
+      "prisma",
+      "@prisma/client",
+      "@prisma/engines",
+      "bcrypt",
+      "@nestjs/core",
+      "@parcel/watcher",
+      "@swc/core",
+      "sharp",
+      "unrs-resolver"
+    ]
+  }
+}
