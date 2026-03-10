@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import {
   X,
   Download,
@@ -228,9 +229,12 @@ export default function DocumentPreviewModal({
 
             {isImage && (
               <div className="w-full h-full overflow-auto flex justify-center items-center p-4">
-                <img
+                <Image
                   src={`${getDownloadUrl(doc.id)}#toolbar=0`}
                   alt={doc.name}
+                  width={1600}
+                  height={1600}
+                  unoptimized
                   className="max-w-full max-h-full object-contain transition-transform duration-200"
                   style={{
                     transform: `scale(${zoom})`,

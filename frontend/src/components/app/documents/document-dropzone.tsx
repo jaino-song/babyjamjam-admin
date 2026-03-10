@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState, useEffect } from "react";
+import Image from "next/image";
 import { useDocumentCategories } from "@/hooks/use-document-categories";
 import { CloudUpload, FileText, X, ImageIcon, File, Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -251,9 +252,12 @@ export function DocumentDropzone({
         <div className="p-6 border border-border rounded-lg">
           <div className="flex items-start gap-4 mb-6">
             {previewUrl ? (
-              <img
+              <Image
                 src={previewUrl}
                 alt="Preview"
+                width={80}
+                height={80}
+                unoptimized
                 className="w-20 h-20 object-cover rounded border border-border"
               />
             ) : (

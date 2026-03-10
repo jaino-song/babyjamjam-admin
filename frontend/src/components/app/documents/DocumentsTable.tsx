@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { Plus, Upload, FileText, Image, File, Loader2 } from "lucide-react";
+import { Plus, Upload, FileText, Image as ImageIcon, File, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
@@ -191,7 +191,7 @@ export function DocumentsTable() {
             return <FileText className="h-5 w-5 text-destructive" />;
         }
         if (mimeType.includes("image")) {
-            return <Image className="h-5 w-5 text-info" />;
+            return <ImageIcon className="h-5 w-5 text-info" />;
         }
         return <File className="h-5 w-5 text-muted-foreground" />;
     };
