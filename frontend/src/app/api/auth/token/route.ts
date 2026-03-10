@@ -18,8 +18,6 @@ interface APIErrorResponse {
 
 const isProduction = process.env.NODE_ENV === "production";
 const isSecureCookie = isProduction || process.env.VERCEL_ENV === "preview";
-const API_URL = isProduction ? process.env.NEXT_PUBLIC_API_BASE_URL : process.env.DEVELOPMENT_API_BASE_URL;
-
 // 30일 세션을 부여받는 권한 있는 역할들
 const EXTENDED_SESSION_ROLES = ["owner", "creator"] as const;
 const EXTENDED_SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
@@ -54,7 +52,9 @@ export async function POST(request: NextRequest) {
             secure: isSecureCookie,
             sameSite: isSecureCookie ? "none" : "lax",
             path: "/",
-            maxAge: ["owner", "creator"].includes(role) ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
+            maxAge: EXTENDED_SESSION_ROLES.includes(role as (typeof EXTENDED_SESSION_ROLES)[number])
+                ? EXTENDED_SESSION_MAX_AGE
+                : DEFAULT_SESSION_MAX_AGE,
         })
 
         cookieStore.set("refresh_token", data.refreshToken, {

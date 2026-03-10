@@ -41,7 +41,7 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
 
   const customHeader = (
     <div data-component="messages-system-template-detail-header" className="mb-6">
-      <div className="flex items-center gap-3 mb-2">
+      <div data-component="messages-system-template-detail-title-row" className="flex items-center gap-3 mb-2">
         <h2 className="text-xl font-bold text-primary">
           {template.name}
         </h2>
