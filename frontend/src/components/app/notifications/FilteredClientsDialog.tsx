@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
@@ -126,6 +127,9 @@ export function FilteredClientsDialog({
                 <DialogContent data-component="admin-filtered-clients-dialog" className="max-w-lg max-h-[80vh] p-0">
                     <DialogHeader data-component="admin-filtered-clients-header" className="px-4 py-3 flex flex-row items-center justify-between border-b">
                         <DialogTitle className="font-semibold">{title}</DialogTitle>
+                        <DialogDescription className="sr-only">
+                            {title}에 해당하는 클라이언트 목록
+                        </DialogDescription>
                         <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
                             <X className="h-5 w-5" />
                         </Button>
