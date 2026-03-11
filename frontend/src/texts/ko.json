@@ -35,16 +35,16 @@
     "view": "보기"
   },
   "nav": {
-    "my-templates": "내 메시지 템플릿"
+    "my-templates": "지점 메시지 템플릿"
   },
   "template-list": {
-    "subtitle": "사용자 정의 메시지 템플릿을 관리합니다"
+    "subtitle": "지점 메시지 템플릿을 관리합니다"
   },
   "template-editor": {
-    "create-title": "새 템플릿 만들기",
-    "create-subtitle": "새로운 메시지 템플릿을 작성합니다",
-    "edit-title": "템플릿 수정",
-    "edit-subtitle": "기존 메시지 템플릿을 수정합니다",
+    "create-title": "지점 템플릿 만들기",
+    "create-subtitle": "새로운 지점 메시지 템플릿을 작성합니다",
+    "edit-title": "지점 템플릿 수정",
+    "edit-subtitle": "기존 지점 메시지 템플릿을 수정합니다",
     "name-label": "템플릿 이름",
     "name-placeholder": "예: VIP 고객 환영 메시지",
     "content-label": "템플릿 내용",
@@ -107,6 +107,43 @@
     "add-template": "추가",
     "edit-template": "수정"
   },
+  "msg-delivery": {
+    "title": "문자 발송",
+    "subtitle": "생성한 메시지를 바로 발송하거나 예약 발송으로 등록할 수 있습니다.",
+    "client-label": "기존 고객 불러오기",
+    "recipient-name-label": "수신자 이름",
+    "recipient-name-placeholder": "예: 홍길동",
+    "phone-label": "수신자 연락처",
+    "phone-placeholder": "010-1234-5678",
+    "message-title-label": "문자 제목",
+    "message-title-placeholder": "장문 문자일 때만 적용됩니다",
+    "msg-type-label": "메시지 타입",
+    "msg-type-auto": "자동 판별",
+    "msg-type-sms": "SMS",
+    "msg-type-lms": "LMS",
+    "trigger-label": "발송 트리거",
+    "trigger-immediate": "즉시 발송",
+    "trigger-immediate-description": "지금 바로 Aligo로 전송 요청합니다.",
+    "trigger-scheduled": "예약 발송",
+    "trigger-scheduled-description": "지정한 날짜와 시간에 발송되도록 등록합니다.",
+    "schedule-date-label": "예약 날짜",
+    "schedule-time-label": "예약 시간",
+    "schedule-required": "예약 발송을 선택한 경우 날짜와 시간을 모두 입력해 주세요.",
+    "schedule-too-soon": "예약 발송은 한국시간 기준 현재 시각보다 10분 이후만 등록할 수 있습니다.",
+    "test-mode-label": "테스트 모드",
+    "test-mode-description": "실제 과금과 실문자 전송 없이 연동만 검증합니다.",
+    "phone-required": "수신자 연락처를 입력해 주세요.",
+    "send-button": "발송하기",
+    "sending": "발송 중...",
+    "send-success-title": "발송 요청 완료",
+    "send-success-immediate": "문자 발송 요청이 접수되었습니다.",
+    "send-success-scheduled": "예약 발송이 등록되었습니다.",
+    "send-failed": "문자 발송에 실패했습니다.",
+    "result-code-label": "결과 코드",
+    "result-message-label": "응답 메시지",
+    "result-message-empty": "응답 메시지 없음",
+    "footer-hint": "Aligo 응답 기준으로 요청 수락 여부를 확인합니다."
+  },
   "price-info-msg": {
     "title": "이용 요금 문자 생성",
     "subtitle": "해당 항목들을 모두 작성 및 선택 후에 하단에 있는 문자 생성 버튼을 클릭해 주세요",
@@ -149,7 +186,7 @@
   "service-info-msg": {
     "subtitle": "서비스 소개 문자 메시지를 생성합니다",
     "name-label": "산모님 성함",
-    "name-placeholder": "홍길동"
+    "name-placeholder": "이름을 입력해 주세요"
   },
   "reminder-msg": {
     "subtitle": "상담 후 리마인더 문자 메시지를 생성합니다",
@@ -313,6 +350,7 @@
       "error-due-date-required": "출산 예정일을 입력해주세요.",
       "error-address-required": "주소를 입력해주세요.",
       "error-phone-required": "연락처를 입력해주세요.",
+      "error-phone-duplicate": "이미 등록된 연락처 입니다.",
       "error-employee-required": "주 담당 인력을 선택해주세요.",
       "error-type-required": "바우처 유형을 선택해주세요.",
       "error-duration-required": "서비스 기간을 선택해주세요.",

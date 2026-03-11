@@ -41,6 +41,14 @@ export function UserTemplateForm({ template }: UserTemplateFormProps) {
         await navigator.clipboard.writeText(generatedMessage);
     };
 
+    const variableItems = template.variables
+        .map((variable) => ({
+            token: `{{${variable.key}}}`,
+            label: variable.label,
+            value: values[variable.key] || "",
+        }))
+        .filter((variable) => variable.value.trim().length > 0);
+
     return (
         <div className="flex flex-col gap-5" data-component="messages-user-template-form">
             <div className="flex flex-col gap-4">
@@ -78,6 +86,14 @@ export function UserTemplateForm({ template }: UserTemplateFormProps) {
                     title={t(locale, "common.generated-message-title")}
                     copyButtonText={t(locale, "common.copy-button")}
                     message={generatedMessage}
+                    bodyDescription={`${template.name} 템플릿 결과를 검토하고 바로 수정할 수 있습니다.`}
+                    metaItems={[
+                        { label: "템플릿 유형", value: "지점 템플릿" },
+                        { label: "템플릿 이름", value: template.name },
+                        { label: "활성 변수", value: `${variableItems.length}개` },
+                    ]}
+                    variableItems={variableItems}
+                    variableEmptyText="입력된 변수 값이 없습니다."
                     onMessageChange={setGeneratedMessage}
                     handleCopy={handleCopy}
                 />
