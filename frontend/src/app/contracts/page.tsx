@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import {
   FileText,
@@ -12,9 +13,13 @@ import {
   User,
   FileSignature,
   Mail,
+  MoreVertical,
   Eye,
 } from "lucide-react";
-import { useEformsignDocumentsByType } from "@/hooks/useEformsignDocuments";
+import {
+  useDeleteEformsignDocument,
+  useEformsignDocumentsByType,
+} from "@/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
 import { EformsignDocument } from "@/lib/eformsign/types";
@@ -43,6 +48,26 @@ import {
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useToast } from "@/hooks/use-toast";
+import { eformsignApi } from "@/services/api";
 import { cn } from "@/lib/utils";
 
 const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
@@ -103,12 +128,66 @@ function getSignatureProgress(category: "completed" | "rejected" | "in-progress"
   return steps;
 }
 
+function normalizePhoneNumber(value: string | null | undefined): string {
+  const digits = (value ?? "").replace(/\D/g, "");
+
+  if (!digits) return "";
+  if (digits.startsWith("0082")) return `0${digits.slice(4)}`;
+  if (digits.startsWith("82")) return `0${digits.slice(2)}`;
+  return digits;
+}
+
+function formatPhoneNumber(value: string): string {
+  const digits = normalizePhoneNumber(value);
+
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+}
+
+function isEmailAddress(value: string | null | undefined): boolean {
+  return Boolean(value && value.includes("@"));
+}
+
+function getDocumentContactInfo(doc: EformsignDocument): { phone?: string; email?: string } {
+  const currentRecipient = doc.current_status?.step_recipients?.[0];
+  const currentRecipientPhone = currentRecipient?.sms?.trim();
+  const currentRecipientId = currentRecipient?.id?.trim();
+
+  if (currentRecipientPhone || currentRecipientId) {
+    return {
+      phone: currentRecipientPhone,
+      email: isEmailAddress(currentRecipientId) ? currentRecipientId : undefined,
+    };
+  }
+
+  const lastEditorId = doc.last_editor?.id?.trim();
+  if (doc.last_editor?.recipient_type === "02" && lastEditorId) {
+    return isEmailAddress(lastEditorId)
+      ? { email: lastEditorId }
+      : { phone: lastEditorId };
+  }
+
+  return {};
+}
+
+function canReRequestDocument(doc: EformsignDocument): boolean {
+  return (
+    getStatusCategory(doc.current_status?.status_type) === "in-progress" &&
+    doc.current_status?.step_type === "05" &&
+    Boolean(doc.current_status?.step_index)
+  );
+}
+
 export default function ContractsPage() {
   const [activeTab, setActiveTab] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [deleteTargetDocumentId, setDeleteTargetDocumentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth();
+  const { toast } = useToast();
+  const deleteDocument = useDeleteEformsignDocument();
   const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);
 
   // Fetch all docs (for stats) - single request for total counts
@@ -189,6 +268,46 @@ export default function ContractsPage() {
   const handleTabChange = (value: string) => {
     setActiveTab(value);
     setSelectedDocId(null);
+  };
+
+  const handleDeleteRequest = (documentId: string) => {
+    setDeleteTargetDocumentId(documentId);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (deleteTargetDocumentId == null) return;
+
+    try {
+      const response = await deleteDocument.mutateAsync(deleteTargetDocumentId);
+      const deleted = response.result?.success_result?.includes(deleteTargetDocumentId);
+
+      if (!deleted) {
+        const failedItem = response.result?.fail_result?.find(
+          (item) => item.document_id === deleteTargetDocumentId
+        );
+        throw new Error(failedItem?.message || "문서 삭제에 실패했습니다.");
+      }
+
+      if (selectedDocId === deleteTargetDocumentId) {
+        setSelectedDocId(null);
+      }
+
+      setDeleteTargetDocumentId(null);
+      toast({
+        title: "문서 삭제 완료",
+        description: "선택한 문서를 삭제했습니다.",
+      });
+    } catch (deleteError) {
+      console.error("Failed to delete contract document:", deleteError);
+      toast({
+        title: "문서 삭제 실패",
+        description:
+          deleteError instanceof Error
+            ? deleteError.message
+            : "문서 삭제 중 오류가 발생했습니다. 다시 시도해주세요.",
+        variant: "destructive",
+      });
+    }
   };
 
   if (authError || error) {
@@ -340,71 +459,161 @@ export default function ContractsPage() {
               ]}
             />
           ) : selectedDocument ? (
-            <ContractDetail document={selectedDocument} />
+            <ContractDetail
+              key={selectedDocument.id}
+              document={selectedDocument}
+              onDeleteRequest={handleDeleteRequest}
+            />
           ) : (
             <EmptyState icon={FileText} message="계약을 선택하면 상세 정보가 표시됩니다" />
           )}
         </SplitLayout>
+
+      <Dialog
+        open={deleteTargetDocumentId != null}
+        onOpenChange={(open) => {
+          if (!open && !deleteDocument.isPending) {
+            setDeleteTargetDocumentId(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>삭제</DialogTitle>
+            <DialogDescription>이 문서를 삭제하시겠습니까?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteTargetDocumentId(null)}
+              disabled={deleteDocument.isPending}
+            >
+              취소
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => void handleDeleteConfirm()}
+              disabled={deleteDocument.isPending}
+            >
+              {deleteDocument.isPending ? "삭제 중..." : "삭제"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageSection>
   );
 }
 
-function ContractDetail({ document: doc }: { document: EformsignDocument }) {
+function ContractDetail({
+  document: doc,
+  onDeleteRequest,
+}: {
+  document: EformsignDocument;
+  onDeleteRequest?: (documentId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const customerName = getCustomerName(doc) ?? "–";
   const category = getStatusCategory(doc.current_status?.status_type);
   const statusType = mapCategoryToStatusType(category);
   const statusLabel = mapStatusToLabel(doc.current_status?.status_type);
   const steps = getSignatureProgress(category);
+  const [isReRequestDialogOpen, setIsReRequestDialogOpen] = useState(false);
+  const canReRequest = canReRequestDocument(doc);
+  const reRequestStepType = doc.current_status?.step_type ?? "";
+  const reRequestStepSeq = doc.current_status?.step_index ?? "";
+  const currentRecipient = doc.current_status?.step_recipients?.[0];
+  const contactInfo = getDocumentContactInfo(doc);
+  const initialRecipientPhone = normalizePhoneNumber(currentRecipient?.sms);
+  const [recipientPhone, setRecipientPhone] = useState(initialRecipientPhone);
+  const recipientPhoneDigits = normalizePhoneNumber(recipientPhone);
+  const hasEditedRecipientPhone = recipientPhoneDigits !== initialRecipientPhone;
+  const isRecipientPhoneValid =
+    !hasEditedRecipientPhone || (recipientPhoneDigits.length >= 10 && recipientPhoneDigits.length <= 11);
 
   const expiredDate = doc.current_status?.expired_date;
 
-  const activityItems = useMemo(() => {
-    const items: {
-      icon: React.ComponentType<{ className?: string }>;
-      iconVariant: "success" | "warning" | "info" | "danger";
-      text: React.ReactNode;
-      time: string;
-    }[] = [];
+  const handleReRequestDialogChange = (open: boolean) => {
+    setIsReRequestDialogOpen(open);
 
-    items.push({
+    if (!open) {
+      setRecipientPhone(initialRecipientPhone);
+    }
+  };
+
+  const reRequestMutation = useMutation({
+    mutationFn: async () => {
+      return eformsignApi.reRequestDocument(doc.id, {
+        stepType: reRequestStepType,
+        stepSeq: reRequestStepSeq,
+        comment: "재요청입니다.",
+        recipientPhone: hasEditedRecipientPhone
+          ? {
+              countryCode: "+82",
+              phoneNumber: recipientPhoneDigits,
+            }
+          : undefined,
+      });
+    },
+    onSuccess: () => {
+      handleReRequestDialogChange(false);
+      queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+      toast({
+        description: `${customerName}님에게 전자문서 작성을 재요청했습니다.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        description: error instanceof Error ? error.message : "재요청 중 오류가 발생했습니다.",
+      });
+    },
+  });
+
+  const activityItems: {
+    icon: React.ComponentType<{ className?: string }>;
+    iconVariant: "success" | "warning" | "info" | "danger";
+    text: React.ReactNode;
+    time: string;
+  }[] = [
+    {
       icon: FileText,
       iconVariant: "info",
       text: "문서가 생성되었습니다",
       time: formatDateTime(doc.created_date),
-    });
-
-    items.push({
+    },
+    {
       icon: Send,
       iconVariant: "info",
       text: `${customerName}에게 발송되었습니다`,
       time: formatDateTime(doc.created_date),
+    },
+  ];
+
+  if (category === "completed") {
+    activityItems.push({
+      icon: CheckCircle2,
+      iconVariant: "success",
+      text: "서명이 완료되었습니다",
+      time: formatDateTime(doc.updated_date),
     });
-
-    if (category === "completed") {
-      items.push({
-        icon: CheckCircle2,
-        iconVariant: "success",
-        text: "서명이 완료되었습니다",
-        time: formatDateTime(doc.updated_date),
-      });
-    } else if (category === "rejected") {
-      items.push({
-        icon: AlertTriangle,
-        iconVariant: "danger",
-        text: "문서가 거부/만료되었습니다",
-        time: formatDateTime(doc.updated_date),
-      });
-    } else {
-      items.push({
-        icon: Eye,
-        iconVariant: "warning",
-        text: "서명 대기중입니다",
-        time: "현재",
-      });
-    }
-
-    return items;
-  }, [doc, customerName, category]);
+  } else if (category === "rejected") {
+    activityItems.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "문서가 거부/만료되었습니다",
+      time: formatDateTime(doc.updated_date),
+    });
+  } else {
+    activityItems.push({
+      icon: Eye,
+      iconVariant: "warning",
+      text: "서명 대기중입니다",
+      time: "현재",
+    });
+  }
 
   return (
     <DetailPanel
@@ -424,7 +633,51 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
           )}
         </span>
       }
-      trailing={<Stepper steps={steps} />}
+      trailing={
+        <div data-component="contracts-stepper-actions" className="flex items-start gap-2">
+          <Stepper steps={steps} />
+          {(canReRequest || onDeleteRequest) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  data-component="contracts-detail-more-trigger"
+                  className="h-9 w-9 rounded-full text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+                  aria-label="계약 작업 더보기"
+                >
+                  <MoreVertical className="h-5 w-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                data-component="contracts-detail-more-content"
+                align="end"
+                sideOffset={8}
+                className="min-w-[8rem]"
+              >
+                {canReRequest && (
+                  <DropdownMenuItem
+                    data-component="contracts-detail-more-rerequest"
+                    onSelect={() => handleReRequestDialogChange(true)}
+                  >
+                    재요청
+                  </DropdownMenuItem>
+                )}
+                {canReRequest && onDeleteRequest && <DropdownMenuSeparator />}
+                {onDeleteRequest && (
+                  <DropdownMenuItem
+                    data-component="contracts-detail-more-delete"
+                    variant="destructive"
+                    onSelect={() => onDeleteRequest(doc.id)}
+                  >
+                    삭제
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      }
     >
       <div data-component="contracts-detail" className="grid grid-cols-2 gap-5">
         <InfoCard title="고객 정보" className="col-start-1 row-start-1 row-end-3">
@@ -437,16 +690,16 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
               </span>
             }
           />
-          {doc.current_status?.step_recipients?.[0]?.sms && (
-            <InfoRow label="연락처" value={doc.current_status.step_recipients[0].sms} />
+          {contactInfo.phone && (
+            <InfoRow label="연락처" value={contactInfo.phone} />
           )}
-          {doc.current_status?.step_recipients?.[0]?.id && (
+          {contactInfo.email && (
             <InfoRow
               label="이메일"
               value={
                 <span className="flex items-center gap-1.5">
                   <Mail className="w-3.5 h-3.5 text-v3-text-muted" />
-                  {doc.current_status.step_recipients[0].id}
+                  {contactInfo.email}
                 </span>
               }
             />
@@ -465,6 +718,68 @@ function ContractDetail({ document: doc }: { document: EformsignDocument }) {
           <ActivityTimeline items={activityItems} maxHeight="300px" />
         </InfoCard>
       </div>
+
+      <Dialog open={isReRequestDialogOpen} onOpenChange={handleReRequestDialogChange}>
+        <DialogContent className="sm:max-w-[400px] h-auto gap-0 rounded-[24px] p-0" showCloseButton={false}>
+          <DialogHeader className="px-6 pt-6 pb-3 text-left">
+            <DialogTitle className="text-[1rem] font-semibold text-v3-dark">재요청</DialogTitle>
+            <DialogDescription className="pt-2 text-[0.9rem] leading-6 text-v3-text-muted">
+              {customerName} 님에게 전자문서 작성을 재요청 할까요?
+            </DialogDescription>
+          </DialogHeader>
+          <div data-component="contracts-rerequest-phone-field" className="px-6 pb-2">
+            <Label
+              htmlFor={`contract-rerequest-phone-${doc.id}`}
+              className="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+            >
+              전송 전화번호
+            </Label>
+            <Input
+              id={`contract-rerequest-phone-${doc.id}`}
+              type="tel"
+              inputMode="numeric"
+              variant="v3"
+              placeholder="010-1234-5678"
+              value={formatPhoneNumber(recipientPhoneDigits)}
+              onChange={(event) =>
+                setRecipientPhone(normalizePhoneNumber(event.target.value).slice(0, 11))
+              }
+              maxLength={13}
+              className={cn(
+                "h-12 rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]",
+                hasEditedRecipientPhone &&
+                  !isRecipientPhoneValid &&
+                  "border-v3-burgundy focus-visible:border-v3-burgundy focus-visible:shadow-[0_0_0_3px_hsla(348,83%,47%,0.08)]"
+              )}
+            />
+            {hasEditedRecipientPhone && !isRecipientPhoneValid && (
+              <p className="mt-2 text-[0.75rem] font-medium text-v3-burgundy">
+                전송할 전화번호를 올바르게 입력해 주세요.
+              </p>
+            )}
+          </div>
+          <DialogFooter className="px-6 pb-6 pt-2 sm:justify-end">
+            <Button
+              variant="v3-outline"
+              size="sm"
+              onClick={() => handleReRequestDialogChange(false)}
+              disabled={reRequestMutation.isPending}
+              className="min-w-[88px]"
+            >
+              취소
+            </Button>
+            <Button
+              variant="v3"
+              size="sm"
+              onClick={() => reRequestMutation.mutate()}
+              disabled={reRequestMutation.isPending || !isRecipientPhoneValid}
+              className="min-w-[88px]"
+            >
+              재요청
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DetailPanel>
   );
 }

@@ -1,8 +1,12 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
-import { EformsignDocumentsResponse, EformsignDocument } from "@/lib/eformsign/types";
+import {
+  EformsignDeleteDocumentsResponse,
+  EformsignDocumentsResponse,
+  EformsignDocument,
+} from "@/lib/eformsign/types";
 import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
 
 // Re-export types for convenience
@@ -87,5 +91,54 @@ export function useEformsignDocuments(isAuthenticated: boolean = true) {
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 60,
+  });
+}
+
+export function useDeleteEformsignDocument() {
+  const queryClient = useQueryClient();
+  type DeleteContext = {
+    previousQueries: Array<[ReadonlyArray<unknown>, EformsignDocumentsResponse | undefined]>;
+  };
+
+  return useMutation<EformsignDeleteDocumentsResponse, Error, string, DeleteContext>({
+    mutationFn: async (documentId: string) => eformsignApi.deleteDocument(documentId),
+    onMutate: async (documentId: string) => {
+      await queryClient.cancelQueries({ queryKey: ["eformsign-documents"] });
+
+      const previousQueries = queryClient.getQueriesData<EformsignDocumentsResponse>({
+        queryKey: ["eformsign-documents"],
+      });
+
+      queryClient.setQueriesData<EformsignDocumentsResponse>(
+        { queryKey: ["eformsign-documents"] },
+        (old) => {
+          if (!old) return old;
+
+          const currentDocuments = old.documents || [];
+          const nextDocuments = currentDocuments.filter((doc) => doc.id !== documentId);
+          const removedCount = currentDocuments.length - nextDocuments.length;
+
+          if (removedCount === 0) {
+            return old;
+          }
+
+          return {
+            ...old,
+            documents: nextDocuments,
+            total_rows: Math.max(0, (old.total_rows ?? currentDocuments.length) - removedCount),
+          };
+        }
+      );
+
+      return { previousQueries };
+    },
+    onError: (_error, _documentId, context) => {
+      context?.previousQueries?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+    },
   });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MessageTemplate } from "@/lib/template/types";
 import { renderTemplate } from "@/lib/template/variable-parser";
 import { useFormStore } from "@/stores/form-store";
@@ -9,17 +9,17 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { DynamicInput } from "./form-components/dynamic-input";
-import { Button } from "@/components/ui/button";
 
 interface CustomTemplateFormProps {
     template: MessageTemplate;
+    onPreviewMessageChange?: (message: string) => void;
 }
 
-export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
+export const CustomTemplateForm = ({ template, onPreviewMessageChange }: CustomTemplateFormProps) => {
     const locale = useLocale();
     const formStore = useFormStore();
     const { variableValues, setVariableValue } = useTemplateStore();
-    const [generatedMessage, setGeneratedMessage] = useState("");
+    const [messageOverride, setMessageOverride] = useState<string | null>(null);
 
     const formStoreSetters: Partial<Record<keyof typeof FORM_STORE_MAPPING, (value: string) => void>> = {
         name: formStore.setName,
@@ -68,6 +68,7 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
     };
 
     const handleVariableChange = (key: string, value: string) => {
+        setMessageOverride(null);
         const storeKey = FORM_STORE_MAPPING[key];
         if (storeKey) {
             const setter = formStoreSetters[storeKey];
@@ -79,27 +80,37 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
         setVariableValue(key, value);
     };
 
-    const handleGenerate = () => {
-        const values: Record<string, string> = {};
-        template.variables.forEach((v) => {
-            values[v.key] = getVariableValue(v.key);
-        });
-
-        const message = renderTemplate(template.content, values);
-        setGeneratedMessage(message);
-    };
+    const templateValues = template.variables.reduce<Record<string, string>>((acc, variable) => {
+        acc[variable.key] = getVariableValue(variable.key);
+        return acc;
+    }, {});
+    const templateMessage = renderTemplate(template.content, templateValues);
+    const generatedMessage = messageOverride ?? templateMessage;
 
     const handleCopy = () => {
         navigator.clipboard.writeText(generatedMessage);
         alert(t(locale, "common.copy-success-message"));
     };
 
+    const variableItems = template.variables
+        .map((variable) => ({
+            token: `{{${variable.key}}}`,
+            label: variable.label,
+            value: getVariableValue(variable.key).trim() || "-",
+        }));
+
+    useEffect(() => {
+        if (generatedMessage) {
+            onPreviewMessageChange?.(generatedMessage);
+        }
+    }, [generatedMessage, onPreviewMessageChange]);
+
     return (
         <div
             data-component="messages-custom-template-form"
             className="flex flex-col grow h-full animate-fade-in"
         >
-            <div className="flex flex-col grow">
+            <div className="flex flex-col h-full gap-4">
                 <div className="flex flex-col gap-6">
                     {template.variables.map((variable) => (
                         <DynamicInput
@@ -109,25 +120,23 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
                             onChange={(value) => handleVariableChange(variable.key, value)}
                         />
                     ))}
-
-                    <Button
-                        size="lg"
-                        onClick={handleGenerate}
-                        disabled={template.variables.some(v => v.required && !getVariableValue(v.key))}
-                    >
-                        {t(locale, "common.generate-button")}
-                    </Button>
                 </div>
 
-                {generatedMessage && (
-                    <GeneratedMsg
-                        title={t(locale, "common.generated-message-title")}
-                        copyButtonText={t(locale, "common.copy-button")}
-                        message={generatedMessage}
-                        onMessageChange={setGeneratedMessage}
-                        handleCopy={handleCopy}
-                    />
-                )}
+                <GeneratedMsg
+                    title={t(locale, "common.generated-message-title")}
+                    copyButtonText={t(locale, "common.copy-button")}
+                    message={generatedMessage}
+                    bodyDescription={`${template.name} 템플릿의 본문과 변수를 함께 검토할 수 있습니다.`}
+                    metaItems={[
+                        { label: "템플릿 유형", value: "사용자 템플릿" },
+                        { label: "템플릿 이름", value: template.name },
+                        { label: "활성 변수", value: `${variableItems.length}개` },
+                    ]}
+                    variableItems={variableItems}
+                    variableEmptyText="입력된 변수 값이 없습니다."
+                    onMessageChange={setMessageOverride}
+                    handleCopy={handleCopy}
+                />
             </div>
         </div>
     );

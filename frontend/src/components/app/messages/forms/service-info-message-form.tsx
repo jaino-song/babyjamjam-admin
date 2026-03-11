@@ -1,32 +1,44 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { serviceInfoMsgTemplate } from "../templates/messageTemplate/serviceInfoMsg";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
+import { TitleTextInputMolecule } from "./form-components/TitleTextInputMolecule";
 
-export const ServiceInfoMessageForm = () => {
+interface ServiceInfoMessageFormProps {
+  onPreviewMessageChange?: (message: string) => void;
+}
+
+export const ServiceInfoMessageForm = ({ onPreviewMessageChange }: ServiceInfoMessageFormProps) => {
   const locale = useLocale();
   const [name, setName] = useState("");
-  const [generatedMessage, setGeneratedMessage] = useState("");
+  const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { data: systemTemplate } = useSystemTemplate("service_info");
-
-  const handleGenerate = () => {
-    const message = systemTemplate?.content
-      ? renderTemplate(systemTemplate.content, { name })
-      : serviceInfoMsgTemplate({ name });
-    setGeneratedMessage(message);
-  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
     alert(t(locale, "common.copy-success-message"));
   };
+
+  const variableItems = [
+    { token: "{{name}}", label: t(locale, "service-info-msg.name-label"), value: name.trim() || "-" },
+  ];
+
+  const normalizedName = name.trim();
+  const templateMessage = systemTemplate?.content
+    ? renderTemplate(systemTemplate.content, { name: normalizedName })
+    : serviceInfoMsgTemplate({ name: normalizedName || "{{name}}" });
+
+  const generatedMessage = messageOverride ?? templateMessage;
+
+  useEffect(() => {
+    if (generatedMessage) {
+      onPreviewMessageChange?.(generatedMessage);
+    }
+  }, [generatedMessage, onPreviewMessageChange]);
 
   return (
     <div
@@ -34,33 +46,31 @@ export const ServiceInfoMessageForm = () => {
       className="flex flex-col grow h-full animate-fade-in"
     >
       <div className="flex flex-col h-full gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="client-name">{t(locale, "service-info-msg.name-label")}</Label>
-          <Input
-            id="client-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t(locale, "service-info-msg.name-placeholder")}
-          />
-        </div>
+        <TitleTextInputMolecule
+          id="client-name"
+          label={t(locale, "service-info-msg.name-label")}
+          value={name}
+          onValueChange={(value) => {
+            setName(value);
+            setMessageOverride(null);
+          }}
+          placeholder={t(locale, "service-info-msg.name-placeholder")}
+          dataComponent="messages-service-info-name-input"
+        />
 
-        <Button
-          size="lg"
-          onClick={handleGenerate}
-          disabled={!name}
-        >
-          {t(locale, "common.generate-button")}
-        </Button>
-
-        {generatedMessage && (
-          <GeneratedMsg
-            title={t(locale, "common.generated-message-title")}
-            copyButtonText={t(locale, "common.copy-button")}
-            message={generatedMessage}
-            onMessageChange={setGeneratedMessage}
-            handleCopy={handleCopy}
-          />
-        )}
+        <GeneratedMsg
+          title={t(locale, "common.generated-message-title")}
+          copyButtonText={t(locale, "common.copy-button")}
+          message={generatedMessage}
+          bodyDescription={systemTemplate?.description || "메시지 문구를 직접 수정할 수 있어요."}
+          metaItems={[
+            { label: "템플릿 유형", value: "서비스 안내" },
+            { label: t(locale, "service-info-msg.name-label"), value: name.trim() || "-" },
+          ]}
+          variableItems={variableItems}
+          onMessageChange={setMessageOverride}
+          handleCopy={handleCopy}
+        />
       </div>
     </div>
   );

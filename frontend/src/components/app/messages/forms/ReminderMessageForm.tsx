@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { reminderMsgTemplate } from "../templates/messageTemplate/reminderMsg";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
@@ -8,65 +8,67 @@ import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { NameInput } from "./form-components/NameInput";
-import { Button } from "@/components/ui/button";
 
+interface ReminderMessageFormProps {
+  onPreviewMessageChange?: (message: string) => void;
+}
 
-export const ReminderMessageForm = () => {
+export const ReminderMessageForm = ({ onPreviewMessageChange }: ReminderMessageFormProps) => {
   const locale = useLocale();
-  const [generatedMessage, setGeneratedMessage] = useState("");
+  const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
   const { data: systemTemplate } = useSystemTemplate("REMINDER");
-
-
-  const handleGenerate = () => {
-    const message = systemTemplate?.content
-      ? renderTemplate(systemTemplate.content, { name })
-      : reminderMsgTemplate({ name });
-
-    setGeneratedMessage(message);
-  };
+  const normalizedName = name.trim();
+  const templateMessage = systemTemplate?.content
+    ? renderTemplate(systemTemplate.content, { name: normalizedName })
+    : reminderMsgTemplate({ name: normalizedName || "{{name}}" });
+  const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
     alert(t(locale, "common.copy-success-message"));
   };
 
+  const variableItems = [
+    { token: "{{name}}", label: t(locale, "reminder-msg.name-label"), value: name.trim() || "-" },
+  ];
+
+  useEffect(() => {
+    if (generatedMessage) {
+      onPreviewMessageChange?.(generatedMessage);
+    }
+  }, [generatedMessage, onPreviewMessageChange]);
+
   return (
     <div
       data-component="messages-reminder-form"
       className="flex flex-col grow h-full animate-fade-in"
     >
-      <div className="flex flex-col grow">
-        {/* form */}
-        <div className="flex flex-col gap-6">
+      <div className="flex flex-col h-full gap-4">
           <NameInput
             name={name}
-            setName={setName}
+            setName={(value) => {
+              setName(value);
+              setMessageOverride(null);
+            }}
             label={t(locale, "reminder-msg.name-label")}
             placeholder={t(locale, "reminder-msg.name-placeholder")}
           />
-          <Button
-            size="lg"
-            onClick={handleGenerate}
-            disabled={!name}
-            data-component="messages-reminder-form-generate"
-          >
-            {t(locale, "common.generate-button")}
-          </Button>
-        </div>
 
-        {/* generated message */}
-        {generatedMessage && (
-          <GeneratedMsg
-            title={t(locale, "common.generated-message-title")}
-            copyButtonText={t(locale, "common.copy-button")}
-            message={generatedMessage}
-            onMessageChange={setGeneratedMessage}
-            handleCopy={handleCopy}
-          />
-        )}
+        <GeneratedMsg
+          title={t(locale, "common.generated-message-title")}
+          copyButtonText={t(locale, "common.copy-button")}
+          message={generatedMessage}
+          bodyDescription={systemTemplate?.description || "리마인더 메시지를 검토하고 개인화된 문구를 조정할 수 있습니다."}
+          metaItems={[
+            { label: "템플릿 유형", value: "리마인더" },
+            { label: t(locale, "reminder-msg.name-label"), value: name.trim() || "-" },
+          ]}
+          variableItems={variableItems}
+          onMessageChange={setMessageOverride}
+          handleCopy={handleCopy}
+        />
       </div>
     </div>
   );
 };
-

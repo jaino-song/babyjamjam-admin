@@ -10,7 +10,14 @@ export const renderTemplate = (content: string, values: Record<string, string>):
     
     for (const key of keys) {
         const regex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "g");
-        rendered = rendered.replace(regex, values[key] || `{{${key}}}`);
+        const value = values[key];
+
+        if (typeof value !== "string" || value.trim().length === 0) {
+            rendered = rendered.replace(regex, `{{${key}}}`);
+            continue;
+        }
+
+        rendered = rendered.replace(regex, value);
     }
     
     return rendered;

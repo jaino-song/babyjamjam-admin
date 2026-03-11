@@ -8,7 +8,7 @@
 
 interface PriceInfoMessageData {
   name: string;
-  weeks: number;
+  weeks: number | string;
   duration: string;
   type: string;
   fullPrice: string;
