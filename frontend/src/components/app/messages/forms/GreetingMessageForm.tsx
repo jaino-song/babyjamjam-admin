@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { greetingMsgTemplate } from "../templates/messageTemplate/greetingMsg";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -8,7 +8,11 @@ import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 
 
-export const GreetingMessageForm = () => {
+interface GreetingMessageFormProps {
+  onPreviewMessageChange?: (message: string) => void;
+}
+
+export const GreetingMessageForm = ({ onPreviewMessageChange }: GreetingMessageFormProps) => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -19,6 +23,10 @@ export const GreetingMessageForm = () => {
     : greetingMsgTemplate();
 
   const displayMessage = isDirty ? generatedMessage : initialMessage;
+
+  useEffect(() => {
+    onPreviewMessageChange?.(displayMessage);
+  }, [displayMessage, onPreviewMessageChange]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(displayMessage);
@@ -37,6 +45,7 @@ export const GreetingMessageForm = () => {
             title={t(locale, "common.generated-message-title")}
             copyButtonText={t(locale, "common.copy-button")}
             message={displayMessage}
+            bodyDescription={systemTemplate?.description || "기본 인사 메시지를 검토하고 바로 수정할 수 있습니다."}
             onMessageChange={(message) => {
               setIsDirty(true);
               setGeneratedMessage(message);

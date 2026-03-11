@@ -29,16 +29,16 @@ export default function FeedbackDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-muted/50 p-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="animate-pulse">
-            <div className="h-8 bg-muted rounded w-32 mb-8"></div>
-            <div className="bg-card rounded-lg shadow p-6 mb-6">
-              <div className="h-6 bg-muted rounded w-48 mb-4"></div>
-              <div className="space-y-3">
-                <div className="h-4 bg-muted rounded w-full"></div>
-                <div className="h-4 bg-muted rounded w-3/4"></div>
-                <div className="h-4 bg-muted rounded w-5/6"></div>
+      <div data-component="admin-feedback-detail-loading" className="min-h-screen bg-muted/50 p-8">
+        <div data-component="admin-feedback-detail-loading-content" className="max-w-4xl mx-auto">
+          <div data-component="admin-feedback-detail-loading-skeleton" className="animate-pulse">
+            <div data-component="admin-feedback-detail-loading-heading" className="h-8 bg-muted rounded w-32 mb-8"></div>
+            <div data-component="admin-feedback-detail-loading-card" className="bg-card rounded-lg shadow p-6 mb-6">
+              <div data-component="admin-feedback-detail-loading-title" className="h-6 bg-muted rounded w-48 mb-4"></div>
+              <div data-component="admin-feedback-detail-loading-lines" className="space-y-3">
+                <div data-component="admin-feedback-detail-loading-line" className="h-4 bg-muted rounded w-full"></div>
+                <div data-component="admin-feedback-detail-loading-line" className="h-4 bg-muted rounded w-3/4"></div>
+                <div data-component="admin-feedback-detail-loading-line" className="h-4 bg-muted rounded w-5/6"></div>
               </div>
             </div>
           </div>
@@ -49,15 +49,16 @@ export default function FeedbackDetailPage() {
 
   if (error || !feedback) {
     return (
-      <div className="min-h-screen bg-muted/50 p-8">
-        <div className="max-w-4xl mx-auto">
+      <div data-component="admin-feedback-detail-error" className="min-h-screen bg-muted/50 p-8">
+        <div data-component="admin-feedback-detail-error-content" className="max-w-4xl mx-auto">
           <button
+            type="button"
             onClick={() => router.push('/admin')}
             className="mb-8 text-primary hover:text-primary/80 font-medium flex items-center gap-2"
           >
             ←
           </button>
-          <div className="bg-card rounded-lg shadow p-12 text-center">
+          <div data-component="admin-feedback-detail-error-panel" className="bg-card rounded-lg shadow p-12 text-center">
             <p className="text-destructive text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
             <p className="text-muted-foreground">요청하신 피드백이 존재하지 않거나 삭제되었습니다.</p>
           </div>
@@ -70,6 +71,7 @@ export default function FeedbackDetailPage() {
     <div data-component="admin-feedback-detail" className="min-h-screen bg-muted/50 p-8">
       <div data-component="admin-feedback-detail-content" className="max-w-4xl mx-auto">
         <button
+          type="button"
           onClick={() => router.push('/admin')}
           data-component="admin-feedback-detail-back"
           className="mb-8 text-primary hover:text-primary/80 font-medium flex items-center gap-2 transition-colors"
@@ -79,8 +81,8 @@ export default function FeedbackDetailPage() {
 
         <div data-component="admin-feedback-detail-info" className="bg-card rounded-lg shadow p-6 mb-6">
           <h2 className="text-xl font-bold text-foreground mb-4">피드백 정보</h2>
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
+          <div data-component="admin-feedback-detail-info-grid" className="space-y-3">
+            <div data-component="admin-feedback-detail-info-type" className="flex items-center gap-3">
               <span className="text-sm font-medium text-muted-foreground w-24">유형:</span>
               <span className="flex items-center gap-2">
                 <span className="text-2xl">{feedback.type === 'positive' ? '👍' : '👎'}</span>
@@ -89,9 +91,9 @@ export default function FeedbackDetailPage() {
                 </span>
               </span>
             </div>
-            <div className="flex items-start gap-3">
+            <div data-component="admin-feedback-detail-info-user" className="flex items-start gap-3">
               <span className="text-sm font-medium text-muted-foreground w-24">사용자:</span>
-              <div>
+              <div data-component="admin-feedback-detail-info-user-body">
                 <p className="font-medium text-foreground">
                   {feedback.user.name || '익명'}
                 </p>
@@ -100,12 +102,12 @@ export default function FeedbackDetailPage() {
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div data-component="admin-feedback-detail-info-date" className="flex items-center gap-3">
               <span className="text-sm font-medium text-muted-foreground w-24">날짜:</span>
               <span className="text-foreground">{formatDate(feedback.createdAt)}</span>
             </div>
             {feedback.comment && (
-              <div className="flex items-start gap-3">
+              <div data-component="admin-feedback-detail-info-comment" className="flex items-start gap-3">
                 <span className="text-sm font-medium text-muted-foreground w-24">코멘트:</span>
                 <p className="text-foreground flex-1">{feedback.comment}</p>
               </div>
@@ -115,17 +117,19 @@ export default function FeedbackDetailPage() {
 
         <div data-component="admin-feedback-detail-chat" className="bg-card rounded-lg shadow p-6">
           <h2 className="text-xl font-bold text-foreground mb-6">대화 내역</h2>
-          <div className="space-y-4">
+          <div data-component="admin-feedback-detail-chat-list" className="space-y-4">
             {feedback.session.messages.map((message: SessionMessage) => {
               const isHighlighted = message.id === feedback.message.id;
               const isUser = message.role === 'user';
 
               return (
                 <div
+                  data-component="admin-feedback-detail-chat-row"
                   key={message.id}
                   className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
+                    data-component="admin-feedback-detail-chat-bubble"
                     className={`max-w-[80%] rounded-lg p-4 ${isHighlighted
                         ? 'ring-2 ring-warning bg-warning/10'
                         : isUser
@@ -133,7 +137,7 @@ export default function FeedbackDetailPage() {
                           : 'bg-muted text-foreground'
                       }`}
                   >
-                    <div className="flex items-center gap-2 mb-2">
+                    <div data-component="admin-feedback-detail-chat-meta" className="flex items-center gap-2 mb-2">
                       <span className={`text-xs font-medium ${isHighlighted
                           ? 'text-warning'
                           : isUser
@@ -159,8 +163,8 @@ export default function FeedbackDetailPage() {
                     {isUser ? (
                       <p className="whitespace-pre-wrap break-words">{message.content}</p>
                     ) : (
-                      <div className={`prose prose-sm max-w-none ${isHighlighted ? 'prose-yellow' : 'prose-neutral dark:prose-invert'
-                        }`}>
+                      <div data-component="admin-feedback-detail-chat-content" className={`prose prose-sm max-w-none ${isHighlighted ? 'prose-yellow' : 'prose-neutral dark:prose-invert'
+                         }`}>
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
@@ -201,7 +205,7 @@ export default function FeedbackDetailPage() {
                               <h3 className="text-base font-bold mb-2 mt-3 first:mt-0">{children}</h3>
                             ),
                             table: ({ children }) => (
-                              <div className="overflow-x-auto mb-3">
+                              <div data-component="admin-feedback-detail-chat-table" className="overflow-x-auto mb-3">
                                 <table className="min-w-full border-collapse border border-border">
                                   {children}
                                 </table>

@@ -30,6 +30,7 @@ export const REJECTED_CODES = [
   "049", // doc_delete: 문서 삭제
   "061", // doc_reject_participant: 참여자 반려
   "071", // doc_reject_reviewer: 검토자 반려
+  "080", // doc_expired: 문서 만료
 ] as const;
 
 // 대기/진행 중 (In-progress) codes - for reference
@@ -113,4 +114,3 @@ export function getStatusColor(status: string): BadgeVariant {
   }
   return "info";
 }
-

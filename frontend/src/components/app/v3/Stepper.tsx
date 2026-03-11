@@ -38,10 +38,10 @@ export interface StepperProps {
   className?: string;
 }
 
-const SIZE_MAP: Record<StepperSize, { circle: string; font: string; label: string; offset: string }> = {
-  sm: { circle: "w-6 h-6",  font: "text-[0.55rem]", label: "text-[0.5rem]",  offset: "mt-[-10px]" },
-  md: { circle: "w-8 h-8",  font: "text-[0.65rem]", label: "text-[0.6rem]",  offset: "mt-[-12px]" },
-  lg: { circle: "w-10 h-10", font: "text-xs",        label: "text-[0.7rem]",  offset: "mt-[-14px]" },
+const SIZE_MAP: Record<StepperSize, { circle: string; font: string; label: string; connector: string }> = {
+  sm: { circle: "w-6 h-6", font: "text-[0.55rem]", label: "text-[0.5rem]", connector: "mt-[-10px] px-1.5 text-xs" },
+  md: { circle: "w-8 h-8", font: "text-[0.65rem]", label: "text-[0.6rem]", connector: "mt-[-12px] px-2 text-sm" },
+  lg: { circle: "w-10 h-10", font: "text-xs", label: "text-[0.7rem]", connector: "mt-[-14px] px-2.5 text-base" },
 };
 
 function resolveState(step: StepperStep, index: number, activeStep?: number): StepState {
@@ -97,7 +97,14 @@ export function Stepper({
               >
                 {indicator}
               </div>
-              <span data-component="stepper-label" className={cn("text-v3-text-muted mt-1 whitespace-nowrap", tokens.label)}>
+              <span
+                data-component="stepper-label"
+                className={cn(
+                  "mt-1 whitespace-nowrap",
+                  tokens.label,
+                  state === "done" ? "text-v3-primary" : "text-v3-text-muted",
+                )}
+              >
                 {step.label}
               </span>
             </div>
@@ -106,11 +113,13 @@ export function Stepper({
               <div
                 data-component="stepper-connector"
                 className={cn(
-                  "flex-1 h-0.5",
-                  tokens.offset,
-                  nextState === "done" || nextState === "active" ? "bg-v3-primary" : "bg-v3-border",
+                  "shrink-0 select-none font-semibold leading-none",
+                  tokens.connector,
+                  nextState === "done" || nextState === "active" ? "text-v3-primary" : "text-v3-border",
                 )}
-              />
+              >
+                -
+              </div>
             )}
           </React.Fragment>
         );

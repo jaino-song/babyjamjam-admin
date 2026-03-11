@@ -4,12 +4,20 @@ import {
     IAligoApiPort,
     AligoSendAlimtalkParams,
     AligoAlimtalkResponse,
+    AligoCreateTemplateParams,
+    AligoTemplateCreateResponse,
 } from "domain/ports/aligo-api.port";
+import {
+    AligoSendSmsParams,
+    AligoSmsResponse,
+    IAligoSmsApiPort,
+} from "domain/ports/aligo-sms-api.port";
 
 @Injectable()
-export class AligoApiClient implements IAligoApiPort {
+export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
     private readonly logger = new Logger(AligoApiClient.name);
     private readonly ALIGO_API_URL: string;
+    private readonly ALIGO_SMS_API_URL: string;
     private readonly ALIGO_API_KEY: string;
     private readonly ALIGO_USER_ID: string;
     private readonly ALIGO_SENDER_KEY: string;
@@ -17,6 +25,7 @@ export class AligoApiClient implements IAligoApiPort {
 
     constructor(private readonly configService: ConfigService) {
         this.ALIGO_API_URL = configService.getOrThrow("ALIGO_API_URL");
+        this.ALIGO_SMS_API_URL = configService.get("ALIGO_SMS_API_URL") || "https://apis.aligo.in";
         this.ALIGO_API_KEY = configService.getOrThrow("ALIGO_API_KEY");
         this.ALIGO_USER_ID = configService.getOrThrow("ALIGO_USER_ID");
         this.ALIGO_SENDER_KEY = configService.getOrThrow("ALIGO_SENDER_KEY");
@@ -72,5 +81,103 @@ export class AligoApiClient implements IAligoApiPort {
         }
 
         return data;
+    }
+
+    async sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {
+        const url = `${this.ALIGO_SMS_API_URL}/send/`;
+
+        const formData = new FormData();
+        formData.append("key", this.ALIGO_API_KEY);
+        formData.append("user_id", this.ALIGO_USER_ID);
+        formData.append("sender", params.sender ?? this.ALIGO_SENDER_PHONE);
+        formData.append("receiver", params.receiver);
+        formData.append("msg", params.message);
+
+        if (params.msgType) {
+            formData.append("msg_type", params.msgType);
+        }
+        if (params.title) {
+            formData.append("title", params.title);
+        }
+        if (params.destination) {
+            formData.append("destination", params.destination);
+        }
+        if (params.scheduledDate) {
+            formData.append("rdate", params.scheduledDate);
+        }
+        if (params.scheduledTime) {
+            formData.append("rtime", params.scheduledTime);
+        }
+        if (params.testModeYn) {
+            formData.append("testmode_yn", params.testModeYn);
+        }
+
+        this.logger.debug(`[Aligo] Sending sms to ${params.receiver}`);
+
+        const response = await fetch(url, {
+            method: "POST",
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            this.logger.error(`[Aligo] SMS API error: ${response.status} - ${errorText}`);
+            throw new Error(`Aligo SMS API error (${response.status}): ${errorText}`);
+        }
+
+        return (await response.json()) as AligoSmsResponse;
+    }
+
+    async createTemplate(params: AligoCreateTemplateParams): Promise<AligoTemplateCreateResponse> {
+        const url = `${this.ALIGO_API_URL}/akv10/template/add/`;
+
+        const formData = new FormData();
+        formData.append("apikey", this.ALIGO_API_KEY);
+        formData.append("userid", this.ALIGO_USER_ID);
+        formData.append("senderkey", this.ALIGO_SENDER_KEY);
+        formData.append("tpl_name", params.templateName);
+        formData.append("tpl_content", params.templateContent);
+        formData.append("tpl_type", params.templateType);
+        formData.append("tpl_emtype", params.emphasisType);
+
+        if (params.title) {
+            formData.append("tpl_title", params.title);
+        }
+
+        if (params.subtitle) {
+            formData.append("tpl_stitle", params.subtitle);
+        }
+
+        if (params.extra) {
+            formData.append("tpl_extra", params.extra);
+        }
+
+        if (params.advert) {
+            formData.append("tpl_advert", params.advert);
+        }
+
+        if (params.buttons && params.buttons.length > 0) {
+            formData.append("tpl_button", JSON.stringify({ button: params.buttons }));
+        }
+
+        if (params.image) {
+            const imageBlob = new Blob([new Uint8Array(params.image.buffer)], { type: params.image.mimeType });
+            formData.append("image", imageBlob, params.image.filename);
+        }
+
+        this.logger.debug(`[Aligo] Creating alimtalk template: ${params.templateName}`);
+
+        const response = await fetch(url, {
+            method: "POST",
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            this.logger.error(`[Aligo] Template API error: ${response.status} - ${errorText}`);
+            throw new Error(`Aligo template API error (${response.status}): ${errorText}`);
+        }
+
+        return (await response.json()) as AligoTemplateCreateResponse;
     }
 }

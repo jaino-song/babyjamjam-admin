@@ -795,9 +795,6 @@ body {
   border-color: hsl(var(--primary) / 0.5);
 }
 
-.tab-active-underline {
-  border-bottom-color: hsl(var(--v3-primary)) !important;
-}
 
 /* Icon hover bounce effect */
 .icon-hover-bounce {

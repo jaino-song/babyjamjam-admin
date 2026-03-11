@@ -1,9 +1,15 @@
 import { AligoService } from "application/services/aligo.service";
-import { SendAligoAlimtalkUsecase } from "application/usecases/aligo";
+import {
+    SendAligoAlimtalkUsecase,
+    SendAligoSmsUsecase,
+} from "application/usecases/aligo";
 import { ClientEntity } from "domain/entities/client.entity";
 
 describe("AligoService", () => {
     const createMockSendAlimtalkUsecase = () => ({
+        execute: jest.fn(),
+    });
+    const createMockSendSmsUsecase = () => ({
         execute: jest.fn(),
     });
 
@@ -30,11 +36,14 @@ describe("AligoService", () => {
 
     let service: AligoService;
     let sendAlimtalkUsecase: ReturnType<typeof createMockSendAlimtalkUsecase>;
+    let sendSmsUsecase: ReturnType<typeof createMockSendSmsUsecase>;
 
     beforeEach(() => {
         sendAlimtalkUsecase = createMockSendAlimtalkUsecase();
+        sendSmsUsecase = createMockSendSmsUsecase();
         service = new AligoService(
-            sendAlimtalkUsecase as unknown as SendAligoAlimtalkUsecase
+            sendAlimtalkUsecase as unknown as SendAligoAlimtalkUsecase,
+            sendSmsUsecase as unknown as SendAligoSmsUsecase,
         );
     });
 
@@ -198,6 +207,17 @@ describe("AligoService", () => {
             await expect(
                 service.sendClientCreatedAlimtalk(createMockClient())
             ).resolves.not.toThrow();
+        });
+
+        it("should rethrow when sms API fails", async () => {
+            sendSmsUsecase.execute.mockRejectedValue(new Error("API Error"));
+
+            await expect(
+                service.sendSms({
+                    receiver: "01012345678",
+                    message: "테스트",
+                })
+            ).rejects.toThrow("API Error");
         });
     });
 });

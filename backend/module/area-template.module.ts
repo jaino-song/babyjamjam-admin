@@ -12,9 +12,10 @@ import {
 import { AreaTemplateService } from "application/services/area-template.service";
 import { AreaTemplateController } from "interface/controllers/area-template.controller";
 import { AREA_TEMPLATE_REPOSITORY } from "domain/repositories/area-template.repository.interface";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 
 @Module({
+    imports: [DatabaseModule],
     controllers: [AreaTemplateController],
     providers: [
         CreateAreaTemplateUsecase,
@@ -23,7 +24,6 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         UpdateAreaTemplateUsecase,
         DeleteAreaTemplateUsecase,
         AreaTemplateService,
-        PrismaService,
         {
             provide: AREA_TEMPLATE_REPOSITORY,
             useClass: SbAreaTemplateRepository,

@@ -7,6 +7,7 @@ export interface SendAligoAlimtalkDto {
     buttonUrl?: string;
     organizationId?: string;
     clientId?: number;
+    triggerJobId?: string;
 }
 
 export class AligoMessageBuilder {
@@ -31,6 +32,28 @@ export class AligoMessageBuilder {
 서비스: #{서비스타입}
 
 문의사항은 채널톡으로 연락주세요.`,
+
+            SERVICE_START_REMINDER: `[아이미래 인천]
+#{고객명}님, #{발송기준}입니다.
+
+서비스 시작일: #{서비스시작일}
+
+준비사항이나 문의사항이 있으시면 연락주세요.`,
+
+            SERVICE_END_REMINDER: `[아이미래 인천]
+#{고객명}님, #{발송기준}입니다.
+
+서비스 종료일: #{서비스종료일}
+
+필요한 사항이 있으면 언제든지 연락주세요.`,
+
+            EMPLOYEE_ASSIGNED: `[아이미래 인천]
+#{직원명}님, 새로운 배정이 등록되었습니다.
+
+고객명: #{고객명}
+서비스 시작일: #{서비스시작일}
+
+세부 내용을 확인해 주세요.`,
 
             CONTRACT_SIGNED: `[아이미래 인천]
 #{고객명}님, 계약이 완료되었습니다.

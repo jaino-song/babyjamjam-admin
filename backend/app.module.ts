@@ -18,16 +18,18 @@ import { EformsignDocModule } from "module/eformsign-doc.module";
 import { EformsignWebhookModule } from "module/eformsign-webhook.module";
 import { AreaTemplateModule } from "module/area-template.module";
 import { DocumentModule } from "module/document.module";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { TenantModule } from "./infrastructure/tenant/tenant.module";
 import { NotificationModule } from "module/notification.module";
 import { AIChatModule } from "module/ai-chat.module";
+import { MessageDeliveryModule } from "module/message-delivery.module";
 
 @Module({
     imports: [
         ConfigModule.forRoot({
             isGlobal: true,
         }),
+        DatabaseModule,
         ScheduleModule.forRoot(),
         PassportModule,
         JwtModule.register({
@@ -49,8 +51,9 @@ import { AIChatModule } from "module/ai-chat.module";
         TenantModule,
         NotificationModule,
         AIChatModule,
+        MessageDeliveryModule,
     ],
     controllers: [EformsignController],
-    providers: [EformsignService, JwtStrategy, PrismaService],
+    providers: [EformsignService, JwtStrategy],
 })
 export class AppModule {}

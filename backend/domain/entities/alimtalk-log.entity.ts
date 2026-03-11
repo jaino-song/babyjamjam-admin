@@ -8,6 +8,7 @@ export class AlimtalkLogEntity {
         public organizationId: string | null,
         public provider: string,
         public templateKey: string,
+        public triggerJobId: string | null,
         public receiver: string,
         public clientId: number | null,
         public messageBody: string,
@@ -56,6 +57,7 @@ export class AlimtalkLogEntity {
         organizationId?: string;
         provider: string;
         templateKey: string;
+        triggerJobId?: string;
         receiver: string;
         clientId?: number;
         messageBody: string;
@@ -67,6 +69,7 @@ export class AlimtalkLogEntity {
             params.organizationId ?? null,
             params.provider,
             params.templateKey,
+            params.triggerJobId ?? null,
             params.receiver,
             params.clientId ?? null,
             params.messageBody,
@@ -87,6 +90,7 @@ export class AlimtalkLogEntity {
         organizationId: string | null,
         provider: string,
         templateKey: string,
+        triggerJobId: string | null,
         receiver: string,
         clientId: number | null,
         messageBody: string,
@@ -98,10 +102,10 @@ export class AlimtalkLogEntity {
         lastAttemptAt: Date | null,
         nextRetryAt: Date | null,
         createdAt: Date,
-        updatedAt: Date,
+        updatedAt: Date = createdAt,
     ): AlimtalkLogEntity {
         return new AlimtalkLogEntity(
-            id, organizationId, provider, templateKey, receiver, clientId,
+            id, organizationId, provider, templateKey, triggerJobId, receiver, clientId,
             messageBody, variables, status, aligoMid, errorMessage, attempts,
             lastAttemptAt, nextRetryAt, createdAt, updatedAt,
         );

@@ -13,19 +13,18 @@ import { SbEformsignDocRepository } from "infrastructure/database/repositories/s
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { SbEmployeeScheduleRepository } from "infrastructure/database/repositories/sb.employee-schedule.repository";
 import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.employee.repository";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { AlimtalkModule } from "./alimtalk.module";
 
 @Module({
-    imports: [AlimtalkModule],
+    imports: [DatabaseModule, AlimtalkModule],
     controllers: [EformsignWebhookController],
     providers: [
         WebhookGuard,
         EformsignWebhookService,
         UpdateEformsignDocStatusUsecase,
         LinkDocumentToClientUsecase,
-        PrismaService,
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
             useClass: SbEformsignDocRepository,

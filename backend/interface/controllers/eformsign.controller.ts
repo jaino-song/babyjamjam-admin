@@ -262,4 +262,68 @@ export class EformsignController {
             );
         }
     }
+
+    /**
+     * Re-request an outsider document to the current recipient.
+     */
+    @Post("documents/:documentId/re_request_outsider")
+    async reRequestOutsiderDocument(
+        @Param("documentId") documentId: string,
+        @Body()
+        body: {
+            accessToken: string;
+            stepType: string;
+            stepSeq: string;
+            comment?: string;
+            recipientPhone?: {
+                countryCode?: string;
+                phoneNumber?: string;
+            };
+        }
+    ) {
+        try {
+            if (!body.accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+
+            if (!body.stepType || !body.stepSeq) {
+                throw new HttpException(
+                    { error: "stepType and stepSeq are required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+
+            if (
+                body.recipientPhone &&
+                (!body.recipientPhone.countryCode || !body.recipientPhone.phoneNumber)
+            ) {
+                throw new HttpException(
+                    { error: "recipientPhone countryCode and phoneNumber are required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+
+            return await this.eformsignService.reRequestOutsiderDocument(
+                body.accessToken,
+                documentId,
+                body.stepType,
+                body.stepSeq,
+                body.comment,
+                body.recipientPhone
+            );
+        } catch (error) {
+            if (error instanceof HttpException) {
+                throw error;
+            }
+
+            const message = error instanceof Error ? error.message : "Unknown error";
+            throw new HttpException(
+                { error: message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
 }

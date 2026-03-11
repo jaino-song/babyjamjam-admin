@@ -8,6 +8,7 @@ import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
 @Injectable()
 export class AlimtalkRetrySchedulerService {
     private readonly logger = new Logger(AlimtalkRetrySchedulerService.name);
+    private isRunning = false;
 
     constructor(
         @Inject(ALIMTALK_LOG_REPOSITORY)
@@ -18,37 +19,52 @@ export class AlimtalkRetrySchedulerService {
 
     @Cron("*/5 * * * *", { timeZone: "Asia/Seoul" })
     async retryFailedMessages(): Promise<void> {
-        const pendingLogs = await this.logRepository.findPendingRetries();
+        if (this.isRunning) {
+            this.logger.warn("[Retry] Previous retry cycle is still running; skipping tick");
+            return;
+        }
 
-        if (pendingLogs.length === 0) return;
+        this.isRunning = true;
+        try {
+            const pendingLogs = await this.logRepository.findPendingRetries();
 
-        this.logger.log(`[Retry] Found ${pendingLogs.length} messages to retry`);
+            if (pendingLogs.length === 0) return;
 
-        for (const log of pendingLogs) {
-            try {
-                const templateKey = log.templateKey as AligoTemplateKey;
-                const template = ALIGO_TEMPLATES[templateKey];
-                if (!template) {
-                    log.markFailed(`Unknown template: ${log.templateKey}`);
+            this.logger.log(`[Retry] Found ${pendingLogs.length} messages to retry`);
+
+            for (const log of pendingLogs) {
+                try {
+                    const templateKey = log.templateKey as AligoTemplateKey;
+                    const template = ALIGO_TEMPLATES[templateKey];
+                    if (!template) {
+                        log.markFailed(`Unknown template: ${log.templateKey}`);
+                        await this.logRepository.update(log);
+                        continue;
+                    }
+
+                    const response = await this.aligoApi.sendAlimtalk({
+                        tplCode: template.code,
+                        receiver: log.receiver,
+                        subject: `알림톡 - ${log.templateKey}`,
+                        message: log.messageBody,
+                    });
+
+                    log.markSent(response.info?.mid?.toString());
                     await this.logRepository.update(log);
-                    continue;
+                    this.logger.log(`[Retry] Successfully resent ${log.templateKey} to ${log.receiver}`);
+                } catch (error) {
+                    log.markFailed(error instanceof Error ? error.message : String(error));
+                    await this.logRepository.update(log);
+                    this.logger.warn(`[Retry] Failed attempt ${log.attempts} for log ${log.id}: ${error}`);
                 }
-
-                const response = await this.aligoApi.sendAlimtalk({
-                    tplCode: template.code,
-                    receiver: log.receiver,
-                    subject: `알림톡 - ${log.templateKey}`,
-                    message: log.messageBody,
-                });
-
-                log.markSent(response.info?.mid?.toString());
-                await this.logRepository.update(log);
-                this.logger.log(`[Retry] Successfully resent ${log.templateKey} to ${log.receiver}`);
-            } catch (error) {
-                log.markFailed(error instanceof Error ? error.message : String(error));
-                await this.logRepository.update(log);
-                this.logger.warn(`[Retry] Failed attempt ${log.attempts} for log ${log.id}: ${error}`);
             }
+        } catch (error) {
+            this.logger.error(
+                "[Retry] Failed to load or retry pending alimtalk messages",
+                error instanceof Error ? error.stack : String(error),
+            );
+        } finally {
+            this.isRunning = false;
         }
     }
 }

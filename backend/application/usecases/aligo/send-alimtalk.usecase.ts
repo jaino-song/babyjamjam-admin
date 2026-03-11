@@ -29,6 +29,7 @@ export class SendAligoAlimtalkUsecase {
             organizationId: dto.organizationId,
             provider: "aligo",
             templateKey: dto.templateKey,
+            triggerJobId: dto.triggerJobId,
             receiver: dto.receiver,
             clientId: dto.clientId,
             messageBody: message,

@@ -8,11 +8,12 @@ import {
 } from "application/usecases/message-template";
 import { MessageTemplateService } from "application/services/message-template.service";
 import { MESSAGE_TEMPLATE_REPOSITORY } from "domain/repositories/message-template.repository.interface";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { MessageTemplateRepository } from "infrastructure/database/repositories/message-template.repository";
 import { MessageTemplateController } from "interface/controllers/message-template.controller";
 
 @Module({
+    imports: [DatabaseModule],
     controllers: [MessageTemplateController],
     providers: [
         CreateMessageTemplateUsecase,
@@ -21,7 +22,6 @@ import { MessageTemplateController } from "interface/controllers/message-templat
         ListMessageTemplatesUsecase,
         FindMessageTemplateByIdUsecase,
         MessageTemplateService,
-        PrismaService,
         {
             provide: MESSAGE_TEMPLATE_REPOSITORY,
             useClass: MessageTemplateRepository,

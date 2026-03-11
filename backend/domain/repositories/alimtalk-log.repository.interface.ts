@@ -4,6 +4,10 @@ export interface IAlimtalkLogRepository {
     save(log: AlimtalkLogEntity): Promise<AlimtalkLogEntity>;
     update(log: AlimtalkLogEntity): Promise<AlimtalkLogEntity>;
     findPendingRetries(): Promise<AlimtalkLogEntity[]>;
+    findRecentByOrganization(
+        organizationId: string,
+        limit?: number,
+    ): Promise<AlimtalkLogEntity[]>;
 }
 
 export const ALIMTALK_LOG_REPOSITORY = "ALIMTALK_LOG_REPOSITORY";

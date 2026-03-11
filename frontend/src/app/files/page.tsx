@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FolderOpen, FileText, Image as ImageIcon, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
-import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, PageSection, DetailSkeleton, ListEmptyState, DetailActions } from "@/components/app/v3";
+import { FolderOpen, FileText, Image as ImageIcon, File, Upload, Loader2, Calendar, Tag, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useDocuments, useUploadDocument, useUpdateDocument, useDeleteDocument, Document } from "@/hooks/use-documents";
 import { useDocumentCategories, useCreateDocumentCategory } from "@/hooks/use-document-categories";
 import { DocumentDropzone } from "@/components/app/documents/document-dropzone";
@@ -311,14 +312,37 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
       }
       subtitle={<>등록일: {formatDate(doc.createdAt)}</>}
       trailing={
-        <DetailActions
-          name="files-detail-actions"
-          actions={[
-            { label: "미리보기", onClick: onPreview, variant: "primary" },
-            { label: "수정", onClick: onEdit, variant: "default" },
-            { label: "삭제", onClick: onDelete, variant: "danger" },
-          ]}
-        />
+        <div data-component="files-detail-actions" className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onPreview}
+            className="rounded-[10px] px-3 py-1.5 text-[0.75rem] font-semibold transition-colors bg-v3-primary text-white hover:bg-v3-primary-hover"
+          >
+            미리보기
+          </button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="문서 작업 더보기"
+                className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
+              >
+                <MoreVertical className="w-5 h-5 text-v3-text-muted" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[140px]">
+              <DropdownMenuItem onClick={onEdit} className="gap-2">
+                <Pencil className="w-4 h-4" />
+                수정
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onDelete} className="gap-2 text-destructive focus:text-destructive">
+                <Trash2 className="w-4 h-4" />
+                삭제
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       }
     >
       <div data-component="files-detail-content" className="space-y-5">

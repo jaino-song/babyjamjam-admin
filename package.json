@@ -9,8 +9,9 @@
     "build:fe": "pnpm --filter imirae-incheon-back-office build",
     "build:be": "pnpm --filter imirae-incheon-backend build",
     "build:mobile": "pnpm --filter babyjamjam-admin build",
-    "test": "pnpm -r test",
-    "lint": "pnpm -r lint"
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "build": "pnpm -r --workspace-concurrency=1 build",
+    "lint": "pnpm -r --workspace-concurrency=1 lint"
   },
   "pnpm": {
     "overrides": {

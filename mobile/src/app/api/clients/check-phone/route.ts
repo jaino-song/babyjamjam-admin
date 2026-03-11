@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
 
 interface ClientPhone {
   phone?: string | null;
@@ -10,14 +11,6 @@ interface PaginatedClientsResponse {
   total?: number;
   page?: number;
   limit?: number;
-}
-
-function getAuthToken(request: NextRequest): string | null {
-  return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 // GET /api/clients/check-phone?phone=01096411878

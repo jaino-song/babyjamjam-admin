@@ -37,13 +37,31 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     const { data: user } = useGetAuthUser();
 
     useEffect(() => {
-        if (!isEformsignAuthenticated()) return;
+        let cancelled = false;
 
-        queryClient.prefetchQuery({
-            queryKey: eformsignQueryKeys.allDocuments(),
-            queryFn: () => eformsignApi.getAllDocuments(),
-            staleTime: 1000 * 60 * 5,
-        });
+        const prefetchDocuments = async () => {
+            try {
+                if (!isEformsignAuthenticated()) return;
+
+                const authStatus = await eformsignApi.getAuthStatus();
+                if (!authStatus.hasAppAuthToken || !authStatus.hasAccessToken || cancelled) {
+                    return;
+                }
+
+                void queryClient.prefetchQuery({
+                    queryKey: eformsignQueryKeys.allDocuments(),
+                    queryFn: () => eformsignApi.getAllDocuments(),
+                    staleTime: 1000 * 60 * 5,
+                });
+            } catch (error) {
+                console.error("[NavBar] Failed to verify eformsign auth status before prefetch:", error);
+            }
+        };
+
+        void prefetchDocuments();
+        return () => {
+            cancelled = true;
+        };
     }, [queryClient]);
 
     const isDashboard = pathname === "/dashboard";

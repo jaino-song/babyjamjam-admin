@@ -16,6 +16,7 @@ type ClientRow = {
     voucherClient: boolean;
     birthday: string | null;
     dueDate?: Date | null;
+    createdAt?: Date | null;
     serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
@@ -42,6 +43,7 @@ export class ClientMapper {
             row.breastPump,
             row.eDocId,
             row.dueDate ?? null,
+            row.createdAt ?? null,
         );
     }
 
@@ -61,6 +63,7 @@ export class ClientMapper {
             voucherClient: entity.voucherClient,
             birthday: entity.birthday,
             dueDate: entity.dueDate,
+            createdAt: entity.createdAt ?? undefined,
             serviceStatus: entity.serviceStatus,
             breastPump: entity.breastPump,
             eDocId: entity.eDocId,

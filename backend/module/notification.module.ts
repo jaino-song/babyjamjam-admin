@@ -13,7 +13,7 @@ import { NotificationService } from "application/services/notification.service";
 import { PwaNotificationSchedulerService } from "application/services/pwa-notification-scheduler.service";
 import { NotificationCleanupSchedulerService } from "application/services/notification-cleanup-scheduler.service";
 import { NotificationController } from "interface/controllers/notification.controller";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbPushSubscriptionRepository } from "infrastructure/database/repositories/sb.push-subscription.repository";
 import { SbNotificationRepository } from "infrastructure/database/repositories/sb.notification.repository";
 import { SbUserRepository } from "infrastructure/database/repositories/sb.user.repository";
@@ -28,7 +28,7 @@ import { SbOrganizationRepository } from "infrastructure/database/repositories/s
 import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
 
 @Module({
-    imports: [ConfigModule],
+    imports: [DatabaseModule, ConfigModule],
     controllers: [NotificationController],
     providers: [
         // Use Cases
@@ -43,8 +43,6 @@ import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
         NotificationService,
         PwaNotificationSchedulerService,
         NotificationCleanupSchedulerService,
-        // Infrastructure
-        PrismaService,
         // Repository bindings (Port -> Adapter)
         {
             provide: PUSH_SUBSCRIPTION_REPOSITORY,

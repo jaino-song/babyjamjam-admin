@@ -12,7 +12,7 @@ export const MsgField = ({ value, onChange }: MsgFieldProps) => {
       value={value}
       onChange={(e) => onChange?.(e.target.value)}
       rows={12}
-      className="font-inherit text-base leading-relaxed max-h-[50vh] resize-none"
+      className="min-h-[280px] rounded-none border-0 bg-transparent px-0 py-0 font-sans text-[0.88rem] leading-7 text-v3-dark shadow-none resize-none focus-visible:ring-0 focus-visible:ring-offset-0"
     />
   );
 };

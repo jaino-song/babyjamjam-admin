@@ -93,6 +93,7 @@ model client {
   serviceStatus                                 String?             @map("service_status")
   eDocId                                        String?             @unique @map("e_doc_id")
   dueDate                                       DateTime?           @map("due_date") @db.Date
+  createdAt                                     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   organizationId                                String?             @map("organization_id") @db.Uuid
   eformsignDocByEDocId                          eformsign_doc?      @relation("client_e_doc_idToeformsign_doc", fields: [eDocId], references: [documentId], onUpdate: NoAction)
   organization                                  organization?       @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -100,6 +101,7 @@ model client {
   employeeSchedules                             employee_schedule[]
 
   @@index([organizationId], map: "idx_client_organization")
+  @@index([createdAt], map: "idx_client_created_at")
 }
 
 model doc_template {
@@ -257,6 +259,12 @@ model organization {
   email              String?
   description        String?
   isActive           Boolean?            @default(true) @map("is_active")
+  smsSenderPhone     String?             @map("sms_sender_phone") @db.VarChar(20)
+  smsSenderApprovalStatus String         @default("not_requested") @map("sms_sender_approval_status") @db.VarChar(20)
+  smsSenderApprovalRequestedAt DateTime? @map("sms_sender_approval_requested_at") @db.Timestamptz(6)
+  smsSenderApprovalRequestedBy String?   @map("sms_sender_approval_requested_by") @db.Uuid
+  smsSenderApprovalApprovedAt DateTime?  @map("sms_sender_approval_approved_at") @db.Timestamptz(6)
+  smsSenderApprovalApprovedBy String?    @map("sms_sender_approval_approved_by") @db.Uuid
   createdAt          DateTime?           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime?           @default(now()) @map("updated_at") @db.Timestamptz(6)
   ownerId            String              @map("owner_id") @db.Uuid
@@ -275,6 +283,7 @@ model organization {
 
   @@index([isActive], map: "idx_organization_is_active")
   @@index([ownerId], map: "idx_organization_owner")
+  @@index([smsSenderApprovalStatus], map: "idx_organization_sms_sender_approval_status")
   @@index([slug], map: "idx_organization_slug")
 }
 
@@ -401,6 +410,7 @@ model alimtalk_log {
   organizationId String?   @map("organization_id") @db.Uuid
   provider       String    // "aligo" | "channeltalk"
   templateKey    String    @map("template_key")
+  triggerJobId   String?   @map("trigger_job_id")
   receiver       String
   clientId       Int?      @map("client_id")
   messageBody    String    @map("message_body")
@@ -415,8 +425,53 @@ model alimtalk_log {
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([organizationId], map: "idx_alimtalk_log_organization")
+  @@index([triggerJobId], map: "idx_alimtalk_log_trigger_job_id")
   @@index([status], map: "idx_alimtalk_log_status")
   @@index([receiver], map: "idx_alimtalk_log_receiver")
   @@index([createdAt], map: "idx_alimtalk_log_created_at")
   @@index([nextRetryAt], map: "idx_alimtalk_log_next_retry_at")
+}
+
+model alimtalk_trigger_rule {
+  id             String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  organizationId String?   @map("organization_id") @db.Uuid
+  name           String
+  isActive       Boolean   @default(true) @map("is_active")
+  eventType      String    @map("event_type")
+  offsetType     String    @map("offset_type")
+  offsetDays     Int       @default(0) @map("offset_days")
+  recipientType  String    @map("recipient_type")
+  templateKey    String    @map("template_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId], map: "idx_alimtalk_trigger_rule_organization")
+  @@index([organizationId, isActive], map: "idx_alimtalk_trigger_rule_active")
+  @@index([eventType], map: "idx_alimtalk_trigger_rule_event_type")
+}
+
+model alimtalk_trigger_job {
+  id               String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  organizationId   String?   @map("organization_id") @db.Uuid
+  ruleId           String    @map("rule_id")
+  status           String    @default("pending")
+  scheduledFor     DateTime  @map("scheduled_for") @db.Timestamptz(6)
+  sentAt           DateTime? @map("sent_at") @db.Timestamptz(6)
+  canceledAt       DateTime? @map("canceled_at") @db.Timestamptz(6)
+  cancelReason     String?   @map("cancel_reason")
+  clientId         Int?      @map("client_id")
+  employeeScheduleId Int?    @map("employee_schedule_id")
+  recipientType    String    @map("recipient_type")
+  recipientPhone   String?   @map("recipient_phone")
+  templateKey      String    @map("template_key")
+  dedupeKey        String    @unique @map("dedupe_key")
+  payload          Json      @default("{}")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId], map: "idx_alimtalk_trigger_job_organization")
+  @@index([ruleId], map: "idx_alimtalk_trigger_job_rule_id")
+  @@index([status, scheduledFor], map: "idx_alimtalk_trigger_job_status_scheduled_for")
+  @@index([clientId], map: "idx_alimtalk_trigger_job_client_id")
+  @@index([employeeScheduleId], map: "idx_alimtalk_trigger_job_employee_schedule_id")
 }

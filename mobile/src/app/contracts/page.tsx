@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   MoreVertical,
-  Plus,
   Send,
   Calendar,
   User,
@@ -26,6 +25,7 @@ import {
   DocumentFilterType,
   mapStatusToLabel,
   getStatusCategory,
+  normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import {
   StatsBar,
@@ -167,18 +167,34 @@ export default function ContractsPage() {
       return name && !EXCLUDED_CUSTOMER_NAMES.includes(name);
     });
 
-    let pending = 0;
     let completed = 0;
+    let sendRequired = 0;
+    let drafting = 0;
     let expired = 0;
 
     for (const doc of allDocs) {
+      const normalizedStatus = normalizeStatusCode(doc.current_status?.status_type);
       const cat = getStatusCategory(doc.current_status?.status_type);
-      if (cat === "in-progress") pending++;
-      else if (cat === "completed") completed++;
-      else if (cat === "rejected") expired++;
+
+      if (cat === "completed") {
+        completed++;
+        continue;
+      }
+
+      if (cat === "rejected") {
+        expired++;
+        continue;
+      }
+
+      if (normalizedStatus === "001") {
+        drafting++;
+        continue;
+      }
+
+      sendRequired++;
     }
 
-    return { total: allDocs.length, pending, completed, expired };
+    return { completed, sendRequired, drafting, expired };
   }, [allData?.documents]);
 
   const selectedDocument = useMemo(() => {
@@ -279,10 +295,10 @@ export default function ContractsPage() {
         name="contracts"
         isLoading={isInitialLoading}
         items={[
-          { icon: FileText, value: stats.total, label: "전체 계약", counter: "건" },
-          { icon: Clock, value: stats.pending, label: "대기중", counter: "건", colorIndex: 1 },
-          { icon: CheckCircle2, value: stats.completed, label: "서명완료", counter: "건", colorIndex: 2 },
-          { icon: AlertTriangle, value: stats.expired, label: "만료", counter: "건", colorIndex: 3 },
+          { icon: CheckCircle2, value: stats.completed, label: "완료", counter: "건", colorIndex: 2 },
+          { icon: Send, value: stats.sendRequired, label: "발송 필요", counter: "건", colorIndex: 1 },
+          { icon: FileText, value: stats.drafting, label: "작성 대기중", counter: "건" },
+          { icon: AlertTriangle, value: stats.expired, label: "기간 만료", counter: "건", colorIndex: 3 },
         ]}
       />
 
@@ -299,8 +315,8 @@ export default function ContractsPage() {
           headerActions={
             <HeaderActionButton
               href="/contracts/creation"
-              icon={Plus}
-              label="서명 요청"
+              icon={Send}
+              label="전자문서 발송"
               data-component="contracts-header-send-contract"
             />
           }

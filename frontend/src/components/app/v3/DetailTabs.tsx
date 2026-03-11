@@ -16,16 +16,23 @@ export function DetailTabs({ tabs, activeTab, onTabChange }: DetailTabsProps) {
     <div data-component="detail-tabs" className="flex gap-1 border-b border-v3-border">
       {tabs.map((tab) => (
         <button
+          data-component="detail-tabs-button"
           key={tab.key}
           onClick={() => onTabChange(tab.key)}
           className={cn(
-            "text-[0.8rem] pb-2 px-3 transition-colors",
+            "relative px-3 pb-2 text-[0.8rem] transition-colors",
             activeTab === tab.key
-              ? "text-v3-primary font-semibold border-b-2 border-v3-primary"
+              ? "text-primary font-semibold"
               : "text-v3-text-muted hover:text-v3-text"
           )}
         >
           {tab.label}
+          {activeTab === tab.key ? (
+            <div
+              data-component="detail-tabs-indicator"
+              className="absolute bottom-0 left-0 h-0.5 w-full bg-primary"
+            />
+          ) : null}
         </button>
       ))}
     </div>

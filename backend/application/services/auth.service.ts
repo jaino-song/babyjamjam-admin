@@ -249,7 +249,8 @@ export class AuthService {
         // Owners can access any organization
         if (user.role === 'owner') {
             const org = await this.prisma.organization.findUnique({
-                where: { id: organizationid }
+                where: { id: organizationid },
+                select: { id: true },
             });
             if (!org) {
                 throw new ForbiddenException("Organization not found");
@@ -281,7 +282,8 @@ export class AuthService {
         // Owners can switch to any organization
         if (user.role === 'owner') {
             const org = await this.prisma.organization.findUnique({
-                where: { id: neworgid }
+                where: { id: neworgid },
+                select: { id: true },
             });
             if (!org) {
                 throw new ForbiddenException("Organization not found");
@@ -313,6 +315,11 @@ export class AuthService {
             // Owner gets access to all organizations
             const allOrgs = await this.prisma.organization.findMany({
                 where: { isActive: true },
+                select: {
+                    id: true,
+                    name: true,
+                    slug: true,
+                },
                 orderBy: { name: 'asc' }
             });
 
@@ -569,6 +576,7 @@ export class AuthService {
 
         const org = await this.prisma.organization.findUnique({
             where: { id: organizationId },
+            select: { id: true },
         });
         if (!org) {
             throw new BadRequestException('유효하지 않은 지점입니다.');

@@ -18,6 +18,6 @@ import { ChannelTalkService } from "application/services/channeltalk.service";
         SendAlimtalkUsecase,
         ChannelTalkService,
     ],
-    exports: [ChannelTalkService],
+    exports: [ChannelTalkService, SendAlimtalkUsecase],
 })
 export class ChannelTalkModule {}

@@ -6,6 +6,7 @@ import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
 describe("SendAligoAlimtalkUsecase", () => {
     const createMockAligoApi = (): jest.Mocked<IAligoApiPort> => ({
         sendAlimtalk: jest.fn(),
+        createTemplate: jest.fn(),
     });
 
     const createMockLogRepository = (): jest.Mocked<IAlimtalkLogRepository> => ({
@@ -16,6 +17,7 @@ describe("SendAligoAlimtalkUsecase", () => {
                 log.organizationId,
                 log.provider,
                 log.templateKey,
+                log.triggerJobId,
                 log.receiver,
                 log.clientId,
                 log.messageBody,
@@ -32,6 +34,7 @@ describe("SendAligoAlimtalkUsecase", () => {
         }),
         update: jest.fn().mockResolvedValue(undefined),
         findPendingRetries: jest.fn().mockResolvedValue([]),
+        findRecentByOrganization: jest.fn().mockResolvedValue([]),
     });
 
     let usecase: SendAligoAlimtalkUsecase;

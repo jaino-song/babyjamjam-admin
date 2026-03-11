@@ -8,11 +8,12 @@ import {
 } from "application/usecases/message";
 import { MessageService } from "application/services/message.service";
 import { MESSAGE_REPOSITORY } from "domain/repositories/message.repository.interface";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbMessageRepository } from "infrastructure/database/repositories/sb.message.repository";
 import { MessageController } from "interface/controllers/message.controller";
 
 @Module({
+    imports: [DatabaseModule],
     controllers: [MessageController],
     providers: [
         CreateMessageUsecase,
@@ -21,7 +22,6 @@ import { MessageController } from "interface/controllers/message.controller";
         UpdateMessageUsecase,
         DeleteMessageUsecase,
         MessageService,
-        PrismaService,
         {
             provide: MESSAGE_REPOSITORY,
             useClass: SbMessageRepository,

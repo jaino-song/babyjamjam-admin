@@ -92,15 +92,39 @@ function useToggleSet<T>(initial: T[]) {
 
 function TableSkeleton() {
   return (
-    <div className="space-y-3">
-      <Skeleton className="h-10 w-full" />
-      <Skeleton className="h-10 w-full" />
-      <Skeleton className="h-10 w-full" />
-      <Skeleton className="h-10 w-full" />
-      <Skeleton className="h-10 w-full" />
-      <Skeleton className="h-10 w-full" />
-      <Skeleton className="h-10 w-full" />
-      <Skeleton className="h-10 w-full" />
+    <div data-component="voucher-price-table-skeleton" className="flex-1 overflow-y-auto min-h-0">
+      <Table>
+        <TableHeader className="sticky top-0 bg-card z-10">
+          <TableRow>
+            <TableHead className="w-[180px]">유형</TableHead>
+            <TableHead className="w-[100px]">기간 (일)</TableHead>
+            <TableHead>서비스 비용</TableHead>
+            <TableHead>정부지원금</TableHead>
+            <TableHead>본인부담금</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {Array.from({ length: 10 }).map((_, index) => (
+            <TableRow key={index} data-component="voucher-price-table-skeleton-row">
+              <TableCell className="font-medium">
+                <Skeleton className="h-4 w-20 mx-auto bg-v3-dim-white" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-10 mx-auto bg-v3-dim-white" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-24 mx-auto bg-v3-dim-white" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-24 mx-auto bg-v3-dim-white" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-20 mx-auto bg-v3-dim-white" />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }

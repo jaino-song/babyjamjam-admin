@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import {
     CreateEmployeeScheduleUsecase,
     DeleteEmployeeScheduleUsecase,
@@ -9,6 +9,7 @@ import {
     UpdateEmployeeScheduleUsecase,
 } from "application/usecases/employee-schedule";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
+import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
 
 @Injectable()
 export class EmployeeScheduleService {
@@ -20,9 +21,10 @@ export class EmployeeScheduleService {
         private readonly listEmployeeSchedulesBySecondaryEmployeeIdUsecase: ListEmployeeSchedulesBySecondaryEmployeeIdUsecase,
         private readonly updateEmployeeScheduleUsecase: UpdateEmployeeScheduleUsecase,
         private readonly deleteEmployeeScheduleUsecase: DeleteEmployeeScheduleUsecase,
+        @Optional() private readonly triggerService?: AlimtalkTriggerService,
     ) {}
 
-    create(organizationid: string, params: {
+    async create(organizationid: string, params: {
         clientId: number;
         primaryEmployeeId: number;
         secondaryEmployeeId: number | null;
@@ -31,7 +33,7 @@ export class EmployeeScheduleService {
         endDate: string;
         replaced?: boolean;
     }): Promise<EmployeeScheduleEntity> {
-        return this.createEmployeeScheduleUsecase.execute(organizationid, {
+        const schedule = await this.createEmployeeScheduleUsecase.execute(organizationid, {
             clientId: params.clientId,
             primaryEmployeeId: params.primaryEmployeeId,
             secondaryEmployeeId: params.secondaryEmployeeId ?? null,
@@ -40,6 +42,10 @@ export class EmployeeScheduleService {
             endDate: new Date(params.endDate),
             replaced: params.replaced,
         });
+        this.triggerService
+            ?.syncEmployeeAssignmentRulesForSchedule(organizationid, schedule.id, true)
+            ?.catch(() => undefined);
+        return schedule;
     }
 
     findAll(organizationid: string): Promise<EmployeeScheduleEntity[]> {
