@@ -14,6 +14,11 @@ const CHOSUNG_LIST = [
     "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅉ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ",
 ];
 
+const CHOSUNG_SET = new Set(CHOSUNG_LIST);
+const chosungStringCache = new Map<string, string>();
+const searchTargetCache = new Map<string, { lowerTarget: string; chosung: string }>();
+const queryHasChosungCache = new Map<string, boolean>();
+
 /**
  * Extract initial consonant (초성) from a Korean syllable
  * Korean syllables (가-힣) are composed of: 초성 + 중성 + 종성
@@ -32,7 +37,7 @@ export function getChosung(char: string): string {
  * Check if a character is a Korean initial consonant (초성)
  */
 export function isChosung(char: string): boolean {
-    return CHOSUNG_LIST.includes(char);
+    return CHOSUNG_SET.has(char);
 }
 
 /**
@@ -40,7 +45,16 @@ export function isChosung(char: string): boolean {
  * Example: "김현아" → "ㄱㅎㅇ"
  */
 export function getChosungString(str: string): string {
-    return str.split("").map(getChosung).join("");
+    const cached = chosungStringCache.get(str);
+    if (cached) return cached;
+
+    let result = "";
+    for (const char of str) {
+        result += getChosung(char);
+    }
+
+    chosungStringCache.set(str, result);
+    return result;
 }
 
 /**
@@ -62,18 +76,36 @@ export function getChosungString(str: string): string {
  * - matchesKoreanSearch("테스트 신규", "ㅅ") → false (full chosung ㅌㅅㅌㅅㄱ starts with ㅌ)
  */
 export function matchesKoreanSearch(target: string, query: string): boolean {
-    const normalizedTarget = target.normalize("NFC");
-    const lowerTarget = normalizedTarget.toLowerCase();
     const lowerQuery = query.toLowerCase();
 
-    if (lowerTarget.includes(lowerQuery)) {
+    let cachedTarget = searchTargetCache.get(target);
+    if (!cachedTarget) {
+        const normalizedTarget = target.normalize("NFC");
+        cachedTarget = {
+            lowerTarget: normalizedTarget.toLowerCase(),
+            chosung: getChosungString(normalizedTarget).replace(/\s/g, ""),
+        };
+        searchTargetCache.set(target, cachedTarget);
+    }
+
+    if (cachedTarget.lowerTarget.includes(lowerQuery)) {
         return true;
     }
 
-    const hasChosung = query.split("").some(isChosung);
+    let hasChosung = queryHasChosungCache.get(query);
+    if (hasChosung === undefined) {
+        hasChosung = false;
+        for (const char of query) {
+            if (isChosung(char)) {
+                hasChosung = true;
+                break;
+            }
+        }
+        queryHasChosungCache.set(query, hasChosung);
+    }
+
     if (hasChosung) {
-        const targetChosung = getChosungString(normalizedTarget).replace(/\s/g, "");
-        return targetChosung.startsWith(query);
+        return cachedTarget.chosung.startsWith(query);
     }
 
     return false;

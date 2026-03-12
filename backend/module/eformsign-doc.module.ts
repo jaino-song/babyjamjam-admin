@@ -14,14 +14,15 @@ import {
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_CLIENT_REPOSITORY } from "domain/repositories/eformsign.client.interface";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
-import { PrismaService } from "infrastructure/database/prisma.service";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
 
 @Module({
+    imports: [DatabaseModule],
     controllers: [EformsignDocController],
     providers: [
         // Use cases - Local DB
@@ -39,8 +40,6 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         CreateAndSendContractUsecase,
         // Service
         EformsignDocService,
-        // Infrastructure
-        PrismaService,
         // Repository bindings
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
@@ -58,4 +57,3 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
     exports: [EformsignDocService],
 })
 export class EformsignDocModule {}
-

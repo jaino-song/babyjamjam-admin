@@ -61,13 +61,10 @@ export function useCreateEmployee() {
 
     return useMutation<Employee, Error, CreateEmployeeDto>({
         mutationFn: async (dto: CreateEmployeeDto) => {
-            console.log("[useCreateEmployee] Creating employee with dto:", dto);
             const { data } = await api.post<Employee>("/employees", dto);
-            console.log("[useCreateEmployee] Created employee response:", data);
             return data;
         },
-        onSuccess: (data) => {
-            console.log("[useCreateEmployee] onSuccess called with:", data);
+        onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
         },
         onError: (error) => {

@@ -26,7 +26,7 @@ export function DetailTabs({ tabs, activeTab, onTabChange }: DetailTabsProps) {
           onClick={() => onTabChange(tab.key)}
           className={cn(
             "relative flex-1 text-center text-[0.8rem] pb-2 px-3 transition-colors",
-            activeTab === tab.key ? "text-v3-primary font-semibold" : "text-v3-text-muted hover:text-v3-text"
+            activeTab === tab.key ? "text-primary font-semibold" : "text-v3-text-muted hover:text-v3-text"
           )}
         >
           {tab.label}
@@ -34,14 +34,14 @@ export function DetailTabs({ tabs, activeTab, onTabChange }: DetailTabsProps) {
             prefersReducedMotion ? (
               <div
                 data-component="detail-tabs-indicator"
-                className="absolute bottom-0 left-0 h-0.5 w-full bg-[hsl(var(--v3-primary))]"
+                className="absolute bottom-0 left-0 h-0.5 w-full bg-primary"
               />
             ) : (
               <motion.div
                 data-component="detail-tabs-indicator"
                 layoutId="detail-tabs-indicator"
                 transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                className="absolute bottom-0 left-0 h-0.5 w-full bg-[hsl(var(--v3-primary))]"
+                className="absolute bottom-0 left-0 h-0.5 w-full bg-primary"
               />
             )
           ) : null}

@@ -14,9 +14,6 @@ export default function AuthCallbackPage() {
         const exchangeCodeForTokens = async () => {
             const code = searchParams.get("code");
 
-            console.log("[Auth Callback] Starting token exchange");
-            console.log("[Auth Callback] Code present:", !!code);
-
             if (!code) {
                 console.error("[Auth Callback] No code in URL");
                 setError("Authorization Code Required");
@@ -24,8 +21,6 @@ export default function AuthCallbackPage() {
             }
 
             try {
-                console.log("[Auth Callback] Using server action for token exchange");
-
                 // Use server action - bypasses Safari's client-side restrictions
                 const result = await exchangeToken(code);
 
@@ -35,13 +30,9 @@ export default function AuthCallbackPage() {
                     return;
                 }
 
-                console.log("[Auth Callback] Token exchange successful");
-
                 if (result.requiresOrgSelection) {
-                    console.log("[Auth Callback] Multiple organizations detected, redirecting to selection");
                     router.replace("/select-organization");
                 } else {
-                    console.log("[Auth Callback] Redirecting to dashboard");
                     router.replace("/dashboard");
                 }
             }

@@ -16,6 +16,7 @@ export { ActivityTimeline } from './ActivityTimeline';
 export { StatusBadge } from './StatusBadge';
 export type { StatusType } from './StatusBadge';
 export { ExpandableSearch } from './ExpandableSearch';
+export { PanelTitleGroup } from './PanelTitleGroup';
 export { ListPanel } from './ListPanel';
 export { DetailPanel } from './DetailPanel';
 export { SplitLayout, useSplitLayoutNav } from './SplitLayout';
@@ -41,4 +42,5 @@ export type { DetailTab } from './DetailTabs';
 export { Input } from './Input';
 export type { InputProps } from './Input';
 export { InputField } from './InputField';
-
+export { SectionNav } from './SectionNav';
+export type { SectionNavItem } from './SectionNav';

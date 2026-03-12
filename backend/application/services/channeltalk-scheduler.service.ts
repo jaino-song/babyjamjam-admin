@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger } from "@nestjs/common";
+import { Injectable, Inject, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Cron } from "@nestjs/schedule";
 import { ChannelTalkService } from "./channeltalk.service";
@@ -6,6 +6,8 @@ import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client
 import { ORGANIZATION_REPOSITORY, IOrganizationRepository } from "domain/repositories/organization.repository.interface";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { AlimtalkTriggerEventType } from "domain/constants/alimtalk-trigger-catalog";
 
 @Injectable()
 export class ChannelTalkSchedulerService {
@@ -22,6 +24,7 @@ export class ChannelTalkSchedulerService {
         private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
         @Inject(EMPLOYEE_REPOSITORY)
         private readonly employeeRepository: IEmployeeRepository,
+        @Optional() private readonly triggerService?: AlimtalkTriggerService,
     ) {}
 
     /**
@@ -36,6 +39,15 @@ export class ChannelTalkSchedulerService {
             const organizations = await this.organizationRepository.findAllActive();
 
             for (const org of organizations) {
+                if (
+                    this.triggerService &&
+                    (await this.triggerService.hasActiveRulesForEvents(org.id, [
+                        AlimtalkTriggerEventType.SERVICE_START,
+                    ]))
+                ) {
+                    this.logger.log(`[Scheduler] Skipping legacy service-start reminders for org ${org.id}`);
+                    continue;
+                }
                 this.logger.log(`[Scheduler] Processing contract reminders for org: ${org.name} (${org.id})`);
                 const now = new Date();
 
@@ -109,6 +121,15 @@ export class ChannelTalkSchedulerService {
             const organizations = await this.organizationRepository.findAllActive();
 
             for (const org of organizations) {
+                if (
+                    this.triggerService &&
+                    (await this.triggerService.hasActiveRulesForEvents(org.id, [
+                        AlimtalkTriggerEventType.SERVICE_END,
+                    ]))
+                ) {
+                    this.logger.log(`[Scheduler] Skipping legacy service-end reminders for org ${org.id}`);
+                    continue;
+                }
                 this.logger.log(`[Scheduler] Processing survey requests for org: ${org.name} (${org.id})`);
                 const yesterday = new Date();
                 yesterday.setDate(yesterday.getDate() - 1);

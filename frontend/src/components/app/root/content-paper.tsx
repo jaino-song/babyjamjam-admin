@@ -26,16 +26,19 @@ export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
             title,
             subtitle,
             header,
-            elevation: _elevation, // Kept for backward compatibility, not used
+            elevation, // Kept for backward compatibility, not used
             disableAnimation = false, // Enable fade-in by default
             className,
             sx,
-            component: _component, // Kept for backward compatibility, not used
+            component, // Kept for backward compatibility, not used
             variant = "default",
             ...props
         },
         ref
     ) => {
+        void elevation;
+        void component;
+
         // Build additional classes from sx prop for backwards compatibility
         const sxClasses = React.useMemo(() => {
             if (!sx) return "";

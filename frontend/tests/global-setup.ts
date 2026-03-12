@@ -34,7 +34,9 @@ function signJwtHS256(payload: Record<string, unknown>, secret: string): string 
   return `${data}.${base64url(sig)}`;
 }
 
-export default async function globalSetup(_config: FullConfig) {
+export default async function globalSetup(config: FullConfig) {
+  void config;
+
   const secret = readJwtSecret();
   const now = Math.floor(Date.now() / 1000);
   const exp = now + 60 * 60;
@@ -83,4 +85,3 @@ export default async function globalSetup(_config: FullConfig) {
 
   fs.writeFileSync(path.resolve(process.cwd(), "auth.json"), JSON.stringify(storageState, null, 2));
 }
-

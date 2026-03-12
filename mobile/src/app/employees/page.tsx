@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useLayoutEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
     Users,
     Plus,
@@ -114,6 +115,7 @@ function formatPhoneNumber(phone: string | null | undefined): string {
 }
 
 export default function EmployeesPage() {
+    const router = useRouter();
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState("all");
     const [formDialogOpen, setFormDialogOpen] = useState(false);
@@ -145,8 +147,7 @@ export default function EmployeesPage() {
     };
 
     const handleAddNew = () => {
-        setEditingEmployee(null);
-        setFormDialogOpen(true);
+        router.push("/employees/new");
     };
 
     const handleSelectEmployee = (employee: Employee) => {

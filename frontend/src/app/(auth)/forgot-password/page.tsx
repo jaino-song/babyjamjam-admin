@@ -77,8 +77,8 @@ export default function ForgotPasswordPage() {
                     <div data-component="auth-forgot-password-success-icon" className="rounded-full bg-success/10 p-3">
                         <CheckCircle className="h-12 w-12 text-success" />
                     </div>
-                    <div className="flex flex-col text-center text-muted-foreground">
-                        <div className="flex flex-col">
+                    <div data-component="auth-forgot-password-success-message" className="flex flex-col text-center text-muted-foreground">
+                        <div data-component="auth-forgot-password-success-message-lines" className="flex flex-col">
                             <p>
                                 <strong className="text-foreground">{email}</strong>로
                             </p>

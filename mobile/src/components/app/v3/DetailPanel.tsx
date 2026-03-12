@@ -2,6 +2,7 @@
 
 import React from "react";
 import { ChevronLeft } from "lucide-react";
+import { PanelTitleGroup } from "./PanelTitleGroup";
 import { useSplitLayoutNavOptional } from "./SplitLayoutContext";
 
 interface DetailPanelProps {
@@ -38,15 +39,13 @@ export function DetailPanel({
     <div className="flex items-center justify-between gap-4">
       <div className="flex items-center gap-4 min-w-0">
         {avatar}
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-xl font-bold text-v3-dark truncate">{title}</h2>
-            {badges}
-          </div>
-          {subtitle && (
-            <p className="text-[0.8rem] text-v3-text-muted mt-0.5">{subtitle}</p>
-          )}
-        </div>
+        <PanelTitleGroup
+          component="detail-panel"
+          title={title}
+          subtitle={subtitle}
+          badges={badges}
+          titleClassName="text-xl"
+        />
       </div>
       {trailing}
     </div>

@@ -5,8 +5,7 @@ import { TextareaInput } from "./textarea-input";
 import { DynamicSelect } from "./dynamic-select";
 import { NameInput } from "./NameInput";
 import { ContactInput } from "./ContactInput";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { TitleTextInputMolecule } from "./TitleTextInputMolecule";
 
 interface DynamicInputProps {
     variable: TemplateVariable;
@@ -60,35 +59,27 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
                 content = <NameInput name={value} setName={onChange} label={label} placeholder={placeholder || ""} />;
             } else {
                 content = (
-                    <div className="space-y-2">
-                        <Label>
-                            {label}
-                            {required && <span className="text-destructive ml-1">*</span>}
-                        </Label>
-                        <Input
-                            value={value}
-                            onChange={(e) => onChange(e.target.value)}
-                            placeholder={placeholder}
-                            className="bg-background"
-                        />
-                    </div>
+                    <TitleTextInputMolecule
+                        label={label}
+                        value={value}
+                        onValueChange={onChange}
+                        placeholder={placeholder}
+                        required={required}
+                        dataComponent="messages-form-dynamic-text-input"
+                    />
                 );
             }
             break;
         default:
             content = (
-                <div className="space-y-2">
-                    <Label>
-                        {label}
-                        {required && <span className="text-destructive ml-1">*</span>}
-                    </Label>
-                    <Input
-                        value={value}
-                        onChange={(e) => onChange(e.target.value)}
-                        placeholder={placeholder}
-                        className="bg-background"
-                    />
-                </div>
+                <TitleTextInputMolecule
+                    label={label}
+                    value={value}
+                    onValueChange={onChange}
+                    placeholder={placeholder}
+                    required={required}
+                    dataComponent="messages-form-default-text-input"
+                />
             );
     }
 

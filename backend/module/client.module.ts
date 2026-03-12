@@ -9,13 +9,13 @@ import {
 } from "application/usecases/client";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { ClientService } from "application/services/client.service";
 import { ClientController } from "interface/controllers/client.controller";
 import { AlimtalkModule } from "./alimtalk.module";
 
 @Module({
-    imports: [AlimtalkModule],
+    imports: [DatabaseModule, AlimtalkModule],
     controllers: [ClientController],
     providers: [
         CreateClientUsecase,
@@ -25,7 +25,6 @@ import { AlimtalkModule } from "./alimtalk.module";
         ListClientsPaginatedUsecase,
         UpdateClientUsecase,
         ClientService,
-        PrismaService,
         {
             provide: CLIENT_REPOSITORY,
             useClass: SbClientRepository,

@@ -10,6 +10,7 @@ interface ExpandableSearchProps {
   placeholder?: string;
   expandedWidth?: string;
   className?: string;
+  disabled?: boolean;
 }
 
 export function ExpandableSearch({
@@ -18,11 +19,13 @@ export function ExpandableSearch({
   placeholder = "검색...",
   expandedWidth = "w-20",
   className,
+  disabled = false,
 }: ExpandableSearchProps) {
   const [expanded, setExpanded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleToggle = () => {
+    if (disabled) return;
     setExpanded((prev) => {
       if (!prev) setTimeout(() => inputRef.current?.focus(), 50);
       else onChange("");
@@ -37,8 +40,13 @@ export function ExpandableSearch({
   return (
     <div data-component="expandable-search" className={cn("flex items-center gap-1.5", className)}>
       <button
+        type="button"
         onClick={handleToggle}
-        className="w-8 h-8 rounded-[10px] flex items-center justify-center hover:bg-v3-dim-white"
+        disabled={disabled}
+        className={cn(
+          "w-8 h-8 rounded-[10px] flex items-center justify-center hover:bg-v3-dim-white",
+          disabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
+        )}
       >
         <Search className={expanded ? "hidden" : "w-[18px] h-[18px] text-v3-text-muted"} />
       </button>
@@ -49,10 +57,12 @@ export function ExpandableSearch({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={handleBlur}
+        disabled={disabled}
         style={{ border: "none", outline: "none", boxShadow: "none" }}
         className={cn(
           "bg-transparent text-sm text-v3-dark caret-v3-primary placeholder:text-v3-text-muted/50",
-          expanded ? expandedWidth : "w-0"
+          expanded ? expandedWidth : "w-0",
+          disabled && "cursor-not-allowed text-v3-text-muted",
         )}
       />
     </div>

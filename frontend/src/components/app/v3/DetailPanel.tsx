@@ -2,6 +2,7 @@
 
 import React from "react";
 import { ChevronLeft } from "lucide-react";
+import { PanelTitleGroup } from "./PanelTitleGroup";
 import { useSplitLayoutNavOptional } from "./SplitLayoutContext";
 
 interface DetailPanelProps {
@@ -18,6 +19,8 @@ interface DetailPanelProps {
   /** Trailing content on the right side of the header (e.g. Stepper) */
   trailing?: React.ReactNode;
   tabs?: React.ReactNode;
+  overlay?: React.ReactNode;
+  emptyState?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -29,10 +32,13 @@ export function DetailPanel({
   badges,
   trailing,
   tabs,
+  overlay,
+  emptyState,
   children,
 }: DetailPanelProps) {
   const nav = useSplitLayoutNavOptional();
   const showBackButton = nav?.isMobile;
+  const resolvedOverlay = overlay ?? emptyState;
 
   const hasStructuredHeader = !!title;
 
@@ -40,22 +46,20 @@ export function DetailPanel({
     <div className="flex items-center justify-between gap-4">
       <div className="flex items-center gap-4 min-w-0">
         {avatar}
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-xl font-bold text-v3-dark truncate">{title}</h2>
-            {badges}
-          </div>
-          {subtitle && (
-            <p className="text-[0.8rem] text-v3-text-muted mt-0.5">{subtitle}</p>
-          )}
-        </div>
+        <PanelTitleGroup
+          component="detail-panel"
+          title={title}
+          subtitle={subtitle}
+          badges={badges}
+          titleClassName="text-xl"
+        />
       </div>
       {trailing}
     </div>
   ) : header;
 
   return (
-    <div data-component="detail-panel" className={`bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0 ${nav?.isMobile ? "" : "animate-v3-slide-up"}`}>
+    <div data-component="detail-panel" className="relative bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
       {/* Back button - mobile only */}
       {showBackButton && (
         <button
@@ -70,8 +74,19 @@ export function DetailPanel({
         {renderedHeader}
       </div>}
       {tabs && <div className="px-6">{tabs}</div>}
+      {resolvedOverlay ? (
+        <div
+          data-component="detail-panel-overlay"
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 -translate-y-3"
+        >
+          {resolvedOverlay}
+        </div>
+      ) : null}
       <div className="relative flex-1 min-h-0">
-        <div className="overflow-y-auto h-full p-6">
+        <div
+          data-component="detail-panel-scroll-content"
+          className="overflow-y-auto h-full px-6 pt-6 pb-12"
+        >
           {children}
         </div>
         <div className="absolute bottom-0 left-0 right-0 h-6 bg-white pointer-events-none z-20 rounded-b-[28px]" />

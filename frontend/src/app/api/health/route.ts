@@ -20,7 +20,6 @@ export async function GET() {
 
     // Test 2: Try to reach backend health endpoint
     try {
-        console.log("[Health Check] Trying to reach backend at:", serverAPIClient.defaults.baseURL);
         const startTime = Date.now();
 
         const response = await serverAPIClient.get("/", {

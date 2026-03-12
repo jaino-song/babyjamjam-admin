@@ -1,5 +1,4 @@
 import axios from "axios";
-import { NextRequest } from "next/server";
 
 const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 const API_URL = isProduction

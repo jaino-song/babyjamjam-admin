@@ -13,11 +13,12 @@ import {
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SystemTemplateBootstrapService } from "application/services/system-template-bootstrap.service";
 import { SYSTEM_TEMPLATE_REPOSITORY } from "domain/repositories/system-template.repository.interface";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbSystemTemplateRepository } from "infrastructure/database/repositories/sb.system-template.repository";
 import { SystemTemplateController } from "interface/controllers/system-template.controller";
 
 @Module({
+    imports: [DatabaseModule],
     providers: [
         {
             provide: SYSTEM_TEMPLATE_REPOSITORY,
@@ -34,7 +35,6 @@ import { SystemTemplateController } from "interface/controllers/system-template.
         RollbackToVersionUseCase,
         ResetToDefaultUseCase,
         SystemTemplateBootstrapService,
-        PrismaService,
     ],
     controllers: [SystemTemplateController],
     exports: [SystemTemplateService],

@@ -48,6 +48,12 @@ export interface LoginResponse extends AuthResponse {
     user?: string;
 }
 
+export interface EformsignAuthStatusResponse {
+    hasAppAuthToken: boolean;
+    hasAccessToken: boolean;
+    hasRefreshToken: boolean;
+}
+
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
@@ -102,6 +108,10 @@ export const eformsignApi = {
     // Authenticates and stores token in httpOnly cookie (returns { success: true })
     authenticate: async (executionTime: number, memberEmail?: string): Promise<{ success: boolean }> => {
         const { data } = await api.post('/access-token', { executionTime, memberEmail });
+        return data;
+    },
+    getAuthStatus: async (): Promise<EformsignAuthStatusResponse> => {
+        const { data } = await api.get('/eformsign/auth-status');
         return data;
     },
     refreshAccessToken: async (executionTime: number) => {
@@ -205,10 +215,22 @@ export async function withEformsignReauth<T>(fn: () => Promise<T>): Promise<T> {
 
 export type AlimtalkProvider = 'aligo' | 'channeltalk' | 'none';
 
+export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
+
 export interface AlimtalkProviderResponse {
     provider: AlimtalkProvider;
     enabled: boolean;
     updatedAt?: string;
+}
+
+export interface MessageSenderApprovalResponse {
+    senderPhone: string | null;
+    senderPhoneFormatted: string | null;
+    approvalStatus: MessageSenderApprovalStatus;
+    isApproved: boolean;
+    canRequest: boolean;
+    requestedAt: string | null;
+    approvedAt: string | null;
 }
 
 export const settingsApi = {
@@ -218,6 +240,14 @@ export const settingsApi = {
     },
     updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
         const { data } = await api.put('/settings/alimtalk-provider', { provider });
+        return data;
+    },
+    getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
+        const { data } = await api.get("/settings/message-sender-approval");
+        return data;
+    },
+    requestMessageSenderApproval: async (senderPhone: string): Promise<MessageSenderApprovalResponse> => {
+        const { data } = await api.post("/settings/message-sender-approval", { senderPhone });
         return data;
     },
 }

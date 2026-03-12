@@ -1,9 +1,10 @@
-import { Controller, Post, Get, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards } from "@nestjs/common";
+import { Controller, Post, Get, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { ContractDataDto } from "../../application/dto/contract.dto";
 import { AreaTemplateService } from "../../application/services/area-template.service";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { Response } from "express";
 
 @Controller("api")
 @UseGuards(JwtGuard, TenantGuard)
@@ -255,6 +256,106 @@ export class EformsignController {
             const document = await this.eformsignService.getDocumentById(accessToken, documentId);
             return document;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            throw new HttpException(
+                { error: message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    /**
+     * Download document PDF for preview/download.
+     */
+    @Get("documents/:documentId/download_files")
+    async downloadDocumentFile(
+        @Param("documentId") documentId: string,
+        @Query("accessToken") accessToken: string,
+        @Query("fileType") fileType: "document" | "audit_trail" = "document",
+        @Res() res: Response,
+    ) {
+        try {
+            if (!accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+
+            const file = await this.eformsignService.downloadDocumentFile(accessToken, documentId, fileType);
+
+            res.status(file.status);
+            res.set({
+                "Content-Type": file.contentType,
+                ...(file.contentDisposition ? { "Content-Disposition": file.contentDisposition } : {}),
+                "Content-Length": String(file.body.length),
+            });
+            res.send(file.body);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            throw new HttpException(
+                { error: message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    /**
+     * Re-request an outsider document to the current recipient.
+     */
+    @Post("documents/:documentId/re_request_outsider")
+    async reRequestOutsiderDocument(
+        @Param("documentId") documentId: string,
+        @Body()
+        body: {
+            accessToken: string;
+            stepType: string;
+            stepSeq: string;
+            comment?: string;
+            recipientPhone?: {
+                countryCode?: string;
+                phoneNumber?: string;
+            };
+        }
+    ) {
+        try {
+            if (!body.accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+
+            if (!body.stepType || !body.stepSeq) {
+                throw new HttpException(
+                    { error: "stepType and stepSeq are required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+
+            if (
+                body.recipientPhone &&
+                (!body.recipientPhone.countryCode || !body.recipientPhone.phoneNumber)
+            ) {
+                throw new HttpException(
+                    { error: "recipientPhone countryCode and phoneNumber are required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+
+            return await this.eformsignService.reRequestOutsiderDocument(
+                body.accessToken,
+                documentId,
+                body.stepType,
+                body.stepSeq,
+                body.comment,
+                body.recipientPhone
+            );
+        } catch (error) {
+            if (error instanceof HttpException) {
+                throw error;
+            }
+
             const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
                 { error: message },

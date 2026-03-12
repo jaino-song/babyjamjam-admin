@@ -4,9 +4,9 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
     Users,
-    CheckCircle,
     Clock,
     Briefcase,
+    CircleOff,
     Plus,
     Phone,
     Calendar,
@@ -127,9 +127,9 @@ export default function EmployeesPage() {
     const stats = useMemo(() => {
         return {
             total: allEmployees.length,
-            active: allEmployees.filter((e: Employee) => e.openToNextWork).length,
-            available: allEmployees.filter((e: Employee) => e.status === "available").length,
             working: allEmployees.filter((e: Employee) => e.status === "working").length,
+            available: allEmployees.filter((e: Employee) => e.status === "available").length,
+            unavailable: allEmployees.filter((e: Employee) => e.status === "unavailable").length,
         };
     }, [allEmployees]);
 
@@ -175,9 +175,9 @@ export default function EmployeesPage() {
                 name="employees"
                 items={[
                     { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
-                    { icon: CheckCircle, value: stats.active, label: "활성", counter: "명", colorIndex: 2 },
+                    { icon: Briefcase, value: stats.working, label: "근무 중", counter: "명", colorIndex: 2 },
                     { icon: Clock, value: stats.available, label: "근무 가능", counter: "명", colorIndex: 1 },
-                    { icon: Briefcase, value: stats.working, label: "배정됨", counter: "명", colorIndex: 3 },
+                    { icon: CircleOff, value: stats.unavailable, label: "근무 불가", counter: "명", colorIndex: 3 },
                 ]}
             />
 

@@ -47,7 +47,19 @@ export function SplitLayout({
           data-component="split-layout"
           className={`grid ${getDesktopGridClass(columns)} gap-6 flex-1 h-full min-h-0`}
         >
-          {children}
+          {childArray.map((child, index) => {
+            const key = (child as React.ReactElement).key ?? `split-panel-${index}`;
+
+            return (
+              <div
+                key={key}
+                data-component="split-layout-panel"
+                className="min-h-0 flex flex-col animate-v3-slide-up"
+              >
+                {child}
+              </div>
+            );
+          })}
         </div>
       </SplitLayoutContext.Provider>
     );
@@ -64,8 +76,8 @@ export function SplitLayout({
           className="absolute inset-0 flex transition-transform duration-300 ease-out"
           style={{ transform: `translateX(-${mobileOffset * 100}%)` }}
         >
-          {childArray.map((child) => {
-            const key = (child as React.ReactElement).key ?? crypto.randomUUID();
+          {childArray.map((child, index) => {
+            const key = (child as React.ReactElement).key ?? `split-panel-${index}`;
             return (
               <div key={key} className="w-full h-full min-h-0 flex-shrink-0 overflow-y-auto">
                 {child}

@@ -1,0 +1,115 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { useQuery } from "@tanstack/react-query";
+import { TriggerRulesManager } from "../TriggerRulesManager";
+import {
+  useAlimtalkTriggerRules,
+  useAlimtalkTriggerTemplates,
+  useCreateAlimtalkTriggerRule,
+  useDeleteAlimtalkTriggerRule,
+  useUpdateAlimtalkTriggerRule,
+} from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+
+jest.mock("@tanstack/react-query", () => ({
+  useQuery: jest.fn(),
+}));
+
+jest.mock("@/hooks/use-toast", () => ({
+  useToast: () => ({
+    toast: jest.fn(),
+  }),
+}));
+
+jest.mock("@/features/alimtalk-triggers/hooks/use-alimtalk-triggers", () => ({
+  useAlimtalkTriggerRules: jest.fn(),
+  useAlimtalkTriggerTemplates: jest.fn(),
+  useCreateAlimtalkTriggerRule: jest.fn(),
+  useUpdateAlimtalkTriggerRule: jest.fn(),
+  useDeleteAlimtalkTriggerRule: jest.fn(),
+}));
+
+const mockedUseQuery = jest.mocked(useQuery);
+const mockedUseAlimtalkTriggerRules = jest.mocked(useAlimtalkTriggerRules);
+const mockedUseAlimtalkTriggerTemplates = jest.mocked(useAlimtalkTriggerTemplates);
+const mockedUseCreateAlimtalkTriggerRule = jest.mocked(useCreateAlimtalkTriggerRule);
+const mockedUseUpdateAlimtalkTriggerRule = jest.mocked(useUpdateAlimtalkTriggerRule);
+const mockedUseDeleteAlimtalkTriggerRule = jest.mocked(useDeleteAlimtalkTriggerRule);
+
+beforeEach(() => {
+  jest.clearAllMocks();
+
+  mockedUseQuery.mockReturnValue({
+    data: {
+      provider: "aligo",
+      enabled: false,
+    },
+    isLoading: false,
+  } as ReturnType<typeof useQuery>);
+
+  mockedUseAlimtalkTriggerRules.mockReturnValue({
+    data: [
+      {
+        id: "rule-1",
+        organizationId: "org-1",
+        name: "서비스 시작 안내",
+        isActive: true,
+        eventType: "SERVICE_START",
+        offsetType: "BEFORE_DAYS",
+        offsetDays: 3,
+        recipientType: "CLIENT",
+        templateKey: "SERVICE_START_REMINDER",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      },
+    ],
+    isLoading: false,
+  } as ReturnType<typeof useAlimtalkTriggerRules>);
+
+  mockedUseAlimtalkTriggerTemplates.mockReturnValue({
+    data: [
+      {
+        key: "SERVICE_START_REMINDER",
+        name: "서비스 시작 리마인더",
+        description: "서비스 시작 전에 안내합니다.",
+        allowedEventTypes: ["SERVICE_START"],
+        allowedRecipientTypes: ["CLIENT"],
+        requiredVariables: [],
+        providers: {
+          aligo: { templateKey: "tmpl_1" },
+        },
+      },
+    ],
+  } as ReturnType<typeof useAlimtalkTriggerTemplates>);
+
+  mockedUseCreateAlimtalkTriggerRule.mockReturnValue({
+    isPending: false,
+    mutateAsync: jest.fn(),
+  } as ReturnType<typeof useCreateAlimtalkTriggerRule>);
+
+  mockedUseUpdateAlimtalkTriggerRule.mockReturnValue({
+    isPending: false,
+    mutateAsync: jest.fn(),
+  } as ReturnType<typeof useUpdateAlimtalkTriggerRule>);
+
+  mockedUseDeleteAlimtalkTriggerRule.mockReturnValue({
+    isPending: false,
+    mutateAsync: jest.fn(),
+  } as ReturnType<typeof useDeleteAlimtalkTriggerRule>);
+});
+
+describe("TriggerRulesManager", () => {
+  it("locks the list panel when message sending approval is not granted", () => {
+    const { container } = render(<TriggerRulesManager />);
+
+    expect(
+      screen.getAllByText("메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요."),
+    ).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "새 규칙" })).not.toBeInTheDocument();
+
+    const activeTab = screen.getByRole("button", { name: "활성화" });
+    expect(activeTab).toBeDisabled();
+
+    fireEvent.click(activeTab);
+
+    expect(container.querySelector('[data-component="list-panel-disabled-overlay"]')).toBeInTheDocument();
+  });
+});

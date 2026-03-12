@@ -89,7 +89,7 @@ export default function FilteredClientsPage() {
 
     if (!filter || !filterConfig) {
         return (
-            <div className="p-6">
+            <div data-component="clients-filtered-invalid" className="p-6">
                 <Alert variant="destructive">잘못된 필터입니다</Alert>
             </div>
         );
@@ -102,7 +102,7 @@ export default function FilteredClientsPage() {
                 <h1 className="text-lg font-semibold text-foreground">
                     {filterConfig.title}
                 </h1>
-                <Button variant="ghost" size="icon" onClick={handleClose}>
+                <Button variant="ghost" size="icon" onClick={handleClose} aria-label="닫기">
                     <X className="w-6 h-6" />
                 </Button>
             </div>
@@ -110,7 +110,7 @@ export default function FilteredClientsPage() {
             {/* Content */}
             <div data-component="clients-filtered-content" className="px-4 sm:px-6 py-4">
                 {isLoading ? (
-                    <div className="flex justify-center py-16">
+                    <div data-component="clients-filtered-loading" className="flex justify-center py-16">
                         <Spinner size="lg" />
                     </div>
                 ) : error ? (

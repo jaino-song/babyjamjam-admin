@@ -1,6 +1,7 @@
+import axios from "axios";
 import { api } from "@/lib/api/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
-import { EformsignDocumentsResponse } from '@/lib/eformsign/types';
+import { EformsignDeleteDocumentsResponse, EformsignDocumentsResponse } from '@/lib/eformsign/types';
 
 // Auth API response types
 export interface AuthResponse {
@@ -15,6 +16,12 @@ export interface LoginResponse extends AuthResponse {
     accessToken?: string;
     refreshToken?: string;
     user?: string;
+}
+
+export interface EformsignAuthStatusResponse {
+    hasAppAuthToken: boolean;
+    hasAccessToken: boolean;
+    hasRefreshToken: boolean;
 }
 
 // Auth API
@@ -86,9 +93,38 @@ export const eformsignApi = {
         const { data } = await api.post('/access-token', { executionTime, memberEmail });
         return data;
     },
+    getAuthStatus: async (): Promise<EformsignAuthStatusResponse> => {
+        const { data } = await api.get('/eformsign/auth-status');
+        return data;
+    },
     refreshAccessToken: async (executionTime: number) => {
         const { data } = await api.post('/refresh-access-token', { executionTime });
         return data;
+    },
+    reRequestDocument: async (
+        documentId: string,
+        params: {
+            stepType: string;
+            stepSeq: string;
+            comment?: string;
+            recipientPhone?: {
+                countryCode: string;
+                phoneNumber: string;
+            };
+        }
+    ): Promise<{ status?: string; code?: string; message?: string }> => {
+        const { data } = await api.post(`/eformsign/documents/${documentId}/re-request`, params);
+        return data;
+    },
+    getDocument: async (documentId: string) => {
+        const { data } = await api.get(`/eformsign/documents/${documentId}`);
+        return data;
+    },
+    getLocalDocumentRecord: async (documentId: string) => {
+        const { data } = await api.get(`/eformsign-docs/document-id`, {
+            params: { documentId },
+        });
+        return data as { clientId?: number | null } | null;
     },
     generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
         const { data } = await api.post('/generate-document', { contractData, clientId });
@@ -131,6 +167,22 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/documents/rejected');
         return data;
     },
+    deleteDocuments: async (
+        documentIds: string[],
+        isPermanent: boolean = false
+    ): Promise<EformsignDeleteDocumentsResponse> => {
+        const { data } = await api.delete('/eformsign/documents', {
+            params: { is_permanent: isPermanent },
+            data: { document_ids: documentIds },
+        });
+        return data;
+    },
+    deleteDocument: async (
+        documentId: string,
+        isPermanent: boolean = false
+    ): Promise<EformsignDeleteDocumentsResponse> => {
+        return eformsignApi.deleteDocuments([documentId], isPermanent);
+    },
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents');
@@ -146,6 +198,40 @@ export interface AlimtalkProviderResponse {
     updatedAt?: string;
 }
 
+export type MessageDeliverySmsType = "AUTO" | "SMS" | "LMS";
+export type MessageDeliveryTriggerType = "immediate" | "scheduled";
+
+export interface SendMessageDeliverySmsRequest {
+    receiver: string;
+    message: string;
+    recipientName?: string;
+    title?: string;
+    msgType?: MessageDeliverySmsType;
+    triggerType?: MessageDeliveryTriggerType;
+    scheduledDate?: string;
+    scheduledTime?: string;
+    testMode?: boolean;
+}
+
+export interface SendMessageDeliverySmsResponse {
+    provider: "aligo";
+    triggerType: Exclude<MessageDeliveryTriggerType, undefined>;
+    request: {
+        receiver: string;
+        msgType: "SMS" | "LMS";
+        scheduledAt?: string;
+        testMode: boolean;
+    };
+    result: {
+        resultCode: number;
+        message: string;
+        msgId?: number;
+        successCount?: number;
+        errorCount?: number;
+        msgType?: string;
+    };
+}
+
 export const settingsApi = {
     getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {
         const { data } = await api.get('/settings/alimtalk-provider');
@@ -156,3 +242,24 @@ export const settingsApi = {
         return data;
     },
 }
+
+export const messageDeliveryApi = {
+    sendSms: async (
+        payload: SendMessageDeliverySmsRequest
+    ): Promise<SendMessageDeliverySmsResponse> => {
+        try {
+            const { data } = await api.post("/message-deliveries/sms", payload);
+            return data;
+        } catch (error) {
+            if (axios.isAxiosError<{ error?: string; message?: string }>(error)) {
+                const message =
+                    error.response?.data?.error
+                    || error.response?.data?.message
+                    || error.message;
+                throw new Error(message);
+            }
+
+            throw error;
+        }
+    },
+};

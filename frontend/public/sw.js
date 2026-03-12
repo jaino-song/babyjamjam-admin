@@ -201,7 +201,7 @@ self.addEventListener('notificationclick', (event) => {
  *
  * Track when user dismisses notification (for analytics).
  */
-self.addEventListener('notificationclose', (event) => {
+self.addEventListener('notificationclose', () => {
     console.log('[SW] Notification dismissed');
     // Could send analytics event here
 });

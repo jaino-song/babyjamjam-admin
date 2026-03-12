@@ -38,6 +38,7 @@ interface CreateClientProps {
     serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
+    createdAt?: Date | null;
 }
 
 export class ClientEntity {
@@ -60,6 +61,7 @@ export class ClientEntity {
         public breastPump: boolean,
         public eDocId: string | null,
         public dueDate: Date | null = null,
+        public createdAt: Date | null = null,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -109,6 +111,7 @@ export class ClientEntity {
             props.breastPump,
             props.eDocId,
             props.dueDate,
+            props.createdAt ?? new Date(),
         );
     }
 
@@ -155,6 +158,7 @@ export class ClientEntity {
         serviceStatus: string | null,
         breastPump: boolean,
         eDocId: string | null,
+        createdAt: Date | null = null,
     ): ClientEntity {
         return new ClientEntity(
             id,
@@ -175,6 +179,7 @@ export class ClientEntity {
             breastPump,
             eDocId,
             dueDate,
+            createdAt,
         );
     }
 }

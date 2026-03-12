@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
@@ -25,6 +25,26 @@ export default function SelectOrganizationPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selecting, setSelecting] = useState<string | null>(null);
+
+    const handleSelectOrganization = useCallback(async (organizationId: string) => {
+        setSelecting(organizationId);
+
+        try {
+            const result = await setCurrentOrganization(organizationId);
+
+            if (!result.success) {
+                setError(result.error || "조직 선택에 실패했습니다.");
+                setSelecting(null);
+                return;
+            }
+
+            router.replace("/dashboard");
+        } catch (err) {
+            console.error("[Select Organization] Error selecting organization:", err);
+            setError("조직 선택에 실패했습니다.");
+            setSelecting(null);
+        }
+    }, [router]);
 
     useEffect(() => {
         const fetchOrganizations = async () => {
@@ -55,28 +75,7 @@ export default function SelectOrganizationPage() {
         };
 
         fetchOrganizations();
-    }, [router]);
-
-    const handleSelectOrganization = async (organizationId: string) => {
-        setSelecting(organizationId);
-
-        try {
-            const result = await setCurrentOrganization(organizationId);
-
-            if (!result.success) {
-                setError(result.error || "조직 선택에 실패했습니다.");
-                setSelecting(null);
-                return;
-            }
-
-            // Redirect to dashboard after successful selection
-            router.replace("/dashboard");
-        } catch (err) {
-            console.error("[Select Organization] Error selecting organization:", err);
-            setError("조직 선택에 실패했습니다.");
-            setSelecting(null);
-        }
-    };
+    }, [handleSelectOrganization]);
 
     if (loading) {
         return (
@@ -168,14 +167,14 @@ export default function SelectOrganizationPage() {
                         onClick={() => !selecting && handleSelectOrganization(org.id)}
                     >
                         <CardContent className="p-4">
-                            <div className="flex items-center justify-between gap-4">
-                                <div className="flex items-center gap-3">
+                            <div data-component="select-org-card-row" className="flex items-center justify-between gap-4">
+                                <div data-component="select-org-card-main" className="flex items-center gap-3">
                                     <Avatar className="bg-primary">
                                         <AvatarFallback className="bg-primary text-primary-foreground">
                                             <Building2 className="w-5 h-5" />
                                         </AvatarFallback>
                                     </Avatar>
-                                    <div>
+                                    <div data-component="select-org-card-text">
                                         <h3 className="text-base font-semibold text-foreground">
                                             {org.name}
                                         </h3>

@@ -9,6 +9,7 @@ import { ToolExecutorService } from "application/ai-chat/tool-executor.service";
 import { GeminiChatGateway } from "infrastructure/api/gemini-chat.gateway";
 import { VercelGeminiGateway } from "infrastructure/api/vercel-gemini.gateway";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { ChatSessionModule } from "./chat-session.module";
 import { ClientModule } from "./client.module";
 import { EmployeeModule } from "./employee.module";
@@ -26,6 +27,7 @@ export { GEMINI_GATEWAY } from "./ai-chat.tokens";
 @Module({
     imports: [
         ConfigModule,
+        DatabaseModule,
         ChatSessionModule,
         ClientModule,
         EmployeeModule,

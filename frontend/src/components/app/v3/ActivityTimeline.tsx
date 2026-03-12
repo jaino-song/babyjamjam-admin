@@ -29,15 +29,19 @@ export function ActivityTimeline({
   maxHeight = "400px",
 }: ActivityTimelineProps) {
   return (
-    <div data-component="activity-timeline" className="overflow-y-auto" style={{ maxHeight }}>
+    <div
+      data-component="activity-timeline"
+      className="flex flex-col gap-4 overflow-y-auto"
+      style={{ maxHeight }}
+    >
       {items.map((item, index) => {
         const isLast = index === items.length - 1;
         const Icon = item.icon;
 
         return (
-          <div key={index} className="relative flex gap-3 pb-4">
+          <div key={index} className="relative flex gap-3">
             {!isLast && (
-              <div className="absolute left-5 top-10 bottom-0 w-px bg-v3-border" />
+              <div className="absolute left-5 top-10 -bottom-4 w-px bg-v3-border" />
             )}
 
             <div

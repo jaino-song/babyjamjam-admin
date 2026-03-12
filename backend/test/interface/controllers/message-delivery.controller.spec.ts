@@ -1,0 +1,112 @@
+import { BadRequestException } from "@nestjs/common";
+import { AligoService } from "application/services/aligo.service";
+import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
+import { MessageDeliveryController } from "interface/controllers/message-delivery.controller";
+
+describe("MessageDeliveryController", () => {
+    let controller: MessageDeliveryController;
+    let aligoService: jest.Mocked<Pick<AligoService, "sendSms">>;
+    let messageSenderApprovalService: jest.Mocked<Pick<MessageSenderApprovalService, "ensureApproved">>;
+
+    beforeEach(() => {
+        aligoService = {
+            sendSms: jest.fn(),
+        };
+        messageSenderApprovalService = {
+            ensureApproved: jest.fn().mockResolvedValue("0212345678"),
+        };
+        controller = new MessageDeliveryController(
+            aligoService as unknown as AligoService,
+            messageSenderApprovalService as unknown as MessageSenderApprovalService,
+        );
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it("should reject scheduled requests that are less than 10 minutes ahead in KST", async () => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-03-09T11:00:00.000Z").getTime());
+
+        await expect(
+            controller.sendSms(
+                { organizationId: "org-1" },
+                {
+                    receiver: "01012345678",
+                    message: "테스트",
+                    triggerType: "scheduled",
+                    scheduledDate: "2026-03-09",
+                    scheduledTime: "20:05",
+                },
+            ),
+        ).rejects.toThrow(BadRequestException);
+
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("should normalize scheduled fields for the Aligo request and response payload", async () => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-03-09T11:00:00.000Z").getTime());
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "LMS",
+                scheduledDate: "20260309",
+                scheduledTime: "2015",
+                testModeYn: "Y",
+            },
+            response: {
+                result_code: 1,
+                message: "성공적으로 전송요청 하였습니다.",
+                msg_id: 321,
+                success_cnt: 1,
+                error_cnt: 0,
+                msg_type: "LMS",
+            },
+        });
+
+        const result = await controller.sendSms(
+            { organizationId: "org-1" },
+            {
+                receiver: "010-1234-5678",
+                message: "장문 테스트 메시지",
+                title: "안내",
+                triggerType: "scheduled",
+                scheduledDate: "2026-03-09",
+                scheduledTime: "20:15",
+                testMode: true,
+            },
+        );
+
+        expect(aligoService.sendSms).toHaveBeenCalledWith({
+            senderPhone: "0212345678",
+            receiver: "010-1234-5678",
+            message: "장문 테스트 메시지",
+            recipientName: undefined,
+            title: "안내",
+            msgType: undefined,
+            scheduledDate: "20260309",
+            scheduledTime: "2015",
+            testMode: true,
+        });
+        expect(result).toEqual({
+            provider: "aligo",
+            triggerType: "scheduled",
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "LMS",
+                scheduledAt: "202603092015",
+                testMode: true,
+            },
+            result: {
+                resultCode: 1,
+                message: "성공적으로 전송요청 하였습니다.",
+                msgId: 321,
+                successCount: 1,
+                errorCount: 0,
+                msgType: "LMS",
+            },
+        });
+    });
+});

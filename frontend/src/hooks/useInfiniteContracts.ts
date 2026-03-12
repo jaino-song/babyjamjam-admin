@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
@@ -98,6 +98,7 @@ export function useInfiniteContracts({
     enabled,
     staleTime: 1000 * 60 * 5, // 5 minutes
     gcTime: 1000 * 60 * 60, // 1 hour
+    refetchOnWindowFocus: false,
   });
 
   // Process and filter all documents

@@ -1,6 +1,5 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import voucherOptions from "../templates/json/voucher.json";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import bankAccountJSON from "../templates/json/bank-account.json";
@@ -12,7 +11,6 @@ import { useBankAccountInfos, useVoucherPriceInfos } from "@/hooks";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { NameInput } from "./form-components/NameInput";
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -55,9 +53,13 @@ function formatPrice(price: string): string {
   return num.toLocaleString("ko-KR");
 }
 
-export const PriceInfoMessageForm = () => {
+interface PriceInfoMessageFormProps {
+  onPreviewMessageChange?: (message: string) => void;
+}
+
+export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessageFormProps) => {
   const locale = useLocale();
-  const [generatedMessage, setGeneratedMessage] = useState("");
+  const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const [durationTooltipOpen, setDurationTooltipOpen] = useState<boolean>(false);
   const tooltipTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -98,7 +100,7 @@ export const PriceInfoMessageForm = () => {
   }, [name, voucherType, voucherDuration]);
 
   // Bank account info query
-  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
+  const { data: bankAccountInfos = [] } = useBankAccountInfos();
 
   // Voucher price info query (연도 필터 적용)
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(formData.type, voucherYear);
@@ -112,6 +114,7 @@ export const PriceInfoMessageForm = () => {
       duration: "",
       voucherId: null,
     }));
+    setMessageOverride(null);
     setVoucherType(value); // Update Zustand store
     setVoucherDuration(""); // Reset duration in store when type changes
   };
@@ -128,6 +131,7 @@ export const PriceInfoMessageForm = () => {
         grant: selectedVoucher.grant?.toString() ?? "",
         actualPrice: selectedVoucher.actualPrice?.toString() ?? "",
       }));
+      setMessageOverride(null);
       // Update Zustand store
       setVoucherDuration(duration);
       setFullPrice(selectedVoucher.fullPrice?.toString() ?? "");
@@ -143,6 +147,7 @@ export const PriceInfoMessageForm = () => {
       bankName: bankAccountInfos.find(b => b.area === value)?.bankName ?? "",
       accNum: bankAccountInfos.find(b => b.area === value)?.accNum ?? "",
     }));
+    setMessageOverride(null);
   };
 
   const handleDurationTooltipOpen = (open: boolean) => {
@@ -155,35 +160,61 @@ export const PriceInfoMessageForm = () => {
     }
   };
 
-  const handleGenerate = () => {
-    const formattedData = {
-      ...formData,
-      fullPrice: formatPrice(formData.fullPrice),
-      grant: formatPrice(formData.grant),
-      actualPrice: formatPrice(formData.actualPrice),
-    };
-
-    const message = systemTemplate?.content
-      ? renderTemplate(systemTemplate.content, {
-          name: formattedData.name,
-          weeks: formattedData.weeks,
-          duration: formattedData.duration,
-          type: formattedData.type,
-          fullPrice: formattedData.fullPrice,
-          grant: formattedData.grant,
-          actualPrice: formattedData.actualPrice,
-          bankName: formattedData.bankName,
-          accNum: formattedData.accNum,
-        })
-      : priceInfoMsgTemplate(formattedData);
-
-    setGeneratedMessage(message);
-  };
+  const normalizedName = formData.name.trim();
+  const templateMessage = systemTemplate?.content
+    ? renderTemplate(systemTemplate.content, {
+        name: normalizedName,
+        weeks: formData.weeks || undefined,
+        duration: formData.duration,
+        type: formData.type,
+        fullPrice: formData.fullPrice ? formatPrice(formData.fullPrice) : undefined,
+        grant: formData.grant ? formatPrice(formData.grant) : undefined,
+        actualPrice: formData.actualPrice ? formatPrice(formData.actualPrice) : undefined,
+        bankName: formData.bankName,
+        accNum: formData.accNum,
+      })
+    : priceInfoMsgTemplate({
+        name: normalizedName || "{{name}}",
+        weeks: formData.weeks || "{{weeks}}",
+        duration: formData.duration || "{{duration}}",
+        type: formData.type || "{{type}}",
+        fullPrice: formData.fullPrice ? formatPrice(formData.fullPrice) : "{{fullPrice}}",
+        grant: formData.grant ? formatPrice(formData.grant) : "{{grant}}",
+        actualPrice: formData.actualPrice ? formatPrice(formData.actualPrice) : "{{actualPrice}}",
+        bankName: formData.bankName || "{{bankName}}",
+        accNum: formData.accNum || "{{accNum}}",
+      });
+  const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
     alert(t(locale, "common.copy-success-message"));
   };
+
+  const priceMetaItems = [
+    { label: "템플릿 유형", value: "요금 안내" },
+    { label: t(locale, "price-info-msg.name-label"), value: formData.name || "-" },
+    { label: t(locale, "price-info-msg.voucher-type-label"), value: formData.type || "-" },
+    { label: t(locale, "price-info-msg.duration-label"), value: formData.duration ? `${formData.duration}일` : "-" },
+    { label: t(locale, "price-info-msg.area-label"), value: formData.area || "-" },
+  ];
+
+  const priceVariableItems = [
+    { token: "{{name}}", label: t(locale, "price-info-msg.name-label"), value: formData.name || "-" },
+    { token: "{{type}}", label: t(locale, "price-info-msg.voucher-type-label"), value: formData.type || "-" },
+    { token: "{{duration}}", label: t(locale, "price-info-msg.duration-label"), value: formData.duration ? `${formData.duration}일` : "-" },
+    { token: "{{fullPrice}}", label: t(locale, "price-info-msg.full-price-label"), value: formData.fullPrice ? `${formatPrice(formData.fullPrice)}${t(locale, "common.currency-symbol")}` : "-" },
+    { token: "{{grant}}", label: t(locale, "price-info-msg.grant-price-label"), value: formData.grant ? `${formatPrice(formData.grant)}${t(locale, "common.currency-symbol")}` : "-" },
+    { token: "{{actualPrice}}", label: t(locale, "price-info-msg.actual-price-label"), value: formData.actualPrice ? `${formatPrice(formData.actualPrice)}${t(locale, "common.currency-symbol")}` : "-" },
+    { token: "{{bankName}}", label: "은행명", value: formData.bankName || "-" },
+    { token: "{{accNum}}", label: "계좌번호", value: formData.accNum || "-" },
+  ];
+
+  useEffect(() => {
+    if (generatedMessage) {
+      onPreviewMessageChange?.(generatedMessage);
+    }
+  }, [generatedMessage, onPreviewMessageChange]);
 
   return (
     <div
@@ -194,7 +225,10 @@ export const PriceInfoMessageForm = () => {
             <div className="col-span-10">
               <NameInput
                 name={name}
-                setName={setName}
+                setName={(value) => {
+                  setName(value);
+                  setMessageOverride(null);
+                }}
                 label={t(locale, "price-info-msg.name-label")}
                 placeholder={t(locale, "price-info-msg.name-placeholder")}
               />
@@ -206,6 +240,7 @@ export const PriceInfoMessageForm = () => {
                 onValueChange={(value: string) => {
                   setVoucherYear(Number(value));
                   setFormData((prev) => ({ ...prev, duration: "", voucherId: null }));
+                  setMessageOverride(null);
                   setVoucherDuration("");
                 }}
               >
@@ -319,33 +354,16 @@ export const PriceInfoMessageForm = () => {
             </div>
           )}
 
-          {/* generate button */}
-          <Button
-            size="lg"
-            onClick={handleGenerate}
-            disabled={
-              !formData.name ||
-              !formData.type ||
-              !formData.area ||
-              isVoucherPriceInfosLoading ||
-              isBankAccountInfosLoading
-            }
-            data-component="messages-price-info-form-generate"
-          >
-            {isVoucherPriceInfosLoading || isBankAccountInfosLoading
-              ? t(locale, "common.generate-button-loading")
-              : t(locale, "common.generate-button")}
-          </Button>
-
-        {generatedMessage && (
-          <GeneratedMsg
-            title={t(locale, "common.generated-message-title")}
-            copyButtonText={t(locale, "common.copy-button")}
-            message={generatedMessage}
-            onMessageChange={setGeneratedMessage}
-            handleCopy={handleCopy}
-          />
-        )}
+        <GeneratedMsg
+          title={t(locale, "common.generated-message-title")}
+          copyButtonText={t(locale, "common.copy-button")}
+          message={generatedMessage}
+          bodyDescription={systemTemplate?.description || "요금 안내 문구와 가격 변수를 한눈에 검토할 수 있습니다."}
+          metaItems={priceMetaItems}
+          variableItems={priceVariableItems}
+          onMessageChange={setMessageOverride}
+          handleCopy={handleCopy}
+        />
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
+import { Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
 import {
     CreateClientUsecase,
     DeleteClientUsecase,
@@ -12,6 +12,7 @@ import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/re
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { AlimtalkService } from "./alimtalk.service";
+import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
 
@@ -75,6 +76,7 @@ export class ClientService {
         private readonly alimtalkService: AlimtalkService,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
+        @Optional() private readonly triggerService?: AlimtalkTriggerService,
     ) {}
 
     async create(organizationid: string, params: {
@@ -124,10 +126,12 @@ export class ClientService {
         });
 
         // Then create employee_schedule (optional - only when primary employee is assigned)
+        let createdScheduleId: number | null = null;
         if (params.primaryEmployeeId !== undefined && params.primaryEmployeeId !== null) {
-            await this.prismaService.employee_schedule.create({
+            const schedule = await this.prismaService.employee_schedule.create({
                 data: {
                     clientId: client.id,
+                    organizationId: organizationid,
                     primaryEmployeeId: params.primaryEmployeeId,
                     secondaryEmployeeId: params.secondaryEmployeeId ?? null,
                     workAddress: params.address ?? "",
@@ -136,11 +140,24 @@ export class ClientService {
                     replaced: false,
                 },
             });
+            createdScheduleId = schedule.id;
         }
 
         this.alimtalkService.sendClientCreatedAlimtalk(client).catch((error) => {
             this.logger.error(`Failed to send client created alimtalk: ${error}`);
         });
+        if (this.triggerService) {
+            this.triggerService.syncClientRulesForClient(organizationid, client.id, true).catch((error) => {
+                this.logger.error(`Failed to sync client trigger rules: ${error}`);
+            });
+        }
+        if (createdScheduleId !== null) {
+            this.triggerService
+                ?.syncEmployeeAssignmentRulesForSchedule(organizationid, createdScheduleId, true)
+                ?.catch((error) => {
+                    this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
+                });
+        }
 
         return client;
     }
@@ -320,6 +337,7 @@ export class ClientService {
                     await this.prismaService.client.update({
                         where: { id },
                         data: { serviceStatus: newStatus },
+                        select: { id: true },
                     });
                     this.logger.debug(`Updated client ${id} service status to ${newStatus}`);
                 } catch (error) {
@@ -377,10 +395,11 @@ export class ClientService {
         // Check if employee assignment is being changed
         const employeeChanged = params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined;
 
+        let createdScheduleId: number | null = null;
         if (employeeChanged) {
             // Get current schedule for this client
             const currentSchedule = await this.prismaService.employee_schedule.findFirst({
-                where: { clientId: id, replaced: false },
+                where: { clientId: id, organizationId: organizationid, replaced: false },
                 orderBy: { id: 'desc' },
             });
 
@@ -409,9 +428,10 @@ export class ClientService {
                 }
 
                 // Create new schedule
-                await this.prismaService.employee_schedule.create({
+                const newSchedule = await this.prismaService.employee_schedule.create({
                     data: {
                         clientId: id,
+                        organizationId: organizationid,
                         primaryEmployeeId: newPrimaryEmployeeId,
                         secondaryEmployeeId: newSecondaryEmployeeId,
                         workAddress: params.address ?? existingClient.address ?? "",
@@ -420,10 +440,11 @@ export class ClientService {
                         replaced: false,
                     },
                 });
+                createdScheduleId = newSchedule.id;
             }
         }
 
-        return this.updateClientUsecase.execute(organizationid, id, {
+        const updatedClient = await this.updateClientUsecase.execute(organizationid, id, {
             name: params.name,
             address: params.address,
             phone: params.phone,
@@ -442,6 +463,19 @@ export class ClientService {
             breastPump: params.breastPump,
             eDocId: params.eDocId,
         });
+        if (this.triggerService) {
+            this.triggerService.syncClientRulesForClient(organizationid, id, false).catch((error) => {
+                this.logger.error(`Failed to sync client trigger rules: ${error}`);
+            });
+        }
+        if (createdScheduleId !== null) {
+            this.triggerService
+                ?.syncEmployeeAssignmentRulesForSchedule(organizationid, createdScheduleId, true)
+                ?.catch((error) => {
+                    this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
+                });
+        }
+        return updatedClient;
     }
 
     /**
@@ -510,7 +544,7 @@ export class ClientService {
 
         // Get current schedule and mark as replaced
         const currentSchedule = await this.prismaService.employee_schedule.findFirst({
-            where: { clientId: clientId, replaced: false },
+            where: { clientId: clientId, organizationId: organizationid, replaced: false },
             orderBy: { id: "desc" },
         });
 
@@ -522,9 +556,10 @@ export class ClientService {
         }
 
         // Create new schedule with new employees
-        await this.prismaService.employee_schedule.create({
+        const replacementSchedule = await this.prismaService.employee_schedule.create({
             data: {
                 clientId: clientId,
+                organizationId: organizationid,
                 primaryEmployeeId: newPrimaryEmployeeId,
                 secondaryEmployeeId: newSecondaryEmployeeId ?? null,
                 workAddress: client.address ?? "",
@@ -533,6 +568,11 @@ export class ClientService {
                 replaced: false,
             },
         });
+        this.triggerService
+            ?.syncEmployeeAssignmentRulesForSchedule(organizationid, replacementSchedule.id, true)
+            ?.catch((error) => {
+                this.logger.error(`Failed to sync replacement assignment triggers: ${error}`);
+            });
 
         return updatedClient;
     }

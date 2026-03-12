@@ -1,18 +1,28 @@
 import { NotificationCleanupSchedulerService } from "application/services/notification-cleanup-scheduler.service";
 import { CleanupNotificationsUsecase } from "application/usecases/notification/cleanup-notifications.usecase";
+import { IOrganizationRepository } from "domain/repositories/organization.repository.interface";
 
 describe("NotificationCleanupSchedulerService", () => {
     const createMockCleanupUsecase = () => ({
         execute: jest.fn(),
     });
+    const createMockOrganizationRepository = () => ({
+        findAllActive: jest.fn(),
+    });
 
     let scheduler: NotificationCleanupSchedulerService;
     let cleanupUsecase: ReturnType<typeof createMockCleanupUsecase>;
+    let organizationRepository: ReturnType<typeof createMockOrganizationRepository>;
 
     beforeEach(() => {
         cleanupUsecase = createMockCleanupUsecase();
+        organizationRepository = createMockOrganizationRepository();
+        organizationRepository.findAllActive.mockResolvedValue([
+            { id: "org-1", name: "Org 1" },
+        ]);
         scheduler = new NotificationCleanupSchedulerService(
-            cleanupUsecase as unknown as CleanupNotificationsUsecase
+            cleanupUsecase as unknown as CleanupNotificationsUsecase,
+            organizationRepository as unknown as IOrganizationRepository,
         );
     });
 
@@ -27,8 +37,24 @@ describe("NotificationCleanupSchedulerService", () => {
 
                 await scheduler.cleanupOldNotifications();
 
-                expect(cleanupUsecase.execute).toHaveBeenCalledWith(expect.any(String), 30);
+                expect(cleanupUsecase.execute).toHaveBeenCalledWith("org-1", 30);
                 expect(cleanupUsecase.execute).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        describe("given multiple active organizations", () => {
+            it("should run cleanup for each active organization", async () => {
+                organizationRepository.findAllActive.mockResolvedValue([
+                    { id: "org-1", name: "Org 1" },
+                    { id: "org-2", name: "Org 2" },
+                ]);
+                cleanupUsecase.execute.mockResolvedValue(5);
+
+                await scheduler.cleanupOldNotifications();
+
+                expect(cleanupUsecase.execute).toHaveBeenNthCalledWith(1, "org-1", 30);
+                expect(cleanupUsecase.execute).toHaveBeenNthCalledWith(2, "org-2", 30);
+                expect(cleanupUsecase.execute).toHaveBeenCalledTimes(2);
             });
         });
 
@@ -45,6 +71,16 @@ describe("NotificationCleanupSchedulerService", () => {
                 cleanupUsecase.execute.mockResolvedValue(0);
 
                 await expect(scheduler.cleanupOldNotifications()).resolves.not.toThrow();
+            });
+        });
+
+        describe("given no active organizations", () => {
+            it("should skip cleanup", async () => {
+                organizationRepository.findAllActive.mockResolvedValue([]);
+
+                await scheduler.cleanupOldNotifications();
+
+                expect(cleanupUsecase.execute).not.toHaveBeenCalled();
             });
         });
 

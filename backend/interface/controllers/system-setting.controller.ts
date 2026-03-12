@@ -1,15 +1,24 @@
-import { Controller, Get, Put, Body, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Put, Request, UseGuards } from "@nestjs/common";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { SystemSettingService } from "application/services/system-setting.service";
 import {
     UpdateAlimtalkProviderDto,
     AlimtalkProviderResponseDto,
 } from "interface/dto/system-setting.dto";
+import {
+    MessageSenderApprovalResponseDto,
+    RequestMessageSenderApprovalDto,
+} from "interface/dto/message-sender-approval.dto";
+import { TenantGuard, CurrentTenant } from "infrastructure/tenant";
+import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 
 @Controller("settings")
 @UseGuards(JwtGuard)
 export class SystemSettingController {
-    constructor(private readonly systemSettingService: SystemSettingService) {}
+    constructor(
+        private readonly systemSettingService: SystemSettingService,
+        private readonly messageSenderApprovalService: MessageSenderApprovalService,
+    ) {}
 
     @Get("alimtalk-provider")
     async getAlimtalkProvider(): Promise<AlimtalkProviderResponseDto> {
@@ -29,5 +38,39 @@ export class SystemSettingController {
             enabled,
             entity.updatedAt
         );
+    }
+
+    @Get("message-sender-approval")
+    @UseGuards(TenantGuard)
+    async getMessageSenderApproval(
+        @CurrentTenant() tenant: { organizationId?: string; orgRole?: string },
+    ): Promise<MessageSenderApprovalResponseDto> {
+        const state = await this.messageSenderApprovalService.getState(
+            tenant.organizationId ?? "",
+        );
+        return MessageSenderApprovalResponseDto.from({
+            ...state,
+            canRequest: this.messageSenderApprovalService.canRequest(tenant.orgRole),
+        });
+    }
+
+    @Post("message-sender-approval/request")
+    @UseGuards(TenantGuard)
+    async requestMessageSenderApproval(
+        @CurrentTenant() tenant: { organizationId?: string; orgRole?: string },
+        @Request() request: { user: { userId: string } },
+        @Body() dto: RequestMessageSenderApprovalDto,
+    ): Promise<MessageSenderApprovalResponseDto> {
+        const state = await this.messageSenderApprovalService.requestApproval({
+            organizationId: tenant.organizationId ?? "",
+            orgRole: tenant.orgRole,
+            userId: request.user.userId,
+            senderPhone: dto.senderPhone,
+        });
+
+        return MessageSenderApprovalResponseDto.from({
+            ...state,
+            canRequest: this.messageSenderApprovalService.canRequest(tenant.orgRole),
+        });
     }
 }

@@ -4,6 +4,9 @@
  */
 export const CHANNELTALK_EVENTS = {
     CLIENT_CREATED: "client_created",
+    SERVICE_START_REMINDER: "service_start_reminder",
+    SERVICE_END_REMINDER: "service_end_reminder",
+    EMPLOYEE_ASSIGNED: "employee_assigned",
     CONTRACT_SIGNED: "contract_signed",
     CONTRACT_REMINDER_3DAYS: "contract_reminder_3days",
     CONTRACT_REMINDER_1DAY: "contract_reminder_1day",

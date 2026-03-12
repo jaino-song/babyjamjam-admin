@@ -156,7 +156,6 @@ test.describe('EmployeeAutocomplete', () => {
         await expect(addNewButton).toBeVisible();
 
         // And possibly show "No options" text, but button is always there
-        const noOptionsText = page.getByText('검색 결과가 없습니다');
         // This may or may not be visible depending on locale
     });
 });

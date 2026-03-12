@@ -169,6 +169,22 @@ export interface EformsignDocumentsResponse {
   skip: number;
 }
 
+export interface EformsignDeleteFailure {
+  document_id: string;
+  code: string;
+  message: string;
+}
+
+export interface EformsignDeleteDocumentsResponse {
+  code: string | number;
+  message: string;
+  status: string | number;
+  result: {
+    success_result: string[];
+    fail_result: EformsignDeleteFailure[];
+  };
+}
+
 // View model for displaying documents
 export interface EformsignDocumentView {
   doc_id: string;

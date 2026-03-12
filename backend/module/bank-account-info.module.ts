@@ -12,9 +12,10 @@ import {
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
 import { BankAccountInfoController } from "interface/controllers/bank-account-info.controller";
 import { BANK_ACCOUNT_INFO_REPOSITORY } from "domain/repositories/bank-account-info.repository.interface";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 
 @Module({
+    imports: [DatabaseModule],
     controllers: [BankAccountInfoController],
     providers: [
         CreateBankAccountInfoUsecase,
@@ -23,7 +24,6 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         UpdateBankAccountInfoUsecase,
         DeleteBankAccountInfoUsecase,
         BankAccountInfoService,
-        PrismaService,
         {
             provide: BANK_ACCOUNT_INFO_REPOSITORY,
             useClass: SbBankAccountInfoRepository,

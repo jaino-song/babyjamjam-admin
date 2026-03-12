@@ -22,6 +22,7 @@ export interface AnimatedSlotListProps<T> {
   hideEmptySlots?: boolean;
   slotClassName?: string | ((args: SlotClassNameArgs<T>) => string);
   onSlotClick?: (item: T, index: number) => void;
+  getItemKey?: (item: T, index: number) => string;
   render: (args: { index: number; item: T | null; isLoading: boolean }) => React.ReactNode;
 
   /** Whether there are more items to load */
@@ -44,6 +45,7 @@ export function AnimatedSlotList<T>({
   hideEmptySlots = true,
   slotClassName,
   onSlotClick,
+  getItemKey,
   render,
   hasMore = false,
   onLoadMore,
@@ -111,10 +113,14 @@ export function AnimatedSlotList<T>({
             : slotClassName ?? "";
 
         const shouldHide = hideEmptySlots && !isSlotLoading && !item;
+        const slotKey =
+          !isSlotLoading && item && getItemKey
+            ? getItemKey(item, index)
+            : `slot-${index}`;
 
         return (
           <div
-            key={`slot-${index}`}
+            key={slotKey}
             data-component={itemDataComponent}
             className={cn(
               "animate-v3-pop-up",

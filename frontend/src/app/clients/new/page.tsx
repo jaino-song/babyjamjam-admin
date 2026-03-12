@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { useCreateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
+import { api } from "@/lib/api/client";
 import type { CreateClientDto } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
@@ -33,6 +34,9 @@ const GRID_CLS = "grid grid-cols-1 md:grid-cols-2 gap-4";
 const COMPLETED_PILL =
   "inline-flex items-center gap-1.5 px-3 py-2 rounded-[14px] bg-v3-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-v3-dark";
 
+const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
+const PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS = 1000;
+
 const formatPhoneNumber = (value: string): string => {
   const digits = value.replace(/\D/g, "");
   if (digits.length <= 3) return digits;
@@ -53,6 +57,16 @@ const parsePrice = (value: string | null | undefined): string => {
   return value.replace(/,/g, "");
 };
 
+const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
+  locale === "ko"
+    ? "문제가 발생했어요. 새로고침 해주세요."
+    : "Something went wrong. Please refresh and try again.";
+
+const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
+  locale === "ko"
+    ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
+    : "Checking for duplicate phone number. Please wait.";
+
 export default function NewClientPage() {
   const router = useRouter();
   const locale = useLocale();
@@ -66,6 +80,21 @@ export default function NewClientPage() {
   const [error, setError] = useState<string | null>(null);
   const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
   const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
+  const [isCheckingPhoneDuplicate, setIsCheckingPhoneDuplicate] = useState(false);
+  const [isPhoneDuplicate, setIsPhoneDuplicate] = useState(false);
+  const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
+  const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
+
+  const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
+  const showPhoneValidationError =
+    phoneDigits.length === 11 && (isPhoneDuplicate || hasPhoneDuplicateCheckFailed);
+  const phoneInlineMessage = phoneDigits.length === 11
+    ? hasPhoneDuplicateCheckFailed
+      ? getPhoneDuplicateCheckFailedMessage(locale)
+      : isPhoneDuplicate
+        ? t(locale, "clients.form.error-phone-duplicate")
+        : null
+    : null;
 
   useEffect(() => {
     if (prefillName) {
@@ -95,6 +124,85 @@ export default function NewClientPage() {
     }
   }, [selectedPriceInfo, pricesManuallyEdited, setField]);
 
+  useEffect(() => {
+    if (phoneDigits.length !== 11) {
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    const waitForRetryDelay = () =>
+      new Promise<void>((resolve) => {
+        const finish = () => {
+          abortController.signal.removeEventListener("abort", handleAbort);
+          resolve();
+        };
+
+        const timeoutId = setTimeout(finish, PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS);
+
+        const handleAbort = () => {
+          clearTimeout(timeoutId);
+          finish();
+        };
+
+        if (abortController.signal.aborted) {
+          handleAbort();
+          return;
+        }
+
+        abortController.signal.addEventListener("abort", handleAbort, { once: true });
+      });
+
+    const checkPhoneDuplicate = async () => {
+      setIsCheckingPhoneDuplicate(true);
+      setIsPhoneDuplicate(false);
+      setHasPhoneDuplicateCheckFailed(false);
+      setLastCheckedPhoneDigits(null);
+
+      let attempt = 0;
+
+      while (!abortController.signal.aborted && attempt <= PHONE_DUPLICATE_CHECK_MAX_RETRIES) {
+        try {
+          const response = await api.get("/clients/check-phone", {
+            params: { phone: phoneDigits },
+            signal: abortController.signal,
+          });
+
+          if (!abortController.signal.aborted) {
+            setIsPhoneDuplicate(response.data?.exists === true);
+            setHasPhoneDuplicateCheckFailed(false);
+            setLastCheckedPhoneDigits(phoneDigits);
+          }
+          return;
+        } catch {
+          if (abortController.signal.aborted) {
+            return;
+          }
+
+          attempt += 1;
+          if (attempt > PHONE_DUPLICATE_CHECK_MAX_RETRIES) {
+            setIsPhoneDuplicate(false);
+            setHasPhoneDuplicateCheckFailed(true);
+            return;
+          }
+
+          await waitForRetryDelay();
+        }
+      }
+    };
+
+    void checkPhoneDuplicate().finally(() => {
+      if (!abortController.signal.aborted) {
+        setIsCheckingPhoneDuplicate(false);
+      }
+    });
+
+    return () => {
+      abortController.abort();
+      setIsCheckingPhoneDuplicate(false);
+    };
+  }, [phoneDigits]);
+
   const handleTypeChange = (newType: string) => {
     setField("type", newType);
     setField("duration", null);
@@ -117,6 +225,24 @@ export default function NewClientPage() {
         if (!store.name.trim()) {
           setError(t(locale, "clients.form.error-name-required"));
           return false;
+        }
+        if (phoneDigits.length !== 11) {
+          setError(t(locale, "clients.form.error-phone-required"));
+          return false;
+        }
+        if (phoneDigits.length === 11) {
+          if (isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits) {
+            setError(getPhoneDuplicateCheckPendingMessage(locale));
+            return false;
+          }
+          if (hasPhoneDuplicateCheckFailed) {
+            setError(getPhoneDuplicateCheckFailedMessage(locale));
+            return false;
+          }
+          if (isPhoneDuplicate) {
+            setError(t(locale, "clients.form.error-phone-duplicate"));
+            return false;
+          }
         }
         return true;
       case 1:
@@ -211,13 +337,35 @@ export default function NewClientPage() {
             />
           </div>
           <div data-component="clients-new-basic-phone-field" className="flex flex-col gap-1.5">
-            <label className={LABEL_CLS}>{t(locale, "clients.form.phone")}</label>
+            <div data-component="clients-new-basic-phone-label-row" className="flex items-center gap-2">
+              <label className={LABEL_CLS}>
+                {t(locale, "clients.form.phone")} <span className="text-v3-burgundy">*</span>
+              </label>
+              {phoneInlineMessage && (
+                <p
+                  data-component="clients-new-basic-phone-message"
+                  className="text-[0.72rem] font-medium text-v3-burgundy"
+                >
+                  {phoneInlineMessage}
+                </p>
+              )}
+            </div>
             <input
-              className={INPUT_CLS}
+              className={cn(
+                INPUT_CLS,
+                showPhoneValidationError &&
+                  "border-v3-burgundy focus:border-v3-burgundy focus:shadow-[0_0_0_3px_hsla(349,65%,45%,0.08)]"
+              )}
               value={store.phone}
-              onChange={(e) => setField("phone", formatPhoneNumber(e.target.value))}
+              onChange={(e) => {
+                setField("phone", formatPhoneNumber(e.target.value));
+                setError(null);
+              }}
               placeholder="010-1234-5678"
               maxLength={13}
+              aria-invalid={showPhoneValidationError}
+              aria-required="true"
+              required
             />
           </div>
           <div data-component="clients-new-basic-address-field" className="flex flex-col gap-1.5 md:col-span-2">
@@ -508,6 +656,16 @@ export default function NewClientPage() {
         backLabel="고객 목록으로 돌아가기"
         completeLabel="등록"
         isSubmitting={createClient.isPending}
+        isNextDisabled={
+          currentStep === 0 &&
+          (
+            phoneDigits.length !== 11 ||
+            isCheckingPhoneDuplicate ||
+            hasPhoneDuplicateCheckFailed ||
+            isPhoneDuplicate ||
+            lastCheckedPhoneDigits !== phoneDigits
+          )
+        }
       />
 
       <EmployeeFormDialog

@@ -1,15 +1,3 @@
-// allowed mime types for upload
-export const allowed_mime_types = [
-    'image/png',
-    'image/jpeg',
-    'image/jpg',
-    'application/pdf',
-] as const;
-
-export type allowedmimetype = typeof allowed_mime_types[number];
-// Export PascalCase alias for compatibility
-export type AllowedMimeType = allowedmimetype;
-
 // maximum file size (25mb in bytes)
 export const max_file_size = 25 * 1024 * 1024;
 export const MAX_FILE_SIZE = max_file_size;
@@ -35,7 +23,7 @@ export interface CreateDocumentProps {
     description?: string;
     categoryId: string;
     tags: string[];
-    mimeType: AllowedMimeType | string;
+    mimeType: string;
     fileSize: number;
     storagePath: string;
     storageUrl?: string | null;
@@ -87,15 +75,6 @@ export class DocumentEntity {
         return DocumentEntity.validateFileSize(size);
     }
 
-    static validateMimeType(mimetype: string): boolean {
-        return allowed_mime_types.includes(mimetype as allowedmimetype);
-    }
-
-    // lowercase alias
-    static validatemimetype(mimetype: string): boolean {
-        return DocumentEntity.validateMimeType(mimetype);
-    }
-
     static validateCategory(category: string): boolean {
         return predefined_categories.includes(category as documentcategory);
     }
@@ -124,9 +103,6 @@ export class DocumentEntity {
         // 검증
         if (!DocumentEntity.validateFileSize(props.fileSize)) {
             throw new Error(`파일 크기가 제한을 초과했습니다. 최대 ${MAX_FILE_SIZE / 1024 / 1024}MB`);
-        }
-        if (!DocumentEntity.validateMimeType(props.mimeType)) {
-            throw new Error(`허용되지 않은 파일 형식: ${props.mimeType}`);
         }
 
         const now = new Date();

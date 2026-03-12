@@ -9,7 +9,6 @@ import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 import {
   DEFAULT_QUICK_ACTION_COLORS,
-  type QuickActionColor,
   type QuickActionIcon,
 } from "./QuickActionButton";
 

@@ -6,6 +6,7 @@ type AlimtalkLogRow = {
     organizationId: string | null;
     provider: string;
     templateKey: string;
+    triggerJobId: string | null;
     receiver: string;
     clientId: number | null;
     messageBody: string;
@@ -27,6 +28,7 @@ export class AlimtalkLogMapper {
             row.organizationId,
             row.provider,
             row.templateKey,
+            row.triggerJobId,
             row.receiver,
             row.clientId,
             row.messageBody,
@@ -47,6 +49,7 @@ export class AlimtalkLogMapper {
             organizationId: entity.organizationId,
             provider: entity.provider,
             templateKey: entity.templateKey,
+            triggerJobId: entity.triggerJobId,
             receiver: entity.receiver,
             clientId: entity.clientId,
             messageBody: entity.messageBody,

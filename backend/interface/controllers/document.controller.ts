@@ -20,7 +20,6 @@ import { DocumentService } from "application/services/document.service";
 import { CreateDocumentDto, UpdateDocumentDto, UploadDocumentDto } from "interface/dto/document.dto";
 import {
     DocumentEntity,
-    allowed_mime_types,
     max_file_size,
 } from "domain/entities/document.entity";
 import { FILE_STORAGE_PORT, FileStoragePort } from "domain/ports/file-storage.port";
@@ -60,7 +59,13 @@ export class DocumentController {
      * Upload a new document with file
      */
     @Post("upload")
-    @UseInterceptors(FileInterceptor("file"))
+    @UseInterceptors(
+        FileInterceptor("file", {
+            limits: {
+                fileSize: max_file_size,
+            },
+        }),
+    )
     async upload(
         @CurrentTenant() tenant: { organizationId?: string },
         @UploadedFile() file: Express.Multer.File,
@@ -77,22 +82,20 @@ export class DocumentController {
             );
         }
 
-        // validate mime type
-        if (!DocumentEntity.validatemimetype(file.mimetype)) {
-            throw new BadRequestException(
-                `invalid file type. allowed types: ${allowed_mime_types.join(", ")}`,
-            );
-        }
-
         // generate unique storage path
-        const fileExtension = file.originalname.split(".").pop() || "";
-        const storagePath = `${uuidv4()}.${fileExtension}`;
+        const lastDotIndex = file.originalname.lastIndexOf(".");
+        const fileExtension =
+            lastDotIndex >= 0 ? file.originalname.slice(lastDotIndex + 1) : "";
+        const storagePath = fileExtension
+            ? `${uuidv4()}.${fileExtension}`
+            : uuidv4();
+        const mimeType = file.mimetype || "application/octet-stream";
 
         // upload to storage
         const storageUrl = await this.fileStorage.upload(
             file.buffer,
             storagePath,
-            file.mimetype,
+            mimeType,
         );
 
         // parse tags from string if needed (form-data sends arrays as strings)
@@ -103,7 +106,7 @@ export class DocumentController {
             description: dto.description,
             categoryId: dto.categoryId,
             tags,
-            mimetype: file.mimetype,
+            mimetype: mimeType,
             filesize: file.size,
             storagepath: storagePath,
             storageurl: storageUrl,

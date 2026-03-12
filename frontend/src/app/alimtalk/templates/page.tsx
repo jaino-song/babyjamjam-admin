@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { SplitLayout, ListPanel, DetailPanel, AnimatedSlotList } from "@/components/app/v3";
+import { SplitLayout, ListPanel, DetailPanel, AnimatedSlotList, ListEmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
@@ -141,11 +141,12 @@ export default function AlimtalkTemplatesPage() {
           activeTab={activeGroup}
           onTabChange={handleGroupChange}
         >
-          <div className="space-y-2 pb-2">
+          <div data-component="alimtalk-templates-list-content" className="space-y-2 pb-2">
             {!isListLoading && visibleItems.length === 0 ? (
-              <div className="rounded-[16px] border border-dashed border-v3-border p-4 text-center text-[0.8rem] text-v3-text-muted">
-                등록된 사용자 템플릿이 없습니다.
-              </div>
+              <ListEmptyState
+                name="alimtalk-templates-list-empty"
+                message="등록된 사용자 템플릿이 없습니다."
+              />
             ) : (
               <AnimatedSlotList<TemplateListItem>
                 items={visibleItems}
@@ -166,10 +167,10 @@ export default function AlimtalkTemplatesPage() {
                   if (isSlotLoading) {
                     return (
                       <>
-                        <div className="w-9 h-9 rounded-[12px] bg-v3-dim-white flex items-center justify-center shrink-0">
+                        <div data-component="alimtalk-templates-list-skeleton-icon" className="w-9 h-9 rounded-[12px] bg-v3-dim-white flex items-center justify-center shrink-0">
                           <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
                         </div>
-                        <div className="flex-1 min-w-0 space-y-1.5">
+                        <div data-component="alimtalk-templates-list-skeleton-text" className="flex-1 min-w-0 space-y-1.5">
                           <Skeleton className="h-4 w-32 bg-v3-dim-white" />
                           <Skeleton className="h-3 w-24 bg-v3-dim-white" />
                         </div>
@@ -182,10 +183,10 @@ export default function AlimtalkTemplatesPage() {
 
                   return (
                     <>
-                      <div className="w-9 h-9 rounded-[12px] bg-v3-dim-white text-v3-text-muted flex items-center justify-center shrink-0">
+                      <div data-component="alimtalk-templates-list-item-icon" className="w-9 h-9 rounded-[12px] bg-v3-dim-white text-v3-text-muted flex items-center justify-center shrink-0">
                         <Icon className="w-4 h-4" />
                       </div>
-                      <div className="flex-1 min-w-0">
+                      <div data-component="alimtalk-templates-list-item-text" className="flex-1 min-w-0">
                         <span className="text-[0.8rem] font-semibold text-v3-dark truncate block">{item.label}</span>
                         <span className="text-[0.7rem] text-v3-text-muted truncate block">{item.description}</span>
                       </div>
@@ -199,15 +200,15 @@ export default function AlimtalkTemplatesPage() {
 
         <DetailPanel>
           {!selectedValue && (
-            <div className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
+            <div data-component="alimtalk-templates-detail-select-empty" className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
               왼쪽 목록에서 템플릿을 선택해 주세요.
             </div>
           )}
 
           {templateDetail && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
+            <div data-component="alimtalk-templates-detail-content" className="space-y-6">
+              <div data-component="alimtalk-templates-detail-header" className="flex items-center justify-between">
+                <div data-component="alimtalk-templates-detail-title-group">
                   <h2 className="text-[1rem] font-bold text-v3-dark">{templateDetail.title}</h2>
                   <p className="text-[0.75rem] text-v3-text-muted mt-0.5">카카오 알림톡 템플릿</p>
                 </div>
@@ -220,9 +221,9 @@ export default function AlimtalkTemplatesPage() {
                 </button>
               </div>
 
-              <div className="rounded-[16px] border border-v3-border bg-v3-dim-white/30 p-4">
-                <h3 className="text-[0.8rem] font-semibold text-v3-dark mb-3">치환 변수</h3>
-                <div className="flex flex-wrap gap-2">
+              <div data-component="alimtalk-templates-detail-variables" className="rounded-[16px] border border-v3-border bg-v3-dim-white/30 p-4">
+                <h3 className="text-[0.8rem] font-semibold text-v3-dark mb-3">변수</h3>
+                <div data-component="alimtalk-templates-detail-variable-list" className="flex flex-wrap gap-2">
                   {templateDetail.variables.map((variable) => (
                     <span
                       key={variable}
@@ -240,22 +241,22 @@ export default function AlimtalkTemplatesPage() {
           )}
 
           {!templateDetail && selectedValue && (
-            <div className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
+            <div data-component="alimtalk-templates-detail-empty" className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
               선택한 템플릿 정보를 불러오지 못했습니다.
             </div>
           )}
         </DetailPanel>
 
-        <div className="bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0 p-6">
+        <div data-component="alimtalk-templates-preview" className="bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0 p-6">
           <h3 className="text-[0.85rem] font-bold text-v3-dark mb-4">알림톡 미리보기</h3>
 
           {templateDetail ? (
-            <div className="flex-1 flex items-start justify-center overflow-y-auto">
-              <div className="w-full max-w-[320px]">
-                <div className="rounded-[20px] bg-[#FAE100] p-3">
-                  <div className="rounded-[16px] bg-white p-4 shadow-sm">
-                    <div className="flex items-center gap-2 mb-3 pb-2.5 border-b border-v3-border/50">
-                      <div className="w-8 h-8 rounded-full bg-[#FAE100] flex items-center justify-center">
+            <div data-component="alimtalk-templates-preview-content" className="flex-1 flex items-start justify-center overflow-y-auto">
+              <div data-component="alimtalk-templates-preview-phone" className="w-full max-w-[320px]">
+                <div data-component="alimtalk-templates-preview-shell" className="rounded-[20px] bg-[#FAE100] p-3">
+                  <div data-component="alimtalk-templates-preview-card" className="rounded-[16px] bg-white p-4 shadow-sm">
+                    <div data-component="alimtalk-templates-preview-header" className="flex items-center gap-2 mb-3 pb-2.5 border-b border-v3-border/50">
+                      <div data-component="alimtalk-templates-preview-avatar" className="w-8 h-8 rounded-full bg-[#FAE100] flex items-center justify-center">
                         <MessageCircle className="w-4 h-4 text-[#3C1E1E]" />
                       </div>
                       <span className="text-[0.8rem] font-bold text-gray-900">아가잼잼</span>
@@ -266,16 +267,16 @@ export default function AlimtalkTemplatesPage() {
                   </div>
                 </div>
 
-                <div className="mt-3 px-1">
+                <div data-component="alimtalk-templates-preview-caption" className="mt-3 px-1">
                   <p className="text-[0.7rem] text-v3-text-muted text-center">
-                    실제 발송 시 치환 변수가 고객 정보로 대체됩니다.
+                    실제 발송 시 변수가 고객 정보로 대체됩니다.
                   </p>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center text-v3-text-muted">
+            <div data-component="alimtalk-templates-preview-empty" className="flex-1 flex items-center justify-center">
+              <div data-component="alimtalk-templates-preview-empty-content" className="text-center text-v3-text-muted">
                 <MessageCircle className="w-10 h-10 mx-auto mb-3 opacity-30" />
                 <p className="text-[0.8rem]">템플릿을 선택하면 미리보기가 표시됩니다.</p>
               </div>

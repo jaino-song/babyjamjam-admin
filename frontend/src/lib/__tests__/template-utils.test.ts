@@ -28,6 +28,18 @@ describe('template-utils', () => {
       expect(renderTemplate('Hello {{name}}', { name: undefined })).toBe('Hello {{name}}');
     });
 
+    it('should preserve variables when value is an empty string', () => {
+      expect(renderTemplate('Hello {{name}}', { name: '' })).toBe('Hello {{name}}');
+    });
+
+    it('should preserve variables when value is whitespace only', () => {
+      expect(renderTemplate('Hello {{name}}', { name: '   ' })).toBe('Hello {{name}}');
+    });
+
+    it('should preserve variables when value is null', () => {
+      expect(renderTemplate('Hello {{name}}', { name: null })).toBe('Hello {{name}}');
+    });
+
     it('should convert non-string values to string (numbers)', () => {
       expect(renderTemplate('Count: {{count}}', { count: 3 })).toBe('Count: 3');
     });

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ExpandableSearch } from "./ExpandableSearch";
+import { PanelTitleGroup } from "./PanelTitleGroup";
 
 interface TabItem {
   label: string;
@@ -12,10 +13,12 @@ interface TabItem {
 
 interface ListPanelProps {
   title: string;
+  subtitle?: string;
   tabs?: TabItem[];
   activeTab?: string;
   onTabChange?: (value: string) => void;
   tabsVariant?: "inline" | "dropdown";
+  headerPadding?: "auto" | "compact" | "default";
   children: React.ReactNode;
   headerActions?: React.ReactNode;
   searchValue?: string;
@@ -28,10 +31,12 @@ interface ListPanelProps {
 
 export function ListPanel({
   title,
+  subtitle,
   tabs,
   activeTab,
   onTabChange,
   tabsVariant = "inline",
+  headerPadding = "auto",
   children,
   headerActions,
   searchValue,
@@ -44,6 +49,15 @@ export function ListPanel({
   const showTabs = tabs && tabs.length > 0;
   const showContentSkeleton = (isLoading || isContentLoading) && contentSkeleton;
   const hasSearch = searchValue !== undefined && !!onSearchChange;
+  const headerAlignmentClass = subtitle ? "items-start" : "items-center";
+  const headerClassName =
+    headerPadding === "default"
+      ? `flex ${headerAlignmentClass} justify-between p-6 shrink-0`
+      : headerPadding === "compact"
+        ? `flex ${headerAlignmentClass} justify-between p-6 pb-0 shrink-0`
+        : showTabs
+          ? `flex ${headerAlignmentClass} justify-between p-6 pb-0 shrink-0`
+          : `flex ${headerAlignmentClass} justify-between p-6 shrink-0`;
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -62,9 +76,14 @@ export function ListPanel({
 
   return (
     <div data-component="list-panel" className="bg-white rounded-2xl shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
-      <div className="flex items-center justify-between p-6 pb-0 shrink-0">
-        <h2 className="text-lg font-bold text-v3-dark">{title}</h2>
-        {headerActions && <div>{headerActions}</div>}
+      <div data-component="list-panel-header" className={headerClassName}>
+        <PanelTitleGroup
+          component="list-panel"
+          title={title}
+          subtitle={subtitle}
+          titleClassName="text-lg"
+        />
+        {headerActions && <div data-component="list-panel-header-actions">{headerActions}</div>}
       </div>
 
       {showTabs && (
@@ -101,15 +120,24 @@ export function ListPanel({
             <div className="flex gap-1">
               {(tabs ?? []).map((tab) => (
                 <button
+                  data-component="list-panel-tab-button"
                   type="button"
                   key={tab.value}
                   onClick={() => onTabChange?.(tab.value)}
-                  className={`text-[0.8rem] pb-2 px-3 transition-colors ${activeTab === tab.value
-                    ? "text-v3-primary font-semibold border-b-2 tab-active-underline"
-                    : "text-v3-text-muted hover:text-v3-text"
-                    }`}
+                  className={cn(
+                    "relative px-3 pb-2 text-[0.8rem] transition-colors",
+                    activeTab === tab.value
+                      ? "text-primary font-semibold"
+                      : "text-v3-text-muted hover:text-v3-text"
+                  )}
                 >
                   {tab.label}
+                  {activeTab === tab.value ? (
+                    <span
+                      data-component="list-panel-tab-indicator"
+                      className="absolute bottom-0 left-0 h-0.5 w-full bg-primary"
+                    />
+                  ) : null}
                 </button>
               ))}
             </div>

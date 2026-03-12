@@ -6,14 +6,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  BarChart3,
   Users,
   UserCheck,
-  Calendar,
   FileText,
   FolderOpen,
-  Bell,
   Settings,
+  Shield,
   LucideIcon,
   Calculator
 } from "lucide-react";
@@ -22,6 +20,7 @@ import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { ROLES } from "@/lib/constants/roles";
 
 interface NavItem {
   label: string;
@@ -35,7 +34,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const NAV_SECTIONS: NavSection[] = [
+const BASE_NAV_SECTIONS: NavSection[] = [
   {
     title: "메인",
     items: [
@@ -78,6 +77,7 @@ export const V3Sidebar = () => {
   const pathname = usePathname();
   const user = useInitialUser();
   const locale = useLocale();
+  const isOwner = user?.role === ROLES.owner;
 
   const getNavItemName = (href: string) => {
     const segment = href.split("/").filter(Boolean).pop() || "";
@@ -89,6 +89,22 @@ export const V3Sidebar = () => {
     if (href === "/employees" && pathname === "/employees/schedule") return false;
     return pathname.startsWith(href);
   };
+
+  const navSections = React.useMemo<NavSection[]>(
+    () => BASE_NAV_SECTIONS.map((section) => {
+      if (section.title !== "시스템 관리") {
+        return section;
+      }
+
+      return {
+        ...section,
+        items: isOwner
+          ? [...section.items, { label: "관리자", href: "/system-admin", icon: Shield }]
+          : section.items,
+      };
+    }),
+    [isOwner]
+  );
 
   if (isLayoutExcluded(pathname)) {
     return null;
@@ -114,7 +130,7 @@ export const V3Sidebar = () => {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-4 py-2 space-y-6 custom-scrollbar" data-component="sidebar-nav">
-        {NAV_SECTIONS.map((section, idx) => (
+        {navSections.map((section, idx) => (
           <div key={section.title + idx}>
             <h3 className="px-4 mb-2 text-[0.65rem] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">
               {section.title}

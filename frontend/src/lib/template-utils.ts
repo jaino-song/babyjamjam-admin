@@ -1,6 +1,16 @@
 export function renderTemplate(content: string, data: Record<string, unknown>): string {
     return content.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key: string) => {
-        return data[key] !== undefined ? String(data[key]) : match;
+        const value = data[key];
+
+        if (value == null) {
+            return match;
+        }
+
+        if (typeof value === "string" && value.trim().length === 0) {
+            return match;
+        }
+
+        return String(value);
     });
 }
 

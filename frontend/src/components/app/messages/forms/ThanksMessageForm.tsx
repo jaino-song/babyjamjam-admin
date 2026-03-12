@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { thanksMsgTemplate } from "../templates/messageTemplate/thanksMsg";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
@@ -8,65 +8,67 @@ import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { NameInput } from "./form-components/NameInput";
-import { Button } from "@/components/ui/button";
 
+interface ThanksMessageFormProps {
+  onPreviewMessageChange?: (message: string) => void;
+}
 
-export const ThanksMessageForm = () => {
+export const ThanksMessageForm = ({ onPreviewMessageChange }: ThanksMessageFormProps) => {
   const locale = useLocale();
-  const [generatedMessage, setGeneratedMessage] = useState("");
+  const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
   const { data: systemTemplate } = useSystemTemplate("THANKS");
-
-
-  const handleGenerate = () => {
-    const message = systemTemplate?.content
-      ? renderTemplate(systemTemplate.content, { name })
-      : thanksMsgTemplate({ name });
-
-    setGeneratedMessage(message);
-  };
+  const normalizedName = name.trim();
+  const templateMessage = systemTemplate?.content
+    ? renderTemplate(systemTemplate.content, { name: normalizedName })
+    : thanksMsgTemplate({ name: normalizedName || "{{name}}" });
+  const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
     alert(t(locale, "common.copy-success-message"));
   };
 
+  const variableItems = [
+    { token: "{{name}}", label: t(locale, "thanks-msg.name-label"), value: name.trim() || "-" },
+  ];
+
+  useEffect(() => {
+    if (generatedMessage) {
+      onPreviewMessageChange?.(generatedMessage);
+    }
+  }, [generatedMessage, onPreviewMessageChange]);
+
   return (
     <div
       data-component="messages-thanks-form"
-      className="flex flex-col grow h-full animate-fade-in"
+      className="flex flex-col animate-fade-in"
     >
-      <div className="flex flex-col grow">
-        {/* form */}
-        <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-4">
           <NameInput
             name={name}
-            setName={setName}
+            setName={(value) => {
+              setName(value);
+              setMessageOverride(null);
+            }}
             label={t(locale, "thanks-msg.name-label")}
             placeholder={t(locale, "thanks-msg.name-placeholder")}
           />
-          <Button
-            size="lg"
-            onClick={handleGenerate}
-            disabled={!name}
-            data-component="messages-thanks-form-generate"
-          >
-            {t(locale, "common.generate-button")}
-          </Button>
-        </div>
 
-        {/* generated message */}
-        {generatedMessage && (
-          <GeneratedMsg
-            title={t(locale, "common.generated-message-title")}
-            copyButtonText={t(locale, "common.copy-button")}
-            message={generatedMessage}
-            onMessageChange={setGeneratedMessage}
-            handleCopy={handleCopy}
-          />
-        )}
+        <GeneratedMsg
+          title={t(locale, "common.generated-message-title")}
+          copyButtonText={t(locale, "common.copy-button")}
+          message={generatedMessage}
+          bodyDescription={systemTemplate?.description || "감사 메시지를 검토하고 수신자 기준으로 다듬을 수 있습니다."}
+          metaItems={[
+            { label: "템플릿 유형", value: "감사 메시지" },
+            { label: t(locale, "thanks-msg.name-label"), value: name.trim() || "-" },
+          ]}
+          variableItems={variableItems}
+          onMessageChange={setMessageOverride}
+          handleCopy={handleCopy}
+        />
       </div>
     </div>
   );
 };
-

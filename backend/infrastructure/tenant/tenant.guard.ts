@@ -27,6 +27,7 @@ export class TenantGuard implements CanActivate {
             // Verify the organization exists
             const org = await this.prisma.organization.findUnique({
                 where: { id: user.organizationId },
+                select: { id: true },
             });
 
             if (!org) {

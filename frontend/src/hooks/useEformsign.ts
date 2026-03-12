@@ -101,7 +101,6 @@ export function useEformsign(): UseEformsignResult {
       const eformsign: EformSignDocument = new window.EformSignDocument();
 
       const successCallback = (response: EformsignSuccessResponse) => {
-        console.log("Eformsign success:", response);
         if (response.code === "-1") {
           callbacks?.onSuccess?.(response);
         }
@@ -113,7 +112,6 @@ export function useEformsign(): UseEformsignResult {
       };
 
       const actionCallback = (response: EformsignActionResponse) => {
-        console.log("Eformsign action:", response);
         callbacks?.onAction?.(response);
       };
 

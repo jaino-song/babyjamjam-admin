@@ -70,7 +70,7 @@ export function ClientsTable() {
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
-    const { data, isLoading, error } = useClients(
+    const { data, isLoading } = useClients(
         page + 1,
         rowsPerPage,
         searchQuery.trim() ? searchQuery.trim() : undefined
@@ -140,7 +140,7 @@ export function ClientsTable() {
         setPage(newPage);
     };
 
-    const clients = data?.data || [];
+    const clients = useMemo(() => data?.data ?? [], [data?.data]);
     const filteredClients = useMemo(() => {
         if (!statusFilter) return clients;
         return clients.filter((client) => client.serviceStatus === statusFilter);
@@ -156,8 +156,8 @@ export function ClientsTable() {
                     <p className="text-sm text-muted-foreground">전체 고객 정보를 확인하고 관리하세요</p>
                  </div>
                  <div className="flex gap-3">
-                     <Button variant="outline" className="rounded-full border-2 hidden sm:flex">📊 내보내기</Button>
-                     <Button variant="v3" onClick={handleAddNew} data-testid="add-client-button">
+                     <Button variant="neutral" className="hidden sm:flex">📊 내보내기</Button>
+                     <Button variant="positive" onClick={handleAddNew} data-testid="add-client-button">
                         <Plus className="h-4 w-4 mr-1" />
                         {t(locale, "clients.add")}
                      </Button>
@@ -179,7 +179,7 @@ export function ClientsTable() {
                     {STATUS_FILTER_OPTIONS.map((opt) => (
                         <Button
                             key={opt.value || "all"}
-                            variant={statusFilter === opt.value ? "v3" : "v3-soft"}
+                            variant={statusFilter === opt.value ? "positive" : "subtle"}
                             onClick={() => handleFilterChange(opt.value)}
                             className={cn(
                                 "rounded-full px-5 h-10 text-xs font-bold shadow-sm transition-transform hover:-translate-y-0.5",

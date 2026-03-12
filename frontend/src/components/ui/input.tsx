@@ -10,9 +10,9 @@ const inputVariants = cva(
         default:
           "h-10 rounded-md border border-input px-3 py-2 text-sm transition-colors focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)]",
         v3:
-          "border border-[hsl(220,20%,90%)] px-4 py-3 text-sm rounded-[14px] transition-all duration-200 ease-in-out focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)] focus-visible:scale-[1.02]",
+          "h-12 rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 py-2 text-[0.85rem] text-v3-dark shadow-none transition-all duration-200 ease-in-out focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)] focus-visible:scale-[1.02]",
         "v3-pill":
-          "border border-[hsl(220,20%,90%)] px-4 py-3 text-sm rounded-pill transition-all duration-200 ease-in-out focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)] focus-visible:scale-[1.02]",
+          "h-12 rounded-pill border-[1.5px] border-v3-border bg-white px-4 py-2 text-[0.85rem] text-v3-dark shadow-none transition-all duration-200 ease-in-out focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)] focus-visible:scale-[1.02]",
       },
     },
     defaultVariants: {

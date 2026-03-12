@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Users, Plus, Clock, UserCheck, AlertTriangle, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { Users, Calendar, CalendarDays, Plus, Clock, UserCheck, AlertTriangle, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -94,6 +94,12 @@ const formatPrice = (price: string | null): string => {
     return `${num.toLocaleString("ko-KR")}원`;
 };
 
+const toDate = (value: string | null): Date | null => {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+};
+
 const filterValueToStatus = (filter: string): string | null => {
     switch (filter) {
         case "active":
@@ -136,7 +142,6 @@ export default function ClientsPage() {
     const activeSelectedClient = selectedClient ?? (clientIdParam ? clientFromParam ?? null : null);
 
     const clients = useMemo(() => data?.data || [], [data?.data]);
-    const total = data?.total || 0;
 
     const filteredClients = useMemo(() => {
         let result = clients;
@@ -149,14 +154,49 @@ export default function ClientsPage() {
     }, [clients, activeFilter, searchQuery]);
 
     const stats = useMemo(() => {
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth();
+        const nextMonthDate = new Date(currentYear, currentMonth + 1, 1);
+        const nextMonthYear = nextMonthDate.getFullYear();
+        const nextMonth = nextMonthDate.getMonth();
+
+        const today = new Date(currentYear, currentMonth, now.getDate());
+        const threeDaysLater = new Date(currentYear, currentMonth, now.getDate() + 3);
+
+        const thisMonthCount = clients.filter((c) => {
+            const dueDate = toDate(c.dueDate);
+            return dueDate
+                ? dueDate.getFullYear() === currentYear && dueDate.getMonth() === currentMonth
+                : false;
+        }).length;
+
+        const nextMonthCount = clients.filter((c) => {
+            const dueDate = toDate(c.dueDate);
+            return dueDate
+                ? dueDate.getFullYear() === nextMonthYear && dueDate.getMonth() === nextMonth
+                : false;
+        }).length;
+
         const activeCount = clients.filter((c) => c.serviceStatus === "active").length;
         const pendingCount = clients.filter(
             (c) => c.serviceStatus === "waiting" || c.serviceStatus === "pending"
         ).length;
-        const expiredCount = clients.filter(
-            (c) => c.serviceStatus === "terminated" || c.serviceStatus === "cancelled"
-        ).length;
-        return { activeCount, pendingCount, expiredCount };
+
+        const endingSoonCount = clients.filter((c) => {
+            const endDate = toDate(c.endDate);
+            if (!endDate) return false;
+
+            const normalizedEndDate = new Date(
+                endDate.getFullYear(),
+                endDate.getMonth(),
+                endDate.getDate()
+            );
+
+            return normalizedEndDate >= today && normalizedEndDate <= threeDaysLater;
+        }).length;
+
+        return { thisMonthCount, nextMonthCount, activeCount, pendingCount, endingSoonCount };
     }, [clients]);
 
     const handleAddNew = () => {
@@ -211,10 +251,11 @@ export default function ClientsPage() {
                 name="clients"
                 isLoading={isLoading}
                 items={[
-                    { icon: Users, value: total, label: "전체 고객", counter: "명" },
-                    { icon: UserCheck, value: stats.activeCount, label: "진행중", counter: "명", colorIndex: 2 },
-                    { icon: Clock, value: stats.pendingCount, label: "대기중", counter: "명", colorIndex: 1 },
-                    { icon: AlertTriangle, value: stats.expiredCount, label: "만료임박", counter: "명", colorIndex: 3 },
+                    { icon: Calendar, value: stats.thisMonthCount, label: "이번달 고객", counter: "명" },
+                    { icon: CalendarDays, value: stats.nextMonthCount, label: "다음달 고객", counter: "명", colorIndex: 1 },
+                    { icon: UserCheck, value: stats.activeCount, label: "서비스 진행중", counter: "명", colorIndex: 2 },
+                    { icon: Clock, value: stats.pendingCount, label: "서비스 대기중", counter: "명", colorIndex: 1 },
+                    { icon: AlertTriangle, value: stats.endingSoonCount, label: "3일내 종료", counter: "명", colorIndex: 3 },
                 ]}
             />
 

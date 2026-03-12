@@ -34,4 +34,16 @@ export class SbAlimtalkLogRepository implements IAlimtalkLogRepository {
         });
         return rows.map(AlimtalkLogMapper.toDomain);
     }
+
+    async findRecentByOrganization(
+        organizationId: string,
+        limit = 200,
+    ): Promise<AlimtalkLogEntity[]> {
+        const rows = await this.prisma.alimtalk_log.findMany({
+            where: { organizationId },
+            orderBy: { createdAt: "desc" },
+            take: limit,
+        });
+        return rows.map(AlimtalkLogMapper.toDomain);
+    }
 }

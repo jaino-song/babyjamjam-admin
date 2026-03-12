@@ -20,10 +20,7 @@ export const getCurrentUser = cache(async () => {
     const cookieStore = await cookies();
     const authToken = cookieStore.get('auth_token');
 
-    console.log("[getCurrentUser] auth_token present:", !!authToken);
-
     if (!authToken) {
-      console.log("[getCurrentUser] No auth token found");
       return null;
     }
 
@@ -39,7 +36,6 @@ export const getCurrentUser = cache(async () => {
       return null;
     }
 
-    console.log("[getCurrentUser] User fetched successfully:", res.data?.name);
     return res.data;
   } catch (error: unknown) {
     if (axios.isAxiosError(error)) {

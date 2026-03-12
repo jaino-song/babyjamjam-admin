@@ -120,22 +120,22 @@ export default function SettingsPage() {
           {activeSection === "profile" && (
           <section data-component="settings-profile">
             <ContentPaper variant="v3">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--v3-primary))]/10">
+              <div data-component="settings-profile-header" className="mb-4 flex items-center gap-3">
+                <div data-component="settings-profile-icon" className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--v3-primary))]/10">
                   <User size={20} className="text-[hsl(var(--v3-primary))]" />
                 </div>
-                <div>
+                <div data-component="settings-profile-title-group">
                   <h2 className="text-lg font-bold text-foreground">프로필</h2>
                   <p className="text-sm text-muted-foreground">개인 정보를 관리합니다.</p>
                 </div>
               </div>
               <Separator className="mb-6" />
 
-              <div className="flex items-center gap-4 mb-6">
-                <div className="w-16 h-16 rounded-full bg-[hsl(var(--v3-primary))]/10 flex items-center justify-center">
+              <div data-component="settings-profile-summary" className="flex items-center gap-4 mb-6">
+                <div data-component="settings-profile-summary-avatar" className="w-16 h-16 rounded-full bg-[hsl(var(--v3-primary))]/10 flex items-center justify-center">
                   <User size={28} className="text-[hsl(var(--v3-primary))]" />
                 </div>
-                <div>
+                <div data-component="settings-profile-summary-text">
                   <p className="text-sm font-medium text-foreground">
                     {user?.name || "사용자"}
                   </p>
@@ -143,8 +143,8 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div>
+              <div data-component="settings-profile-form" className="space-y-4">
+                <div data-component="settings-profile-name-field">
                   <Label htmlFor="profile-name" className="text-sm font-medium">
                     이름
                   </Label>
@@ -156,7 +156,7 @@ export default function SettingsPage() {
                     className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
-                <div>
+                <div data-component="settings-profile-email-field">
                   <Label htmlFor="profile-email" className="text-sm font-medium">
                     이메일
                   </Label>
@@ -168,7 +168,7 @@ export default function SettingsPage() {
                     className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
-                <div>
+                <div data-component="settings-profile-phone-field">
                   <Label htmlFor="profile-phone" className="text-sm font-medium">
                     전화번호
                   </Label>
@@ -187,20 +187,20 @@ export default function SettingsPage() {
           {activeSection === "notifications" && (
           <section data-component="settings-notifications">
             <ContentPaper variant="v3">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-500/10">
+              <div data-component="settings-notifications-header" className="mb-4 flex items-center gap-3">
+                <div data-component="settings-notifications-icon" className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-500/10">
                   <Bell size={20} className="text-amber-500" />
                 </div>
-                <div>
+                <div data-component="settings-notifications-title-group">
                   <h2 className="text-lg font-bold text-foreground">알림</h2>
                   <p className="text-sm text-muted-foreground">알림 수신 설정을 관리합니다.</p>
                 </div>
               </div>
               <Separator className="mb-4" />
 
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
-                  <div className="space-y-0.5">
+              <div data-component="settings-notifications-content" className="space-y-4">
+                <div data-component="settings-notifications-email" className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
+                  <div data-component="settings-notifications-email-text" className="space-y-0.5">
                     <Label htmlFor="notif-email" className="text-sm font-medium">
                       이메일 알림
                     </Label>
@@ -216,8 +216,8 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                <div className="p-3 rounded-xl">
-                  <div className="flex items-center gap-2 mb-3">
+                <div data-component="settings-notifications-alimtalk" className="p-3 rounded-xl">
+                  <div data-component="settings-notifications-alimtalk-header" className="flex items-center gap-2 mb-3">
                     <MessageSquare size={16} className="text-amber-500" />
                     <Label className="text-sm font-medium">알림톡 서비스</Label>
                   </div>
@@ -226,7 +226,7 @@ export default function SettingsPage() {
                   </p>
 
                   {isLoadingAlimtalk ? (
-                    <div className="flex justify-center py-6">
+                    <div data-component="settings-notifications-alimtalk-loading" className="flex justify-center py-6">
                       <Spinner className="h-6 w-6" />
                     </div>
                   ) : alimtalkError ? (
@@ -241,6 +241,7 @@ export default function SettingsPage() {
                     >
                       {PROVIDER_OPTIONS.map((option) => (
                         <div
+                          data-component="settings-notifications-alimtalk-option"
                           key={option.value}
                           className="flex items-start space-x-3 p-3 rounded-xl transition-all hover:bg-muted/50"
                         >
@@ -250,7 +251,7 @@ export default function SettingsPage() {
                             disabled={updateAlimtalkMutation.isPending}
                             className="mt-1"
                           />
-                          <div className="grid gap-1">
+                          <div data-component="settings-notifications-alimtalk-option-text" className="grid gap-1">
                             <Label
                               htmlFor={`alimtalk-${option.value}`}
                               className="font-medium cursor-pointer"
@@ -288,18 +289,18 @@ export default function SettingsPage() {
           {activeSection === "theme" && (
           <section data-component="settings-theme">
             <ContentPaper variant="v3">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-violet-500/10">
+              <div data-component="settings-theme-header" className="mb-4 flex items-center gap-3">
+                <div data-component="settings-theme-icon" className="flex items-center justify-center w-10 h-10 rounded-xl bg-violet-500/10">
                   <Palette size={20} className="text-violet-500" />
                 </div>
-                <div>
+                <div data-component="settings-theme-title-group">
                   <h2 className="text-lg font-bold text-foreground">테마</h2>
                   <p className="text-sm text-muted-foreground">화면 테마를 선택합니다.</p>
                 </div>
               </div>
               <Separator className="mb-6" />
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div data-component="settings-theme-options" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {THEME_OPTIONS.map((theme) => {
                   const Icon = theme.icon;
                   const isSelected = selectedTheme === theme.id;
@@ -315,6 +316,7 @@ export default function SettingsPage() {
                       } ${theme.id === "dark" ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                     >
                       <div
+                        data-component="settings-theme-option-icon"
                         className={`w-12 h-12 rounded-full flex items-center justify-center ${
                           isSelected
                             ? "bg-[hsl(var(--v3-primary))]/10"
@@ -330,7 +332,7 @@ export default function SettingsPage() {
                           }
                         />
                       </div>
-                      <div className="text-center">
+                      <div data-component="settings-theme-option-text" className="text-center">
                         <p className="text-sm font-medium">{theme.label}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {theme.description}
@@ -352,19 +354,19 @@ export default function SettingsPage() {
           {activeSection === "security" && (
           <section data-component="settings-security">
             <ContentPaper variant="v3">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-red-500/10">
+              <div data-component="settings-security-header" className="mb-4 flex items-center gap-3">
+                <div data-component="settings-security-icon" className="flex items-center justify-center w-10 h-10 rounded-xl bg-red-500/10">
                   <Shield size={20} className="text-red-500" />
                 </div>
-                <div>
+                <div data-component="settings-security-title-group">
                   <h2 className="text-lg font-bold text-foreground">보안</h2>
                   <p className="text-sm text-muted-foreground">계정 보안 설정을 관리합니다.</p>
                 </div>
               </div>
               <Separator className="mb-6" />
 
-              <div className="space-y-4">
-                <div>
+              <div data-component="settings-security-content" className="space-y-4">
+                <div data-component="settings-security-current-password-field">
                   <Label htmlFor="current-password" className="text-sm font-medium">
                     현재 비밀번호
                   </Label>
@@ -375,7 +377,7 @@ export default function SettingsPage() {
                     className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
-                <div>
+                <div data-component="settings-security-new-password-field">
                   <Label htmlFor="new-password" className="text-sm font-medium">
                     새 비밀번호
                   </Label>
@@ -386,7 +388,7 @@ export default function SettingsPage() {
                     className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
                   />
                 </div>
-                <div>
+                <div data-component="settings-security-confirm-password-field">
                   <Label htmlFor="confirm-password" className="text-sm font-medium">
                     비밀번호 확인
                   </Label>
@@ -400,8 +402,8 @@ export default function SettingsPage() {
 
                 <Separator className="my-2" />
 
-                <div className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
-                  <div className="space-y-0.5">
+                <div data-component="settings-security-two-factor" className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
+                  <div data-component="settings-security-two-factor-text" className="space-y-0.5">
                     <Label htmlFor="two-factor" className="text-sm font-medium text-muted-foreground">
                       2단계 인증 (준비 중)
                     </Label>

@@ -1,5 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { SendAligoAlimtalkUsecase } from "application/usecases/aligo";
+import {
+    SendAligoAlimtalkUsecase,
+    SendAligoSmsUsecase,
+} from "application/usecases/aligo";
+import { SendAligoSmsDto, SendAligoSmsResult } from "application/dto/aligo/send-sms.dto";
 import { ClientEntity } from "domain/entities/client.entity";
 import { PhoneNumber } from "domain/value-objects/phone-number.vo";
 
@@ -21,7 +25,22 @@ interface PaymentInfo {
 export class AligoService {
     private readonly logger = new Logger(AligoService.name);
 
-    constructor(private readonly sendAlimtalkUsecase: SendAligoAlimtalkUsecase) {}
+    constructor(
+        private readonly sendAlimtalkUsecase: SendAligoAlimtalkUsecase,
+        private readonly sendSmsUsecase: SendAligoSmsUsecase,
+    ) {}
+
+    async sendSms(dto: SendAligoSmsDto): Promise<SendAligoSmsResult> {
+        try {
+            return await this.sendSmsUsecase.execute(dto);
+        } catch (error) {
+            this.logger.error(
+                `[Aligo] Failed to send sms to ${dto.receiver}`,
+                error instanceof Error ? error.stack : String(error),
+            );
+            throw error;
+        }
+    }
 
     async sendClientCreatedAlimtalk(client: ClientEntity): Promise<void> {
         const phone = PhoneNumber.create(client.phone);

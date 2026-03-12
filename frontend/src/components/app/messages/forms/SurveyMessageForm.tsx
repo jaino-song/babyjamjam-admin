@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { surveyMsgTemplate } from "../templates/messageTemplate/surveyMsg";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
@@ -8,65 +8,67 @@ import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import { NameInput } from "./form-components/NameInput";
-import { Button } from "@/components/ui/button";
 
+interface SurveyMessageFormProps {
+  onPreviewMessageChange?: (message: string) => void;
+}
 
-export const SurveyMessageForm = () => {
+export const SurveyMessageForm = ({ onPreviewMessageChange }: SurveyMessageFormProps) => {
   const locale = useLocale();
-  const [generatedMessage, setGeneratedMessage] = useState("");
+  const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
   const { data: systemTemplate } = useSystemTemplate("SURVEY");
-
-
-  const handleGenerate = () => {
-    const message = systemTemplate?.content
-      ? renderTemplate(systemTemplate.content, { name })
-      : surveyMsgTemplate({ name });
-
-    setGeneratedMessage(message);
-  };
+  const normalizedName = name.trim();
+  const templateMessage = systemTemplate?.content
+    ? renderTemplate(systemTemplate.content, { name: normalizedName })
+    : surveyMsgTemplate({ name: normalizedName || "{{name}}" });
+  const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
     alert(t(locale, "common.copy-success-message"));
   };
 
+  const variableItems = [
+    { token: "{{name}}", label: t(locale, "survey-msg.name-label"), value: name.trim() || "-" },
+  ];
+
+  useEffect(() => {
+    if (generatedMessage) {
+      onPreviewMessageChange?.(generatedMessage);
+    }
+  }, [generatedMessage, onPreviewMessageChange]);
+
   return (
     <div
       data-component="messages-survey-form"
-      className="flex flex-col grow h-full animate-fade-in"
+      className="flex flex-col animate-fade-in"
     >
-      <div className="flex flex-col grow">
-        {/* form */}
-        <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-4">
           <NameInput
             name={name}
-            setName={setName}
+            setName={(value) => {
+              setName(value);
+              setMessageOverride(null);
+            }}
             label={t(locale, "survey-msg.name-label")}
             placeholder={t(locale, "survey-msg.name-placeholder")}
           />
-          <Button
-            size="lg"
-            onClick={handleGenerate}
-            disabled={!name}
-            data-component="messages-survey-form-generate"
-          >
-            {t(locale, "common.generate-button")}
-          </Button>
-        </div>
 
-        {/* generated message */}
-        {generatedMessage && (
-          <GeneratedMsg
-            title={t(locale, "common.generated-message-title")}
-            copyButtonText={t(locale, "common.copy-button")}
-            message={generatedMessage}
-            onMessageChange={setGeneratedMessage}
-            handleCopy={handleCopy}
-          />
-        )}
+        <GeneratedMsg
+          title={t(locale, "common.generated-message-title")}
+          copyButtonText={t(locale, "common.copy-button")}
+          message={generatedMessage}
+          bodyDescription={systemTemplate?.description || "설문 안내 문구를 검토하고 수신자별 안내를 조정할 수 있습니다."}
+          metaItems={[
+            { label: "템플릿 유형", value: "설문" },
+            { label: t(locale, "survey-msg.name-label"), value: name.trim() || "-" },
+          ]}
+          variableItems={variableItems}
+          onMessageChange={setMessageOverride}
+          handleCopy={handleCopy}
+        />
       </div>
     </div>
   );
 };
-

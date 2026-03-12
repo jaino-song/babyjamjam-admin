@@ -26,8 +26,6 @@ interface LoginResult {
 
 export async function loginWithEmail(email: string, password: string, autoLogin = true): Promise<LoginResult> {
     try {
-        console.log("[Server Action] Logging in with email");
-
         const { data, status } = await serverAPIClient.post("/auth/login", { email, password });
 
         // Handle error responses
@@ -91,9 +89,6 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         } else {
             cookieStore.set("auto_login", "0", authCookieBaseOptions);
         }
-
-        console.log("[Server Action] Email login successful");
-        console.log("[Server Action] requiresOrgSelection:", data.requiresOrgSelection);
 
         // Use requiresOrgSelection from backend response
         return { success: true, requiresOrgSelection: data.requiresOrgSelection || false };

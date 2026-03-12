@@ -1,16 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FolderOpen, FileText, Image, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
-import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, PageSection, DetailSkeleton, ListEmptyState, DetailActions } from "@/components/app/v3";
-import type { DetailAction } from "@/components/app/v3";
+import { FolderOpen, FileText, Image as ImageIcon, File, Upload, Loader2, Calendar, Tag, MoreVertical, Pencil, Trash2, Eye } from "lucide-react";
+import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useDocuments, useUploadDocument, useUpdateDocument, useDeleteDocument, Document } from "@/hooks/use-documents";
-import { useDocumentCategories, useCreateDocumentCategory, DocumentCategory } from "@/hooks/use-document-categories";
+import { useDocumentCategories, useCreateDocumentCategory } from "@/hooks/use-document-categories";
 import { DocumentDropzone } from "@/components/app/documents/document-dropzone";
 import DocumentPreviewModal from "@/components/app/documents/document-preview-modal";
 import { DocumentEditModal } from "@/components/app/documents/document-edit-modal";
@@ -75,7 +75,7 @@ export default function FilesPage() {
 
   function getFileIcon(mimeType: string) {
     if (mimeType.includes("pdf")) return <FileText className="w-4 h-4 text-v3-burgundy" />;
-    if (mimeType.includes("image")) return <Image className="w-4 h-4 text-v3-primary" />;
+    if (mimeType.includes("image")) return <ImageIcon className="w-4 h-4 text-v3-primary" />;
     return <File className="w-4 h-4 text-v3-text-muted" />;
   }
 
@@ -127,7 +127,7 @@ export default function FilesPage() {
 
   if (error) {
     return (
-      <div className="p-6">
+      <div data-component="files-error-container" className="p-6">
         <div data-component="files-error" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
           문서를 불러오는데 실패했습니다.
         </div>
@@ -189,10 +189,10 @@ export default function FilesPage() {
                 if (slotLoading) {
                   return (
                     <>
-                      <div className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
+                      <div data-component="files-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
                         <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
                       </div>
-                      <div className="flex-1 min-w-0">
+                      <div data-component="files-list-item-skeleton-content" className="flex-1 min-w-0">
                         <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
                         <Skeleton className="h-3 w-32 bg-v3-dim-white" />
                       </div>
@@ -203,10 +203,10 @@ export default function FilesPage() {
                 if (!doc) return null;
                 return (
                   <>
-                    <div className="w-9 h-9 rounded-[10px] bg-v3-primary-light flex items-center justify-center shrink-0">
+                    <div data-component="files-list-item-icon" className="w-9 h-9 rounded-[10px] bg-v3-primary-light flex items-center justify-center shrink-0">
                       {getFileIcon(doc.mimeType)}
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div data-component="files-list-item-content" className="flex-1 min-w-0">
                       <p className="text-[0.8rem] font-semibold text-v3-dark truncate">{doc.name}</p>
                       <p className="text-[0.7rem] text-v3-text-muted truncate">{getCategoryLabel(doc.categoryId)}</p>
                     </div>
@@ -230,7 +230,6 @@ export default function FilesPage() {
         ) : selectedDocument ? (
           <FileDetail
             document={selectedDocument}
-            categories={categories}
             getCategoryLabel={getCategoryLabel}
             onPreview={() => setPreviewDoc(selectedDocument)}
             onEdit={() => setEditDoc(selectedDocument)}
@@ -242,18 +241,29 @@ export default function FilesPage() {
       </SplitLayout>
 
       <Dialog open={isUploadOpen} onOpenChange={(open: boolean) => !uploadMutation.isPending && setIsUploadOpen(open)}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5 text-primary" />
-              문서 업로드
-            </DialogTitle>
-            <DialogDescription className="sr-only">파일을 업로드합니다</DialogDescription>
+        <DialogContent
+          data-component="files-upload-dialog"
+          showCloseButton={!uploadMutation.isPending}
+          className="flex max-h-[90vh] w-[min(720px,calc(100vw-1.5rem))] max-w-[720px] flex-col overflow-hidden rounded-[28px] border-none bg-v3-dim-white p-0 shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] gap-0"
+        >
+          <DialogHeader className="shrink-0 border-b border-v3-border bg-white p-6 text-left">
+            <div data-component="files-upload-dialog-heading" className="min-w-0 pr-12">
+              <span className="mb-3 inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-v3-primary shadow-sm">
+                Document Upload
+              </span>
+              <DialogTitle className="flex items-center gap-2 text-[1.35rem] font-bold tracking-[-0.02em] text-v3-dark">
+                <Upload className="h-5 w-5 text-v3-primary" />
+                파일 업로드
+              </DialogTitle>
+              <DialogDescription className="mt-2 pt-0 text-[0.82rem] leading-6 text-v3-text-muted">
+                PNG, JPG, PDF 문서를 업로드하고 카테고리와 태그까지 한 번에 정리합니다.
+              </DialogDescription>
+            </div>
           </DialogHeader>
-          <div className="mt-2">
+          <div data-component="files-upload-content" className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
             <DocumentDropzone onUpload={handleUpload} isLoading={uploadMutation.isPending} uploadProgress={uploadProgress} />
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t border-v3-border bg-white px-6 py-4">
             <Button variant="outline" onClick={() => setIsUploadOpen(false)} disabled={uploadMutation.isPending}>취소</Button>
           </DialogFooter>
         </DialogContent>
@@ -284,9 +294,9 @@ export default function FilesPage() {
             <DialogTitle>문서 삭제</DialogTitle>
             <DialogDescription>이 문서를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setDeleteDoc(null)} disabled={deleteMutation.isPending}>취소</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleteMutation.isPending}>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleteDoc(null)} disabled={deleteMutation.isPending}>취소</Button>
+            <Button variant="destructive" size="sm" onClick={handleDelete} disabled={deleteMutation.isPending}>
               {deleteMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />삭제 중...</> : "삭제"}
             </Button>
           </DialogFooter>
@@ -296,9 +306,8 @@ export default function FilesPage() {
   );
 }
 
-function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, onEdit, onDelete }: {
+function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDelete }: {
   document: Document;
-  categories: DocumentCategory[];
   getCategoryLabel: (id: string) => string;
   onPreview: () => void;
   onEdit: () => void;
@@ -314,17 +323,42 @@ function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, on
       }
       subtitle={<>등록일: {formatDate(doc.createdAt)}</>}
       trailing={
-        <DetailActions
-          name="files-detail-actions"
-          actions={[
-            { label: "미리보기", onClick: onPreview, variant: "primary" },
-            { label: "수정", onClick: onEdit, variant: "default" },
-            { label: "삭제", onClick: onDelete, variant: "danger" },
-          ]}
-        />
+        <div data-component="files-detail-actions" className="flex items-center gap-2">
+          <Button
+            variant="positive"
+            size="sm"
+            data-component="contracts-detail-preview-trigger"
+            onClick={onPreview}
+          >
+            <Eye className="h-4 w-4" />
+            파일 보기
+          </Button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="문서 작업 더보기"
+                className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
+              >
+                <MoreVertical className="w-5 h-5 text-v3-text-muted" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[140px]">
+              <DropdownMenuItem onClick={onEdit} className="gap-2">
+                <Pencil className="w-4 h-4" />
+                수정
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onDelete} className="gap-2 text-destructive focus:text-destructive">
+                <Trash2 className="w-4 h-4" />
+                삭제
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       }
     >
-      <div className="space-y-5">
+      <div data-component="files-detail-content" className="space-y-5">
         <InfoCard title="파일 정보">
           <InfoRow label="파일명" value={doc.name} />
           <InfoRow label="형식" value={doc.mimeType} />
@@ -341,7 +375,7 @@ function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, on
 
         {doc.tags && doc.tags.length > 0 && (
           <InfoCard title="태그">
-            <div className="flex flex-wrap gap-2">
+            <div data-component="files-detail-tags" className="flex flex-wrap gap-2">
               {doc.tags.map(tag => (
                 <span key={tag} className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
                   {tag}

@@ -1,20 +1,27 @@
 import { Module } from "@nestjs/common";
 import { ALIGO_API_PORT } from "domain/ports/aligo-api.port";
+import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
 import { AligoApiClient } from "infrastructure/api/aligo-api.client";
-import { SendAligoAlimtalkUsecase } from "application/usecases/aligo";
+import {
+    SendAligoAlimtalkUsecase,
+    SendAligoSmsUsecase,
+} from "application/usecases/aligo";
 import { AligoService } from "application/services/aligo.service";
 import { ALIMTALK_LOG_REPOSITORY } from "domain/repositories/alimtalk-log.repository.interface";
 import { SbAlimtalkLogRepository } from "infrastructure/database/repositories/sb.alimtalk-log.repository";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 
 @Module({
+    imports: [DatabaseModule],
     providers: [
-        { provide: ALIGO_API_PORT, useClass: AligoApiClient },
+        AligoApiClient,
+        { provide: ALIGO_API_PORT, useExisting: AligoApiClient },
+        { provide: ALIGO_SMS_API_PORT, useExisting: AligoApiClient },
         { provide: ALIMTALK_LOG_REPOSITORY, useClass: SbAlimtalkLogRepository },
-        PrismaService,
         SendAligoAlimtalkUsecase,
+        SendAligoSmsUsecase,
         AligoService,
     ],
-    exports: [AligoService, ALIMTALK_LOG_REPOSITORY, ALIGO_API_PORT],
+    exports: [AligoService, SendAligoAlimtalkUsecase, ALIMTALK_LOG_REPOSITORY, ALIGO_API_PORT, ALIGO_SMS_API_PORT],
 })
 export class AligoModule {}
