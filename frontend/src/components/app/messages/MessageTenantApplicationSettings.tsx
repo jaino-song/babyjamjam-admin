@@ -13,19 +13,26 @@ import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-com
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { formatKoreanPhoneNumber, isValidKoreanPhoneNumber, normalizePhoneDigits } from "@/lib/phone";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 const ALIGO_POLICY_ITEMS = [
   {
     id: "aligo-terms",
-    text: "회원등록 버튼을 클릭함으로써 알리고 문자 서비스 이용약관 개인정보보호방침에 동의함을 간주합니다.",
+    text: "알리고 문자 서비스 이용약관에 동의합니다.",
+    sourceLabel: "알리고 회원가입",
+    sourceHref: "https://smartsms.aligo.in/join.html",
+  },
+  {
+    id: "aligo-privacy-third-party",
+    text: "메시지 발송 기능 제공을 위해 필요한 개인정보를 제3자에게 제공하는 데 동의합니다.",
     sourceLabel: "알리고 회원가입",
     sourceHref: "https://smartsms.aligo.in/join.html",
   },
   {
     id: "sender-number",
-    text: "발신번호는 사이트내에서 미리 등록된 번호만 사용하실 수 있습니다.",
+    text: "발신번호는 사이트 내에 사전 등록된 번호만 사용할 수 있음을 확인했습니다.",
     sourceLabel: "알리고 API SPEC",
     sourceHref: "https://smartsms.aligo.in/admin/api/spec.html",
   },
@@ -41,24 +48,8 @@ type TenantApplicationListItem = {
   icon: typeof Building2;
 };
 
-function normalizePhone(value: string) {
-  return value.replace(/\D/g, "").slice(0, 11);
-}
-
-function formatPhone(value: string) {
-  if (value.length <= 3) return value;
-  if (value.length <= 7) return `${value.slice(0, 3)}-${value.slice(3)}`;
-  if (value.length === 8) return `${value.slice(0, 4)}-${value.slice(4)}`;
-  if (value.startsWith("02")) {
-    if (value.length <= 9) return `${value.slice(0, 2)}-${value.slice(2, 5)}-${value.slice(5)}`;
-    return `${value.slice(0, 2)}-${value.slice(2, 6)}-${value.slice(6)}`;
-  }
-
-  return `${value.slice(0, 3)}-${value.slice(3, 7)}-${value.slice(7)}`;
-}
-
 function isValidSenderPhone(value: string) {
-  return /^0\d{8,10}$/.test(value);
+  return isValidKoreanPhoneNumber(value);
 }
 
 function formatRequestedAt(date: Date) {
@@ -80,8 +71,8 @@ export function MessageTenantApplicationSettings() {
   const [requestedAt, setRequestedAt] = useState<string | null>(null);
 
   const tenantName = authUser?.organizationName?.trim() || "현재 선택된 지점";
-  const normalizedPhone = useMemo(() => normalizePhone(senderPhone), [senderPhone]);
-  const formattedPhone = useMemo(() => formatPhone(normalizedPhone), [normalizedPhone]);
+  const normalizedPhone = useMemo(() => normalizePhoneDigits(senderPhone), [senderPhone]);
+  const formattedPhone = useMemo(() => formatKoreanPhoneNumber(normalizedPhone), [normalizedPhone]);
   const phoneError =
     normalizedPhone.length > 0 && !isValidSenderPhone(normalizedPhone)
       ? "발신 신청에 사용할 전화번호 형식을 확인해 주세요."
@@ -212,7 +203,7 @@ export function MessageTenantApplicationSettings() {
               <TitleTextInputMolecule
                 label="발신 전화번호"
                 value={formattedPhone}
-                onValueChange={(value) => setSenderPhone(normalizePhone(value))}
+                onValueChange={(value) => setSenderPhone(normalizePhoneDigits(value))}
                 placeholder="예: 0212345678"
                 required
                 error={Boolean(phoneError)}

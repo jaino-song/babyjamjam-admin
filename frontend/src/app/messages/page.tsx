@@ -1997,7 +1997,7 @@ export default function MessagesPage() {
                       왼쪽 목록에서 템플릿을 선택해 주세요.
                     </div>
                   ) : (
-                    <div data-component="messages-template-detail-tabpanes" className="flex h-full flex-col">
+                    <div data-component="messages-template-detail-tabpanes" className="flex min-h-0 flex-col">
                       <div
                         data-component="messages-template-detail-pane"
                         className={cn(templateDetailTab === "details" ? "block" : "hidden")}

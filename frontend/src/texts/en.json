@@ -247,7 +247,8 @@
    "documents": {
      "title": "document management",
      "upload": "upload",
-     "upload-title": "upload document",
+  "upload-title": "file upload",
+  "upload-details-title": "file details",
      "filter-all": "all",
      "delete-confirm-title": "delete document",
      "delete-confirm-message": "are you sure you want to delete this document? this action cannot be undone.",

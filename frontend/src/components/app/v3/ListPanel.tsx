@@ -111,7 +111,7 @@ export function ListPanel({
           <div
             data-component="list-panel-tabs"
             className={cn(
-              "flex items-center px-6 pt-4 shrink-0",
+              "flex min-h-[52px] items-center px-6 pt-4 shrink-0",
               showTabs ? "justify-between" : "justify-end",
             )}
           >
@@ -191,7 +191,7 @@ export function ListPanel({
                 value={searchValue!}
                 onChange={onSearchChange!}
                 placeholder={searchPlaceholder}
-                className={tabsVariant === "inline" && showTabs ? "pb-2" : undefined}
+                className={tabsVariant === "inline" ? "pb-2" : undefined}
                 disabled={disabled}
               />
             )}
@@ -207,7 +207,7 @@ export function ListPanel({
         </div>
       ) : null}
 
-      <div data-component="list-panel-content" className="relative overflow-y-auto min-h-0 flex-1 px-6 pt-6 flex flex-col">
+      <div data-component="list-panel-content" className="relative overflow-y-auto min-h-0 flex-1 px-6 pt-3 flex flex-col">
         {showContentSkeleton ? contentSkeleton : children}
         <div className="sticky bottom-0 h-6 bg-white shrink-0" />
       </div>

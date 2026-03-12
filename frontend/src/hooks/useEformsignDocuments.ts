@@ -80,6 +80,7 @@ export function useEformsignDocumentsByType(isAuthenticated: boolean, type: Docu
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5, // 5 minutes
     gcTime: 1000 * 60 * 60,   // 1 hour (garbage collection)
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -91,6 +92,7 @@ export function useEformsignDocuments(isAuthenticated: boolean = true) {
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
   });
 }
 

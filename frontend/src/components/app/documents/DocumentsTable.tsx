@@ -403,9 +403,10 @@ export function DocumentsTable() {
                             {t(locale, "documents.delete-confirm-message")}
                         </DialogDescription>
                     </DialogHeader>
-                    <DialogFooter className="gap-2 sm:gap-0">
+                    <DialogFooter className="gap-2">
                         <Button
                             variant="outline"
+                            size="sm"
                             onClick={() => setDeleteDoc(null)}
                             disabled={deleteMutation.isPending}
                         >
@@ -413,6 +414,7 @@ export function DocumentsTable() {
                         </Button>
                         <Button
                             variant="destructive"
+                            size="sm"
                             onClick={handleDelete}
                             disabled={deleteMutation.isPending}
                         >

@@ -108,9 +108,9 @@ export const CustomTemplateForm = ({ template, onPreviewMessageChange }: CustomT
     return (
         <div
             data-component="messages-custom-template-form"
-            className="flex flex-col grow h-full animate-fade-in"
+            className="flex flex-col animate-fade-in"
         >
-            <div className="flex flex-col h-full gap-4">
+            <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-6">
                     {template.variables.map((variable) => (
                         <DynamicInput

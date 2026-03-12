@@ -146,7 +146,7 @@ export class EformsignService {
                 fields: [
                     { id: "이용자 성명", value: contractData.customerName, enabled: true },
                     { id: "이용자 생년월일", value: '', enabled: true },
-                    { id: "이용자 주소", value: '', enabled: true },
+                    { id: "이용자 주소", value: contractData.customerAddress, enabled: true },
                     { id: "계약 시작 년도", value: contractData.startYear },
                     { id: "계약 시작 월", value: contractData.startMonth },
                     { id: "계약 시작 일", value: contractData.startDay },
@@ -275,7 +275,18 @@ export class EformsignService {
      * GET /v2.0/api/documents/{documentId}
      */
     async getDocumentById(accessToken: string, documentId: string): Promise<any> {
-        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}`, {
+        const includeParams = new URLSearchParams({
+            include_fields: "true",
+            include_histories: "true",
+            include_previous_status: "true",
+            include_next_status: "true",
+            include_external_token: "true",
+            include_detail_template_info: "true",
+        });
+
+        const response = await fetch(
+            `${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}?${includeParams.toString()}`,
+            {
             method: "GET",
             headers: {
                 "Content-Type": "application/json",
@@ -289,6 +300,40 @@ export class EformsignService {
         }
 
         return await response.json();
+    }
+
+    /**
+     * Download document PDF or audit trail PDF
+     * GET /v2.0/api/documents/{documentId}/download_files?file_type=document|audit_trail
+     */
+    async downloadDocumentFile(
+        accessToken: string,
+        documentId: string,
+        fileType: "document" | "audit_trail" = "document"
+    ): Promise<{
+        status: number;
+        contentType: string;
+        contentDisposition: string | null;
+        body: Buffer;
+    }> {
+        const response = await fetch(
+            `${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}/download_files?file_type=${fileType}`,
+            {
+                method: "GET",
+                headers: {
+                    "Authorization": `Bearer ${accessToken}`,
+                },
+            }
+        );
+
+        const body = Buffer.from(await response.arrayBuffer());
+
+        return {
+            status: response.status,
+            contentType: response.headers.get("content-type") || "application/octet-stream",
+            contentDisposition: response.headers.get("content-disposition"),
+            body,
+        };
     }
 
     /**

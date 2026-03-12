@@ -421,21 +421,22 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                 >
                     <div className="ml-auto flex w-full flex-col-reverse gap-2 sm:w-[360px] sm:flex-row sm:justify-end">
                         <Button
-                            variant="outline"
+                            variant="neutral"
                             size="md"
                             onClick={handleClose}
                             disabled={isLoading}
                             data-component="employees-form-dialog-cancel"
-                            className="rounded-full border-v3-border text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-dark"
+                            className="w-full sm:flex-1"
                         >
                             {t(locale, "common.cancel")}
                         </Button>
                         <Button
-                            variant="v3"
+                            variant="positive"
                             size="md"
                             onClick={handleSubmit}
                             disabled={isLoading || !isFormValid}
                             data-component="employees-form-dialog-submit"
+                            className="w-full sm:flex-1"
                         >
                             {isLoading ? (
                                 <Spinner className="h-4 w-4" />

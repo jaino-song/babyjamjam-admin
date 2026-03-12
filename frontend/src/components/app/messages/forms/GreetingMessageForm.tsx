@@ -36,9 +36,9 @@ export const GreetingMessageForm = ({ onPreviewMessageChange }: GreetingMessageF
   return (
     <div
       data-component="messages-greeting-form"
-      className="flex flex-col justify-center grow w-full h-full animate-fade-in"
+      className="flex w-full flex-col animate-fade-in"
     >
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col">
         {/* generated message */}
         {displayMessage && (
           <GeneratedMsg

@@ -42,6 +42,8 @@ export const IN_PROGRESS_CODES = [
   "030", // doc_request_outsider: 문서 외부자 요청
   "043", // doc_update: 문서 수정
   "060", // doc_request_participant: 참여자 요청
+  "063", // doc_rerequest_participant: 참여자 재요청(외부 수신자)
+  "064", // doc_open_participant: 참여자 문서 열람(외부 수신자)
   "070", // doc_request_reviewer: 검토자 요청
 ] as const;
 
@@ -51,11 +53,48 @@ export type DocumentStatusLabel = "대기" | "완료" | "거부";
 // Filter types for API calls
 export type DocumentFilterType = "in-progress" | "completed" | "rejected" | null;
 
+const STATUS_NAME_TO_CODE: Record<string, string> = {
+  doc_tempsave: "001",
+  doc_create: "002",
+  doc_complete: "003",
+  doc_request_approval: "010",
+  doc_reject_approval: "011",
+  doc_accept_approval: "012",
+  doc_request_reception: "020",
+  doc_reject_reception: "021",
+  doc_accept_reception: "022",
+  doc_request_outsider: "030",
+  doc_reject_outsider: "031",
+  doc_accept_outsider: "032",
+  doc_request_revoke: "040",
+  doc_revoke: "042",
+  doc_update: "043",
+  doc_request_reject: "045",
+  doc_request_delete: "047",
+  doc_delete: "049",
+  doc_request_participant: "060",
+  doc_reject_participant: "061",
+  doc_accept_participant: "062",
+  doc_rerequest_participant: "063",
+  doc_open_participant: "064",
+  doc_request_reviewer: "070",
+  doc_reject_reviewer: "071",
+  doc_accept_reviewer: "072",
+  doc_expired: "080",
+  face_signature_complete: "092",
+};
+
 /**
  * Normalize status code to 3-digit format
  */
 export function normalizeStatusCode(code: string | undefined | null): string {
-  return code?.trim()?.padStart(3, "0") || "000";
+  const normalized = code?.trim().toLowerCase();
+
+  if (!normalized) {
+    return "000";
+  }
+
+  return STATUS_NAME_TO_CODE[normalized] ?? normalized.padStart(3, "0");
 }
 
 /**

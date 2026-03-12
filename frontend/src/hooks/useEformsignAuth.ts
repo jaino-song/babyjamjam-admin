@@ -11,6 +11,10 @@ interface UseEformsignAuthReturn {
   authenticate: () => Promise<void>;
 }
 
+interface UseEformsignAuthOptions {
+  syncOnWindowFocus?: boolean;
+}
+
 // Cookie expiry buffer (re-authenticate 5 minutes before expiry)
 const AUTH_BUFFER_MS = 5 * 60 * 1000;
 const TOKEN_EXPIRY_MS = 60 * 60 * 1000;
@@ -50,7 +54,9 @@ async function authenticateOnce(memberEmail?: string): Promise<void> {
  * - Stores authentication timestamp in sessionStorage
  * - Auto re-authenticates when token is about to expire
  */
-export function useEformsignAuth(): UseEformsignAuthReturn {
+export function useEformsignAuth(
+  { syncOnWindowFocus = true }: UseEformsignAuthOptions = {}
+): UseEformsignAuthReturn {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -104,13 +110,16 @@ export function useEformsignAuth(): UseEformsignAuthReturn {
   useEffect(() => {
     void syncAuthentication();
 
+    if (!syncOnWindowFocus) {
+      return;
+    }
+
     const handleFocus = () => {
       void syncAuthentication();
     };
-
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
-  }, [syncAuthentication]);
+  }, [syncAuthentication, syncOnWindowFocus]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

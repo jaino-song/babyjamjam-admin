@@ -13,7 +13,8 @@ describe("Input Component", () => {
   it("renders v3 variant correctly", () => {
     const { container } = render(<Input variant="v3" />);
     const input = container.querySelector("input");
-    expect(input).toHaveClass("rounded-[14px]");
+    expect(input).toHaveClass("h-12");
+    expect(input).toHaveClass("rounded-[16px]");
     expect(input).toHaveClass("focus-visible:scale-[1.02]");
   });
 

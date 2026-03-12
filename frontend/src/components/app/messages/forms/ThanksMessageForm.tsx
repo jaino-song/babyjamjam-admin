@@ -42,9 +42,9 @@ export const ThanksMessageForm = ({ onPreviewMessageChange }: ThanksMessageFormP
   return (
     <div
       data-component="messages-thanks-form"
-      className="flex flex-col grow h-full animate-fade-in"
+      className="flex flex-col animate-fade-in"
     >
-      <div className="flex flex-col h-full gap-4">
+      <div className="flex flex-col gap-4">
           <NameInput
             name={name}
             setName={(value) => {

@@ -275,8 +275,9 @@
   "documents": {
     "title": "문서 관리",
     "upload": "업로드",
-    "upload-title": "문서 업로드",
-    "filter-all": "전체",
+  "upload-title": "파일 업로드",
+  "upload-details-title": "파일 세부정보",
+  "filter-all": "전체",
     "delete-confirm-title": "문서 삭제",
     "delete-confirm-message": "이 문서를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
     "delete-success": "문서가 삭제되었습니다",

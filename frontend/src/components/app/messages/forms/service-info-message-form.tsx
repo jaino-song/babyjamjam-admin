@@ -43,9 +43,9 @@ export const ServiceInfoMessageForm = ({ onPreviewMessageChange }: ServiceInfoMe
   return (
     <div
       data-component="messages-service-info-form"
-      className="flex flex-col grow h-full animate-fade-in"
+      className="flex flex-col animate-fade-in"
     >
-      <div className="flex flex-col h-full gap-4">
+      <div className="flex flex-col gap-4">
         <TitleTextInputMolecule
           id="client-name"
           label={t(locale, "service-info-msg.name-label")}

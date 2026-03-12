@@ -116,6 +116,16 @@ export const eformsignApi = {
         const { data } = await api.post(`/eformsign/documents/${documentId}/re-request`, params);
         return data;
     },
+    getDocument: async (documentId: string) => {
+        const { data } = await api.get(`/eformsign/documents/${documentId}`);
+        return data;
+    },
+    getLocalDocumentRecord: async (documentId: string) => {
+        const { data } = await api.get(`/eformsign-docs/document-id`, {
+            params: { documentId },
+        });
+        return data as { clientId?: number | null } | null;
+    },
     generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
         const { data } = await api.post('/generate-document', { contractData, clientId });
         return data;

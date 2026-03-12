@@ -61,7 +61,7 @@ export const GeneratedMsg = memo(function GeneratedMsg({
       animate={{ opacity: 1, filter: "blur(0px)" }}
       transition={{ duration: 0.8 }}
       data-component="messages-generated-msg-panel"
-      className="mt-6 space-y-4"
+      className=""
     >
       <div data-component="messages-generated-msg-detail" className="space-y-4">
         <div

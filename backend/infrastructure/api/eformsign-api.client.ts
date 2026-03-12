@@ -188,7 +188,18 @@ export class EformsignApiClient implements IEformsignClientRepository {
      * GET /v2.0/api/documents/{DOCUMENT_ID}
      */
     async getDocument(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse> {
-        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}`, {
+        const includeParams = new URLSearchParams({
+            include_fields: "true",
+            include_histories: "true",
+            include_previous_status: "true",
+            include_next_status: "true",
+            include_external_token: "true",
+            include_detail_template_info: "true",
+        });
+
+        const response = await fetch(
+            `${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}?${includeParams.toString()}`,
+            {
             method: "GET",
             headers: {
                 "Content-Type": "application/json",
@@ -247,4 +258,3 @@ export class EformsignApiClient implements IEformsignClientRepository {
         };
     }
 }
-

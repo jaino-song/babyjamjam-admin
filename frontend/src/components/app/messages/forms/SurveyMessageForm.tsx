@@ -42,9 +42,9 @@ export const SurveyMessageForm = ({ onPreviewMessageChange }: SurveyMessageFormP
   return (
     <div
       data-component="messages-survey-form"
-      className="flex flex-col grow h-full animate-fade-in"
+      className="flex flex-col animate-fade-in"
     >
-      <div className="flex flex-col h-full gap-4">
+      <div className="flex flex-col gap-4">
           <NameInput
             name={name}
             setName={(value) => {
