@@ -28,10 +28,10 @@ const LABEL_CLASS_NAME =
 const V3_TEXTAREA_CLASS_NAME =
   "min-h-[104px] rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
 const V3_SELECT_TRIGGER_CLASS_NAME =
-  "h-12 w-full rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 text-[0.85rem] text-v3-dark shadow-none focus-visible:border-v3-primary focus-visible:ring-[3px] focus-visible:ring-[hsl(214,100%,34%,0.08)]";
+  "h-12 w-full";
 const V3_SELECT_CONTENT_CLASS_NAME =
-  "rounded-[18px] border border-v3-border bg-white p-1 shadow-[0_12px_36px_hsla(214,50%,20%,0.12)]";
-const V3_SELECT_ITEM_CLASS_NAME = "rounded-[12px] px-3 py-2 text-[0.85rem]";
+  "rounded-[22px]";
+const V3_SELECT_ITEM_CLASS_NAME = "rounded-[16px]";
 
 interface DocumentDropzoneProps {
   onUpload: (params: {

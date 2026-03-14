@@ -4,7 +4,6 @@ import { z } from 'zod';
 const passwordSchema = z
     .string()
     .min(8, '비밀번호는 최소 8자 이상이어야 합니다.')
-    .regex(/[A-Z]/, '비밀번호에 대문자가 포함되어야 합니다.')
     .regex(/[a-z]/, '비밀번호에 소문자가 포함되어야 합니다.')
     .regex(/[0-9]/, '비밀번호에 숫자가 포함되어야 합니다.')
     .regex(/[^A-Za-z0-9]/, '비밀번호에 특수문자가 포함되어야 합니다.');
@@ -88,7 +87,6 @@ export type LinkPasswordFormData = z.infer<typeof linkPasswordSchema>;
 // Helper to get password requirements for UI display
 export const passwordRequirements = [
     { label: '최소 8자 이상', regex: /.{8,}/ },
-    { label: '대문자 포함', regex: /[A-Z]/ },
     { label: '소문자 포함', regex: /[a-z]/ },
     { label: '숫자 포함', regex: /[0-9]/ },
     { label: '특수문자 포함', regex: /[^A-Za-z0-9]/ },

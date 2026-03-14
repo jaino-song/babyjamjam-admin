@@ -602,7 +602,7 @@ export const ContractCreationForm = () => {
               data-component="contract-creation-doc-type-select"
             >
               <SelectTrigger
-                className="w-full h-auto rounded-[14px] border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-v3-dark shadow-none focus-visible:border-v3-primary focus-visible:ring-0 focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]"
+                className="w-full"
                 data-component="contract-creation-doc-type-trigger"
               >
                 <SelectValue placeholder={t(locale, "contract-msg.doc-type-label")} />

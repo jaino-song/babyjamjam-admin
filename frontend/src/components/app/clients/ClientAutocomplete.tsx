@@ -141,7 +141,7 @@ export function ClientAutocomplete({
                         data-component="clients-autocomplete-input"
                         className={cn(
                             "w-full justify-between font-normal",
-                            !selectedClient && "text-muted-foreground",
+                            selectedClient ? "text-v3-dark" : "text-muted-foreground",
                             error && "border-destructive focus:ring-destructive"
                         )}
                     >
@@ -164,7 +164,11 @@ export function ClientAutocomplete({
                         </div>
                     </Button>
                 </PopoverTrigger>
-                <PopoverContent data-component="clients-autocomplete-dropdown" className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                <PopoverContent
+                    data-component="clients-autocomplete-dropdown"
+                    className="w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border border-v3-border bg-white p-0 text-v3-dark shadow-[0_12px_36px_hsla(214,50%,20%,0.12)]"
+                    align="start"
+                >
                     <Command shouldFilter={false}>
                         <CommandInput
                             placeholder={t(locale, "contract-msg.client-search-placeholder")}
@@ -189,7 +193,7 @@ export function ClientAutocomplete({
                                             key={client.id}
                                             value={client.id.toString()}
                                             onSelect={() => handleSelect(client)}
-                                            className="flex flex-col items-start gap-1 py-2"
+                                            className="flex flex-col items-start gap-1 rounded-[16px] px-3 py-2.5"
                                         >
                                             <div className="flex items-center gap-2 w-full">
                                                 <Check
@@ -224,7 +228,7 @@ export function ClientAutocomplete({
                                 <CommandSeparator />
                                 <button
                                     type="button"
-                                    className="flex w-full flex-col py-3 px-3 text-left hover:bg-accent transition-colors"
+                                    className="flex w-full flex-col rounded-[16px] px-3 py-3 text-left transition-colors hover:bg-accent"
                                     onClick={handleManualEntry}
                                 >
                                     <div className="flex items-center gap-2">

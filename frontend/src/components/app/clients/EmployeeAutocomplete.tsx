@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Check, UserPlus, X, Loader2 } from "lucide-react";
+import { Check, ChevronsUpDown, UserPlus, X, Loader2 } from "lucide-react";
 import { useEmployees, Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -165,10 +165,10 @@ export function EmployeeAutocomplete({
                     data-component="employee-autocomplete-input"
                     style={{ outline: "2px solid transparent", outlineOffset: "2px" }}
                     className={cn(
-                        "w-full h-9 px-3 pr-16 py-1 rounded-md border bg-transparent text-sm shadow-sm transition-colors",
-                        "placeholder:text-muted-foreground",
+                        "h-10 w-full rounded-full border-2 border-v3-border bg-white px-4 py-2 pr-20 text-[0.85rem] font-normal text-v3-dark shadow-none transition-all duration-300",
+                        "placeholder:text-muted-foreground hover:bg-v3-dim-white focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
                         error && "border-destructive",
-                        !error && "border-input"
+                        !error && "border-v3-border"
                     )}
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -184,11 +184,12 @@ export function EmployeeAutocomplete({
                             <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
                         </button>
                     )}
+                    <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
                 </div>
 
                 {showDropdown && (
                     <div
-                        className="absolute top-full left-0 right-0 z-50 mt-1 rounded-md border bg-popover shadow-md animate-in fade-in-0 zoom-in-95"
+                        className="absolute top-full left-0 right-0 z-50 mt-2 overflow-hidden rounded-[22px] border border-v3-border bg-white text-v3-dark shadow-[0_12px_36px_hsla(214,50%,20%,0.12)] animate-in fade-in-0 zoom-in-95"
                         data-testid="employee-autocomplete-dropdown"
                     >
                         {isLoading ? (
@@ -200,7 +201,7 @@ export function EmployeeAutocomplete({
                                 {t(locale, "clients.form.no-employee-found")}
                             </div>
                         ) : (
-                                <div className="max-h-[200px] overflow-y-auto py-1">
+                                <div className="max-h-[200px] overflow-y-auto p-1">
                                     {filteredEmployees.map((employee, index) => (
                                     <button
                                         type="button"
@@ -211,7 +212,7 @@ export function EmployeeAutocomplete({
                                         }}
                                         onMouseEnter={() => setHighlightedIndex(index)}
                                         className={cn(
-                                            "flex w-full flex-col items-start gap-1 px-3 py-2 text-left cursor-pointer transition-colors",
+                                            "flex w-full cursor-pointer flex-col items-start gap-1 rounded-[16px] px-3 py-2.5 text-left transition-colors",
                                             highlightedIndex === index && "bg-accent",
                                             selectedEmployee?.id === employee.id && "bg-accent/50"
                                         )}
@@ -244,7 +245,7 @@ export function EmployeeAutocomplete({
                                     }}
                                     onMouseEnter={() => setHighlightedIndex(filteredEmployees.length)}
                                     className={cn(
-                                        "flex w-full flex-col py-3 px-3 text-left cursor-pointer transition-colors",
+                                        "flex w-full cursor-pointer flex-col rounded-[16px] px-3 py-3 text-left transition-colors",
                                         highlightedIndex === filteredEmployees.length && "bg-accent"
                                     )}
                                     data-testid="employee-autocomplete-add-button"

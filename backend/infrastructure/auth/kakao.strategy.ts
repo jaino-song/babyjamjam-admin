@@ -22,6 +22,9 @@ interface KakaoProfile {
 export class KakaoStrategy extends PassportStrategy(Strategy) {
     constructor() {
         super({
+            // Keep Kakao login limited to basic profile/email fields for now.
+            // Requesting additional consent items such as phone_number or birthday
+            // should only be done after the Kakao app has the required approval.
             clientID: process.env['KAKAO_CLIENT_ID'],
             clientSecret: process.env['KAKAO_CLIENT_SECRET'],
             callbackURL: process.env['KAKAO_CALLBACK_URL'],

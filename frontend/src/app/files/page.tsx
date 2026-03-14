@@ -260,7 +260,7 @@ export default function FilesPage() {
               </DialogDescription>
             </div>
           </DialogHeader>
-          <div data-component="files-upload-content" className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+          <div data-component="files-upload-content" className="min-h-0 flex-1 overflow-y-auto bg-white px-6 py-6">
             <DocumentDropzone onUpload={handleUpload} isLoading={uploadMutation.isPending} uploadProgress={uploadProgress} />
           </div>
           <DialogFooter className="shrink-0 border-t border-v3-border bg-white px-6 py-4">

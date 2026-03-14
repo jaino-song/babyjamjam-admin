@@ -4,11 +4,26 @@ import { ALIMTALK_LOG_REPOSITORY, IAlimtalkLogRepository } from "domain/reposito
 import { ALIGO_API_PORT, IAligoApiPort } from "domain/ports/aligo-api.port";
 import { ALIGO_TEMPLATES } from "application/dto/aligo";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
+import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
+import {
+    isTransientPrismaConnectivityError,
+    summarizePrismaError,
+} from "infrastructure/database/prisma-error.utils";
+
+const MAX_RUN_MS = 15 * 60 * 1000;
+const DB_COOLDOWN_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class AlimtalkRetrySchedulerService {
     private readonly logger = new Logger(AlimtalkRetrySchedulerService.name);
-    private isRunning = false;
+    private readonly executionGuard = new SchedulerExecutionGuard({
+        logger: this.logger,
+        runningWarning: "[Retry] Previous retry cycle is still running; skipping tick",
+        staleRunError: "[Retry] Previous retry cycle exceeded the max runtime",
+        cooldownWarning: "[Retry] Database connectivity issue detected during retry cycle",
+        maxRunMs: MAX_RUN_MS,
+        cooldownMs: DB_COOLDOWN_MS,
+    });
 
     constructor(
         @Inject(ALIMTALK_LOG_REPOSITORY)
@@ -19,12 +34,11 @@ export class AlimtalkRetrySchedulerService {
 
     @Cron("*/5 * * * *", { timeZone: "Asia/Seoul" })
     async retryFailedMessages(): Promise<void> {
-        if (this.isRunning) {
-            this.logger.warn("[Retry] Previous retry cycle is still running; skipping tick");
+        const runToken = this.executionGuard.tryStart();
+        if (!runToken) {
             return;
         }
 
-        this.isRunning = true;
         try {
             const pendingLogs = await this.logRepository.findPendingRetries();
 
@@ -59,12 +73,17 @@ export class AlimtalkRetrySchedulerService {
                 }
             }
         } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                this.executionGuard.enterCooldown(summarizePrismaError(error));
+                return;
+            }
+
             this.logger.error(
                 "[Retry] Failed to load or retry pending alimtalk messages",
                 error instanceof Error ? error.stack : String(error),
             );
         } finally {
-            this.isRunning = false;
+            this.executionGuard.finish(runToken);
         }
     }
 }
