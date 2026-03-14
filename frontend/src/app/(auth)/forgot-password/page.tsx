@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { CheckCircle } from "lucide-react";
 import { authApi } from "@/services/api";
 import { forgotPasswordSchema } from "@/lib/validations/auth";
-import { CardContainer } from "@/components/auth/auth-card";
+import { AuthPanel } from "@/components/auth/auth-panel";
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
 import { Button } from "@/components/ui/button";
@@ -58,7 +58,7 @@ export default function ForgotPasswordPage() {
         : "가입하신 이메일 주소를 입력하시면 비밀번호 재설정 링크를 보내드립니다.";
 
     return (
-        <CardContainer
+        <AuthPanel
             data-component="auth-forgot-password"
             dataComponents={{
                 container: "auth-forgot-password",
@@ -95,8 +95,9 @@ export default function ForgotPasswordPage() {
                     </Alert>
                     <Button
                         data-component="auth-forgot-password-login-btn"
+                        variant="positive"
                         size="lg"
-                        className="w-full rounded-2xl"
+                        className="w-full"
                         onClick={() => router.push("/login")}
                     >
                         로그인 페이지로 돌아가기
@@ -125,8 +126,9 @@ export default function ForgotPasswordPage() {
                         <Button
                             data-component="auth-forgot-password-submit-btn"
                             type="submit"
+                            variant="positive"
                             size="lg"
-                            className="w-full rounded-2xl"
+                            className="w-full"
                             disabled={isLoading || !email.trim()}
                         >
                             {isLoading ? <Spinner size="sm" /> : "비밀번호 재설정 링크 전송"}
@@ -141,6 +143,6 @@ export default function ForgotPasswordPage() {
                     />
                 </>
             )}
-        </CardContainer>
+        </AuthPanel>
     );
 }

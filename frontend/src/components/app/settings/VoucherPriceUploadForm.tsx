@@ -196,10 +196,10 @@ export function VoucherPriceUploadForm() {
               value={String(selectedYear)}
               onValueChange={(value: string) => setSelectedYear(Number(value))}
             >
-              <SelectTrigger id="year-select" className="w-[120px] rounded-xl border-border/50">
+              <SelectTrigger id="year-select" className="w-[120px]">
                 <SelectValue placeholder="연도 선택" />
               </SelectTrigger>
-              <SelectContent className="rounded-xl">
+              <SelectContent>
                 {yearOptions.map((year) => (
                   <SelectItem key={year} value={String(year)}>
                     {year}년

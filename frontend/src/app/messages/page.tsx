@@ -1515,7 +1515,7 @@ function MessageHistorySection() {
                   <SelectTrigger
                     size="sm"
                     data-component="messages-history-list-filter-relative-trigger"
-                    className="w-full rounded-[10px] border-v3-border bg-white text-[0.76rem] text-v3-dark shadow-xs"
+                    className="w-full"
                   >
                     <SelectValue placeholder="기간 선택" />
                   </SelectTrigger>

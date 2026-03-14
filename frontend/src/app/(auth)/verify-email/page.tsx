@@ -101,6 +101,7 @@ export default function VerifyEmailPage() {
                             <p className="text-muted-foreground">{message}</p>
                             <Button
                                 data-component="auth-verify-email-login-btn"
+                                variant="positive"
                                 size="lg"
                                 className="w-full mt-4"
                                 onClick={() => router.push("/login")}
@@ -149,7 +150,7 @@ export default function VerifyEmailPage() {
                                 <Button
                                     data-component="auth-verify-email-resend-btn"
                                     type="submit"
-                                    variant="outline"
+                                    variant="positive-outline"
                                     size="lg"
                                     className="w-full"
                                     disabled={resendLoading || !resendEmail.trim()}
@@ -160,7 +161,7 @@ export default function VerifyEmailPage() {
 
                             <Button
                                 data-component="auth-verify-email-login-btn"
-                                variant="ghost"
+                                variant="link"
                                 onClick={() => router.push("/login")}
                             >
                                 로그인 페이지로 돌아가기
@@ -208,7 +209,7 @@ export default function VerifyEmailPage() {
                             <Button
                                 data-component="auth-verify-email-resend-btn"
                                 type="submit"
-                                variant="outline"
+                                variant="positive-outline"
                                 size="lg"
                                 className="w-full"
                                 disabled={resendLoading || !resendEmail.trim()}
@@ -219,7 +220,7 @@ export default function VerifyEmailPage() {
 
                         <Button
                             data-component="auth-verify-email-login-btn"
-                            variant="ghost"
+                            variant="link"
                             onClick={() => router.push("/login")}
                         >
                             로그인 페이지로 돌아가기

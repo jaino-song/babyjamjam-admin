@@ -8,20 +8,29 @@ interface PasswordRequirement {
 
 interface PasswordRequirementsProps {
   requirements: PasswordRequirement[];
+  orientation?: "vertical" | "horizontal";
   className?: string;
 }
 
 export function PasswordRequirements({
   requirements,
+  orientation = "vertical",
   className,
 }: PasswordRequirementsProps) {
   return (
-    <ul className={cn("space-y-1", className)}>
+    <ul
+      className={cn(
+        orientation === "horizontal"
+          ? "flex flex-wrap gap-x-[18px] gap-y-[8px]"
+          : "space-y-1",
+        className
+      )}
+    >
       {requirements.map((req) => (
         <li
           key={req.label}
           className={cn(
-            "flex items-center gap-2 text-sm transition-colors",
+            "flex items-center gap-[2px] text-sm transition-colors",
             req.met ? "text-success" : "text-muted-foreground"
           )}
         >

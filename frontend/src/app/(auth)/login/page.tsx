@@ -7,7 +7,7 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { loginWithEmail } from "./actions";
-import { CardContainer } from "@/components/auth/auth-card";
+import { AuthPanel } from "@/components/auth/auth-panel";
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
@@ -113,7 +113,7 @@ const LoginPage = () => {
     };
 
     return (
-        <CardContainer
+        <AuthPanel
             data-component="auth-login"
             dataComponents={{
                 container: "auth-login-container",
@@ -202,6 +202,7 @@ const LoginPage = () => {
 
                     <Button
                         type="submit"
+                        variant="positive"
                         size="lg"
                         className="w-full"
                         disabled={isLoading}
@@ -239,7 +240,7 @@ const LoginPage = () => {
                     prefixText="계정이 없으신가요?"
                     linkLabel="회원가입"
                 />
-        </CardContainer>
+        </AuthPanel>
     );
 };
 

@@ -316,12 +316,12 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                                     <span className="ml-1 text-v3-burgundy">*</span>
                                 </Label>
                                 <Select value={formData.grade} onValueChange={(value) => handleChange("grade", value)}>
-                                    <SelectTrigger className="h-12 w-full rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 text-[0.85rem] text-v3-dark shadow-none focus-visible:border-v3-primary focus-visible:ring-[3px] focus-visible:ring-[hsl(214,100%,34%,0.08)]">
+                                    <SelectTrigger className="h-12 w-full">
                                         <SelectValue placeholder={t(locale, "employees.form.grade")} />
                                     </SelectTrigger>
-                                    <SelectContent className="rounded-[18px] border border-v3-border bg-white p-1 shadow-[0_12px_36px_hsla(214,50%,20%,0.12)]">
+                                    <SelectContent>
                                         {GRADES.map((grade) => (
-                                            <SelectItem key={grade} value={grade} className="rounded-[12px] px-3 py-2 text-[0.85rem]">
+                                            <SelectItem key={grade} value={grade}>
                                                 {grade}
                                             </SelectItem>
                                         ))}

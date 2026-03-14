@@ -14,6 +14,9 @@ const PRISMA_ERROR_STATUS: Record<string, HttpStatus> = {
     P2025: HttpStatus.NOT_FOUND,          // Record not found
     P2011: HttpStatus.BAD_REQUEST,        // Required field missing
     P2006: HttpStatus.BAD_REQUEST,        // Invalid value for field
+    P1001: HttpStatus.SERVICE_UNAVAILABLE, // Database unreachable
+    P1017: HttpStatus.SERVICE_UNAVAILABLE, // Connection closed by server
+    P2024: HttpStatus.SERVICE_UNAVAILABLE, // Prisma pool exhausted
 };
 
 @Catch(Prisma.PrismaClientKnownRequestError)
@@ -65,6 +68,8 @@ export class PrismaExceptionFilter implements ExceptionFilter {
                 return "Bad Request";
             case HttpStatus.NOT_FOUND:
                 return "Not Found";
+            case HttpStatus.SERVICE_UNAVAILABLE:
+                return "Service Unavailable";
             default:
                 return "Internal Server Error";
         }
