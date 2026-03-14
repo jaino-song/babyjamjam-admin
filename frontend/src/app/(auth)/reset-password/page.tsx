@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle, AlertTriangle } from "lucide-react";
 import { authApi } from "@/services/api";
 import { resetPasswordSchema, checkPasswordStrength, type ResetPasswordFormData } from "@/lib/validations/auth";
-import { CardContainer } from "@/components/auth/auth-card";
+import { AuthPanel } from "@/components/auth/auth-panel";
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
 import { PasswordRequirements } from "@/components/auth/password-requirements";
@@ -96,7 +96,7 @@ export default function ResetPasswordPage() {
     };
 
     return (
-        <CardContainer
+        <AuthPanel
             data-component="auth-reset-password"
             dataComponents={{
                 container: "auth-reset-password",
@@ -122,8 +122,9 @@ export default function ResetPasswordPage() {
                     </p>
                     <Button
                         data-component="auth-reset-password-retry-btn"
+                        variant="positive"
                         size="lg"
-                        className="w-full rounded-2xl"
+                        className="w-full"
                         onClick={() => router.push("/forgot-password")}
                     >
                         비밀번호 재설정 다시 요청
@@ -144,8 +145,9 @@ export default function ResetPasswordPage() {
                     </p>
                     <Button
                         data-component="auth-reset-password-login-btn"
+                        variant="positive"
                         size="lg"
-                        className="w-full rounded-2xl"
+                        className="w-full"
                         onClick={() => router.push("/login")}
                     >
                         로그인하기
@@ -194,8 +196,9 @@ export default function ResetPasswordPage() {
                         <Button
                             data-component="auth-reset-password-submit-btn"
                             type="submit"
+                            variant="positive"
                             size="lg"
-                            className="w-full rounded-2xl"
+                            className="w-full"
                             disabled={isLoading}
                         >
                             {isLoading ? <Spinner size="sm" /> : "비밀번호 변경"}
@@ -209,6 +212,6 @@ export default function ResetPasswordPage() {
                     />
                 </>
             )}
-        </CardContainer>
+        </AuthPanel>
     );
 }
