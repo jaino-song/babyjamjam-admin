@@ -1,6 +1,6 @@
 # API Receipt
 
-Overview of public HTTP endpoints exposed by the Imirae Incheon back-office backend. All routes are mounted on the NestJS server (default port `3001`). Unless otherwise noted, endpoints expect and return JSON and require appropriate authentication/authorization middleware.
+Overview of public HTTP endpoints exposed by the BabyJamJam Staff backend. All routes are mounted on the NestJS server (default port `3001`). Unless otherwise noted, endpoints expect and return JSON and require appropriate authentication/authorization middleware.
 
 ## Users (`/users`)
 
@@ -102,4 +102,3 @@ Overview of public HTTP endpoints exposed by the Imirae Incheon back-office back
 
 - All route paths assume the Nest app is mounted at root (`/`). Adjust if a global prefix is configured (e.g., `app.setGlobalPrefix('api')`).
 - Ensure appropriate auth/role guards wrap mutating routes in production. The current receipt documents functionality, not authorization policies.
-

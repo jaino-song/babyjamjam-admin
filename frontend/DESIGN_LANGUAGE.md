@@ -1,6 +1,6 @@
 # Design Language & Conventions
 
-This document describes the design patterns, conventions, and best practices used throughout the Incheon Imirae Back Office frontend application.
+This document describes the design patterns, conventions, and best practices used throughout the BabyJamJam Staff frontend application.
 
 ## Table of Contents
 - [Theme & Colors](#theme--colors)

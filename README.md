@@ -6,8 +6,8 @@ Monorepo for **아가잼잼** — a Korean baby care service management platform
 
 ```
 dev/
-├── backend/        # NestJS API server (imirae-incheon-backend)
-├── frontend/       # Next.js desktop back office (imirae-incheon-back-office)
+├── backend/        # NestJS API server (babyjamjam-staff-backend)
+├── frontend/       # Next.js desktop back office (babyjamjam-staff)
 ├── mobile/         # Next.js mobile admin PWA (babyjamjam-admin)
 ├── native/         # Kotlin Multiplatform (Android + iOS)
 ├── docs/           # Documentation, guides, and task tracking

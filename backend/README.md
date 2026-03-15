@@ -1,6 +1,6 @@
-# Imirae Incheon Back Office – Backend
+# BabyJamJam Staff – Backend
 
-NestJS service powering the Imirae Incheon back office system. The project follows **Clean Architecture** principles with clear separation of concerns across domain, application, infrastructure, and interface layers.
+NestJS service powering the BabyJamJam Staff operations platform. The project follows **Clean Architecture** principles with clear separation of concerns across domain, application, infrastructure, and interface layers.
 
 ---
 
@@ -598,4 +598,4 @@ npm run format             # Run Prettier
 
 ## License
 
-Private – Imirae Incheon
+Private – BabyJamJam

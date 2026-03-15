@@ -1,6 +1,6 @@
 # PWA Push Notification Implementation Guide
 
-This document describes the PWA push notification system implemented for the Imirae Incheon Back Office project.
+This document describes the PWA push notification system implemented for the BabyJamJam Staff project.
 
 ## Architecture Overview
 

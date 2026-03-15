@@ -139,6 +139,6 @@
 
 ## 📅 작성 정보
 
-- **프로젝트:** Imirae Incheon Back Office
+- **프로젝트:** BabyJamJam Staff
 - **기간:** 2025-12 ~ 2026-01
 - **기술 스택:** Next.js 16, NestJS 10, Prisma 6, TypeScript 5
