@@ -1,7 +1,10 @@
+import { Transform } from 'class-transformer';
 import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MinLength } from 'class-validator';
 
+const NAME_PATTERN = /^[\p{L} ]+$/u;
+
 export class RegisterDto {
-    @IsEmail({}, { message: '유효한 이메일 주소를 입력해주세요.' })
+    @IsEmail({}, { message: '이메일 주소를 확인해 주세요.' })
     @IsNotEmpty({ message: '이메일은 필수입니다.' })
     email!: string;
 
@@ -11,7 +14,9 @@ export class RegisterDto {
     password!: string;
 
     @IsString()
+    @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
     @IsNotEmpty({ message: '이름은 필수입니다.' })
+    @Matches(NAME_PATTERN, { message: '이름에는 숫자나 특수문자를 입력할 수 없습니다.' })
     name!: string;
 
     @IsString()
@@ -35,7 +40,7 @@ export class RegisterDto {
 }
 
 export class LoginDto {
-    @IsEmail({}, { message: '유효한 이메일 주소를 입력해주세요.' })
+    @IsEmail({}, { message: '이메일 주소를 확인해 주세요.' })
     @IsNotEmpty({ message: '이메일은 필수입니다.' })
     email!: string;
 
@@ -51,7 +56,7 @@ export class VerifyEmailDto {
 }
 
 export class ForgotPasswordDto {
-    @IsEmail({}, { message: '유효한 이메일 주소를 입력해주세요.' })
+    @IsEmail({}, { message: '이메일 주소를 확인해 주세요.' })
     @IsNotEmpty({ message: '이메일은 필수입니다.' })
     email!: string;
 }
@@ -68,7 +73,7 @@ export class ResetPasswordDto {
 }
 
 export class ResendVerificationDto {
-    @IsEmail({}, { message: '유효한 이메일 주소를 입력해주세요.' })
+    @IsEmail({}, { message: '이메일 주소를 확인해 주세요.' })
     @IsNotEmpty({ message: '이메일은 필수입니다.' })
     email!: string;
 }

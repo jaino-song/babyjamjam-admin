@@ -23,6 +23,7 @@ import { TenantModule } from "./infrastructure/tenant/tenant.module";
 import { NotificationModule } from "module/notification.module";
 import { AIChatModule } from "module/ai-chat.module";
 import { MessageDeliveryModule } from "module/message-delivery.module";
+import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
 
 @Module({
     imports: [
@@ -33,7 +34,7 @@ import { MessageDeliveryModule } from "module/message-delivery.module";
         ScheduleModule.forRoot(),
         PassportModule,
         JwtModule.register({
-            secret: process.env['JWT_SECRET'],
+            secret: getJwtSecret(),
             signOptions: { expiresIn: "7d" },
         }),
         AuthModule,

@@ -79,7 +79,7 @@ export const TitleTextInputMolecule = React.forwardRef<
           {labelTrailing ? (
             <div
               data-component={labelTrailingDataComponent}
-              className="shrink-0"
+              className="flex min-h-[0.6875rem] shrink-0 items-center"
             >
               {labelTrailing}
             </div>

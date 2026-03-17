@@ -492,4 +492,71 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             });
         });
     });
+
+    // ============================================
+    // Email Failure Resilience Tests
+    // ============================================
+    describe("requestPasswordReset", () => {
+        it("should return success even when password reset email delivery fails", async () => {
+            // #given
+            prismaService.user.findUnique.mockResolvedValue({
+                ...mockUser,
+                emailVerified: true,
+            });
+            authTokenRepository.deleteByUserIdAndType.mockResolvedValue(undefined);
+            authTokenRepository.create.mockResolvedValue(undefined);
+            (emailService.sendPasswordResetEmail as jest.Mock).mockRejectedValue(
+                new Error("resend unavailable"),
+            );
+
+            // #when
+            const result = await service.requestPasswordReset(mockUser.email);
+
+            // #then
+            expect(result).toEqual({
+                success: true,
+                message: "비밀번호 재설정 이메일이 발송되었습니다.",
+            });
+            expect(authTokenRepository.deleteByUserIdAndType).toHaveBeenCalledWith(
+                mockUser.id,
+                "password_reset",
+            );
+            expect(authTokenRepository.create).toHaveBeenCalledTimes(1);
+            expect(emailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("resendVerificationEmail", () => {
+        it("should return success even when verification email delivery fails", async () => {
+            // #given
+            prismaService.user.findUnique
+                .mockResolvedValueOnce({
+                    ...mockUser,
+                    emailVerified: false,
+                })
+                .mockResolvedValueOnce({
+                    name: mockUser.name,
+                });
+            authTokenRepository.deleteByUserIdAndType.mockResolvedValue(undefined);
+            authTokenRepository.create.mockResolvedValue(undefined);
+            (emailService.sendVerificationEmail as jest.Mock).mockRejectedValue(
+                new Error("resend unavailable"),
+            );
+
+            // #when
+            const result = await service.resendVerificationEmail(mockUser.email);
+
+            // #then
+            expect(result).toEqual({
+                success: true,
+                message: "인증 이메일이 발송되었습니다.",
+            });
+            expect(authTokenRepository.deleteByUserIdAndType).toHaveBeenCalledWith(
+                mockUser.id,
+                "email_verification",
+            );
+            expect(authTokenRepository.create).toHaveBeenCalledTimes(1);
+            expect(emailService.sendVerificationEmail).toHaveBeenCalledTimes(1);
+        });
+    });
 });

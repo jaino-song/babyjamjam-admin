@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
 import {
@@ -16,24 +16,38 @@ import {
  */
 @Injectable()
 export class EformsignApiClient implements IEformsignClientRepository {
+    private readonly logger = new Logger(EformsignApiClient.name);
     private readonly USER_EMAIL: string;
     private readonly EFORMSIGN_API_URL: string; // base for token endpoints
     private readonly EFORMSIGN_DOC_API_URL: string; // for document endpoints (kr-api)
     private readonly EFORMSIGN_API_KEY: string;
     private readonly EFORMSIGN_PRIVATE_KEY: string;
+    private readonly isConfigured: boolean;
 
     constructor(private configService: ConfigService) {
-        this.USER_EMAIL = this.configService.getOrThrow<string>("EFORMSIGN_USER_EMAIL");
-        this.EFORMSIGN_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_API_URL");
-        this.EFORMSIGN_DOC_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_DOC_API_URL");
-        this.EFORMSIGN_API_KEY = this.configService.getOrThrow<string>("EFORMSIGN_API_KEY");
-        this.EFORMSIGN_PRIVATE_KEY = this.configService.getOrThrow<string>("EFORMSIGN_PRIVATE_KEY");
+        this.USER_EMAIL = this.configService.get<string>("EFORMSIGN_USER_EMAIL") || "";
+        this.EFORMSIGN_API_URL = this.configService.get<string>("EFORMSIGN_API_URL") || "";
+        this.EFORMSIGN_DOC_API_URL = this.configService.get<string>("EFORMSIGN_DOC_API_URL") || "";
+        this.EFORMSIGN_API_KEY = this.configService.get<string>("EFORMSIGN_API_KEY") || "";
+        this.EFORMSIGN_PRIVATE_KEY = this.configService.get<string>("EFORMSIGN_PRIVATE_KEY") || "";
+        this.isConfigured = Boolean(
+            this.USER_EMAIL &&
+            this.EFORMSIGN_API_URL &&
+            this.EFORMSIGN_DOC_API_URL &&
+            this.EFORMSIGN_API_KEY &&
+            this.EFORMSIGN_PRIVATE_KEY,
+        );
+
+        if (!this.isConfigured) {
+            this.logger.warn("Eformsign API env vars are not fully configured. Eformsign API client will be disabled.");
+        }
     }
 
     /**
      * Generate eformsign signature using SHA256withECDSA
      */
     private generateSignature(executionTime: number): string {
+        this.assertConfigured();
         const message = String(executionTime);
         const privateKeyDer = Buffer.from(this.EFORMSIGN_PRIVATE_KEY, "hex");
 
@@ -57,6 +71,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
      * POST /v2.0/api_auth/access_token
      */
     async getAccessToken(executionTime: number, memberEmail?: string): Promise<EformsignTokenResponse> {
+        this.assertConfigured();
         const signature = this.generateSignature(executionTime);
         const email = memberEmail || this.USER_EMAIL;
 
@@ -89,6 +104,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
      * POST /v2.0/api_auth/refresh_token
      */
     async refreshAccessToken(executionTime: number, refreshToken: string): Promise<EformsignTokenResponse> {
+        this.assertConfigured();
         const signature = this.generateSignature(executionTime);
 
         const response = await fetch(`${this.EFORMSIGN_API_URL}/v2.0/api_auth/refresh_token`, {
@@ -117,6 +133,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
      * POST /v2.0/api/list_document with type: "01"
      */
     async getInProgressDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]> {
+        this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
             headers: {
@@ -147,6 +164,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
      * POST /v2.0/api/list_document with type: "03"
      */
     async getCompletedDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]> {
+        this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
             headers: {
@@ -176,6 +194,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
      * Get all documents (both in-progress and completed)
      */
     async getAllDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]> {
+        this.assertConfigured();
         const [inProgress, completed] = await Promise.all([
             this.getInProgressDocuments(accessToken),
             this.getCompletedDocuments(accessToken),
@@ -188,6 +207,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
      * GET /v2.0/api/documents/{DOCUMENT_ID}
      */
     async getDocument(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse> {
+        this.assertConfigured();
         const includeParams = new URLSearchParams({
             include_fields: "true",
             include_histories: "true",
@@ -216,6 +236,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
     }
 
     async createDocument(accessToken: string, payload: CreateDocumentPayload): Promise<CreateDocumentResponse> {
+        this.assertConfigured();
         const requestBody = {
             template_id: payload.templateId,
             document: {
@@ -256,5 +277,11 @@ export class EformsignApiClient implements IEformsignClientRepository {
             documentId: data.document_id || data.id,
             status: data.status || "created",
         };
+    }
+
+    private assertConfigured() {
+        if (!this.isConfigured) {
+            throw new Error("Eformsign integration is not configured.");
+        }
     }
 }

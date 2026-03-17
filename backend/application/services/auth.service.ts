@@ -840,9 +840,15 @@ export class AuthService {
         // Build reset URL
         const resetUrl = `${this.FRONTEND_URL}/reset-password?token=${rawToken}`;
 
-        // Send email
-        await this.emailService.sendPasswordResetEmail(user.email!, user.name, resetUrl);
-        this.logger.log(`Password reset email sent to ${email}`);
+        try {
+            await this.emailService.sendPasswordResetEmail(user.email!, user.name, resetUrl);
+            this.logger.log(`Password reset email sent to ${email}`);
+        } catch (error) {
+            this.logger.error(
+                `Failed to send password reset email to ${email}`,
+                error instanceof Error ? error.stack : String(error),
+            );
+        }
 
         return {
             success: true,
@@ -939,8 +945,14 @@ export class AuthService {
             };
         }
 
-        // Send new verification email
-        await this.sendVerificationEmail(user.id, user.email!);
+        try {
+            await this.sendVerificationEmail(user.id, user.email!);
+        } catch (error) {
+            this.logger.error(
+                `Failed to resend verification email to ${email}`,
+                error instanceof Error ? error.stack : String(error),
+            );
+        }
 
         return {
             success: true,

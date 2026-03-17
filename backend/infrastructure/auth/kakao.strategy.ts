@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { Strategy } from "passport-kakao";
 import { KakaoData } from "../../application/services/auth.service";
+import { getKakaoOAuthConfig } from "./kakao-config";
 
 interface KakaoProfile {
     id: string;
@@ -21,13 +22,15 @@ interface KakaoProfile {
 @Injectable()
 export class KakaoStrategy extends PassportStrategy(Strategy) {
     constructor() {
+        const kakaoOAuthConfig = getKakaoOAuthConfig();
+
         super({
             // Keep Kakao login limited to basic profile/email fields for now.
             // Requesting additional consent items such as phone_number or birthday
             // should only be done after the Kakao app has the required approval.
-            clientID: process.env['KAKAO_CLIENT_ID'],
-            clientSecret: process.env['KAKAO_CLIENT_SECRET'],
-            callbackURL: process.env['KAKAO_CALLBACK_URL'],
+            clientID: kakaoOAuthConfig.clientID,
+            clientSecret: kakaoOAuthConfig.clientSecret,
+            callbackURL: kakaoOAuthConfig.callbackURL,
         });
     }
 

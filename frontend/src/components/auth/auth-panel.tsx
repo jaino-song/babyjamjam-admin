@@ -7,6 +7,7 @@ export interface AuthPanelProps {
   children: React.ReactNode;
   title?: React.ReactNode;
   subtitle?: React.ReactNode;
+  containerClassName?: string;
   className?: string;
   contentClassName?: string;
   disableAnimation?: boolean;
@@ -28,6 +29,7 @@ export function AuthPanel({
   children,
   title,
   subtitle,
+  containerClassName,
   className,
   contentClassName,
   disableAnimation = false,
@@ -51,14 +53,17 @@ export function AuthPanel({
   return (
     <div
       data-component={componentSlots.container}
-      className="relative flex h-full min-h-0 w-full items-start justify-center overflow-y-auto py-4 md:py-8 lg:items-center"
+      className={cn(
+        "relative flex !h-auto min-h-full w-full items-start justify-center py-4 md:py-8 lg:items-center",
+        containerClassName
+      )}
     >
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 top-2 mx-auto h-40 w-full max-w-[640px] rounded-full bg-[radial-gradient(circle_at_top,_rgba(18,54,106,0.16),_transparent_72%)] blur-3xl"
       />
 
-      <div className="relative w-full max-w-[460px]">
+      <div className="relative w-[85%] max-w-[460px]">
         <CardShell
           data-component={componentSlots.card}
           animated={!disableAnimation}

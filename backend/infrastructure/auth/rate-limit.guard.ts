@@ -101,11 +101,17 @@ export class RateLimitGuard implements CanActivate {
     }
 
     /**
-     * Extract email from request body
+     * Extract email from request body or query string
      */
     private getEmailFromRequest(request: Request): string | undefined {
         const body = request.body as { email?: string } | undefined;
-        return body?.email;
+        if (body?.email) {
+            return body.email;
+        }
+
+        const query = request.query as { email?: string | string[] } | undefined;
+        const queryEmail = query?.email;
+        return Array.isArray(queryEmail) ? queryEmail[0] : queryEmail;
     }
 
     /**

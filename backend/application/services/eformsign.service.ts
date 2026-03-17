@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
 import * as https from "https";
@@ -13,6 +13,7 @@ export interface EformsignTokenResponse {
 
 @Injectable()
 export class EformsignService {
+    private readonly logger = new Logger(EformsignService.name);
     private readonly USER_EMAIL: string;
     private readonly EFORMSIGN_API_URL: string;
     private readonly EFORMSIGN_DOC_API_URL: string;
@@ -20,15 +21,29 @@ export class EformsignService {
     private readonly EFORMSIGN_PRIVATE_KEY: string;
     private readonly EFORMSIGN_COMPANY_ID: string;
     private readonly EFORMSIGN_TEMPLATE_ID: string;
+    private readonly isConfigured: boolean;
 
     constructor(private configService: ConfigService) {
-        this.USER_EMAIL = this.configService.getOrThrow<string>("EFORMSIGN_USER_EMAIL");
-        this.EFORMSIGN_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_API_URL");
-        this.EFORMSIGN_DOC_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_DOC_API_URL");
-        this.EFORMSIGN_API_KEY = this.configService.getOrThrow<string>("EFORMSIGN_API_KEY");
-        this.EFORMSIGN_PRIVATE_KEY = this.configService.getOrThrow<string>("EFORMSIGN_PRIVATE_KEY");
-        this.EFORMSIGN_COMPANY_ID = this.configService.getOrThrow<string>("EFORMSIGN_COMPANY_ID");
-        this.EFORMSIGN_TEMPLATE_ID = this.configService.getOrThrow<string>("EFORMSIGN_TEMPLATE_ID");
+        this.USER_EMAIL = this.configService.get<string>("EFORMSIGN_USER_EMAIL") || "";
+        this.EFORMSIGN_API_URL = this.configService.get<string>("EFORMSIGN_API_URL") || "";
+        this.EFORMSIGN_DOC_API_URL = this.configService.get<string>("EFORMSIGN_DOC_API_URL") || "";
+        this.EFORMSIGN_API_KEY = this.configService.get<string>("EFORMSIGN_API_KEY") || "";
+        this.EFORMSIGN_PRIVATE_KEY = this.configService.get<string>("EFORMSIGN_PRIVATE_KEY") || "";
+        this.EFORMSIGN_COMPANY_ID = this.configService.get<string>("EFORMSIGN_COMPANY_ID") || "";
+        this.EFORMSIGN_TEMPLATE_ID = this.configService.get<string>("EFORMSIGN_TEMPLATE_ID") || "";
+        this.isConfigured = Boolean(
+            this.USER_EMAIL &&
+            this.EFORMSIGN_API_URL &&
+            this.EFORMSIGN_DOC_API_URL &&
+            this.EFORMSIGN_API_KEY &&
+            this.EFORMSIGN_PRIVATE_KEY &&
+            this.EFORMSIGN_COMPANY_ID &&
+            this.EFORMSIGN_TEMPLATE_ID,
+        );
+
+        if (!this.isConfigured) {
+            this.logger.warn("Eformsign environment variables are not fully configured. Eformsign features will be disabled.");
+        }
     }
 
     /**
@@ -40,6 +55,7 @@ export class EformsignService {
      * - Output: hex string
      */
     generateSignature(executionTime: number): string {
+        this.assertConfigured();
         const message = String(executionTime);
 
         // Convert hex private key to DER format for crypto.sign
@@ -65,6 +81,7 @@ export class EformsignService {
     }
 
     async getAccessToken(executionTime: number, memberEmail?: string): Promise<EformsignTokenResponse> {
+        this.assertConfigured();
         const signature = this.generateSignature(executionTime);
         const email = memberEmail || this.USER_EMAIL;
 
@@ -93,6 +110,7 @@ export class EformsignService {
     }
 
     async refreshAccessToken(executionTime: number, refreshToken: string): Promise<EformsignTokenResponse> {
+        this.assertConfigured();
         const signature = this.generateSignature(executionTime);
 
         const response = await fetch(`${this.EFORMSIGN_API_URL}/v2.0/api_auth/refresh_token`, {
@@ -117,6 +135,7 @@ export class EformsignService {
     }
 
     generateDocumentOptions(contractData: ContractDataDto, accessToken: string, refreshToken: string, templateId?: string) {
+        this.assertConfigured();
         return {
             company: {
                 id: this.EFORMSIGN_COMPANY_ID,
@@ -188,6 +207,7 @@ export class EformsignService {
      * type: "01"
      */
     async getInProgressDocuments(accessToken: string): Promise<any> {
+        this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
             headers: {
@@ -217,6 +237,7 @@ export class EformsignService {
      * type: "03"
      */
     async getCompletedDocuments(accessToken: string): Promise<any> {
+        this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
             headers: {
@@ -246,6 +267,7 @@ export class EformsignService {
      * type: "04"
      */
     async getRejectedDocuments(accessToken: string): Promise<any> {
+        this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
             headers: {
@@ -275,6 +297,7 @@ export class EformsignService {
      * GET /v2.0/api/documents/{documentId}
      */
     async getDocumentById(accessToken: string, documentId: string): Promise<any> {
+        this.assertConfigured();
         const includeParams = new URLSearchParams({
             include_fields: "true",
             include_histories: "true",
@@ -316,6 +339,7 @@ export class EformsignService {
         contentDisposition: string | null;
         body: Buffer;
     }> {
+        this.assertConfigured();
         const response = await fetch(
             `${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}/download_files?file_type=${fileType}`,
             {
@@ -346,6 +370,7 @@ export class EformsignService {
         limit: number;
         skip: number;
     }> {
+        this.assertConfigured();
         const [inProgress, completed, rejected] = await Promise.all([
             this.getInProgressDocuments(accessToken),
             this.getCompletedDocuments(accessToken),
@@ -392,6 +417,7 @@ export class EformsignService {
         documentIds: string[],
         isPermanent: boolean = false
     ): Promise<any> {
+        this.assertConfigured();
         const url = new URL(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents`);
         if (isPermanent) {
             url.searchParams.set("is_permanent", "true");
@@ -431,6 +457,7 @@ export class EformsignService {
             phoneNumber?: string;
         }
     ): Promise<any> {
+        this.assertConfigured();
         const nextStep: {
             step_type: string;
             step_seq: string;
@@ -521,5 +548,11 @@ export class EformsignService {
         }
 
         return await response.json();
+    }
+
+    private assertConfigured() {
+        if (!this.isConfigured) {
+            throw new Error("Eformsign integration is not configured.");
+        }
     }
 }

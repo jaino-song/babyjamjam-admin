@@ -45,23 +45,35 @@ export function SelectField({
   const fieldId = id || label.toLowerCase().replace(/\s+/g, "-");
   const errorId = `${fieldId}-error`;
   const shouldShowInlineError = errorDisplay === "inline";
-  const trailingContent = labelTrailing ?? (
+  const inlineError =
     shouldShowInlineError ? (
-      <InlineFieldError id={errorId} message={error} />
-    ) : undefined
-  );
+      <InlineFieldError
+        id={errorId}
+        message={error}
+        reserveSpace
+      />
+    ) : undefined;
+  const trailingContent =
+    shouldShowInlineError
+      ? labelTrailing ? (
+          <div className="flex items-center gap-2">
+            {labelTrailing}
+            {inlineError}
+          </div>
+        ) : inlineError
+      : labelTrailing;
 
   return (
-    <div className="flex flex-col" data-component={dataComponent}>
+    <div className="flex flex-col gap-2" data-component={dataComponent}>
       <div
         data-component="form-field-label-row"
         className="flex items-center justify-between gap-2"
       >
         <Label htmlFor={fieldId}>{label}</Label>
-        {trailingContent ? (
+        {shouldShowInlineError || trailingContent ? (
           <div
             data-component="form-field-label-trailing"
-            className="shrink-0"
+            className="flex min-h-[0.6875rem] shrink-0 items-center"
           >
             {trailingContent}
           </div>
@@ -92,7 +104,7 @@ export function SelectField({
       {error && !hideErrorMessage && !shouldShowInlineError && (
         <p
           id={errorId}
-          className="mt-2 text-sm text-destructive animate-fade-in"
+          className="text-sm text-destructive animate-fade-in"
         >
           {error}
         </p>

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2 } from "lucide-react";
+import { Building2, ChevronLeft, ChevronRight } from "lucide-react";
+import { AuthPanel } from "@/components/auth/auth-panel";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,12 +20,15 @@ interface Organization {
     role: string;
 }
 
+const ORGANIZATIONS_PER_PAGE = 5;
+
 export default function SelectOrganizationPage() {
     const router = useRouter();
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selecting, setSelecting] = useState<string | null>(null);
+    const [currentPage, setCurrentPage] = useState(1);
 
     const handleSelectOrganization = useCallback(async (organizationId: string) => {
         setSelecting(organizationId);
@@ -66,6 +70,7 @@ export default function SelectOrganizationPage() {
                 }
 
                 setOrganizations(result.organizations || []);
+                setCurrentPage(1);
             } catch (err) {
                 console.error("[Select Organization] Error fetching organizations:", err);
                 setError("조직 목록을 불러오는데 실패했습니다.");
@@ -79,59 +84,103 @@ export default function SelectOrganizationPage() {
 
     if (loading) {
         return (
-            <div data-component="select-org" className="flex flex-col items-center justify-center h-screen gap-4">
-                <Spinner size="lg" />
-                <p className="text-foreground">조직 목록을 불러오는 중...</p>
-            </div>
+            <AuthPanel
+                dataComponents={{
+                    container: "select-org",
+                    card: "select-org-container",
+                    header: "select-org-header",
+                    title: "select-org-title",
+                    subtitle: "select-org-subtitle",
+                    content: "select-org-content",
+                }}
+                containerClassName="!h-full min-h-0 items-center overflow-hidden py-0 md:py-0"
+                className="min-h-[70vh] gap-5 !p-5 sm:!p-6 [&_[data-component='select-org-title']]:!text-[1.72rem] md:[&_[data-component='select-org-title']]:!text-[1.5rem] [&_[data-component='select-org-subtitle']]:!max-w-[30ch] [&_[data-component='select-org-subtitle']]:!text-[0.82rem] md:[&_[data-component='select-org-subtitle']]:!text-[0.76rem]"
+                contentClassName="flex-1 gap-5"
+                title="조직 불러오는 중"
+                subtitle="계정에 연결된 조직을 정리하고 있습니다."
+            >
+                <div data-component="select-org-loading" className="flex flex-col items-center gap-4 py-6 text-center">
+                    <Spinner size="lg" className="text-v3-primary" />
+                    <p className="text-sm text-v3-text-muted">조직 목록을 불러오는 중...</p>
+                </div>
+            </AuthPanel>
         );
     }
 
     if (error) {
         return (
-            <div data-component="select-org" className="flex flex-col items-center justify-center h-screen gap-4 px-4">
-                <div data-component="select-org-error">
-                    <p className="text-destructive">{error}</p>
+            <AuthPanel
+                dataComponents={{
+                    container: "select-org",
+                    card: "select-org-container",
+                    header: "select-org-header",
+                    title: "select-org-title",
+                    subtitle: "select-org-subtitle",
+                    content: "select-org-content",
+                }}
+                containerClassName="!h-full min-h-0 items-center overflow-hidden py-0 md:py-0"
+                className="min-h-[70vh] gap-5 !p-5 sm:!p-6 [&_[data-component='select-org-title']]:!text-[1.72rem] md:[&_[data-component='select-org-title']]:!text-[1.5rem] [&_[data-component='select-org-subtitle']]:!max-w-[30ch] [&_[data-component='select-org-subtitle']]:!text-[0.82rem] md:[&_[data-component='select-org-subtitle']]:!text-[0.76rem]"
+                contentClassName="flex-1 gap-5"
+                title="조직을 불러오지 못했습니다"
+                subtitle="권한 확인 또는 다시 로그인이 필요할 수 있습니다."
+            >
+                <div data-component="select-org-error" className="flex flex-col items-center gap-4 text-center">
+                    <p className="rounded-full bg-destructive/10 px-3 py-1 text-sm font-semibold text-destructive">
+                        {error}
+                    </p>
+                    <Button variant="outline" onClick={() => router.push("/login")}>
+                        로그인 페이지로 돌아가기
+                    </Button>
                 </div>
-                <Button variant="outline" onClick={() => router.push("/login")}>
-                    로그인 페이지로 돌아가기
-                </Button>
-            </div>
+            </AuthPanel>
         );
     }
 
     if (organizations.length === 0) {
         return (
-            <div data-component="select-org" className="flex flex-col items-center justify-center h-screen gap-6 px-4 text-center">
-                <Building2 className="w-16 h-16 text-muted-foreground/50" />
-                <div data-component="select-org-empty">
-                    <h2 className="text-xl font-bold text-foreground mb-2">
-                        접근 가능한 조직이 없습니다
-                    </h2>
-                    <p className="text-muted-foreground">
-                        관리자에게 조직 접근 권한을 요청해주세요.
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-2">
-                        권한이 부여되면 이 페이지를 새로고침하세요.
-                    </p>
+            <AuthPanel
+                dataComponents={{
+                    container: "select-org",
+                    card: "select-org-container",
+                    header: "select-org-header",
+                    title: "select-org-title",
+                    subtitle: "select-org-subtitle",
+                    content: "select-org-content",
+                }}
+                containerClassName="!h-full min-h-0 items-center overflow-hidden py-0 md:py-0"
+                className="min-h-[70vh] gap-5 !p-5 sm:!p-6 [&_[data-component='select-org-title']]:!text-[1.72rem] md:[&_[data-component='select-org-title']]:!text-[1.5rem] [&_[data-component='select-org-subtitle']]:!max-w-[30ch] [&_[data-component='select-org-subtitle']]:!text-[0.82rem] md:[&_[data-component='select-org-subtitle']]:!text-[0.76rem]"
+                contentClassName="flex-1 gap-5"
+                title="접근 가능한 조직이 없습니다"
+                subtitle="관리자에게 조직 접근 권한을 요청한 뒤 다시 시도해 주세요."
+            >
+                <div data-component="select-org-empty-state" className="flex flex-col items-center gap-6 text-center">
+                    <div data-component="select-org-empty-icon" className="flex h-16 w-16 items-center justify-center rounded-full bg-v3-primary/8 text-v3-primary">
+                        <Building2 className="h-8 w-8" />
+                    </div>
+                    <div data-component="select-org-empty">
+                        <p className="text-sm text-v3-text-muted">
+                            권한이 부여되면 이 페이지를 새로고침하세요.
+                        </p>
+                    </div>
+                    <div data-component="select-org-empty-actions" className="flex gap-3">
+                        <Button onClick={() => window.location.reload()}>
+                            새로고침
+                        </Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                // Clear auth cookies and redirect to login
+                                document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+                                document.cookie = "refresh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+                                document.cookie = "selected_organization_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+                                router.replace("/login");
+                            }}
+                        >
+                            로그아웃
+                        </Button>
+                    </div>
                 </div>
-                <div data-component="select-org-empty-actions" className="flex gap-3">
-                    <Button onClick={() => window.location.reload()}>
-                        새로고침
-                    </Button>
-                    <Button
-                        variant="outline"
-                        onClick={() => {
-                            // Clear auth cookies and redirect to login
-                            document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-                            document.cookie = "refresh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-                            document.cookie = "selected_organization_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-                            router.replace("/login");
-                        }}
-                    >
-                        로그아웃
-                    </Button>
-                </div>
-            </div>
+            </AuthPanel>
         );
     }
 
@@ -146,22 +195,36 @@ export default function SelectOrganizationPage() {
         }
     };
 
+    const totalPages = Math.max(1, Math.ceil(organizations.length / ORGANIZATIONS_PER_PAGE));
+    const pageStartIndex = (currentPage - 1) * ORGANIZATIONS_PER_PAGE;
+    const paginatedOrganizations = organizations.slice(
+        pageStartIndex,
+        pageStartIndex + ORGANIZATIONS_PER_PAGE,
+    );
+
 
 
     return (
-        <div data-component="select-org" className="flex flex-col items-center justify-center min-h-screen gap-6 px-4 py-8">
-            <h1 className="text-2xl font-bold text-foreground">
-                조직 선택
-            </h1>
-            <p className="text-muted-foreground">
-                작업할 조직을 선택해주세요
-            </p>
-
-            <div data-component="select-org-list" className="flex flex-col gap-3 w-full max-w-md">
-                {organizations.map((org) => (
+        <AuthPanel
+            dataComponents={{
+                container: "select-org",
+                card: "select-org-container",
+                header: "select-org-header",
+                title: "select-org-title",
+                subtitle: "select-org-subtitle",
+                content: "select-org-content",
+            }}
+            containerClassName="!h-full min-h-0 items-center overflow-hidden py-0 md:py-0"
+            className="min-h-[70vh] gap-5 !p-5 sm:!p-6 [&_[data-component='select-org-title']]:!text-[1.72rem] md:[&_[data-component='select-org-title']]:!text-[1.5rem] [&_[data-component='select-org-subtitle']]:!max-w-[30ch] [&_[data-component='select-org-subtitle']]:!text-[0.82rem] md:[&_[data-component='select-org-subtitle']]:!text-[0.76rem]"
+            contentClassName="flex-1 gap-5"
+            title="지점 선택"
+            subtitle="지점을 선택해 주세요."
+        >
+            <div data-component="select-org-list" className="flex w-full flex-1 flex-col gap-3">
+                {paginatedOrganizations.map((org) => (
                     <Card
                         key={org.id}
-                        className={`cursor-pointer transition-all hover-lift ${
+                        className={`cursor-pointer rounded-[24px] border-[1.35px] border-v3-border bg-white shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] transition-all duration-300 ease-in-out hover:-translate-y-1 hover:border-v3-primary/35 hover:shadow-[0_12px_48px_hsla(214,50%,20%,0.12)] ${
                             selecting ? "opacity-60 cursor-not-allowed" : ""
                         }`}
                         onClick={() => !selecting && handleSelectOrganization(org.id)}
@@ -169,26 +232,31 @@ export default function SelectOrganizationPage() {
                         <CardContent className="p-4">
                             <div data-component="select-org-card-row" className="flex items-center justify-between gap-4">
                                 <div data-component="select-org-card-main" className="flex items-center gap-3">
-                                    <Avatar className="bg-primary">
-                                        <AvatarFallback className="bg-primary text-primary-foreground">
+                                    <Avatar className="h-11 w-11 rounded-[18px] bg-[linear-gradient(180deg,hsl(214,100%,34%),hsl(214,92%,28%))] ring-1 ring-v3-primary/15">
+                                        <AvatarFallback className="rounded-[18px] bg-transparent text-primary-foreground">
                                             <Building2 className="w-5 h-5" />
                                         </AvatarFallback>
                                     </Avatar>
-                                    <div data-component="select-org-card-text">
-                                        <h3 className="text-base font-semibold text-foreground">
+                                    <div data-component="select-org-card-text" className="flex min-w-0 flex-col gap-1">
+                                        <h3 className="text-base font-semibold tracking-[-0.02em] text-v3-dark">
                                             {org.name}
                                         </h3>
                                         {org.description && (
-                                            <p className="text-sm text-muted-foreground">
+                                            <p className="text-sm leading-5 text-v3-text-muted">
                                                 {org.description}
                                             </p>
                                         )}
                                     </div>
                                 </div>
                                 {selecting === org.id ? (
-                                    <Spinner size="sm" />
+                                    <div data-component="select-org-card-spinner" className="flex h-8 w-8 items-center justify-center rounded-full bg-v3-primary/10">
+                                        <Spinner size="sm" className="text-v3-primary" />
+                                    </div>
                                 ) : (
-                                    <Badge variant={getRoleBadgeVariant(org.role)}>
+                                    <Badge
+                                        variant={getRoleBadgeVariant(org.role)}
+                                        className="px-2.5 py-1 text-[0.72rem] font-semibold"
+                                    >
                                         {getRoleLabel(org.role)}
                                     </Badge>
                                 )}
@@ -197,8 +265,43 @@ export default function SelectOrganizationPage() {
                     </Card>
                 ))}
             </div>
+            <div
+                data-component="select-org-pagination"
+                className="mt-auto grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-t border-v3-border pt-3"
+            >
+                <Button
+                    data-component="select-org-pagination-prev"
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-1/4 min-w-[96px] justify-self-start"
+                    disabled={currentPage === 1 || Boolean(selecting)}
+                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                >
+                    <ChevronLeft className="h-4 w-4" />
+                    이전
+                </Button>
 
+                <div
+                    data-component="select-org-pagination-position"
+                    className="justify-self-center text-[0.72rem] font-semibold text-v3-text-muted md:text-[0.77rem]"
+                >
+                    {currentPage} / {totalPages}
+                </div>
 
-        </div>
+                <Button
+                    data-component="select-org-pagination-next"
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-1/4 min-w-[96px] justify-self-end"
+                    disabled={currentPage === totalPages || Boolean(selecting)}
+                    onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                >
+                    다음
+                    <ChevronRight className="h-4 w-4" />
+                </Button>
+            </div>
+        </AuthPanel>
     );
 }
