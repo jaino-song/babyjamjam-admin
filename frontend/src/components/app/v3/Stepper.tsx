@@ -39,9 +39,9 @@ export interface StepperProps {
 }
 
 const SIZE_MAP: Record<StepperSize, { circle: string; font: string; label: string; connector: string }> = {
-  sm: { circle: "w-6 h-6", font: "text-[0.55rem]", label: "text-[0.5rem]", connector: "mt-[-10px] px-1.5 text-xs" },
-  md: { circle: "w-8 h-8", font: "text-[0.65rem]", label: "text-[0.6rem]", connector: "mt-[-12px] px-2 text-sm" },
-  lg: { circle: "w-10 h-10", font: "text-xs", label: "text-[0.7rem]", connector: "mt-[-14px] px-2.5 text-base" },
+  sm: { circle: "w-6 h-6", font: "text-[0.55rem]", label: "text-[0.5rem]", connector: "px-1.5 text-xs" },
+  md: { circle: "w-8 h-8", font: "text-[0.65rem]", label: "text-[0.6rem]", connector: "px-2 text-sm" },
+  lg: { circle: "w-10 h-10", font: "text-xs", label: "text-[0.7rem]", connector: "px-2.5 text-base" },
 };
 
 function resolveState(step: StepperStep, index: number, activeStep?: number): StepState {
@@ -85,7 +85,7 @@ export function Stepper({
 
         return (
           <React.Fragment key={step.label}>
-            <div data-component="stepper-step" className="flex flex-1 flex-col items-center">
+            <div data-component="stepper-step" className="relative flex flex-1 flex-col items-center">
               <div
                 data-component="stepper-circle"
                 className={cn(
@@ -100,7 +100,7 @@ export function Stepper({
               <span
                 data-component="stepper-label"
                 className={cn(
-                  "mt-1 whitespace-nowrap",
+                  "absolute top-full mt-1 whitespace-nowrap",
                   tokens.label,
                   state === "done" ? "text-v3-primary" : "text-v3-text-muted",
                 )}
