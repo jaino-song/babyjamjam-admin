@@ -1,0 +1,31 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: 🔔
+      - generic [ref=e6]:
+        - paragraph [ref=e7]: 알림을 허용하시겠습니까?
+        - paragraph [ref=e8]: 서비스 일정, 계약서 알림 등을 받을 수 있습니다.
+        - generic [ref=e9]:
+          - button "허용" [ref=e10]
+          - button "나중에" [ref=e11]
+      - button "닫기" [ref=e12]: ✕
+    - main [ref=e13]:
+      - generic [ref=e16]:
+        - heading "로그인 실패" [level=2] [ref=e18]
+        - generic [ref=e19]:
+          - paragraph [ref=e20]: Authorization Code Required
+          - button "로그인 페이지로 돌아가기" [ref=e21]
+  - generic [ref=e26] [cursor=pointer]:
+    - button "Open Next.js Dev Tools" [ref=e27]:
+      - img [ref=e28]
+    - generic [ref=e31]:
+      - button "Open issues overlay" [ref=e32]:
+        - generic [ref=e33]:
+          - generic [ref=e34]: "1"
+          - generic [ref=e35]: "2"
+        - generic [ref=e36]:
+          - text: Issue
+          - generic [ref=e37]: s
+      - button "Collapse issues badge" [ref=e38]:
+        - img [ref=e39]
+  - alert [ref=e41]

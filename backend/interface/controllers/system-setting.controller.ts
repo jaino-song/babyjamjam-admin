@@ -4,6 +4,8 @@ import { SystemSettingService } from "application/services/system-setting.servic
 import {
     UpdateAlimtalkProviderDto,
     AlimtalkProviderResponseDto,
+    UpdateNotificationPreferencesDto,
+    NotificationPreferencesResponseDto,
 } from "interface/dto/system-setting.dto";
 import {
     MessageSenderApprovalResponseDto,
@@ -37,6 +39,32 @@ export class SystemSettingController {
             entity.getAlimtalkProvider(),
             enabled,
             entity.updatedAt
+        );
+    }
+
+    @Get("notification-preferences")
+    async getNotificationPreferences(
+        @Request() request: { user: { userId: string } },
+    ): Promise<NotificationPreferencesResponseDto> {
+        const emailNotificationsEnabled =
+            await this.systemSettingService.getUserEmailNotificationsEnabled(request.user.userId);
+
+        return NotificationPreferencesResponseDto.from(emailNotificationsEnabled);
+    }
+
+    @Put("notification-preferences")
+    async updateNotificationPreferences(
+        @Request() request: { user: { userId: string } },
+        @Body() dto: UpdateNotificationPreferencesDto,
+    ): Promise<NotificationPreferencesResponseDto> {
+        const entity = await this.systemSettingService.setUserEmailNotificationsEnabled(
+            request.user.userId,
+            dto.emailNotificationsEnabled,
+        );
+
+        return NotificationPreferencesResponseDto.from(
+            entity.value === "true",
+            entity.updatedAt,
         );
     }
 

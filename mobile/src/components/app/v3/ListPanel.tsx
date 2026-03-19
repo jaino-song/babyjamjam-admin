@@ -153,7 +153,7 @@ export function ListPanel({
         </div>
       )}
 
-      <div data-component="list-panel-content" className="relative overflow-y-auto min-h-0 flex-1 p-6">
+      <div data-component="list-panel-content" className="relative overflow-y-auto scrollbar-hide min-h-0 flex-1 p-6">
         {showContentSkeleton ? contentSkeleton : children}
         {/* <div className="sticky bottom-0 h-6 bg-white shrink-0" /> */}
       </div>

@@ -5,13 +5,13 @@ import {
   CalendarClock,
   CalendarRange,
   Clock3,
-  MessageCircle,
   Send,
   UserPlus,
   Users,
 } from "lucide-react";
 import {
   AnimatedSlotList,
+  DetailEmptyState,
   DetailPanel,
   InfoCard,
   InfoRow,
@@ -32,6 +32,13 @@ import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
 type UpcomingJobSelection = string | null;
+type UpcomingListFilter = "all" | "customer" | "staff";
+
+const UPCOMING_LIST_TABS: Array<{ value: UpcomingListFilter; label: string }> = [
+  { value: "all", label: "전체" },
+  { value: "customer", label: "고객" },
+  { value: "staff", label: "직원" },
+];
 
 const EVENT_META: Record<TriggerEventType, { label: string; icon: typeof Send }> = {
   CLIENT_CREATED: { label: "고객 등록", icon: UserPlus },
@@ -112,6 +119,10 @@ function getTemplateLabel(templateKey: TriggerTemplateKey) {
   return TEMPLATE_LABELS[templateKey] ?? templateKey;
 }
 
+function getRecipientBadge(recipientType: TriggerRecipientType) {
+  return recipientType === "CLIENT" ? "고객" : "직원";
+}
+
 function matchesJobSearch(job: UpcomingAlimtalkJob, query: string) {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return true;
@@ -160,41 +171,39 @@ function UpcomingDetailSkeleton() {
   );
 }
 
-function UpcomingDetailEmpty() {
+function UpcomingDetailEmpty({
+  message = "발송 예정 메시지를 선택하면 상세 정보가 표시됩니다.",
+}: {
+  message?: string;
+}) {
   return (
     <DetailPanel
-      title="발송 상세"
-      subtitle="예정된 알림톡의 발송 시점과 수신자 정보를 확인합니다."
-    >
-      <div data-component="alimtalk-upcoming-detail-empty" className="space-y-4">
-        {[0, 1].map((index) => (
-          <div
-            key={index}
-            data-component="alimtalk-upcoming-detail-empty-card"
-            className="rounded-[18px] bg-v3-dim-white p-4"
-          >
-            <Skeleton className="h-3.5 w-24 bg-white/80" />
-            <div className="mt-4 space-y-3">
-              <Skeleton className="h-4 w-full bg-white/80" />
-              <Skeleton className="h-4 w-4/5 bg-white/80" />
-              <Skeleton className="h-4 w-3/5 bg-white/80" />
-            </div>
-          </div>
-        ))}
-
+      avatar={
         <div
-          data-component="alimtalk-upcoming-detail-empty-message"
-          className="rounded-[18px] bg-v3-dim-white p-8 text-center text-[0.82rem] text-v3-text-muted"
+          data-component="alimtalk-upcoming-detail-avatar"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
         >
-          <MessageCircle className="mx-auto mb-3 h-10 w-10 opacity-30" />
-          예정된 알림톡을 선택하면 상세 정보가 표시됩니다.
+          <Clock3 className="h-5 w-5" />
         </div>
-      </div>
+      }
+      title="발송 상세"
+      subtitle="발송 예정 메시지를 선택하면 상세 정보가 표시됩니다."
+      emptyState={
+        <DetailEmptyState
+          name="alimtalk-upcoming-detail-empty"
+          icon={Users}
+          message={message}
+          className="flex-none min-h-0"
+        />
+      }
+    >
+      {null}
     </DetailPanel>
   );
 }
 
 export function UpcomingAlimtalkManager() {
+  const [listFilter, setListFilter] = useState<UpcomingListFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [selectedJobId, setSelectedJobId] = useState<UpcomingJobSelection>(null);
@@ -203,8 +212,21 @@ export function UpcomingAlimtalkManager() {
   const { data: upcomingJobs = [], isLoading } = useUpcomingAlimtalkJobs();
 
   const filteredJobs = useMemo(() => {
-    return upcomingJobs.filter((job) => matchesJobSearch(job, deferredSearchQuery));
-  }, [deferredSearchQuery, upcomingJobs]);
+    return upcomingJobs.filter((job) => {
+      if (listFilter === "customer" && job.recipientType !== "CLIENT") {
+        return false;
+      }
+
+      if (listFilter === "staff" && job.recipientType === "CLIENT") {
+        return false;
+      }
+
+      return matchesJobSearch(job, deferredSearchQuery);
+    });
+  }, [deferredSearchQuery, listFilter, upcomingJobs]);
+
+  const hasSearchQuery = deferredSearchQuery.trim().length > 0;
+  const hasListFilters = listFilter !== "all" || hasSearchQuery;
 
   const selectedJob = useMemo(() => {
     if (!selectedJobId) return null;
@@ -239,95 +261,119 @@ export function UpcomingAlimtalkManager() {
       <SplitLayout hasSelection={!!selectedJob} onBack={() => setSelectedJobId(null)}>
         <ListPanel
           title="발송 예정"
+          subtitle="발송이 예정된 메시지를 확인할 수 있어요."
+          tabs={UPCOMING_LIST_TABS}
+          activeTab={listFilter}
+          onTabChange={(value) => {
+            setListFilter(value as UpcomingListFilter);
+            setSelectedJobId(null);
+          }}
           searchValue={searchQuery}
-          onSearchChange={setSearchQuery}
-          searchPlaceholder="고객명, 수신자, 번호, 규칙명 검색..."
+          onSearchChange={(value) => {
+            setSearchQuery(value);
+            setSelectedJobId(null);
+          }}
+          searchPlaceholder="이름, 연락처, 템플릿 검색..."
           headerActions={
             isLoading ? null : (
-              <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
-                {upcomingJobs.length}건 예정
+              <span
+                data-component="alimtalk-upcoming-list-badge"
+                className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
+              >
+                {(hasListFilters ? filteredJobs.length : upcomingJobs.length)}개
               </span>
             )
           }
-        >
-          {!isLoading && filteredJobs.length === 0 ? (
-            <ListEmptyState
-              name="alimtalk-upcoming-list-empty"
-              message={searchQuery.trim() ? "검색 결과가 없습니다" : "예정된 알림톡이 없습니다"}
-            />
-          ) : (
-            <AnimatedSlotList<UpcomingAlimtalkJob>
-              items={filteredJobs}
-              isLoading={isLoading}
-              loadingCount={5}
-              className="space-y-2"
-              slotClassName={({ item, isLoading: slotLoading }) => {
-                const isActive = !slotLoading && item && item.id === selectedJob?.id;
-                return cn(
-                  "flex items-start gap-3 rounded-[18px] border-2 border-transparent bg-white p-4 text-left transition-all duration-200",
-                  !slotLoading && "cursor-pointer",
-                  isActive
-                    ? "border-v3-primary bg-v3-primary-light"
-                    : !slotLoading && "hover:border-v3-primary/30 hover:bg-v3-primary-light/50",
-                );
-              }}
-              onSlotClick={(job) => setSelectedJobId(job.id)}
-              render={({ item: job, isLoading: slotLoading }) => {
-                if (slotLoading) {
-                  return (
-                    <>
-                      <div
-                        data-component="alimtalk-upcoming-list-skeleton-icon"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white"
-                      >
-                        <Skeleton className="h-5 w-5 rounded-md bg-white/80" />
-                      </div>
-                      <div
-                        data-component="alimtalk-upcoming-list-skeleton-copy"
-                        className="min-w-0 flex-1 space-y-2"
-                      >
-                        <Skeleton className="h-4 w-32 bg-v3-dim-white" />
-                        <Skeleton className="h-3 w-48 bg-v3-dim-white" />
-                      </div>
-                    </>
-                  );
+          overlay={
+            !isLoading && filteredJobs.length === 0 ? (
+              <ListEmptyState
+                name="alimtalk-upcoming-list-empty"
+                message={
+                  hasListFilters ? "조건에 맞는 예약 발송 항목이 없습니다." : "발송 예정 항목이 없습니다."
                 }
-
-                if (!job) return null;
-
-                const eventMeta = getEventMeta(job.eventType);
-                const EventIcon = eventMeta.icon;
-
-                return (
-                  <>
-                    <div
-                      data-component="alimtalk-upcoming-list-item-icon"
-                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-primary"
-                    >
-                      <EventIcon className="h-4 w-4" />
-                    </div>
-
-                    <div
-                      data-component="alimtalk-upcoming-list-item-copy"
-                      className="min-w-0 flex-1"
-                    >
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-[0.82rem] font-semibold text-v3-dark">
-                          {job.ruleName}
-                        </p>
-                        <span className="inline-flex shrink-0 items-center rounded-full bg-white/80 px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary">
-                          {formatCountdown(job.scheduledFor)}
-                        </span>
+                className="flex-none min-h-0"
+              />
+            ) : null
+          }
+        >
+          {isLoading || filteredJobs.length > 0 ? (
+            <div data-component="alimtalk-upcoming-list" className="space-y-3 pb-2">
+              <AnimatedSlotList<UpcomingAlimtalkJob>
+                items={filteredJobs}
+                isLoading={isLoading}
+                loadingCount={5}
+                className="space-y-2"
+                itemDataComponent="alimtalk-upcoming-list-item"
+                slotClassName={({ item, isLoading: slotLoading }) =>
+                  cn(
+                    "rounded-[18px] border-2 p-4 text-left transition-all duration-200",
+                    !slotLoading && item?.id === selectedJobId
+                      ? "border-v3-primary bg-v3-primary-light"
+                      : "border-v3-border/70 bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/40",
+                    !slotLoading && "cursor-pointer",
+                  )
+                }
+                onSlotClick={(job) => setSelectedJobId(job.id)}
+                render={({ item: job, isLoading: slotLoading }) => {
+                  if (slotLoading) {
+                    return (
+                      <div data-component="alimtalk-upcoming-list-item-body" className="flex items-start gap-3">
+                        <div
+                          data-component="alimtalk-upcoming-list-item-icon"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-primary"
+                        >
+                          <Skeleton className="h-4 w-4 rounded-md bg-white/80" />
+                        </div>
+                        <div
+                          data-component="alimtalk-upcoming-list-item-copy"
+                          className="min-w-0 flex-1 space-y-2"
+                        >
+                          <Skeleton className="h-4 w-28 bg-v3-dim-white" />
+                          <Skeleton className="h-3 w-40 bg-v3-dim-white" />
+                        </div>
                       </div>
-                      <p className="mt-1 truncate text-[0.72rem] text-v3-text-muted">
-                        {job.payload.recipientName} · {formatScheduledForCompact(job.scheduledFor)} · {getTemplateLabel(job.templateKey)}
-                      </p>
+                    );
+                  }
+
+                  if (!job) return null;
+
+                  return (
+                    <div data-component="alimtalk-upcoming-list-item-body" className="flex items-start gap-3">
+                      <div
+                        data-component="alimtalk-upcoming-list-item-icon"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-primary"
+                      >
+                        <Clock3 className="h-4 w-4" />
+                      </div>
+
+                      <div
+                        data-component="alimtalk-upcoming-list-item-copy"
+                        className="min-w-0 flex-1"
+                      >
+                        <div
+                          data-component="alimtalk-upcoming-list-item-meta"
+                          className="flex items-center gap-2"
+                        >
+                          <p className="truncate text-[0.82rem] font-semibold text-v3-dark">
+                            {job.payload.recipientName || "-"}
+                          </p>
+                          <span
+                            data-component="alimtalk-upcoming-list-item-badge"
+                            className="inline-flex shrink-0 items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
+                          >
+                            {getRecipientBadge(job.recipientType)}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[0.74rem] leading-5 text-v3-text-muted">
+                          {`${getTemplateLabel(job.templateKey)} · ${formatScheduledForCompact(job.scheduledFor)}`}
+                        </p>
+                      </div>
                     </div>
-                  </>
-                );
-              }}
-            />
-          )}
+                  );
+                }}
+              />
+            </div>
+          ) : null}
         </ListPanel>
 
         {isLoading ? (
@@ -413,17 +459,7 @@ export function UpcomingAlimtalkManager() {
           </DetailPanel>
         ) : (
           searchQuery.trim() ? (
-            <DetailPanel
-              title="발송 상세"
-              subtitle="예정된 알림톡의 발송 시점과 수신자 정보를 확인합니다."
-            >
-              <div
-                data-component="alimtalk-upcoming-detail-empty"
-                className="rounded-[18px] border border-dashed border-v3-border p-8 text-center text-[0.82rem] text-v3-text-muted"
-              >
-                검색 결과에 해당하는 예정 발송이 없습니다.
-              </div>
-            </DetailPanel>
+            <UpcomingDetailEmpty message="검색 결과에 해당하는 예정 발송이 없습니다." />
           ) : (
             <UpcomingDetailEmpty />
           )

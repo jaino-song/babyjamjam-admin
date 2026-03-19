@@ -16,7 +16,6 @@ import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
@@ -42,7 +41,7 @@ const FILTER_CHIPS = [
     { label: "진행중", value: "active" },
     { label: "대기", value: "pending" },
     { label: "완료", value: "completed" },
-    { label: "만료", value: "expired" },
+    { label: "중단", value: "expired" },
 ];
 
 const getAvatarGradient = (name: string) => {
@@ -73,7 +72,7 @@ const mapServiceStatusToV3 = (status: string | null): StatusType => {
             return "pending";
         case "terminated":
         case "cancelled":
-            return "expired";
+            return "terminated";
         case "completed":
             return "completed";
         default:
@@ -319,15 +318,15 @@ export default function ClientsPage() {
 	                                                    </div>
 	                                                ) : (
 	                                                    client && (
-	                                                        <div
-	                                                            data-component="clients-list-item-avatar"
-	                                                            className={cn(
-	                                                                "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
-	                                                                getAvatarGradient(client.name)
-	                                                            )}
-	                                                        >
-	                                                            {client.name.charAt(0)}
-	                                                        </div>
+                                                        <div
+                                                            data-component="clients-list-item-avatar"
+                                                            className={cn(
+                                                                "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0 shadow-md",
+                                                                getAvatarGradient(client.name)
+                                                            )}
+                                                        >
+                                                            <Users className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
+                                                        </div>
 	                                                    )
 	                                                )}
 
@@ -343,15 +342,9 @@ export default function ClientsPage() {
 	                                                                <span className="font-bold text-[0.85rem] text-v3-dark truncate">
 	                                                                    {client?.name}
 	                                                                </span>
-	                                                                <Badge
-	                                                                    variant="secondary"
-	                                                                    className="bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)] border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
-	                                                                >
-	                                                                    {client?.type || "일반"}
-	                                                                </Badge>
-	                                                            </>
-	                                                        )}
-	                                                    </div>
+                                                            </>
+                                                        )}
+                                                    </div>
 
 	                                                    {isLoading ? (
 	                                                        <Skeleton className="h-3 w-52 bg-v3-dim-white" />
@@ -394,11 +387,11 @@ export default function ClientsPage() {
                             <div
                                 data-component="clients-detail-avatar"
                                 className={cn(
-                                    "w-16 h-16 rounded-[20px] flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
+                                    "w-16 h-16 rounded-[20px] flex items-center justify-center text-white shadow-lg shrink-0",
                                     getAvatarGradient(activeSelectedClient.name)
                                 )}
                             >
-                                {activeSelectedClient.name.charAt(0)}
+                                <Users className="w-7 h-7 shrink-0 transition-colors text-white" aria-hidden="true" />
                             </div>
                         }
                         title={activeSelectedClient.name}

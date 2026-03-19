@@ -1,0 +1,29 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: 🔔
+      - generic [ref=e6]:
+        - paragraph [ref=e7]: 알림을 허용하시겠습니까?
+        - paragraph [ref=e8]: 서비스 일정, 계약서 알림 등을 받을 수 있습니다.
+        - generic [ref=e9]:
+          - button "허용" [ref=e10]
+          - button "나중에" [ref=e11]
+      - button "닫기" [ref=e12]: ✕
+    - main [ref=e13]:
+      - generic [ref=e16]:
+        - heading "인증 토큰 없음" [level=2] [ref=e18]
+        - generic [ref=e20]:
+          - img [ref=e22]
+          - paragraph [ref=e24]: 이메일에서 인증 링크를 클릭해 주세요.
+          - alert [ref=e25]:
+            - img [ref=e26]
+            - generic [ref=e28]: 인증 이메일을 받지 못하셨나요? 아래에서 재발송을 요청할 수 있습니다.
+          - generic [ref=e29]:
+            - generic [ref=e30]:
+              - generic [ref=e32]: 이메일 주소
+              - textbox "이메일 주소" [ref=e33]
+            - button "인증 이메일 재발송" [disabled]
+          - button "로그인 페이지로 돌아가기" [ref=e34]
+  - button "Open Next.js Dev Tools" [ref=e40] [cursor=pointer]:
+    - img [ref=e41]
+  - alert [ref=e44]

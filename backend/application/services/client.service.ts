@@ -31,6 +31,7 @@ export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested
 export interface ClientWithEmployees {
     id: number;
     name: string;
+    createdAt: Date | null;
     address: string | null;
     phone: string | null;
     type: string | null;
@@ -288,6 +289,7 @@ export class ClientService {
                 return {
                     id: client.id,
                     name: client.name,
+                    createdAt: client.createdAt,
                     address: client.address,
                     phone: client.phone,
                     type: client.type,

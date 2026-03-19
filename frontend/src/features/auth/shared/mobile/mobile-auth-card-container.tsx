@@ -52,6 +52,7 @@ export function MobileAuthCardContainer({
         className={cn(
           "flex flex-1 flex-col gap-6 overflow-hidden rounded-2xl border-none bg-white p-6 text-foreground shadow-v3",
           "w-full max-w-[440px]",
+          "max-h-[85dvh] overflow-x-hidden overflow-y-auto lg:max-h-[85%]",
           !disableAnimation && "animate-scale-in",
           className,
         )}

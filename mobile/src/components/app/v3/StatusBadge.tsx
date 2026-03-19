@@ -1,5 +1,7 @@
 "use client";
 
+import { StatusPill } from "@/components/app/ui/status-badge";
+
 export type StatusType = 'active' | 'pending' | 'expired' | 'completed' | 'signed';
 
 interface StatusBadgeProps {
@@ -7,22 +9,19 @@ interface StatusBadgeProps {
   label?: string;
 }
 
-const statusConfig: Record<StatusType, { bg: string; text: string; defaultLabel: string }> = {
-  active: { bg: 'bg-v3-green-light', text: 'text-v3-green', defaultLabel: '활성' },
-  signed: { bg: 'bg-v3-green-light', text: 'text-v3-green', defaultLabel: '서명완료' },
-  pending: { bg: 'bg-v3-orange-light', text: 'text-v3-orange', defaultLabel: '대기' },
-  expired: { bg: 'bg-v3-burgundy-light', text: 'text-v3-burgundy', defaultLabel: '만료' },
-  completed: { bg: 'bg-v3-dim-white', text: 'text-v3-text-muted', defaultLabel: '완료' },
+const statusConfig: Record<StatusType, { variant: Parameters<typeof StatusPill>[0]["variant"]; defaultLabel: string }> = {
+  active: { variant: "success", defaultLabel: "활성" },
+  signed: { variant: "success", defaultLabel: "서명완료" },
+  pending: { variant: "warning", defaultLabel: "대기" },
+  expired: { variant: "danger", defaultLabel: "만료" },
+  completed: { variant: "neutral", defaultLabel: "완료" },
 };
 
 export function StatusBadge({ status, label }: StatusBadgeProps) {
   const config = statusConfig[status];
   return (
-    <span
-      data-component="status-badge"
-      className={`inline-flex items-center rounded-2xl px-3 py-1 text-[0.65rem] font-semibold ${config.bg} ${config.text}`}
-    >
+    <StatusPill data-component="status-badge" variant={config.variant} size="sm">
       {label || config.defaultLabel}
-    </span>
+    </StatusPill>
   );
 }

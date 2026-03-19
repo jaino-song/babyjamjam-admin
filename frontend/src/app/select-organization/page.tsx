@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Building2 } from "lucide-react";
 import { AuthPanel } from "@/components/auth/auth-panel";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { FooterNavigation } from "@/components/ui/footer-navigation";
 import { getRoleLabel } from "@/lib/constants/roles";
 import { getUserOrganizations, setCurrentOrganization } from "./actions";
 
@@ -265,43 +266,21 @@ export default function SelectOrganizationPage() {
                     </Card>
                 ))}
             </div>
-            <div
-                data-component="select-org-pagination"
-                className="mt-auto grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-t border-v3-border pt-3"
-            >
-                <Button
-                    data-component="select-org-pagination-prev"
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-1/4 min-w-[96px] justify-self-start"
-                    disabled={currentPage === 1 || Boolean(selecting)}
-                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                >
-                    <ChevronLeft className="h-4 w-4" />
-                    이전
-                </Button>
-
-                <div
-                    data-component="select-org-pagination-position"
-                    className="justify-self-center text-[0.72rem] font-semibold text-v3-text-muted md:text-[0.77rem]"
-                >
-                    {currentPage} / {totalPages}
-                </div>
-
-                <Button
-                    data-component="select-org-pagination-next"
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-1/4 min-w-[96px] justify-self-end"
-                    disabled={currentPage === totalPages || Boolean(selecting)}
-                    onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                >
-                    다음
-                    <ChevronRight className="h-4 w-4" />
-                </Button>
-            </div>
+            <FooterNavigation
+                dataComponent="select-org-pagination"
+                prevDataComponent="select-org-pagination-prev"
+                nextDataComponent="select-org-pagination-next"
+                positionDataComponent="select-org-pagination-position"
+                positionLabel={`${currentPage} / ${totalPages}`}
+                prevVariant="outline"
+                nextVariant="outline"
+                prevDisabled={currentPage === 1 || Boolean(selecting)}
+                nextDisabled={currentPage === totalPages || Boolean(selecting)}
+                onPrev={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                onNext={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                prevClassName="w-1/4 min-w-[96px] justify-self-start"
+                nextClassName="w-1/4 min-w-[96px] justify-self-end"
+            />
         </AuthPanel>
     );
 }

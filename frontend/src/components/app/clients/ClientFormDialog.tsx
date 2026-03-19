@@ -15,15 +15,11 @@ import {
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
+import { cn } from "@/lib/utils";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
 import {
     Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-    DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,10 +34,11 @@ import {
     SelectLabel,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Spinner } from "@/components/ui/spinner";
+import { TitleDescChildrenMolecule } from "@/components/app/ui/TitleDescChildrenMolecule";
+import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 
 interface ClientFormDialogProps {
     open: boolean;
@@ -49,6 +46,11 @@ interface ClientFormDialogProps {
     client?: Client | null; // null/undefined for create mode, Client for edit mode
     onSuccess?: (client: Client) => void; // Optional callback when client is created/updated
 }
+
+const FIELD_GRID_CLASS_NAME = "grid grid-cols-1 gap-4 sm:grid-cols-2";
+const SECTION_CARD_CLASS_NAME = "rounded-[24px] border border-v3-border/70 bg-white p-5";
+const LABEL_CLASS_NAME = "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted";
+const V3_INPUT_CLASS_NAME = "h-12 rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
 
 // Format number with commas (handles comma-formatted strings too)
 const formatPrice = (price: number | string): string => {
@@ -396,51 +398,68 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     return (
         <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && handleDialogClose()}>
-            <DialogContent data-testid="client-form-dialog">
-                <DialogHeader>
-                    <DialogTitle>
-                        {isEditMode
-                            ? t(locale, "clients.form.edit-title")
-                            : t(locale, "clients.form.add-title")
-                        }
-                    </DialogTitle>
-                    <DialogDescription className="sr-only">
-                        {isEditMode
-                            ? t(locale, "clients.form.edit-description")
-                            : t(locale, "clients.form.add-description")
-                        }
-                    </DialogDescription>
-                </DialogHeader>
-
-                <div ref={contentRef} data-component="clients-form-dialog-content" className="space-y-6 py-4">
+            <FormDialogShell
+                dataComponent="clients-form-dialog"
+                title={
+                    isEditMode
+                        ? t(locale, "clients.form.edit-title")
+                        : t(locale, "clients.form.add-title")
+                }
+                description={
+                    isEditMode
+                        ? "기본 정보, 담당 인력, 서비스 조건을 한 번에 수정합니다."
+                        : "고객의 기본 정보와 서비스 조건을 단계 없이 빠르게 등록합니다."
+                }
+                dialogClassName="w-[85%] max-w-[460px] min-h-[70vh] max-h-[70vh] sm:w-[85%] sm:max-w-[460px]"
+                contentClassName="space-y-5"
+                footer={
+                    <>
+                        <Button variant="neutral" onClick={handleDialogClose} disabled={isSubmitting}>
+                            {t(locale, "common.cancel")}
+                        </Button>
+                        <Button onClick={handleSubmit} disabled={isSubmitting}>
+                            {isSubmitting ? (
+                                <Spinner className="h-4 w-4" />
+                            ) : isEditMode ? (
+                                t(locale, "common.save")
+                            ) : (
+                                t(locale, "common.create")
+                            )}
+                        </Button>
+                    </>
+                }
+            >
+                <div ref={contentRef} data-component="clients-form-dialog-content" className="space-y-5">
                     {error && (
                         <Alert variant="destructive">
                             <AlertDescription>{error}</AlertDescription>
                         </Alert>
                     )}
 
-                    {/* Basic Info Section */}
-                    <div className="space-y-4">
-                        <h4 className="text-sm font-medium text-primary">
-                            {t(locale, "clients.form.section-basic")}
-                        </h4>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <TitleDescChildrenMolecule
+                        title={t(locale, "clients.form.section-basic")}
+                        description="고객의 프로필과 연락처를 먼저 입력해 주세요."
+                        className={SECTION_CARD_CLASS_NAME}
+                        titleClassName={LABEL_CLASS_NAME}
+                    >
+                        <div className={FIELD_GRID_CLASS_NAME}>
                             <div className="space-y-2">
-                                <Label htmlFor="name">
+                                <Label htmlFor="name" className={LABEL_CLASS_NAME}>
                                     {t(locale, "clients.form.name")}
                                     <span className="text-destructive ml-1">*</span>
                                 </Label>
                                 <Input
                                     id="name"
+                                    className={V3_INPUT_CLASS_NAME}
                                     value={formData.name}
                                     onChange={(e) => handleChange("name", e.target.value)}
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="birthday">{t(locale, "clients.form.birthday")}</Label>
+                                <Label htmlFor="birthday" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.birthday")}</Label>
                                 <Input
                                     id="birthday"
+                                    className={V3_INPUT_CLASS_NAME}
                                     placeholder="YYMMDD"
                                     value={formData.birthday ?? ""}
                                     onChange={(e) => handleChange("birthday", e.target.value)}
@@ -451,18 +470,20 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </p>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="dueDate">{t(locale, "clients.form.due-date")}</Label>
+                                <Label htmlFor="dueDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.due-date")}</Label>
                                 <Input
                                     id="dueDate"
                                     type="date"
+                                    className={V3_INPUT_CLASS_NAME}
                                     value={formData.dueDate || ""}
                                     onChange={(e) => handleChange("dueDate", e.target.value)}
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="phone">{t(locale, "clients.form.phone")}</Label>
+                                <Label htmlFor="phone" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.phone")}</Label>
                                 <Input
                                     id="phone"
+                                    className={V3_INPUT_CLASS_NAME}
                                     placeholder="010-1234-5678"
                                     value={formData.phone ?? ""}
                                     onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
@@ -470,25 +491,24 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 />
                             </div>
                             <div className="space-y-2 sm:col-span-2">
-                                <Label htmlFor="address">{t(locale, "clients.form.address")}</Label>
+                                <Label htmlFor="address" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.address")}</Label>
                                 <Input
                                     id="address"
+                                    className={V3_INPUT_CLASS_NAME}
                                     value={formData.address ?? ""}
                                     onChange={(e) => handleChange("address", e.target.value)}
                                 />
                             </div>
                         </div>
-                    </div>
+                    </TitleDescChildrenMolecule>
 
-                    <Separator />
-
-                    {/* Employee Section */}
-                    <div className="space-y-4">
-                        <h4 className="text-sm font-medium text-primary">
-                            {t(locale, "clients.form.section-employee")}
-                        </h4>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <TitleDescChildrenMolecule
+                        title={t(locale, "clients.form.section-employee")}
+                        description="서비스를 담당할 제공인력을 배정해 주세요."
+                        className={SECTION_CARD_CLASS_NAME}
+                        titleClassName={LABEL_CLASS_NAME}
+                    >
+                        <div className={FIELD_GRID_CLASS_NAME}>
                             <EmployeeAutocomplete
                                 value={formData.primaryEmployeeId}
                                 onChange={(id) => handleChange("primaryEmployeeId", id)}
@@ -520,24 +540,22 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 }}
                             />
                         </div>
-                    </div>
+                    </TitleDescChildrenMolecule>
 
-                    <Separator />
-
-                    {/* Service Info Section */}
-                    <div className="space-y-4">
-                        <h4 className="text-sm font-medium text-primary">
-                            {t(locale, "clients.form.section-service")}
-                        </h4>
-
+                    <TitleDescChildrenMolecule
+                        title={t(locale, "clients.form.section-service")}
+                        description="바우처 유형과 서비스 기간을 선택해 주세요."
+                        className={SECTION_CARD_CLASS_NAME}
+                        titleClassName={LABEL_CLASS_NAME}
+                    >
                         <div className="flex flex-wrap items-end gap-4">
                             <div className="flex-1 space-y-2">
-                                <Label>{t(locale, "clients.form.voucher-type")}</Label>
+                                <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.voucher-type")}</Label>
                                 <Select
                                     value={formData.type || ""}
                                     onValueChange={handleTypeChange}
                                 >
-                                    <SelectTrigger className="w-full">
+                                    <SelectTrigger className="h-12 w-full">
                                         <SelectValue placeholder={t(locale, "clients.form.voucher-type")} />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -555,7 +573,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </Select>
                             </div>
                             <div className="flex-1 space-y-2">
-                                <Label>{t(locale, "clients.form.duration")}</Label>
+                                <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.duration")}</Label>
                                 <div className="relative">
                                     <Select
                                         value={formData.duration?.toString() || ""}
@@ -565,7 +583,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                         }}
                                         disabled={!formData.type || isPriceLoading}
                                     >
-                                        <SelectTrigger className="w-full">
+                                        <SelectTrigger className="h-12 w-full">
                                             <SelectValue placeholder={t(locale, "clients.form.duration")} />
                                         </SelectTrigger>
                                         <SelectContent>
@@ -584,16 +602,15 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    </TitleDescChildrenMolecule>
 
-                    <Separator />
-
-                    {/* Pricing Section */}
-                    <div className="space-y-4">
+                    <TitleDescChildrenMolecule
+                        title={t(locale, "clients.form.section-pricing")}
+                        description="서비스 금액과 지원 금액을 확인하고 조정해 주세요."
+                        className={SECTION_CARD_CLASS_NAME}
+                        titleClassName={LABEL_CLASS_NAME}
+                    >
                         <div className="flex items-center gap-2">
-                            <h4 className="text-sm font-medium text-primary">
-                                {t(locale, "clients.form.section-pricing")}
-                            </h4>
                             {selectedPriceInfo && !pricesManuallyEdited && (
                                 <StatusBadge variant="doc_requested" size="sm">
                                     {t(locale, "clients.form.auto-filled")}
@@ -603,14 +620,14 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
                         <div className="flex flex-wrap items-end gap-4">
                             <div className="flex-1 space-y-2">
-                                <Label htmlFor="fullPrice">{t(locale, "clients.form.full-price")}</Label>
+                                <Label htmlFor="fullPrice" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.full-price")}</Label>
                                 <div className="relative">
                                     <Input
                                         id="fullPrice"
                                         placeholder="0"
                                         value={formatPrice(formData.fullPrice || "")}
                                         onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
-                                        className="pr-8"
+                                        className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
                                     />
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                                         원
@@ -618,14 +635,14 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </div>
                             </div>
                             <div className="flex-1 space-y-2">
-                                <Label htmlFor="grant">{t(locale, "clients.form.grant")}</Label>
+                                <Label htmlFor="grant" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.grant")}</Label>
                                 <div className="relative">
                                     <Input
                                         id="grant"
                                         placeholder="0"
                                         value={formatPrice(formData.grant || "")}
                                         onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
-                                        className="pr-8"
+                                        className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
                                     />
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                                         원
@@ -633,14 +650,14 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </div>
                             </div>
                             <div className="flex-1 space-y-2">
-                                <Label htmlFor="actualPrice">{t(locale, "clients.form.actual-price")}</Label>
+                                <Label htmlFor="actualPrice" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.actual-price")}</Label>
                                 <div className="relative">
                                     <Input
                                         id="actualPrice"
                                         placeholder="0"
                                         value={formatPrice(formData.actualPrice || "")}
                                         onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
-                                        className="pr-8"
+                                        className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
                                     />
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                                         원
@@ -648,24 +665,22 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    </TitleDescChildrenMolecule>
 
-                    <Separator />
-
-                    {/* Contract Section */}
-                    <div className="space-y-4">
-                        <h4 className="text-sm font-medium text-primary">
-                            {t(locale, "clients.form.section-contract")}
-                        </h4>
-
+                    <TitleDescChildrenMolecule
+                        title={t(locale, "clients.form.section-contract")}
+                        description="계약 상태와 서비스 일정을 정리해 주세요."
+                        className={SECTION_CARD_CLASS_NAME}
+                        titleClassName={LABEL_CLASS_NAME}
+                    >
                         <div className="flex flex-wrap items-end gap-4">
                             <div className="flex-1 space-y-2">
-                                <Label>{t(locale, "clients.form.contract-status")}</Label>
+                                <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.contract-status")}</Label>
                                 <Select
                                     value={formData.serviceStatus || ""}
                                     onValueChange={(value) => handleChange("serviceStatus", value)}
                                 >
-                                    <SelectTrigger className="w-full">
+                                    <SelectTrigger className="h-12 w-full">
                                         <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -678,34 +693,34 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </Select>
                             </div>
                             <div className="flex-1 space-y-2">
-                                <Label htmlFor="startDate">{t(locale, "clients.form.start-date")}</Label>
+                                <Label htmlFor="startDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.start-date")}</Label>
                                 <Input
                                     id="startDate"
                                     type="date"
+                                    className={V3_INPUT_CLASS_NAME}
                                     value={formData.startDate || ""}
                                     onChange={(e) => handleChange("startDate", e.target.value)}
                                 />
                             </div>
                             <div className="flex-1 space-y-2">
-                                <Label htmlFor="endDate">{t(locale, "clients.form.end-date")}</Label>
+                                <Label htmlFor="endDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.end-date")}</Label>
                                 <Input
                                     id="endDate"
                                     type="date"
+                                    className={V3_INPUT_CLASS_NAME}
                                     value={formData.endDate || ""}
                                     onChange={(e) => handleChange("endDate", e.target.value)}
                                 />
                             </div>
                         </div>
-                    </div>
+                    </TitleDescChildrenMolecule>
 
-                    <Separator />
-
-                    {/* Flags Section */}
-                    <div className="space-y-4">
-                        <h4 className="text-sm font-medium text-primary">
-                            {t(locale, "clients.form.section-flags")}
-                        </h4>
-
+                    <TitleDescChildrenMolecule
+                        title={t(locale, "clients.form.section-flags")}
+                        description="추가 서비스 옵션을 설정해 주세요."
+                        className={SECTION_CARD_CLASS_NAME}
+                        titleClassName={LABEL_CLASS_NAME}
+                    >
                         <div className="flex flex-wrap gap-6">
                             <div className="flex items-center gap-2">
                                 <Switch
@@ -738,25 +753,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </Label>
                             </div>
                         </div>
-                    </div>
+                    </TitleDescChildrenMolecule>
                 </div>
-
-                <DialogFooter data-component="clients-form-dialog-actions">
-                    <Button variant="outline" onClick={handleDialogClose} disabled={isSubmitting}>
-                        {t(locale, "common.cancel")}
-                    </Button>
-                    <Button onClick={handleSubmit} disabled={isSubmitting}>
-                        {isSubmitting ? (
-                            <Spinner className="h-4 w-4" />
-                        ) : isEditMode ? (
-                            t(locale, "common.save")
-                        ) : (
-                            t(locale, "common.create")
-                        )}
-                    </Button>
-                </DialogFooter>
-
-            </DialogContent>
+            </FormDialogShell>
         </Dialog>
     );
 }

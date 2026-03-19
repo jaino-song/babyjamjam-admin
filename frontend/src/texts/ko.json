@@ -318,6 +318,9 @@
         "서비스/요금",
         "계약 정보"
       ],
+      "customer-info": "고객 정보",
+      "assigned-employee": "제공인력 정보",
+      "service-info": "서비스 정보",
       "add-title": "새 고객 등록",
       "edit-title": "고객 정보 수정",
       "section-basic": "기본 정보",

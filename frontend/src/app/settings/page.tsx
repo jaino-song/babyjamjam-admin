@@ -1,65 +1,66 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
-  User,
   Bell,
   Palette,
   Shield,
-  CreditCard,
   Sun,
   Moon,
   Monitor,
-  MessageSquare,
 } from "lucide-react";
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { SectionNav } from "@/components/app/v3";
-import { VoucherPriceUploadForm } from "@/components/app/settings/VoucherPriceUploadForm";
-import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { settingsApi, AlimtalkProvider } from "@/services/api";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { usePushNotification } from "@/hooks/usePushNotification";
+import { getRoleLabel } from "@/lib/constants/roles";
+import { settingsApi } from "@/services/api";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
-import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 
-const NAV_SECTIONS = [
-  { id: "profile", label: "프로필", icon: User },
+function UserKeyIcon({
+  size = 20,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="m16 11 2 2 4-4" />
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+    </svg>
+  );
+}
+
+const BASE_NAV_SECTIONS = [
+  { id: "profile", label: "계정", icon: UserKeyIcon },
   { id: "notifications", label: "알림", icon: Bell },
   { id: "theme", label: "테마", icon: Palette },
   { id: "security", label: "보안", icon: Shield },
-  { id: "pricing", label: "요금제", icon: CreditCard },
 ] as const;
 
-type SectionId = (typeof NAV_SECTIONS)[number]["id"];
-
-const PROVIDER_OPTIONS: {
-  value: AlimtalkProvider;
-  label: string;
-  description: string;
-}[] = [
-  {
-    value: "aligo",
-    label: "알리고 (Aligo)",
-    description: "알리고 알림톡 API를 통해 카카오 알림톡을 발송합니다.",
-  },
-  {
-    value: "channeltalk",
-    label: "채널톡 (Channel Talk)",
-    description: "채널톡 마케팅 자동화를 통해 알림톡을 발송합니다.",
-  },
-  {
-    value: "none",
-    label: "사용 안함",
-    description: "알림톡 발송을 비활성화합니다.",
-  },
-];
+type SectionId = "profile" | "notifications" | "theme" | "security" | "pricing";
 
 const THEME_OPTIONS = [
   { id: "light", label: "라이트", icon: Sun, description: "밝은 테마" },
@@ -69,49 +70,53 @@ const THEME_OPTIONS = [
 
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("profile");
-  const [notifications, setNotifications] = useState(true);
   const [selectedTheme, setSelectedTheme] = useState<string>("light");
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
   const { data: user } = useGetAuthUser();
-  const isOwner = user?.role === "owner";
-
+  const queryClient = useQueryClient();
+  const notificationPreferencesQuery = useQuery({
+    queryKey: ["settings", "notification-preferences"],
+    queryFn: settingsApi.getNotificationPreferences,
+  });
   const {
-    data: alimtalkSettings,
-    isLoading: isLoadingAlimtalk,
-    error: alimtalkError,
-  } = useQuery({
-    queryKey: ["settings", "alimtalk-provider"],
-    queryFn: settingsApi.getAlimtalkProvider,
-  });
+    isSupported: isBrowserNotificationSupported,
+    isSubscribed: isBrowserNotificationEnabled,
+    permission: browserNotificationPermission,
+    isLoading: isBrowserNotificationLoading,
+    error: browserNotificationError,
+    subscribe: enableBrowserNotifications,
+    unsubscribe: disableBrowserNotifications,
+  } = usePushNotification();
 
-  const updateAlimtalkMutation = useMutation({
-    mutationFn: settingsApi.updateAlimtalkProvider,
+  const emailNotificationsEnabled =
+    notificationPreferencesQuery.data?.emailNotificationsEnabled ?? true;
+
+  const updateNotificationPreferencesMutation = useMutation({
+    mutationFn: settingsApi.updateNotificationPreferences,
     onSuccess: (data) => {
-      queryClient.setQueryData(["settings", "alimtalk-provider"], data);
-      toast({
-        title: "설정 저장됨",
-        description: "알림톡 설정이 저장되었습니다.",
-      });
-    },
-    onError: () => {
-      toast({
-        title: "오류",
-        description: "설정 저장에 실패했습니다. 다시 시도해주세요.",
-        variant: "destructive",
-      });
+      queryClient.setQueryData(["settings", "notification-preferences"], data);
     },
   });
 
-  const handleProviderChange = (value: string) => {
-    updateAlimtalkMutation.mutate(value as AlimtalkProvider);
+  const handleBrowserNotificationToggle = async (checked: boolean) => {
+    if (checked) {
+      await enableBrowserNotifications();
+      return;
+    }
+
+    await disableBrowserNotifications();
   };
+
+  const handleEmailNotificationToggle = async (checked: boolean) => {
+    await updateNotificationPreferencesMutation.mutateAsync(checked);
+  };
+
+  const accountInitials = user?.name ? user.name.slice(0, 2) : "사용";
 
   return (
     <section data-component="settings" className="space-y-6">
       <div data-component="settings-content" className="flex flex-col lg:flex-row gap-8">
         <SectionNav
-          items={NAV_SECTIONS}
+          items={BASE_NAV_SECTIONS}
           activeId={activeSection}
           onSelect={(id) => setActiveSection(id as SectionId)}
         />
@@ -122,62 +127,51 @@ export default function SettingsPage() {
             <ContentPaper variant="v3">
               <div data-component="settings-profile-header" className="mb-4 flex items-center gap-3">
                 <div data-component="settings-profile-icon" className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--v3-primary))]/10">
-                  <User size={20} className="text-[hsl(var(--v3-primary))]" />
+                  <UserKeyIcon size={20} className="text-[hsl(var(--v3-primary))]" />
                 </div>
                 <div data-component="settings-profile-title-group">
-                  <h2 className="text-lg font-bold text-foreground">프로필</h2>
-                  <p className="text-sm text-muted-foreground">개인 정보를 관리합니다.</p>
+                  <h2 className="text-lg font-bold text-foreground">계정</h2>
+                  <p className="text-sm text-muted-foreground">회원가입 시 입력한 계정 정보를 관리합니다.</p>
                 </div>
               </div>
               <Separator className="mb-6" />
 
-              <div data-component="settings-profile-summary" className="flex items-center gap-4 mb-6">
-                <div data-component="settings-profile-summary-avatar" className="w-16 h-16 rounded-full bg-[hsl(var(--v3-primary))]/10 flex items-center justify-center">
-                  <User size={28} className="text-[hsl(var(--v3-primary))]" />
-                </div>
-                <div data-component="settings-profile-summary-text">
-                  <p className="text-sm font-medium text-foreground">
-                    {user?.name || "사용자"}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{user?.role || "member"}</p>
-                </div>
-              </div>
+              <div data-component="settings-profile-summary-wrap" className="flex justify-center">
+                <div data-component="settings-profile-summary" className="mb-6 flex w-full flex-col gap-5 rounded-[24px] bg-[hsl(var(--v3-bg))] p-5 lg:w-1/2">
+                  <div data-component="settings-profile-summary-header" className="flex items-center gap-4">
+                    <Avatar
+                      data-component="settings-profile-summary-avatar"
+                      className="h-16 w-16 rounded-full border border-[hsl(var(--v3-border))]/60 bg-[hsl(var(--v3-primary))]/10"
+                    >
+                      <AvatarImage src={user?.profileImage || ""} alt={user?.name || "사용자"} />
+                      <AvatarFallback className="bg-[hsl(var(--v3-primary))]/10 text-[hsl(var(--v3-primary))] text-lg font-bold">
+                        {accountInitials}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div data-component="settings-profile-summary-text">
+                      <p className="text-sm font-medium text-foreground">
+                        {user?.name || "사용자"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {getRoleLabel(user?.role || "user")}
+                      </p>
+                    </div>
+                  </div>
 
-              <div data-component="settings-profile-form" className="space-y-4">
-                <div data-component="settings-profile-name-field">
-                  <Label htmlFor="profile-name" className="text-sm font-medium">
-                    이름
-                  </Label>
-                  <input
-                    id="profile-name"
-                    type="text"
-                    defaultValue={user?.name || ""}
-                    placeholder="이름을 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
-                  />
-                </div>
-                <div data-component="settings-profile-email-field">
-                  <Label htmlFor="profile-email" className="text-sm font-medium">
-                    이메일
-                  </Label>
-                  <input
-                    id="profile-email"
-                    type="email"
-                    defaultValue={user?.email || ""}
-                    placeholder="이메일을 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
-                  />
-                </div>
-                <div data-component="settings-profile-phone-field">
-                  <Label htmlFor="profile-phone" className="text-sm font-medium">
-                    전화번호
-                  </Label>
-                  <input
-                    id="profile-phone"
-                    type="tel"
-                    placeholder="전화번호를 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
-                  />
+                  <div data-component="settings-profile-readonly-grid" className="flex flex-col gap-4">
+                    <div data-component="settings-profile-email-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
+                      <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">이메일</p>
+                      <p className="mt-1 text-sm font-medium text-foreground break-all">{user?.email || "-"}</p>
+                    </div>
+                    <div data-component="settings-profile-phone-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
+                      <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">전화번호</p>
+                      <p className="mt-1 text-sm font-medium text-foreground">{user?.phone || "-"}</p>
+                    </div>
+                    <div data-component="settings-profile-organization-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
+                      <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">지점</p>
+                      <p className="mt-1 text-sm font-medium text-foreground">{user?.organizationName || "-"}</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </ContentPaper>
@@ -211,77 +205,50 @@ export default function SettingsPage() {
                   <Switch
                     variant="v3"
                     id="notif-email"
-                    checked={notifications}
-                    onCheckedChange={setNotifications}
+                    checked={emailNotificationsEnabled}
+                    onCheckedChange={handleEmailNotificationToggle}
+                    disabled={notificationPreferencesQuery.isLoading || updateNotificationPreferencesMutation.isPending}
                   />
                 </div>
 
-                <div data-component="settings-notifications-alimtalk" className="p-3 rounded-xl">
-                  <div data-component="settings-notifications-alimtalk-header" className="flex items-center gap-2 mb-3">
-                    <MessageSquare size={16} className="text-amber-500" />
-                    <Label className="text-sm font-medium">알림톡 서비스</Label>
-                  </div>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    카카오 알림톡 발송 서비스를 선택합니다.
-                  </p>
-
-                  {isLoadingAlimtalk ? (
-                    <div data-component="settings-notifications-alimtalk-loading" className="flex justify-center py-6">
-                      <Spinner className="h-6 w-6" />
-                    </div>
-                  ) : alimtalkError ? (
-                    <Alert variant="destructive">
-                      <AlertDescription>설정을 불러오는데 실패했습니다.</AlertDescription>
-                    </Alert>
-                  ) : (
-                    <RadioGroup
-                      value={alimtalkSettings?.provider || "aligo"}
-                      onValueChange={handleProviderChange}
-                      className="space-y-3"
-                    >
-                      {PROVIDER_OPTIONS.map((option) => (
-                        <div
-                          data-component="settings-notifications-alimtalk-option"
-                          key={option.value}
-                          className="flex items-start space-x-3 p-3 rounded-xl transition-all hover:bg-muted/50"
-                        >
-                          <RadioGroupItem
-                            value={option.value}
-                            id={`alimtalk-${option.value}`}
-                            disabled={updateAlimtalkMutation.isPending}
-                            className="mt-1"
-                          />
-                          <div data-component="settings-notifications-alimtalk-option-text" className="grid gap-1">
-                            <Label
-                              htmlFor={`alimtalk-${option.value}`}
-                              className="font-medium cursor-pointer"
-                            >
-                              {option.label}
-                            </Label>
-                            <p className="text-sm text-muted-foreground">
-                              {option.description}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </RadioGroup>
-                  )}
-
-                  {alimtalkSettings?.updatedAt && (
-                    <p className="text-xs text-muted-foreground mt-4">
-                      마지막 수정:{" "}
-                      {new Date(alimtalkSettings.updatedAt).toLocaleString("ko-KR")}
+                <div data-component="settings-notifications-browser" className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
+                  <div data-component="settings-notifications-browser-text" className="space-y-0.5">
+                    <Label htmlFor="notif-browser" className="text-sm font-medium">
+                      브라우저 알림
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      {isBrowserNotificationSupported
+                        ? browserNotificationPermission === "denied"
+                          ? "브라우저 설정에서 알림 권한을 허용해 주세요."
+                          : "브라우저 푸시 알림을 수신합니다."
+                        : "이 브라우저는 푸시 알림을 지원하지 않습니다."}
                     </p>
+                  </div>
+                  {isBrowserNotificationLoading ? (
+                    <Spinner size="sm" />
+                  ) : (
+                    <Switch
+                      variant="v3"
+                      id="notif-browser"
+                      checked={isBrowserNotificationEnabled}
+                      onCheckedChange={handleBrowserNotificationToggle}
+                      disabled={!isBrowserNotificationSupported || browserNotificationPermission === "denied"}
+                    />
                   )}
                 </div>
-              </div>
 
-              {isOwner && (
-                <>
-                  <Separator className="my-4" />
-                  <NotificationTestSection />
-                </>
-              )}
+                {browserNotificationError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{browserNotificationError}</AlertDescription>
+                  </Alert>
+                ) : null}
+
+                {updateNotificationPreferencesMutation.isError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>이메일 알림 설정을 저장하지 못했습니다.</AlertDescription>
+                  </Alert>
+                ) : null}
+              </div>
             </ContentPaper>
           </section>
           )}
@@ -418,11 +385,6 @@ export default function SettingsPage() {
           </section>
           )}
 
-          {activeSection === "pricing" && (
-          <section data-component="settings-pricing">
-            <VoucherPriceUploadForm />
-          </section>
-          )}
         </div>
       </div>
 

@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsString } from "class-validator";
+import { IsBoolean, IsIn, IsNotEmpty, IsString } from "class-validator";
 import { ALIMTALK_PROVIDERS, AlimtalkProvider } from "domain/entities/system-setting.entity";
 
 export class UpdateAlimtalkProviderDto {
@@ -17,6 +17,23 @@ export class AlimtalkProviderResponseDto {
         const dto = new AlimtalkProviderResponseDto();
         dto.provider = provider;
         dto.enabled = enabled;
+        dto.updatedAt = updatedAt?.toISOString();
+        return dto;
+    }
+}
+
+export class UpdateNotificationPreferencesDto {
+    @IsBoolean()
+    emailNotificationsEnabled!: boolean;
+}
+
+export class NotificationPreferencesResponseDto {
+    emailNotificationsEnabled!: boolean;
+    updatedAt?: string;
+
+    static from(emailNotificationsEnabled: boolean, updatedAt?: Date): NotificationPreferencesResponseDto {
+        const dto = new NotificationPreferencesResponseDto();
+        dto.emailNotificationsEnabled = emailNotificationsEnabled;
         dto.updatedAt = updatedAt?.toISOString();
         return dto;
     }

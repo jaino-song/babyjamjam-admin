@@ -26,6 +26,7 @@ import { format, isToday, isYesterday } from "date-fns";
 import { ko } from "date-fns/locale";
 import { FilteredClientsDialog } from "./FilteredClientsDialog";
 import { cn } from "@/lib/utils";
+import { useScrollActivity } from "@/components/app/v3/useScrollActivity";
 
 type FilterType = "starting-soon" | "ending-soon" | "incomplete-contracts" | "no-contract";
 
@@ -102,6 +103,7 @@ export function NotificationBell({ className }: { className?: string }) {
     const router = useRouter();
     const [isOpen, setIsOpen] = useState(false);
     const [subscribeLoading, setSubscribeLoading] = useState(false);
+    const { isScrollActive, handleScroll } = useScrollActivity();
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogFilterType, setDialogFilterType] = useState<FilterType | null>(null);
@@ -285,7 +287,11 @@ export function NotificationBell({ className }: { className?: string }) {
                         <p className="text-muted-foreground">알림이 없습니다</p>
                     </div>
                 ) : (
-                    <div className="max-h-80 overflow-y-auto scrollbar-hide">
+                    <div
+                        className="max-h-80 overflow-y-auto scrollbar-on-scroll"
+                        data-scroll-active={isScrollActive ? "true" : "false"}
+                        onScroll={handleScroll}
+                    >
                         {groupNotificationsByDate(notifications).map((group) => (
                             <div key={group.date}>
                                 <div className="px-4 py-2 bg-muted sticky top-0">

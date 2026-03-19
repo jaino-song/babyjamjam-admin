@@ -21,6 +21,8 @@ describe("AuthController (Integration)", () => {
         id: "user-uuid-123",
         name: "Test User",
         email: "test@example.com",
+        phone: "010-1234-5678",
+        birthDate: "1990-01-01",
         profileImage: "https://example.com/profile.jpg",
         role: "user",
         organizationName: null,
@@ -68,6 +70,10 @@ describe("AuthController (Integration)", () => {
                 findUnique: jest.fn(),
                 findFirst: jest.fn(),
                 create: jest.fn(),
+                update: jest.fn(),
+            },
+            organization: {
+                findUnique: jest.fn(),
             },
         };
 
@@ -215,6 +221,8 @@ describe("AuthController (Integration)", () => {
                         id: true,
                         name: true,
                         email: true,
+                        phone: true,
+                        birthDate: true,
                         profileImage: true,
                         role: true,
                     },

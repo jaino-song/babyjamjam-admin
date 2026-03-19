@@ -14,6 +14,7 @@ import { PwaNotificationSchedulerService } from "application/services/pwa-notifi
 import { NotificationCleanupSchedulerService } from "application/services/notification-cleanup-scheduler.service";
 import { NotificationController } from "interface/controllers/notification.controller";
 import { DatabaseModule } from "infrastructure/database/database.module";
+import { AuthModule } from "infrastructure/auth/auth.module";
 import { SbPushSubscriptionRepository } from "infrastructure/database/repositories/sb.push-subscription.repository";
 import { SbNotificationRepository } from "infrastructure/database/repositories/sb.notification.repository";
 import { SbUserRepository } from "infrastructure/database/repositories/sb.user.repository";
@@ -26,9 +27,10 @@ import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interfa
 import { ORGANIZATION_REPOSITORY } from "domain/repositories/organization.repository.interface";
 import { SbOrganizationRepository } from "infrastructure/database/repositories/sb.organization.repository";
 import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
+import { SystemSettingModule } from "./system-setting.module";
 
 @Module({
-    imports: [DatabaseModule, ConfigModule],
+    imports: [DatabaseModule, ConfigModule, AuthModule, SystemSettingModule],
     controllers: [NotificationController],
     providers: [
         // Use Cases

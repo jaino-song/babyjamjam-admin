@@ -1,0 +1,67 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e74]:
+      - generic [ref=e75]: 🔔
+      - generic [ref=e76]:
+        - paragraph [ref=e77]: 알림을 허용하시겠습니까?
+        - paragraph [ref=e78]: 서비스 일정, 계약서 알림 등을 받을 수 있습니다.
+        - generic [ref=e79]:
+          - button "허용" [ref=e80]
+          - button "나중에" [ref=e81]
+      - button "닫기" [ref=e82]: ✕
+    - main [ref=e4]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - heading "회원가입" [level=2] [ref=e9]
+          - paragraph [ref=e10]: 필수 정보를 단계별로 입력해 주세요.
+        - generic [ref=e11]:
+          - generic [ref=e12]:
+            - generic [ref=e15]: "1"
+            - generic [ref=e19]: "2"
+            - generic [ref=e23]: "3"
+          - generic [ref=e24]:
+            - generic [ref=e25]:
+              - generic [ref=e26]: 1단계
+              - generic [ref=e27]:
+                - generic [ref=e28]:
+                  - generic [ref=e29]:
+                    - generic [ref=e30]: 이메일
+                    - generic [ref=e84]: 유효한 이메일 주소를 입력해주세요.
+                  - textbox "이메일" [ref=e31]: jainostudio@gmail,com
+                - generic [ref=e32]:
+                  - generic [ref=e34]: 이름
+                  - textbox "이름" [active] [ref=e35]
+                - generic [ref=e36]:
+                  - generic [ref=e38]: 비밀번호
+                  - textbox "비밀번호" [ref=e39]
+                - list [ref=e40]:
+                  - listitem [ref=e41]:
+                    - img [ref=e42]
+                    - generic [ref=e44]: 최소 8자 이상
+                  - listitem [ref=e45]:
+                    - img [ref=e46]
+                    - generic [ref=e48]: 소문자 포함
+                  - listitem [ref=e49]:
+                    - img [ref=e50]
+                    - generic [ref=e52]: 숫자 포함
+                  - listitem [ref=e53]:
+                    - img [ref=e54]
+                    - generic [ref=e56]: 특수문자 포함
+                - generic [ref=e57]:
+                  - generic [ref=e59]: 비밀번호 확인
+                  - textbox "비밀번호 확인" [ref=e60]
+            - generic [ref=e61]:
+              - button "이전" [disabled]:
+                - img
+                - text: 이전
+              - generic [ref=e62]: 1 / 3 단계
+              - button "다음" [disabled]:
+                - text: 다음
+                - img
+          - paragraph [ref=e63]:
+            - text: 이미 계정이 있으신가요?
+            - link "로그인" [ref=e64] [cursor=pointer]:
+              - /url: /login
+  - button "Open Next.js Dev Tools" [ref=e70] [cursor=pointer]:
+    - img [ref=e71]
+  - alert [ref=e85]

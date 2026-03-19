@@ -290,6 +290,9 @@
         "Service/Pricing",
         "Contract"
       ],
+      "customer-info": "Customer Information",
+      "assigned-employee": "Provider Information",
+      "service-info": "Service Information",
       "add-title": "Register New Client",
       "edit-title": "Edit Client Information",
       "section-basic": "Basic Information",

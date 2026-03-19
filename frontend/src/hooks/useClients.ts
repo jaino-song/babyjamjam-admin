@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import type { 
     Client, 
@@ -15,6 +15,8 @@ export const clientQueryKeys = {
     lists: () => [...clientQueryKeys.all, "list"] as const,
     list: (page?: number, limit?: number, search?: string) => 
         [...clientQueryKeys.lists(), { page, limit, search }] as const,
+    infiniteList: (limit?: number, search?: string) =>
+        [...clientQueryKeys.lists(), "infinite", { limit, search }] as const,
     filtered: (filter: string) => [...clientQueryKeys.all, "filtered", filter] as const,
     details: () => [...clientQueryKeys.all, "detail"] as const,
     detail: (id: number) => [...clientQueryKeys.details(), id] as const,
@@ -34,6 +36,25 @@ export function useClients(page: number = 1, limit: number = 10, search?: string
             return data;
         },
         staleTime: 1000 * 60 * 5, // 5 minutes
+    });
+}
+
+export function useInfiniteClients(limit: number = 10, search?: string) {
+    return useInfiniteQuery<PaginatedResponse<Client>, Error>({
+        queryKey: clientQueryKeys.infiniteList(limit, search),
+        initialPageParam: 1,
+        queryFn: async ({ pageParam }) => {
+            const params = new URLSearchParams();
+            params.set("page", String(pageParam));
+            params.set("limit", String(limit));
+            if (search) params.set("search", search);
+
+            const { data } = await api.get(`/clients?${params.toString()}`);
+            return data;
+        },
+        getNextPageParam: (lastPage) =>
+            lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
+        staleTime: 1000 * 60 * 5,
     });
 }
 
@@ -124,4 +145,3 @@ export function useDeleteClient() {
         },
     });
 }
-

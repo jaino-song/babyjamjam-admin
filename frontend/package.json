@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "jest",
+    "test:screenshots": "playwright test tests/screenshots",
     "magi": "node ./bin/magi"
   },
   "dependencies": {

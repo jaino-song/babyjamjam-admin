@@ -212,7 +212,7 @@ export function SteppedWizard({
     <div
       data-component="stepped-wizard-root"
       className={cn(
-        "flex flex-col",
+        "flex w-full flex-col",
         isMobile && "h-full min-h-0 overflow-hidden",
         className
       )}

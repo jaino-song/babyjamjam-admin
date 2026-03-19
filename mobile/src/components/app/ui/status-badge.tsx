@@ -5,35 +5,38 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const statusBadgeVariants = cva(
-  "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-colors whitespace-nowrap",
+  "inline-flex items-center justify-center rounded-[50px] border px-3 py-1 text-[0.65rem] font-semibold leading-none whitespace-nowrap shrink-0 transition-colors overflow-hidden gap-1 [&>svg]:size-3 [&>svg]:pointer-events-none",
   {
     variants: {
       variant: {
-        // Service/Contract Status
-        waiting: "bg-warning/10 text-warning border border-warning/20",
-        in_progress: "bg-info/10 text-info border border-info/20",
-        completed: "bg-success/10 text-success border border-success/20",
-        cancelled: "bg-muted text-muted-foreground border border-border",
-        replacement_requested: "bg-destructive/10 text-destructive border border-destructive/20",
+        neutral: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
+        primary: "bg-[hsl(214,80%,95%)] border-[hsl(214,70%,85%)] text-v3-primary",
+        info: "bg-[hsl(214,80%,95%)] border-[hsl(214,70%,85%)] text-v3-primary",
+        success: "bg-[hsl(137,60%,94%)] border-[hsl(137,34%,84%)] text-v3-green",
+        warning: "bg-[hsl(47,100%,92%)] border-[hsla(38,92%,35%,0.18)] text-[hsl(38,92%,35%)]",
+        danger: "bg-[hsl(355,40%,94%)] border-[hsla(355,36%,45%,0.20)] text-[hsl(355,36%,45%)]",
+        amber: "bg-amber-100 border-amber-200 text-amber-700",
+        outline: "bg-transparent border-border text-v3-dark",
 
-        // Document Status
-        doc_created: "bg-muted text-muted-foreground border border-border",
-        doc_requested: "bg-info/10 text-info border border-info/20",
-        doc_opened: "bg-warning/10 text-warning border border-warning/20",
-        doc_completed: "bg-success/10 text-success border border-success/20",
-        doc_rejected: "bg-destructive/10 text-destructive border border-destructive/20",
-        doc_revoked: "bg-destructive/10 text-destructive border border-destructive/20",
-        doc_deleted: "bg-muted text-muted-foreground border border-border",
+        waiting: "bg-[hsl(47,100%,92%)] border-[hsla(38,92%,35%,0.18)] text-[hsl(38,92%,35%)]",
+        in_progress: "bg-[hsl(214,80%,95%)] border-[hsl(214,70%,85%)] text-v3-primary",
+        completed: "bg-[hsl(137,60%,94%)] border-[hsl(137,34%,84%)] text-v3-green",
+        cancelled: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
+        replacement_requested: "bg-[hsl(355,40%,94%)] border-[hsla(355,36%,45%,0.20)] text-[hsl(355,36%,45%)]",
 
-        // Generic
-        default: "bg-secondary text-secondary-foreground border border-border",
-        primary: "bg-primary/10 text-primary border border-primary/20",
-        outline: "border border-border bg-transparent text-foreground",
+        doc_created: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
+        doc_requested: "bg-[hsl(214,80%,95%)] border-[hsl(214,70%,85%)] text-v3-primary",
+        doc_opened: "bg-[hsl(47,100%,92%)] border-[hsla(38,92%,35%,0.18)] text-[hsl(38,92%,35%)]",
+        doc_completed: "bg-[hsl(137,60%,94%)] border-[hsl(137,34%,84%)] text-v3-green",
+        doc_rejected: "bg-[hsl(355,40%,94%)] border-[hsla(355,36%,45%,0.20)] text-[hsl(355,36%,45%)]",
+        doc_revoked: "bg-[hsl(355,40%,94%)] border-[hsla(355,36%,45%,0.20)] text-[hsl(355,36%,45%)]",
+        doc_deleted: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
+        default: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
       },
       size: {
-        sm: "px-2.5 py-0.5 text-xs",
-        default: "px-3 py-1 text-xs",
-        lg: "px-4 py-1.5 text-sm",
+        sm: "px-3 py-1 text-[0.65rem]",
+        default: "px-3 py-1 text-[0.65rem]",
+        lg: "px-3.5 py-1.5 text-[0.75rem]",
       },
     },
     defaultVariants: {
@@ -67,4 +70,6 @@ function StatusBadge({
   );
 }
 
-export { StatusBadge, statusBadgeVariants };
+const StatusPill = StatusBadge;
+
+export { StatusBadge, StatusPill, statusBadgeVariants };

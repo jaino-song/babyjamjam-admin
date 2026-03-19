@@ -78,6 +78,8 @@ export class AuthController {
                 id: true,
                 name: true,
                 email: true,
+                phone: true,
+                birthDate: true,
                 profileImage: true,
                 role: true,
             },

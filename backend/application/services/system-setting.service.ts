@@ -13,6 +13,10 @@ export class SystemSettingService {
         private readonly updateSettingUsecase: UpdateSettingUsecase
     ) {}
 
+    private getUserEmailNotificationPreferenceKey(userId: string): string {
+        return `user:${userId}:email_notifications_enabled`;
+    }
+
     async getAlimtalkProvider(): Promise<AlimtalkProvider> {
         const value = await this.getSettingUsecase.executeWithDefault(
             SystemSettingEntity.ALIMTALK_PROVIDER_KEY,
@@ -36,5 +40,21 @@ export class SystemSettingService {
     async isAlimtalkEnabled(): Promise<boolean> {
         const provider = await this.getAlimtalkProvider();
         return provider !== "none";
+    }
+
+    async getUserEmailNotificationsEnabled(userId: string): Promise<boolean> {
+        const value = await this.getSettingUsecase.executeWithDefault(
+            this.getUserEmailNotificationPreferenceKey(userId),
+            "true"
+        );
+
+        return value === "true";
+    }
+
+    async setUserEmailNotificationsEnabled(userId: string, enabled: boolean): Promise<SystemSettingEntity> {
+        return this.updateSettingUsecase.execute(
+            this.getUserEmailNotificationPreferenceKey(userId),
+            enabled ? "true" : "false"
+        );
     }
 }

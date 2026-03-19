@@ -362,18 +362,18 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
                 />
               ) : null
             }
-            subHeader={isTriggerRulesLocked ? (
-              <div
-                data-component={component("trigger-rules-approval-banner")}
-                className="relative z-30 rounded-[18px] border border-v3-burgundy/15 bg-white px-4 py-3 text-[0.78rem] font-semibold leading-5 text-v3-burgundy shadow-sm"
-              >
-                {TRIGGER_RULE_APPROVAL_MESSAGE}
-              </div>
-            ) : undefined}
             tabs={RULE_STATUS_TABS.map((tab) => ({ ...tab }))}
             activeTab={statusFilter}
             onTabChange={isTriggerRulesLocked ? undefined : (value) => setStatusFilter(value as RuleStatusFilter)}
             disabled={isTriggerRulesLocked}
+            disabledOverlay={isTriggerRulesLocked ? (
+              <div
+                data-component={component("trigger-rules-disabled-copy")}
+                className="max-w-[240px] rounded-[18px] border border-v3-burgundy/15 bg-white/90 px-4 py-3 text-center text-[0.78rem] font-semibold leading-5 text-v3-burgundy shadow-sm"
+              >
+                {TRIGGER_RULE_APPROVAL_MESSAGE}
+              </div>
+            ) : undefined}
             headerActions={isLoading || isTriggerRulesLocked ? undefined : (
               <HeaderActionButton
                 icon={Plus}

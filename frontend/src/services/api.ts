@@ -208,6 +208,11 @@ export interface AlimtalkProviderResponse {
     updatedAt?: string;
 }
 
+export interface NotificationPreferencesResponse {
+    emailNotificationsEnabled: boolean;
+    updatedAt?: string;
+}
+
 export type MessageDeliverySmsType = "AUTO" | "SMS" | "LMS";
 export type MessageDeliveryTriggerType = "immediate" | "scheduled";
 
@@ -249,6 +254,14 @@ export const settingsApi = {
     },
     updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
         const { data } = await api.put('/settings/alimtalk-provider', { provider });
+        return data;
+    },
+    getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {
+        const { data } = await api.get('/settings/notification-preferences');
+        return data;
+    },
+    updateNotificationPreferences: async (emailNotificationsEnabled: boolean): Promise<NotificationPreferencesResponse> => {
+        const { data } = await api.put('/settings/notification-preferences', { emailNotificationsEnabled });
         return data;
     },
 }

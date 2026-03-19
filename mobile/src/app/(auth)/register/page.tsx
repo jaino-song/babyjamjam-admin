@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle, Link2 } from "lucide-react";
 import { authApi } from "@/services/api";
-import { registerSchema, checkPasswordStrength, type RegisterFormData } from "@/lib/validations/auth";
+import { registerSchema, checkPasswordStrength, getEmailFormatError, sanitizeNameInput, type RegisterFormData } from "@/lib/validations/auth";
 import { CardContainer } from "@/components/auth/card-container";
 import { InputField } from "@/components/app/v3";
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
@@ -27,6 +27,8 @@ interface AxiosLikeError {
     };
 }
 
+const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다.";
+
 export default function RegisterPage() {
     const router = useRouter();
     const [formData, setFormData] = useState<Partial<RegisterFormData>>({
@@ -40,26 +42,132 @@ export default function RegisterPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
     const [accountsLinked, setAccountsLinked] = useState(false);
+    const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
+    const [isEmailDuplicate, setIsEmailDuplicate] = useState(false);
+    const [emailTouched, setEmailTouched] = useState(false);
 
     const passwordStrength = checkPasswordStrength(formData.password || "");
+    const normalizedEmail = (formData.email ?? "").trim().toLowerCase();
+    const emailFormatError = getEmailFormatError(formData.email ?? "");
+
+    useEffect(() => {
+        if (!normalizedEmail || emailFormatError) {
+            setIsCheckingEmailDuplicate(false);
+            setIsEmailDuplicate(false);
+            setErrors((prev) => {
+                if (prev.email !== EMAIL_DUPLICATE_ERROR) {
+                    return prev;
+                }
+
+                const nextErrors = { ...prev };
+                delete nextErrors.email;
+                return nextErrors;
+            });
+            return;
+        }
+
+        let isCancelled = false;
+        const timeoutId = window.setTimeout(() => {
+            setIsCheckingEmailDuplicate(true);
+
+            void authApi.checkEmailExists(normalizedEmail)
+                .then(({ exists, linkable }) => {
+                    if (isCancelled) {
+                        return;
+                    }
+
+                    const isDuplicate = exists && !linkable;
+                    setIsEmailDuplicate(isDuplicate);
+                    setErrors((prev) => {
+                        const nextErrors = { ...prev };
+                        if (isDuplicate) {
+                            nextErrors.email = EMAIL_DUPLICATE_ERROR;
+                        } else if (nextErrors.email === EMAIL_DUPLICATE_ERROR) {
+                            delete nextErrors.email;
+                        }
+                        return nextErrors;
+                    });
+                })
+                .catch(() => {
+                    if (!isCancelled) {
+                        setIsEmailDuplicate(false);
+                        setErrors((prev) => {
+                            if (prev.email !== EMAIL_DUPLICATE_ERROR) {
+                                return prev;
+                            }
+
+                            const nextErrors = { ...prev };
+                            delete nextErrors.email;
+                            return nextErrors;
+                        });
+                    }
+                })
+                .finally(() => {
+                    if (!isCancelled) {
+                        setIsCheckingEmailDuplicate(false);
+                    }
+                });
+        }, 250);
+
+        return () => {
+            isCancelled = true;
+            window.clearTimeout(timeoutId);
+            setIsCheckingEmailDuplicate(false);
+        };
+    }, [normalizedEmail, emailFormatError]);
 
     const handleChange = (field: keyof RegisterFormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
-        setFormData((prev) => ({ ...prev, [field]: e.target.value }));
+        const value = field === "name" ? sanitizeNameInput(e.target.value) : e.target.value;
+        const nextEmailError = field === "email" ? getEmailFormatError(value) : undefined;
+        setFormData((prev) => ({ ...prev, [field]: value }));
         // Clear field error on change
         if (errors[field]) {
             setErrors((prev) => {
                 const newErrors = { ...prev };
                 delete newErrors[field];
+                if (field === "email" && (emailTouched || Boolean(prev.email)) && nextEmailError) {
+                    newErrors.email = nextEmailError;
+                }
                 return newErrors;
             });
+        } else if (field === "email" && emailTouched && nextEmailError) {
+            setErrors((prev) => ({ ...prev, email: nextEmailError }));
         }
         setServerError(null);
+    };
+
+    const handleEmailBlur = () => {
+        setEmailTouched(true);
+
+        const emailError = getEmailFormatError(formData.email ?? "");
+
+        if (!emailError) {
+            return;
+        }
+
+        setErrors((prev) => ({ ...prev, email: emailError }));
     };
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setServerError(null);
-        setErrors({});
+
+        if (isCheckingEmailDuplicate) {
+            return;
+        }
+
+        if (isEmailDuplicate) {
+            setErrors((prev) => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
+            return;
+        }
+
+        setErrors((prev) => {
+            const nextErrors = { ...prev };
+            if (nextErrors.email === EMAIL_DUPLICATE_ERROR) {
+                delete nextErrors.email;
+            }
+            return nextErrors;
+        });
 
         // Validate with Zod
         const result = registerSchema.safeParse(formData);
@@ -180,6 +288,7 @@ export default function RegisterPage() {
                                 type: "email",
                                 value: formData.email,
                                 onChange: handleChange("email"),
+                                onBlur: handleEmailBlur,
                                 disabled: isLoading,
                                 autoComplete: "email",
                                 "aria-invalid": !!errors.email,
@@ -256,7 +365,7 @@ export default function RegisterPage() {
                             type="submit"
                             size="lg"
                             className={PRIMARY_BTN_CLS + " w-full"}
-                            disabled={isLoading}
+                            disabled={isLoading || isCheckingEmailDuplicate || isEmailDuplicate || !!emailFormatError}
                         >
                             {isLoading ? <Spinner size="sm" /> : "회원가입"}
                         </Button>

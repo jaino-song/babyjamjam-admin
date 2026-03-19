@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useLayoutEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 
@@ -51,8 +51,10 @@ export function AnimatedSlotList<T>({
   onLoadMore,
   isFetchingMore = false,
 }: AnimatedSlotListProps<T>) {
+  const listRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadMoreTriggeredRef = useRef(false);
+  const previousIsLoadingRef = useRef(isLoading);
 
   const itemsLength = items?.length ?? 0;
   const effectiveFetchingMoreCount = fetchingMoreCount ?? loadingCount;
@@ -66,6 +68,24 @@ export function AnimatedSlotList<T>({
   useEffect(() => {
     loadMoreTriggeredRef.current = false;
   }, [itemsLength, hasMore, isFetchingMore]);
+
+  useLayoutEffect(() => {
+    if (previousIsLoadingRef.current && !isLoading) {
+      const listElement = listRef.current;
+      const itemElements = listElement?.querySelectorAll<HTMLElement>(
+        `[data-component="${itemDataComponent}"]`,
+      );
+
+      itemElements?.forEach((element) => {
+        element.style.animation = "none";
+        element.style.animationDelay = "0s";
+        element.style.opacity = "1";
+        element.style.transform = "none";
+      });
+    }
+
+    previousIsLoadingRef.current = isLoading;
+  }, [isLoading, itemDataComponent]);
 
   useEffect(() => {
     if (!hasMore || !onLoadMore || isFetchingMore) return;
@@ -96,16 +116,18 @@ export function AnimatedSlotList<T>({
   }, [hasMore, onLoadMore, isFetchingMore]);
 
   return (
-    <div data-component="animated-slot-list" className={cn("relative -mx-2 px-2", className)}>
+    <div
+      ref={listRef}
+      data-component="animated-slot-list"
+      className={cn("relative -mx-2 px-2", className)}
+    >
       {Array.from({ length: slotCount }, (_, index) => {
         const isAppendLoadingSlot = !isLoading && isFetchingMore && index >= itemsLength;
         const isSlotLoading = isLoading || isAppendLoadingSlot;
         const item = !isSlotLoading ? (items?.[index] ?? null) : null;
 
-        const loadingBatchIndex = isAppendLoadingSlot ? index - itemsLength : index;
-        const animationDelay = isSlotLoading
-          ? `${Math.max(0, loadingBatchIndex) * delayStepSeconds}s`
-          : "0s";
+        const staggerIndex = isAppendLoadingSlot ? index - itemsLength : index;
+        const animationDelay = `${Math.max(0, staggerIndex) * delayStepSeconds}s`;
 
         const computedSlotClassName =
           typeof slotClassName === "function"
@@ -127,9 +149,7 @@ export function AnimatedSlotList<T>({
               computedSlotClassName,
               shouldHide && "hidden"
             )}
-            style={{
-              animationDelay,
-            }}
+            style={{ animationDelay }}
             onClick={
               !isSlotLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined
             }

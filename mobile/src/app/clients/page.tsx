@@ -27,7 +27,6 @@ import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
     DropdownMenu,
@@ -426,13 +425,13 @@ export default function ClientsPage() {
 	                                                    </div>
 	                                                ) : (
 	                                                    client && (
-	                                                        <div
+	                                                    <div
 	                                                            className={cn(
-	                                                                "w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
+	                                                                "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md",
 	                                                                getAvatarGradient(client.name)
 	                                                            )}
 	                                                        >
-	                                                            {client.name.charAt(0)}
+	                                                            <Users className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
 	                                                        </div>
 	                                                    )
 	                                                )}
@@ -449,15 +448,9 @@ export default function ClientsPage() {
 	                                                                <span className="font-bold text-[0.85rem] text-v3-dark truncate">
 	                                                                    {client?.name}
 	                                                                </span>
-	                                                                <Badge
-	                                                                    variant="secondary"
-	                                                                    className="bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)] border-none rounded-full px-2 py-0 text-[9px] font-bold shrink-0"
-	                                                                >
-	                                                                    {client?.type || "일반"}
-	                                                                </Badge>
-	                                                            </>
-	                                                        )}
-	                                                    </div>
+                                                            </>
+                                                        )}
+                                                    </div>
 
 	                                                    {isLoading ? (
 	                                                        <Skeleton className="h-3 w-52 bg-v3-dim-white" />
@@ -537,11 +530,11 @@ export default function ClientsPage() {
                                 <div className="flex items-center gap-4">
                                     <div
                                         className={cn(
-                                            "w-20 h-20 shrink-0 rounded-2xl flex items-center justify-center text-2xl font-bold text-white shadow-lg",
+                                            "w-20 h-20 shrink-0 rounded-2xl flex items-center justify-center text-white shadow-lg",
                                             getAvatarGradient(selectedClient.name)
                                         )}
                                     >
-                                        {selectedClient.name.charAt(0)}
+                                        <Users className="w-7 h-7 shrink-0 transition-colors text-white" aria-hidden="true" />
                                     </div>
                                     <div>
                                         <h2 className="text-xl font-bold text-v3-dark">

@@ -37,6 +37,6 @@ import { getJwtSecret } from "./jwt-secret";
             useClass: SbAuthTokenRepository,
         },
     ],
-    exports: [AuthService, RateLimitGuard],
+    exports: [AuthService, RateLimitGuard, EMAIL_PORT],
 })
 export class AuthModule { }

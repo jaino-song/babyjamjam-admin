@@ -532,11 +532,15 @@ export class ClientController { ... }
 Required environment variables:
 
 ```env
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE?schema=public
+DIRECT_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE?schema=public
 JWT_SECRET=your-secret-key
 KAKAO_CLIENT_ID=your-kakao-app-id
 KAKAO_CLIENT_SECRET=your-kakao-secret
 KAKAO_CALLBACK_URL=http://localhost:3000/auth/kakao/callback
 ```
+
+Create `backend/.env` from `backend/env.example` before running `npm run start:dev`.
 
 ---
 

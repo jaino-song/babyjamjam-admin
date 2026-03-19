@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { resolve } from "node:path";
 import { JwtModule } from "@nestjs/jwt";
 import { JwtStrategy } from "./infrastructure/auth/jwt.strategy";
 import { EformsignController } from "interface/controllers/eformsign.controller";
@@ -25,10 +26,22 @@ import { AIChatModule } from "module/ai-chat.module";
 import { MessageDeliveryModule } from "module/message-delivery.module";
 import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
 
+const ENV_FILE_PATHS = [
+    resolve(process.cwd(), "backend/.env.local"),
+    resolve(process.cwd(), "backend/.env"),
+    resolve(process.cwd(), ".env.local"),
+    resolve(process.cwd(), ".env"),
+    resolve(__dirname, ".env.local"),
+    resolve(__dirname, ".env"),
+    resolve(__dirname, "..", ".env.local"),
+    resolve(__dirname, "..", ".env"),
+];
+
 @Module({
     imports: [
         ConfigModule.forRoot({
             isGlobal: true,
+            envFilePath: ENV_FILE_PATHS,
         }),
         DatabaseModule,
         ScheduleModule.forRoot(),

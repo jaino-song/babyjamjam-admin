@@ -4,18 +4,15 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { CardHeader } from "@/components/app/v3";
 import {
   Settings,
-  User,
   Bell,
   Palette,
   Shield,
-  CreditCard,
   Sun,
   Moon,
   Monitor,
   MessageSquare,
 } from "lucide-react";
 import { ContentPaper } from "@/components/app/root/content-paper";
-import { VoucherPriceUploadForm } from "@/components/app/settings/VoucherPriceUploadForm";
 import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -32,12 +29,39 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 
+function UserKeyIcon({
+  size = 20,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="m16 11 2 2 4-4" />
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+    </svg>
+  );
+}
+
 const NAV_SECTIONS = [
-  { id: "profile", label: "프로필", icon: User },
+  { id: "profile", label: "프로필", icon: UserKeyIcon },
   { id: "notifications", label: "알림", icon: Bell },
   { id: "theme", label: "테마", icon: Palette },
   { id: "security", label: "보안", icon: Shield },
-  { id: "pricing", label: "요금제", icon: CreditCard },
 ] as const;
 
 type SectionId = (typeof NAV_SECTIONS)[number]["id"];
@@ -79,7 +103,6 @@ export default function SettingsPage() {
     notifications: null,
     theme: null,
     security: null,
-    pricing: null,
   });
 
   const { toast } = useToast();
@@ -209,8 +232,8 @@ export default function SettingsPage() {
           >
             <ContentPaper variant="v3">
               <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-[hsl(var(--v3-primary))]/10">
-                  <User size={20} className="text-[hsl(var(--v3-primary))]" />
+              <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-[hsl(var(--v3-primary))]/10">
+                  <UserKeyIcon size={20} className="text-[hsl(var(--v3-primary))]" />
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-foreground">프로필</h2>
@@ -221,7 +244,7 @@ export default function SettingsPage() {
 
               <div className="flex items-center gap-4 mb-6">
                 <div className="w-16 h-16 rounded-full bg-[hsl(var(--v3-primary))]/10 flex items-center justify-center">
-                  <User size={28} className="text-[hsl(var(--v3-primary))]" />
+                  <UserKeyIcon size={28} className="text-[hsl(var(--v3-primary))]" />
                 </div>
                 <div>
                   <p className="text-sm font-medium text-foreground">
@@ -509,13 +532,6 @@ export default function SettingsPage() {
             </ContentPaper>
           </section>
 
-          <section
-            data-component="settings-pricing"
-            ref={(el) => { sectionRefs.current.pricing = el; }}
-            id="section-pricing"
-          >
-            <VoucherPriceUploadForm />
-          </section>
         </div>
       </div>
 

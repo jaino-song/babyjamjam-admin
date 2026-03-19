@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+const namePattern = /^[\p{L} ]+$/u;
+const EMAIL_FORMAT_MESSAGE = '이메일 주소를 확인해 주세요.';
+
 // Password validation with detailed requirements
 const passwordSchema = z
     .string()
@@ -9,15 +12,35 @@ const passwordSchema = z
     .regex(/[0-9]/, '비밀번호에 숫자가 포함되어야 합니다.')
     .regex(/[^A-Za-z0-9]/, '비밀번호에 특수문자가 포함되어야 합니다.');
 
+const nameSchema = z
+    .string()
+    .trim()
+    .min(1, '이름은 필수입니다.')
+    .regex(namePattern, '이름에는 숫자나 특수문자를 입력할 수 없습니다.');
+
+export const sanitizeNameInput = (value: string) => value.replace(/[^\p{L} ]+/gu, '');
+const emailSchema = z
+    .string()
+    .trim()
+    .min(1, '이메일은 필수입니다.')
+    .email(EMAIL_FORMAT_MESSAGE);
+
+export const getEmailFormatError = (value: string) => {
+    const trimmedValue = value.trim();
+
+    if (!trimmedValue) {
+        return undefined;
+    }
+
+    return emailSchema.safeParse(trimmedValue).success ? undefined : EMAIL_FORMAT_MESSAGE;
+};
+
 // Registration schema
 export const registerSchema = z.object({
-    email: z
-        .string()
-        .min(1, '이메일은 필수입니다.')
-        .email('유효한 이메일 주소를 입력해주세요.'),
+    email: emailSchema,
     password: passwordSchema,
     confirmPassword: z.string().min(1, '비밀번호 확인은 필수입니다.'),
-    name: z.string().min(1, '이름은 필수입니다.'),
+    name: nameSchema,
 }).refine((data) => data.password === data.confirmPassword, {
     message: '비밀번호가 일치하지 않습니다.',
     path: ['confirmPassword'],
@@ -25,19 +48,13 @@ export const registerSchema = z.object({
 
 // Login schema
 export const loginSchema = z.object({
-    email: z
-        .string()
-        .min(1, '이메일은 필수입니다.')
-        .email('유효한 이메일 주소를 입력해주세요.'),
+    email: emailSchema,
     password: z.string().min(1, '비밀번호는 필수입니다.'),
 });
 
 // Forgot password schema
 export const forgotPasswordSchema = z.object({
-    email: z
-        .string()
-        .min(1, '이메일은 필수입니다.')
-        .email('유효한 이메일 주소를 입력해주세요.'),
+    email: emailSchema,
 });
 
 // Reset password schema
