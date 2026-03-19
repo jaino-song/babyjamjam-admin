@@ -5,7 +5,10 @@ import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/app/ui/status-badge";
-import { type ActionRequiredReason } from "@/lib/client/action-required";
+import {
+  type ActionRequiredReason,
+  type ActionRequiredStatus,
+} from "@/lib/client/action-required";
 import { cn } from "@/lib/utils";
 import { AnimatedSlotList } from "./AnimatedSlotList";
 import { useScrollActivity } from "./useScrollActivity";
@@ -14,7 +17,7 @@ import type { Client } from "@/lib/client/types";
 export type ActionRequiredItem = {
   client: Client;
   reason: ActionRequiredReason;
-  priority: number;
+  priority: ActionRequiredStatus["priority"];
 };
 
 type RecentActivitiesPanelTab = "all" | "upcoming" | "actionRequired";
@@ -23,7 +26,7 @@ type RecentActivityListItem = {
   key: string;
   client: Client;
   actionReason?: ActionRequiredReason;
-  actionPriority?: number;
+  actionPriority?: ActionRequiredStatus["priority"];
   isUpcoming: boolean;
 };
 

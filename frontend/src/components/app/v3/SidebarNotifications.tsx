@@ -114,14 +114,14 @@ export function SidebarNotifications() {
 
   const notifications = React.useMemo<SidebarNotificationItem[]>(() => {
     const actionRequired = clients
-      .map((client) => {
+      .flatMap<SidebarNotificationItem>((client) => {
         const status = getActionRequiredStatus(client);
         if (!status) {
-          return null;
+          return [];
         }
 
         if (status.reason === "교체 요청") {
-          return {
+          return [{
             id: `action-${client.id}`,
             client: {
               id: client.id,
@@ -132,11 +132,11 @@ export function SidebarNotifications() {
             timeLabel: formatNotificationTime(client.createdAt),
             unread: true,
             tone: "warning" as const,
-          };
+          }];
         }
 
         if (status.reason === "서명 필요") {
-          return {
+          return [{
             id: `action-${client.id}`,
             client: {
               id: client.id,
@@ -147,10 +147,10 @@ export function SidebarNotifications() {
             timeLabel: formatNotificationTime(client.createdAt),
             unread: true,
             tone: "default" as const,
-          };
+          }];
         }
 
-        return {
+        return [{
           id: `action-${client.id}`,
           client: {
             id: client.id,
@@ -161,9 +161,8 @@ export function SidebarNotifications() {
           timeLabel: formatNotificationTime(client.createdAt),
           unread: true,
           tone: "default" as const,
-        };
+        }];
       })
-      .filter((item): item is SidebarNotificationItem => item !== null)
       .slice(0, 3);
 
     const today = new Date();

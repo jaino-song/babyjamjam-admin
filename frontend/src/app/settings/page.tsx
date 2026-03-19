@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { forwardRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   Bell,
+  type LucideProps,
   Palette,
   Shield,
   Sun,
@@ -25,15 +26,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster } from "@/components/ui/toaster";
 
-function UserKeyIcon({
-  size = 20,
-  className = "",
-}: {
-  size?: number;
-  className?: string;
-}) {
+const UserKeyIcon = forwardRef<SVGSVGElement, LucideProps>(function UserKeyIcon(
+  { size = 20, className, ...props },
+  ref,
+) {
   return (
     <svg
+      ref={ref}
       xmlns="http://www.w3.org/2000/svg"
       width={size}
       height={size}
@@ -45,13 +44,14 @@ function UserKeyIcon({
       strokeLinejoin="round"
       className={className}
       aria-hidden="true"
+      {...props}
     >
       <path d="m16 11 2 2 4-4" />
       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
       <circle cx="9" cy="7" r="4" />
     </svg>
   );
-}
+});
 
 const BASE_NAV_SECTIONS = [
   { id: "profile", label: "계정", icon: UserKeyIcon },
