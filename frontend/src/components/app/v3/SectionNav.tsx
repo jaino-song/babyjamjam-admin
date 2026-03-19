@@ -7,6 +7,7 @@ export interface SectionNavItem {
   id: string;
   label: string;
   icon: LucideIcon;
+  disabled?: boolean;
 }
 
 interface SectionNavProps {
@@ -27,11 +28,14 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
             return (
               <button
                 key={item.id}
-                onClick={() => onSelect(item.id)}
+                onClick={() => !item.disabled && onSelect(item.id)}
+                disabled={item.disabled}
                 className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 text-left ${
-                  isActive
-                    ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
-                    : "text-[hsl(var(--v3-text-muted))] hover:bg-[hsl(var(--v3-bg))]"
+                  item.disabled
+                    ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed"
+                    : isActive
+                      ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
+                      : "text-[hsl(var(--v3-text-muted))] hover:bg-[hsl(var(--v3-bg))]"
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -51,11 +55,14 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
             return (
               <button
                 key={item.id}
-                onClick={() => onSelect(item.id)}
+                onClick={() => !item.disabled && onSelect(item.id)}
+                disabled={item.disabled}
                 className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-200 ${
-                  isActive
-                    ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
-                    : "text-[hsl(var(--v3-text-muted))] bg-[hsl(var(--v3-bg))]"
+                  item.disabled
+                    ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed bg-[hsl(var(--v3-bg))]"
+                    : isActive
+                      ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
+                      : "text-[hsl(var(--v3-text-muted))] bg-[hsl(var(--v3-bg))]"
                 }`}
               >
                 <Icon className="w-4 h-4" />

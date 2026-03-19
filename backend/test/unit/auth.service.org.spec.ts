@@ -18,6 +18,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         user_organization: {
             findFirst: jest.fn(),
             findMany: jest.fn(),
+            create: jest.fn(),
         },
         organization: {
             findUnique: jest.fn(),
@@ -348,6 +349,45 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     });
 
     // ============================================
+    // registerWithEmail Tests
+    // ============================================
+    describe("registerWithEmail", () => {
+        it("should preserve the submitted organization role on membership creation", async () => {
+            prismaService.organization.findUnique.mockResolvedValue(mockOrganization);
+            prismaService.user.findUnique
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce({ name: "Manager User" });
+            prismaService.user.create.mockResolvedValue({
+                ...mockUser,
+                id: "new-user-uuid-123",
+                role: "manager",
+                emailVerified: false,
+            });
+            prismaService.user_organization.create.mockResolvedValue(undefined);
+            authTokenRepository.deleteByUserIdAndType.mockResolvedValue(undefined);
+            authTokenRepository.create.mockResolvedValue(undefined);
+
+            await service.registerWithEmail(
+                "manager@example.com",
+                "Password1!",
+                "Manager User",
+                "010-1234-5678",
+                "1990-01-01",
+                mockOrganization.id,
+                "manager",
+            );
+
+            expect(prismaService.user_organization.create).toHaveBeenCalledWith({
+                data: {
+                    userId: "new-user-uuid-123",
+                    organizationId: mockOrganization.id,
+                    role: "manager",
+                },
+            });
+        });
+    });
+
+    // ============================================
     // refreshTokens Tests
     // ============================================
     describe("refreshTokens", () => {
@@ -490,6 +530,73 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 expect(result).toEqual([]);
                 expect(prismaService.organization.findUnique).not.toHaveBeenCalled();
             });
+        });
+    });
+
+    // ============================================
+    // Email Failure Resilience Tests
+    // ============================================
+    describe("requestPasswordReset", () => {
+        it("should return success even when password reset email delivery fails", async () => {
+            // #given
+            prismaService.user.findUnique.mockResolvedValue({
+                ...mockUser,
+                emailVerified: true,
+            });
+            authTokenRepository.deleteByUserIdAndType.mockResolvedValue(undefined);
+            authTokenRepository.create.mockResolvedValue(undefined);
+            (emailService.sendPasswordResetEmail as jest.Mock).mockRejectedValue(
+                new Error("resend unavailable"),
+            );
+
+            // #when
+            const result = await service.requestPasswordReset(mockUser.email);
+
+            // #then
+            expect(result).toEqual({
+                success: true,
+                message: "비밀번호 재설정 이메일이 발송되었습니다.",
+            });
+            expect(authTokenRepository.deleteByUserIdAndType).toHaveBeenCalledWith(
+                mockUser.id,
+                "password_reset",
+            );
+            expect(authTokenRepository.create).toHaveBeenCalledTimes(1);
+            expect(emailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("resendVerificationEmail", () => {
+        it("should return success even when verification email delivery fails", async () => {
+            // #given
+            prismaService.user.findUnique
+                .mockResolvedValueOnce({
+                    ...mockUser,
+                    emailVerified: false,
+                })
+                .mockResolvedValueOnce({
+                    name: mockUser.name,
+                });
+            authTokenRepository.deleteByUserIdAndType.mockResolvedValue(undefined);
+            authTokenRepository.create.mockResolvedValue(undefined);
+            (emailService.sendVerificationEmail as jest.Mock).mockRejectedValue(
+                new Error("resend unavailable"),
+            );
+
+            // #when
+            const result = await service.resendVerificationEmail(mockUser.email);
+
+            // #then
+            expect(result).toEqual({
+                success: true,
+                message: "인증 이메일이 발송되었습니다.",
+            });
+            expect(authTokenRepository.deleteByUserIdAndType).toHaveBeenCalledWith(
+                mockUser.id,
+                "email_verification",
+            );
+            expect(authTokenRepository.create).toHaveBeenCalledTimes(1);
+            expect(emailService.sendVerificationEmail).toHaveBeenCalledTimes(1);
         });
     });
 });

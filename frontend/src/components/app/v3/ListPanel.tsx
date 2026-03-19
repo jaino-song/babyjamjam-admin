@@ -5,6 +5,7 @@ import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ExpandableSearch } from "./ExpandableSearch";
 import { PanelTitleGroup } from "./PanelTitleGroup";
+import { useScrollActivity } from "./useScrollActivity";
 
 interface TabItem {
   label: string;
@@ -71,6 +72,7 @@ export function ListPanel({
           : `flex ${headerAlignmentClass} justify-between p-6 shrink-0`;
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { isScrollActive, handleScroll } = useScrollActivity();
 
   useEffect(() => {
     if (!dropdownOpen) return;
@@ -207,7 +209,12 @@ export function ListPanel({
         </div>
       ) : null}
 
-      <div data-component="list-panel-content" className="relative overflow-y-auto min-h-0 flex-1 px-6 pt-3 flex flex-col">
+      <div
+        data-component="list-panel-content"
+        className="relative overflow-y-auto scrollbar-on-scroll min-h-0 flex-1 px-6 pt-3 flex flex-col"
+        data-scroll-active={isScrollActive ? "true" : "false"}
+        onScroll={handleScroll}
+      >
         {showContentSkeleton ? contentSkeleton : children}
         <div className="sticky bottom-0 h-6 bg-white shrink-0" />
       </div>

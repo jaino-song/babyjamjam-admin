@@ -1,10 +1,9 @@
 import axios from "axios";
-import { NextRequest } from "next/server";
 
 const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 const API_URL = isProduction
     ? process.env.NEXT_PUBLIC_API_BASE_URL
-    : process.env.DEVELOPMENT_API_BASE_URL;
+    : process.env.DEVELOPMENT_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
 
 export const serverAPIClient = axios.create({
     baseURL: API_URL,

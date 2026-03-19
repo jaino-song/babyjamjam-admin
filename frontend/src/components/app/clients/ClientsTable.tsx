@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Users } from "lucide-react";
 import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { ClientFormDialog } from "./ClientFormDialog";
@@ -22,7 +22,7 @@ const STATUS_FILTER_OPTIONS = [
     { value: "active", label: "진행중" },
     { value: "pending", label: "대기" },
     { value: "completed", label: "완료" },
-    { value: "terminated", label: "만료" },
+    { value: "terminated", label: "중단" },
 ];
 
 const getStatusBadgeVariant = (status: string | null) => {
@@ -249,10 +249,10 @@ export function ClientsTable() {
                                     onClick={() => handleRowClick(client)}
                                 >
                                     <div className={cn(
-                                        "w-14 h-14 rounded-[18px] flex items-center justify-center font-bold text-lg text-white shrink-0 shadow-md transition-transform duration-300 group-hover:scale-105 group-hover:-rotate-3",
+                                        "w-14 h-14 rounded-[18px] flex items-center justify-center shrink-0 shadow-md transition-transform duration-300 group-hover:scale-105 group-hover:-rotate-3",
                                         getAvatarGradient(client.name)
                                     )}>
-                                        {client.name.charAt(0)}
+                                        <Users className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
                                     </div>
 
                                     <div className="flex-1 min-w-0">

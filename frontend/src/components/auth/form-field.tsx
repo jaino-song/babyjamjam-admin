@@ -33,11 +33,23 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
     const fieldId = id || label.toLowerCase().replace(/\s+/g, "-");
     const errorId = `${fieldId}-error`;
     const shouldShowInlineError = errorDisplay === "inline";
-    const trailingContent = labelTrailing ?? (
+    const inlineError =
       shouldShowInlineError ? (
-        <InlineFieldError id={errorId} message={error} />
-      ) : undefined
-    );
+        <InlineFieldError
+          id={errorId}
+          message={error}
+          reserveSpace
+        />
+      ) : undefined;
+    const trailingContent =
+      shouldShowInlineError
+        ? labelTrailing ? (
+            <div className="flex items-center gap-2">
+              {labelTrailing}
+              {inlineError}
+            </div>
+          ) : inlineError
+        : labelTrailing;
 
     return (
       <TitleTextInputMolecule
@@ -49,15 +61,14 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
         onChange={onChange}
         error={!!error}
         helperText={error && !hideErrorMessage && !shouldShowInlineError ? error : undefined}
-        helperTextClassName="mt-2 text-sm animate-fade-in"
+        helperTextClassName="text-sm animate-fade-in"
         helperTextId={errorId}
-        containerClassName="gap-0"
         inputClassName={cn(AUTH_FIELD_CONTROL_CLASS_NAME, className)}
         labelTrailing={trailingContent}
         dataComponent="form-field"
         inputDataComponent={dataComponent}
         labelRowDataComponent="form-field-label-row"
-        labelTrailingDataComponent={trailingContent ? "form-field-label-trailing" : undefined}
+        labelTrailingDataComponent={shouldShowInlineError || trailingContent ? "form-field-label-trailing" : undefined}
         aria-describedby={error ? errorId : undefined}
         aria-invalid={!!error}
       />

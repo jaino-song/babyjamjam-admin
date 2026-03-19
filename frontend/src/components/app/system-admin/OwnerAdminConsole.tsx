@@ -3,9 +3,11 @@
 import { useDeferredValue, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Bell,
   Building2,
   CheckCircle2,
   Clock3,
+  EllipsisVertical,
   KeyRound,
   Landmark,
   MessageSquare,
@@ -17,7 +19,6 @@ import {
 } from "lucide-react";
 import {
   DetailPanel,
-  EmptyState,
   InfoCard,
   InfoRow,
   ListEmptyState,
@@ -28,11 +29,20 @@ import {
   StatsBar,
   type StatsBarItem,
 } from "@/components/app/v3";
-import { Badge } from "@/components/ui/badge";
+import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
+import { VoucherPriceUploadForm } from "@/components/app/settings/VoucherPriceUploadForm";
 import { Button } from "@/components/ui/button";
+import { StatusPill } from "@/components/app/ui/status-badge";
+import { TagPill } from "@/components/app/ui/tag-pill";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
-type AdminSectionId = "signups" | "branches" | "accounts" | "subsidies";
+type AdminSectionId = "signups" | "branches" | "accounts" | "notifications" | "subsidies";
 type StatusVariant = "warning" | "info" | "success" | "destructive";
 
 interface AdminMetric {
@@ -46,6 +56,13 @@ interface AdminDetailRow {
   value: string;
 }
 
+interface AdminRequest {
+  category: string;
+  statusLabel: string;
+  detailRows: readonly AdminDetailRow[];
+  applicantRows?: readonly AdminDetailRow[];
+}
+
 interface AdminRecord {
   id: string;
   title: string;
@@ -54,6 +71,7 @@ interface AdminRecord {
   listSubtitle?: string;
   listSummary?: string;
   listBadgeLabel?: string;
+  listStatusLabel?: string;
   category: string;
   statusLabel: string;
   statusVariant: StatusVariant;
@@ -62,9 +80,11 @@ interface AdminRecord {
   summary: string;
   tags: readonly string[];
   detailRows: readonly AdminDetailRow[];
-  metrics: readonly AdminMetric[];
-  checklist: readonly string[];
-  notes: readonly string[];
+  applicantRows?: readonly AdminDetailRow[];
+  metrics?: readonly AdminMetric[];
+  checklist?: readonly string[];
+  notes?: readonly string[];
+  requests?: readonly AdminRequest[];
 }
 
 interface AdminSection {
@@ -75,7 +95,7 @@ interface AdminSection {
   listTitle: string;
   listSubtitle: string;
   searchPlaceholder: string;
-  tabs?: readonly { label: string; value: string }[];
+  tabs?: readonly { label: string; value: string; activeClassName?: string; indicatorClassName?: string }[];
   stats: readonly StatsBarItem[];
   emptyMessage: string;
   detailEmptyMessage: string;
@@ -88,9 +108,39 @@ interface SectionViewState {
   selectedRecordId: string | null;
 }
 
+function getAdminRequestPillVariant(category: string) {
+  switch (category) {
+    case "signup":
+      return "warning";
+    case "messaging":
+      return "info";
+    default:
+      return "success";
+  }
+}
+
+function getAdminTagPillVariant(sectionId: AdminSectionId) {
+  switch (sectionId) {
+    case "signups":
+      return "amber";
+    case "branches":
+      return "emerald";
+    case "accounts":
+      return "sky";
+    case "subsidies":
+      return "cyan";
+    case "notifications":
+      return "indigo";
+    default:
+      return "neutral";
+  }
+}
+
 const PERSISTENT_SYSTEM_ADMIN_STATS: readonly StatsBarItem[] = [
   { icon: UserPlus, value: 1, label: "회원가입 신청", counter: "건" },
-  { icon: MessageSquare, value: 1, label: "메시지 발송 기능 신청", counter: "건", colorIndex: 1 },
+  { icon: Building2, value: 3, label: "지점 개설 신청", counter: "건", colorIndex: 1 },
+  { icon: MessageSquare, value: 1, label: "메시지 신청", counter: "건", colorIndex: 2 },
+  { icon: Bell, value: 1, label: "알림톡 신청", counter: "건" },
 ] as const;
 
 const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
@@ -117,7 +167,7 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
         category: "signup",
         statusLabel: "승인 대기",
         statusVariant: "warning",
-        updatedAt: "5분 전",
+        updatedAt: "2026. 03. 12.",
         owner: "김서윤",
         summary: "새 기관 회원가입 신청으로, 기본 owner 계정 생성과 첫 지점 개설 승인이 함께 필요합니다.",
         tags: ["회원가입 신청", "신규 기관", "첫 지점"],
@@ -156,8 +206,8 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
         category: "messaging",
         statusLabel: "검토 중",
         statusVariant: "info",
-        updatedAt: "27분 전",
-        owner: "운영팀 박진아",
+        updatedAt: "2026. 03. 12.",
+        owner: "박진아",
         summary: "기존 기관에서 메시지 발송 기능 사용을 요청해 발신 프로필과 과금 정책 연결 여부를 확인해야 합니다.",
         tags: ["메시지 발송 기능 신청", "알림톡", "기존 기관"],
         detailRows: [
@@ -166,6 +216,13 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
           { label: "요청 기능", value: "알림톡 및 문자 발송" },
           { label: "발신 채널", value: "카카오 알림톡 + SMS" },
           { label: "쟁점", value: "발신 프로필 승인 필요" },
+        ],
+        applicantRows: [
+          { label: "신청자", value: "박진아" },
+          { label: "전화번호", value: "010-4567-8901" },
+          { label: "이메일", value: "jina.park@example.com" },
+          { label: "역할", value: "매니저" },
+          { label: "신청 날짜", value: "2026-03-12" },
         ],
         metrics: [
           { label: "예상 활성화 시간", value: "1일", helper: "발신 프로필 승인 포함" },
@@ -190,14 +247,14 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
     label: "지점 관리",
     icon: Building2,
     description: "개설 예정 지점, 운영 중 지점, 점검 필요 지점을 분리해서 운영합니다.",
-    listTitle: "지점 운영 보드",
-    listSubtitle: "개설과 운영 상태, 점검 이슈를 동일한 흐름에서 다룹니다.",
+    listTitle: "지점 관리",
+    listSubtitle: "각 지점의 승인 신청을 관리할 수 있어요",
     searchPlaceholder: "지점명, 지역, 담당자 검색...",
     tabs: [
       { label: "전체", value: "all" },
-      { label: "개설 준비", value: "launch" },
-      { label: "운영 중", value: "active" },
-      { label: "점검 필요", value: "audit" },
+      { label: "개설", value: "launch" },
+      { label: "메시지", value: "messaging" },
+      { label: "알림톡", value: "alimtalk" },
     ],
     stats: [
       { icon: Building2, value: 12, label: "운영 지점", counter: "곳" },
@@ -211,19 +268,27 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
       {
         id: "branch-songdo-3",
         title: "송도 3호점 개설 준비",
-        subtitle: "신규 지역 확장에 따른 운영 구조 생성",
+        listTitle: "송도지점",
+        listSubtitle: "",
+        subtitle: "",
         category: "launch",
-        statusLabel: "개설 준비",
+        statusLabel: "개설 신청",
         statusVariant: "warning",
-        updatedAt: "18분 전",
-        owner: "지역 운영 리더 이현지",
+        updatedAt: "2026. 03. 14.",
+        owner: "이현지",
         summary: "개설 전 직원 배정과 정부지원금 기본 단가 연결이 마지막 단계입니다.",
-        tags: ["신규 지점", "송도", "오픈 D-4"],
+        tags: [],
         detailRows: [
           { label: "지점명", value: "송도 3호점" },
-          { label: "지역", value: "인천 연수구" },
-          { label: "오픈 일정", value: "2026-03-16" },
-          { label: "책임자", value: "이현지" },
+          { label: "주소", value: "인천 연수구" },
+          { label: "개업 날짜", value: "2026-03-16" },
+        ],
+        applicantRows: [
+          { label: "신청자", value: "이현지" },
+          { label: "전화번호", value: "010-1234-5678" },
+          { label: "이메일", value: "hyunji.lee@example.com" },
+          { label: "역할", value: "지점장" },
+          { label: "신청 날짜", value: "2026-03-14" },
         ],
         metrics: [
           { label: "배정 대기 직원", value: "3명", helper: "첫 주 운영 스케줄 미확정" },
@@ -243,53 +308,144 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
       },
       {
         id: "branch-cheongna",
-        title: "청라점 운영 안정화",
-        subtitle: "이용자 증가에 따른 서비스 용량 점검",
-        category: "active",
-        statusLabel: "운영 중",
-        statusVariant: "success",
-        updatedAt: "1시간 전",
-        owner: "지점장 강하늘",
-        summary: "지난주 대비 신규 고객이 늘어 메시지/문서 사용량 상향 조정이 필요합니다.",
-        tags: ["운영 중", "용량 점검", "이용자 증가"],
+        title: "청라점",
+        listTitle: "청라점",
+        listSubtitle: "",
+        subtitle: "",
+        category: "launch",
+        statusLabel: "개설 신청",
+        statusVariant: "warning",
+        updatedAt: "2026. 03. 12.",
+        owner: "강하늘",
+        summary: "",
+        tags: [],
         detailRows: [
           { label: "지점명", value: "청라점" },
-          { label: "활성 고객", value: "84명" },
-          { label: "직원 수", value: "19명" },
-          { label: "상태", value: "안정 운영" },
+          { label: "주소", value: "인천 서구" },
+          { label: "개업 날짜", value: "2026-03-20" },
         ],
-        metrics: [
-          { label: "이번 주 계약", value: "16건", helper: "평균 대비 22% 증가" },
-          { label: "문서 저장소", value: "71%", helper: "증설 전 알림 기준 도달" },
-          { label: "알림 발송 성공률", value: "99.4%", helper: "알림톡/이메일 포함" },
-          { label: "응답 지연", value: "정상", helper: "지점별 SLA 유지 중" },
+        applicantRows: [
+          { label: "신청자", value: "강하늘" },
+          { label: "전화번호", value: "010-2345-6789" },
+          { label: "이메일", value: "haneul.kang@example.com" },
+          { label: "역할", value: "지점장" },
+          { label: "신청 날짜", value: "2026-03-12" },
         ],
-        checklist: [
-          "용량 확장 전 비용 영향도를 확인합니다.",
-          "지점장 대시보드 권한이 최신 구조와 일치하는지 검토합니다.",
-          "문서 보관 정책이 지점 계약 건수에 맞는지 확인합니다.",
-        ],
-        notes: [
-          "다음 분기 확장 후보 지점으로 자동 태깅해 둡니다.",
-          "고객 증가 추세가 유지되면 전담 매니저 추가 배정이 필요합니다.",
+        metrics: [],
+        checklist: [],
+        notes: [],
+        requests: [
+          {
+            category: "launch",
+            statusLabel: "개설 신청",
+            detailRows: [
+              { label: "지점명", value: "청라점" },
+              { label: "주소", value: "인천 서구" },
+              { label: "개업 날짜", value: "2026-03-20" },
+            ],
+            applicantRows: [
+              { label: "신청자", value: "강하늘" },
+              { label: "전화번호", value: "010-2345-6789" },
+              { label: "이메일", value: "haneul.kang@example.com" },
+              { label: "역할", value: "지점장" },
+              { label: "신청 날짜", value: "2026-03-12" },
+            ],
+          },
+          {
+            category: "messaging",
+            statusLabel: "메시지 신청",
+            detailRows: [
+              { label: "기관명", value: "아가잼잼 청라점" },
+              { label: "요청 기능", value: "SMS/LMS 발송" },
+              { label: "발신번호", value: "등록 완료" },
+              { label: "상태", value: "설정 진행 중" },
+            ],
+            applicantRows: [
+              { label: "신청자", value: "강하늘" },
+              { label: "전화번호", value: "010-2345-6789" },
+              { label: "이메일", value: "haneul.kang@example.com" },
+              { label: "역할", value: "지점장" },
+              { label: "신청 날짜", value: "2026-03-12" },
+            ],
+          },
         ],
       },
       {
         id: "branch-bupyeong",
-        title: "부평점 운영 점검",
-        subtitle: "휴면 계정 증가와 발송 실패 비율 확인 필요",
-        category: "audit",
-        statusLabel: "점검 필요",
-        statusVariant: "destructive",
-        updatedAt: "3시간 전",
-        owner: "품질 관리 민서현",
-        summary: "최근 7일간 휴면 계정과 알림 실패율이 기준치를 넘겨 운영 점검 대상으로 분류되었습니다.",
-        tags: ["점검", "휴면 계정", "알림 실패"],
+        title: "부평점",
+        listTitle: "부평점",
+        listSubtitle: "",
+        subtitle: "",
+        category: "launch",
+        statusLabel: "개설 신청",
+        statusVariant: "warning",
+        updatedAt: "2026. 03. 10.",
+        owner: "민서현",
+        summary: "",
+        tags: [],
         detailRows: [
           { label: "지점명", value: "부평점" },
-          { label: "이슈 유형", value: "운영 품질 점검" },
-          { label: "발생 기간", value: "최근 7일" },
-          { label: "조치 우선순위", value: "높음" },
+          { label: "주소", value: "인천 부평구" },
+          { label: "개업 날짜", value: "2026-03-25" },
+        ],
+        applicantRows: [
+          { label: "신청자", value: "민서현" },
+          { label: "전화번호", value: "010-3456-7890" },
+          { label: "이메일", value: "seohyun.min@example.com" },
+          { label: "역할", value: "지점장" },
+          { label: "신청 날짜", value: "2026-03-10" },
+        ],
+        requests: [
+          {
+            category: "launch",
+            statusLabel: "개설 신청",
+            detailRows: [
+              { label: "지점명", value: "부평점" },
+              { label: "주소", value: "인천 부평구" },
+              { label: "개업 날짜", value: "2026-03-25" },
+            ],
+            applicantRows: [
+              { label: "신청자", value: "민서현" },
+              { label: "전화번호", value: "010-3456-7890" },
+              { label: "이메일", value: "seohyun.min@example.com" },
+              { label: "역할", value: "지점장" },
+              { label: "신청 날짜", value: "2026-03-10" },
+            ],
+          },
+          {
+            category: "messaging",
+            statusLabel: "메시지 신청",
+            detailRows: [
+              { label: "기관명", value: "아가잼잼 부평점" },
+              { label: "요청 기능", value: "SMS/LMS 발송" },
+              { label: "발신번호", value: "미등록" },
+              { label: "상태", value: "접수 대기" },
+            ],
+            applicantRows: [
+              { label: "신청자", value: "민서현" },
+              { label: "전화번호", value: "010-3456-7890" },
+              { label: "이메일", value: "seohyun.min@example.com" },
+              { label: "역할", value: "지점장" },
+              { label: "신청 날짜", value: "2026-03-10" },
+            ],
+          },
+          {
+            category: "alimtalk",
+            statusLabel: "알림톡 신청",
+            detailRows: [
+              { label: "기관명", value: "아가잼잼 부평점" },
+              { label: "요청 기능", value: "카카오 알림톡 발송" },
+              { label: "약관 동의", value: "3/3 완료" },
+              { label: "상태", value: "접수 대기" },
+            ],
+            applicantRows: [
+              { label: "신청자", value: "민서현" },
+              { label: "전화번호", value: "010-3456-7890" },
+              { label: "이메일", value: "seohyun.min@example.com" },
+              { label: "역할", value: "지점장" },
+              { label: "신청 날짜", value: "2026-03-10" },
+            ],
+          },
         ],
         metrics: [
           { label: "휴면 계정", value: "11개", helper: "관리자 재인증 필요" },
@@ -307,6 +463,47 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
           "이슈가 지속되면 권한 정비와 템플릿 정리를 함께 진행합니다.",
         ],
       },
+      {
+        id: "branch-noeul-alimtalk",
+        title: "알림톡 발송 기능 신청",
+        listTitle: "노을 공동육아센터",
+        listSubtitle: "",
+        subtitle: "",
+        category: "alimtalk",
+        statusLabel: "알림톡 신청",
+        statusVariant: "warning",
+        updatedAt: "2026. 03. 12.",
+        owner: "박진아",
+        summary: "약관 동의 완료 후 알림톡 발송 기능 활성화를 요청했습니다.",
+        tags: [],
+        detailRows: [
+          { label: "기관명", value: "노을 공동육아센터" },
+          { label: "지점명", value: "본원" },
+          { label: "신청 일시", value: "2026-03-12 09:33" },
+        ],
+        applicantRows: [
+          { label: "신청자", value: "박진아" },
+          { label: "전화번호", value: "010-4567-8901" },
+          { label: "이메일", value: "jina.park@example.com" },
+          { label: "역할", value: "매니저" },
+          { label: "신청 날짜", value: "2026-03-12" },
+        ],
+        metrics: [
+          { label: "약관 동의", value: "3/3", helper: "알리고 이용약관 전체 동의" },
+          { label: "발신 프로필", value: "미등록", helper: "카카오 발신 프로필 승인 필요" },
+          { label: "예상 활성화", value: "1~2일", helper: "발신 프로필 승인 포함" },
+          { label: "영향 계정", value: "5명", helper: "발송 권한 부여 대상" },
+        ],
+        checklist: [
+          "알리고 API 키 발급과 발신번호 등록 상태를 확인합니다.",
+          "카카오 발신 프로필 승인 절차를 안내합니다.",
+          "기본 알림톡 템플릿을 연결합니다.",
+        ],
+        notes: [
+          "승인 후 테스트 발송을 통해 정상 동작을 검증합니다.",
+          "첫 주 발송 실패 모니터링을 강화합니다.",
+        ],
+      },
     ],
   },
   {
@@ -314,14 +511,14 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
     label: "계정 관리",
     icon: Users,
     description: "오너, 관리자, 매니저 계정의 역할과 보안 상태를 한 화면에서 검토합니다.",
-    listTitle: "계정 권한 센터",
-    listSubtitle: "민감 계정, 휴면 계정, 역할 변경 요청을 구분해서 관리합니다.",
+    listTitle: "계정 관리",
+    listSubtitle: "등록된 계정들을 관리할 수 있어요.",
     searchPlaceholder: "이름, 이메일, 조직, 역할 검색...",
     tabs: [
       { label: "전체", value: "all" },
-      { label: "오너 계정", value: "owner" },
-      { label: "관리자 권한", value: "admin" },
-      { label: "보안 점검", value: "security" },
+      { label: "지점장", value: "branch-manager", activeClassName: "text-amber-700", indicatorClassName: "bg-amber-600" },
+      { label: "매니저", value: "manager", activeClassName: "text-sky-700", indicatorClassName: "bg-sky-600" },
+      { label: "관리자", value: "admin", activeClassName: "text-emerald-700", indicatorClassName: "bg-emerald-600" },
     ],
     stats: [
       { icon: Users, value: 128, label: "전체 계정", counter: "명" },
@@ -335,100 +532,76 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
       {
         id: "account-hq-owner",
         title: "본사 owner 계정 정비",
+        listTitle: "정민호",
+        listSubtitle: "본사",
+        listStatusLabel: "관리자",
         subtitle: "결재선 변경에 따른 소유권 재배치",
-        category: "owner",
+        category: "admin",
         statusLabel: "권한 변경",
         statusVariant: "info",
         updatedAt: "11분 전",
         owner: "보안 담당 정민호",
         summary: "본사 owner 2명 체계에서 단일 승인 체계로 줄이기 위한 권한 조정 요청입니다.",
-        tags: ["owner", "권한 재배치", "결재선 변경"],
+        tags: [],
         detailRows: [
-          { label: "대상 계정", value: "hq-owner@agajamjam.kr" },
-          { label: "현재 권한", value: "owner" },
-          { label: "변경 예정", value: "admin" },
-          { label: "승인 필요", value: "예" },
-        ],
-        metrics: [
-          { label: "연결 조직", value: "4곳", helper: "복수 조직 소유권 포함" },
-          { label: "최근 로그인", value: "오늘 08:31", helper: "최근 24시간 내 접속" },
-          { label: "동시 owner", value: "2명", helper: "변경 후 1명 예정" },
-          { label: "감사 로그", value: "정상", helper: "최근 30일 이상 징후 없음" },
-        ],
-        checklist: [
-          "감사 로그 백업 후 owner 역할을 하향 조정합니다.",
-          "다중 조직 소유권 매핑이 끊기지 않는지 확인합니다.",
-          "변경 직후 조직 선택 UX를 다시 검증합니다.",
-        ],
-        notes: [
-          "권한 변경은 야간 배치 직후에 처리하는 편이 안전합니다.",
-          "하향 조정된 계정의 북마크 URL 접근도 함께 점검합니다.",
+          { label: "이름", value: "정민호" },
+          { label: "이메일", value: "hq-owner@agajamjam.kr" },
+          { label: "전화번호", value: "010-5678-1234" },
+          { label: "생년월일", value: "1985-04-12" },
+          { label: "역할", value: "관리자" },
+          { label: "인증 방식", value: "이메일" },
+          { label: "이메일 인증", value: "완료" },
+          { label: "가입일", value: "2025-06-01" },
         ],
       },
       {
         id: "account-songdo-manager",
         title: "송도점 관리자 권한 부여",
+        listTitle: "이현지",
+        listSubtitle: "송도 3호점",
+        listStatusLabel: "지점장",
         subtitle: "신규 지점 운영 준비에 따른 admin 승격",
-        category: "admin",
+        category: "branch-manager",
         statusLabel: "승격 검토",
         statusVariant: "warning",
         updatedAt: "49분 전",
         owner: "지역 운영 리더 이현지",
         summary: "오픈 예정 지점의 총괄 담당자를 manager에서 admin으로 조정하는 요청입니다.",
-        tags: ["admin", "승격", "신규 지점"],
+        tags: [],
         detailRows: [
-          { label: "대상 계정", value: "songdo.lead@agajamjam.kr" },
-          { label: "현재 권한", value: "manager" },
-          { label: "요청 권한", value: "admin" },
-          { label: "적용 지점", value: "송도 3호점" },
-        ],
-        metrics: [
-          { label: "권한 범위", value: "지점 단위", helper: "전사 설정 접근 없음" },
-          { label: "준비 완료율", value: "87%", helper: "지점 오픈 체크리스트 기준" },
-          { label: "관련 계정", value: "8명", helper: "같은 지점 운영팀" },
-          { label: "승인 우선도", value: "중간", helper: "오픈 D-4 기준" },
-        ],
-        checklist: [
-          "지점 단위 문서 및 고객 권한만 부여되는지 확인합니다.",
-          "오너 전용 메뉴 접근이 노출되지 않도록 재검증합니다.",
-          "승격 사유와 책임 범위를 운영 문서에 남깁니다.",
-        ],
-        notes: [
-          "승격 후 1주일 동안 민감 액션 로그를 별도 태깅합니다.",
-          "필요 시 오픈 안정화 이후 다시 manager로 하향할 수 있습니다.",
+          { label: "이름", value: "이현지" },
+          { label: "이메일", value: "songdo.lead@agajamjam.kr" },
+          { label: "전화번호", value: "010-1234-5678" },
+          { label: "생년월일", value: "1990-08-22" },
+          { label: "역할", value: "지점장" },
+          { label: "인증 방식", value: "카카오" },
+          { label: "이메일 인증", value: "완료" },
+          { label: "가입일", value: "2025-09-15" },
         ],
       },
       {
         id: "account-bupyeong-security",
         title: "부평점 휴면 계정 잠금",
+        listTitle: "민서현",
+        listSubtitle: "부평점",
+        listStatusLabel: "매니저",
         subtitle: "미사용 계정과 장기 미인증 계정 동시 정리",
-        category: "security",
+        category: "manager",
         statusLabel: "보안 점검",
         statusVariant: "destructive",
         updatedAt: "2시간 전",
         owner: "품질 관리 민서현",
         summary: "장기 미사용 계정과 최근 인증 오류가 누적된 계정을 묶어 선제 잠금이 필요합니다.",
-        tags: ["보안", "휴면 계정", "잠금 예정"],
+        tags: [],
         detailRows: [
-          { label: "대상 그룹", value: "부평점 휴면 계정 11개" },
-          { label: "위험 요소", value: "장기 미접속 + 인증 오류" },
-          { label: "예상 영향", value: "지점 운영팀 3명" },
-          { label: "권장 조치", value: "선잠금 후 재승인" },
-        ],
-        metrics: [
-          { label: "휴면 기간", value: "60일+", helper: "정책 기준 초과" },
-          { label: "인증 오류", value: "7회", helper: "최근 48시간 누적" },
-          { label: "잠금 대상", value: "11개", helper: "일괄 처리 가능" },
-          { label: "복구 방식", value: "오너 승인", helper: "관리자 임시 복구 차단" },
-        ],
-        checklist: [
-          "잠금 전 필수 운영 계정이 포함되지 않았는지 확인합니다.",
-          "재승인 프로세스 안내 메시지를 미리 준비합니다.",
-          "동일 IP 반복 실패 여부를 별도 로깅에 남깁니다.",
-        ],
-        notes: [
-          "보안 점검 섹션은 owner 또는 지정 보안 담당자만 리뷰합니다.",
-          "잠금 후 24시간 안에 지점장에게 후속 조치 링크를 전달합니다.",
+          { label: "이름", value: "민서현" },
+          { label: "이메일", value: "seohyun.min@agajamjam.kr" },
+          { label: "전화번호", value: "010-3456-7890" },
+          { label: "생년월일", value: "1992-11-03" },
+          { label: "역할", value: "매니저" },
+          { label: "인증 방식", value: "카카오" },
+          { label: "이메일 인증", value: "완료" },
+          { label: "가입일", value: "2026-01-10" },
         ],
       },
     ],
@@ -557,6 +730,45 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
       },
     ],
   },
+  {
+    id: "notifications",
+    label: "알림 테스트",
+    icon: Bell,
+    description: "브라우저 푸시 알림과 발송 동작을 관리자 화면에서 직접 점검합니다.",
+    listTitle: "알림 테스트",
+    listSubtitle: "구독된 디바이스로 테스트 알림을 전송할 수 있어요",
+    searchPlaceholder: "테스트 항목 검색...",
+    stats: [
+      { icon: Bell, value: 1, label: "테스트 도구", counter: "개" },
+      { icon: CheckCircle2, value: "Push", label: "채널", colorIndex: 2 },
+      { icon: Clock3, value: "실시간", label: "전송 방식", colorIndex: 1 },
+      { icon: ShieldCheck, value: "Owner", label: "접근 권한" },
+    ],
+    emptyMessage: "사용 가능한 알림 테스트 항목이 없습니다.",
+    detailEmptyMessage: "테스트 항목을 선택하면 실행 패널이 표시됩니다.",
+    records: [
+      {
+        id: "notification-test-broadcast",
+        title: "브라우저 알림 테스트",
+        subtitle: "구독된 브라우저 디바이스 전체에 테스트 알림을 전송합니다.",
+        listTitle: "브라우저 알림 테스트",
+        listSubtitle: "실시간 브로드캐스트",
+        listSummary: "현재 구독 중인 디바이스로 알림을 발송합니다.",
+        listStatusLabel: "실행 가능",
+        category: "notifications",
+        statusLabel: "대기",
+        statusVariant: "info",
+        updatedAt: "2026. 03. 19.",
+        owner: "시스템",
+        summary: "푸시 알림 수신 여부와 브라우저 구독 상태를 빠르게 확인할 수 있는 관리자용 테스트 도구입니다.",
+        tags: ["Push", "브로드캐스트"],
+        detailRows: [
+          { label: "대상", value: "현재 구독된 모든 디바이스" },
+          { label: "권장 사용", value: "브라우저 알림 설정 직후 확인" },
+        ],
+      },
+    ],
+  },
 ] as const;
 
 const SECTION_THEME_CLASSNAMES: Record<
@@ -602,6 +814,14 @@ const SECTION_THEME_CLASSNAMES: Record<
     tagSurface: "bg-cyan-100 text-cyan-700",
     noteSurface: "bg-cyan-50/70",
   },
+  notifications: {
+    accentSurface: "border-indigo-200/80 bg-gradient-to-br from-indigo-50 via-white to-sky-50",
+    accentIcon: "bg-indigo-500/12 text-indigo-700",
+    itemActiveRing: "border-indigo-300 bg-indigo-50/70 shadow-[0_24px_40px_-30px_rgba(79,70,229,0.45)]",
+    itemHoverRing: "hover:border-indigo-200 hover:bg-indigo-50/40",
+    tagSurface: "bg-indigo-100 text-indigo-700",
+    noteSurface: "bg-indigo-50/70",
+  },
 };
 
 const STATUS_ICON: Record<StatusVariant, LucideIcon> = {
@@ -611,11 +831,26 @@ const STATUS_ICON: Record<StatusVariant, LucideIcon> = {
   destructive: AlertTriangle,
 };
 
+const CATEGORY_BADGE_STYLE: Record<string, { bg: string; text: string; icon?: string }> = {
+  launch: { bg: "bg-v3-green-light", text: "text-v3-green" },
+  messaging: { bg: "bg-v3-orange-light", text: "text-v3-orange" },
+  alimtalk: { bg: "bg-v3-primary-light", text: "text-v3-primary" },
+  notifications: { bg: "bg-indigo-100", text: "text-indigo-700", icon: "bg-indigo-500/12 text-indigo-700" },
+  admin: { bg: "bg-v3-green-light", text: "text-v3-green", icon: "bg-emerald-500/12 text-emerald-600" },
+  "branch-manager": { bg: "bg-amber-100", text: "text-amber-700", icon: "bg-amber-500/12 text-amber-600" },
+  manager: { bg: "bg-sky-100", text: "text-sky-700", icon: "bg-sky-500/12 text-sky-700" },
+};
+
+const DEFAULT_BADGE_STYLE = { bg: "bg-v3-green-light", text: "text-v3-green" };
+
 function filterSectionRecords(section: AdminSection, tab: string, query: string) {
   const normalizedQuery = query.trim().toLowerCase();
 
   return section.records.filter((record) => {
-    const matchesTab = tab === "all" || record.category === tab;
+    const matchesTab =
+      tab === "all" ||
+      record.category === tab ||
+      (record.requests?.some((r) => r.category === tab) ?? false);
 
     if (!matchesTab) {
       return false;
@@ -685,7 +920,7 @@ export function OwnerAdminConsole() {
   const deferredSearchQuery = useDeferredValue(activeViewState.search);
 
   const activeTheme = SECTION_THEME_CLASSNAMES[activeSection.id];
-  const isSignupSection = activeSection.id === "signups";
+  const isApprovalSection = activeSection.id === "signups" || activeSection.id === "branches";
 
   const filteredRecords = useMemo(() => {
     return filterSectionRecords(activeSection, activeViewState.tab, deferredSearchQuery);
@@ -695,6 +930,8 @@ export function OwnerAdminConsole() {
     () => filteredRecords.find((record) => record.id === activeViewState.selectedRecordId) ?? null,
     [filteredRecords, activeViewState.selectedRecordId]
   );
+  const showVoucherPriceUploadForm =
+    activeSection.id === "subsidies" && selectedRecord?.id === "subsidy-2026-standard";
 
   const updateActiveSectionState = (updater: (current: SectionViewState) => SectionViewState) => {
     setViewStateBySection((prev) => ({
@@ -713,6 +950,7 @@ export function OwnerAdminConsole() {
             id: section.id,
             label: section.label,
             icon: section.icon,
+            disabled: section.id === "subsidies",
           }))}
           activeId={activeSection.id}
           onSelect={(id) => setActiveSectionId(id as AdminSectionId)}
@@ -770,10 +1008,12 @@ export function OwnerAdminConsole() {
                   message={activeSection.emptyMessage}
                 />
               ) : (
-                <div className="space-y-3 pb-4">
-                  {filteredRecords.map((record) => {
+                <div className="space-y-2 pb-4">
+                  {filteredRecords.map((record, index) => {
                     const isActive = record.id === selectedRecord?.id;
-                    const StatusIcon = STATUS_ICON[record.statusVariant];
+                    const ListIcon = activeSection.id === "branches" ? Building2 : activeSection.id === "accounts" ? Users : STATUS_ICON[record.statusVariant];
+                    const listPills = record.listBadgeLabel ? [record.listBadgeLabel] : record.tags;
+                    const hasSingleAsidePill = listPills.length === 1;
 
                     return (
                       <button
@@ -786,52 +1026,51 @@ export function OwnerAdminConsole() {
                             selectedRecordId: record.id,
                           }))
                         }
+                        style={{ animationDelay: `${index * 0.04}s` }}
                         className={cn(
-                          "w-full rounded-[14px] border-2 border-transparent bg-white p-3 text-left transition-all duration-200",
-                          "hover:border-v3-border hover:bg-v3-dim-white/35",
-                          isActive && "border-v3-primary/30 bg-white"
+                          "animate-v3-pop-up w-full min-h-[76px] rounded-[18px] border-2 border-transparent bg-white p-4 text-left transition-all duration-200",
+                          "hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
+                          isActive && "border-v3-primary bg-v3-primary-light"
                         )}
                       >
-                        <div className="flex items-center gap-3">
-                          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]", activeTheme.accentIcon)}>
-                            <StatusIcon className="h-4 w-4" />
+                        <div className="flex min-h-11 items-center gap-3">
+                          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]", CATEGORY_BADGE_STYLE[record.category]?.icon ?? activeTheme.accentIcon)}>
+                            <ListIcon className="h-4 w-4" />
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="text-[0.85rem] font-semibold text-v3-dark">
-                                  {record.listTitle ?? record.title}
-                                </p>
-                                <p className="mt-0.5 text-[0.7rem] text-v3-text-muted">
-                                  {record.listSubtitle ?? record.subtitle}
-                                </p>
-                              </div>
-
-                              <Badge variant={record.statusVariant} className="rounded-full px-2.5 py-1 text-[0.68rem]">
-                                {record.statusLabel}
-                              </Badge>
-                            </div>
-
-                            {(record.listBadgeLabel || record.tags.length > 0) ? (
-                              <div className="mt-2 flex items-center justify-between gap-2">
-                                <p className="min-w-0 truncate text-[0.74rem] text-v3-text">
-                                  {record.listSummary ?? record.summary}
-                                </p>
-                                {(record.listBadgeLabel ? [record.listBadgeLabel] : record.tags).map((tag) => (
-                                  <span
+                            <p className="truncate text-[0.85rem] font-semibold text-v3-dark">
+                              {record.listTitle ?? record.title}
+                            </p>
+                            {record.listSubtitle ? (
+                              <p className="mt-0.5 truncate text-[0.7rem] text-v3-text-muted">
+                                {record.listSubtitle}
+                              </p>
+                            ) : null}
+                            <p className="mt-1.5 min-w-0 truncate text-[0.74rem] text-v3-text">
+                              {record.listSummary ?? record.summary}
+                            </p>
+                            {!hasSingleAsidePill && listPills.length > 0 ? (
+                              <div className="mt-2 flex flex-wrap items-center gap-1">
+                                {listPills.map((tag) => (
+                                  <TagPill
                                     key={tag}
-                                    className={cn(
-                                      "inline-flex shrink-0 rounded-full px-2.5 py-1 text-[0.68rem] font-medium",
-                                      activeTheme.tagSurface
-                                    )}
+                                    variant={getAdminTagPillVariant(activeSection.id)}
                                   >
                                     {tag}
-                                  </span>
+                                  </TagPill>
                                 ))}
                               </div>
                             ) : null}
                           </div>
+
+                          {hasSingleAsidePill ? (
+                            <div className="ml-auto flex shrink-0 items-center self-center">
+                              <TagPill variant={getAdminTagPillVariant(activeSection.id)}>
+                                {listPills[0]}
+                              </TagPill>
+                            </div>
+                          ) : null}
                         </div>
                       </button>
                     );
@@ -842,52 +1081,115 @@ export function OwnerAdminConsole() {
 
             {selectedRecord ? (
               <DetailPanel
-                title={selectedRecord.title}
+                avatar={(() => {
+                  const iconStyle = CATEGORY_BADGE_STYLE[selectedRecord.category]?.icon;
+                  return (
+                    <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]", iconStyle ?? "bg-v3-primary-light text-v3-primary")}>
+                      <activeSection.icon className="h-5 w-5" />
+                    </div>
+                  );
+                })()}
+                title={selectedRecord.listTitle ?? selectedRecord.title}
                 subtitle={
-                  <span className="text-[0.8rem] text-v3-text-muted">
-                    {activeSection.label} · {selectedRecord.owner}
-                  </span>
+                  isApprovalSection ? (
+                    <span className="text-sm text-v3-text-muted">
+                      {activeSection.id === "signups"
+                        ? "회원가입 신청 내역을 확인해 보세요."
+                        : `${selectedRecord.listTitle ?? selectedRecord.title}의 승인 신청 내역을 확인해 보세요.`}
+                    </span>
+                  ) : selectedRecord.listSubtitle && selectedRecord.listStatusLabel ? (
+                    <span className="flex items-center gap-3 text-sm text-v3-text-muted">
+                      <span className="flex items-center gap-1">
+                        <Building2 className="w-3.5 h-3.5" />
+                        {selectedRecord.listSubtitle}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        {selectedRecord.listStatusLabel}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="text-sm text-v3-text-muted">
+                      {activeSection.label} · {selectedRecord.owner}
+                    </span>
+                  )
                 }
-                badges={
-                  <Badge variant={selectedRecord.statusVariant} className="rounded-full px-2.5 py-1 text-[0.68rem]">
-                    {selectedRecord.statusLabel}
-                  </Badge>
+                trailing={
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 rounded-full border-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+                        aria-label="더보기"
+                      >
+                        <EllipsisVertical className="h-5 w-5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem>역할 변경</DropdownMenuItem>
+                      <DropdownMenuItem>계정 정보 수정</DropdownMenuItem>
+                      <DropdownMenuItem className="text-destructive">계정 삭제</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 }
               >
                 <div className="space-y-5">
-                  <InfoCard title={isSignupSection ? "회원가입 정보" : "운영 개요"}>
-                    {selectedRecord.detailRows.map((row) => (
-                      <InfoRow key={row.label} label={row.label} value={row.value} />
-                    ))}
-                  </InfoCard>
+                  {(selectedRecord.requests && selectedRecord.requests.length > 0
+                    ? selectedRecord.requests
+                    : [{ category: selectedRecord.category, statusLabel: selectedRecord.statusLabel, detailRows: selectedRecord.detailRows, applicantRows: selectedRecord.applicantRows }]
+                  ).map((req) => {
+                    const infoTitle = activeSection.id === "signups" ? "회원가입 정보" : req.category === "launch" ? "지점 정보" : activeSection.id === "accounts" ? "계정 정보" : "신청 정보";
+                    const showCardBadge = selectedRecord.requests && selectedRecord.requests.length > 1;
+                    return (
+                      <div
+                        key={req.category}
+                        className="rounded-[18px] border border-v3-border p-5 space-y-4"
+                      >
+                        {showCardBadge && (
+                          <StatusPill variant={getAdminRequestPillVariant(req.category)} size="sm">
+                            {req.statusLabel}
+                          </StatusPill>
+                        )}
+                        {req.applicantRows && (
+                          <InfoCard title="신청인 정보">
+                            {req.applicantRows.map((row) => (
+                              <InfoRow key={row.label} label={row.label} value={row.value} />
+                            ))}
+                          </InfoCard>
+                        )}
+                        <InfoCard title={infoTitle}>
+                          {req.detailRows.map((row) => (
+                            <InfoRow key={row.label} label={row.label} value={row.value} />
+                          ))}
+                        </InfoCard>
+                        {activeSection.id !== "accounts" && (
+                          <div className="flex flex-col gap-3 sm:flex-row">
+                            <Button type="button" size="md" variant="positive" className="w-full sm:flex-1">
+                              승인
+                            </Button>
+                            <Button type="button" size="md" variant="negative-outline" className="w-full sm:flex-1">
+                              거부
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
 
-                  {isSignupSection ? (
-                    <div
-                      data-component="system-admin-signup-actions"
-                      className="flex flex-col gap-3 sm:flex-row"
-                    >
-                      <Button
-                        type="button"
-                        size="md"
-                        variant="positive"
-                        data-component="system-admin-approve-button"
-                        className="w-full sm:flex-1"
-                      >
-                        승인
-                      </Button>
-                      <Button
-                        type="button"
-                        size="md"
-                        variant="negative-outline"
-                        data-component="system-admin-reject-button"
-                        className="w-full sm:flex-1"
-                      >
-                        거부
-                      </Button>
+                  {activeSection.id === "notifications" ? (
+                    <InfoCard title="알림 실행">
+                      <NotificationTestSection />
+                    </InfoCard>
+                  ) : null}
+
+                  {showVoucherPriceUploadForm ? (
+                    <div data-component="system-admin-voucher-upload">
+                      <VoucherPriceUploadForm />
                     </div>
                   ) : null}
 
-                  {!isSignupSection ? (
+                  {!isApprovalSection && selectedRecord.metrics?.length ? (
                     <>
                       <InfoCard title="핵심 메트릭">
                         <div className="grid gap-3 sm:grid-cols-2">
@@ -911,7 +1213,7 @@ export function OwnerAdminConsole() {
 
                       <InfoCard title="검토 체크리스트">
                         <div className="space-y-2">
-                          {selectedRecord.checklist.map((item) => (
+                          {selectedRecord.checklist?.map((item) => (
                             <div
                               key={item}
                               data-component="system-admin-checklist-item"
@@ -926,7 +1228,7 @@ export function OwnerAdminConsole() {
 
                       <InfoCard title="다음 액션">
                         <div className="space-y-2">
-                          {selectedRecord.notes.map((note) => (
+                          {selectedRecord.notes?.map((note) => (
                             <div
                               key={note}
                               data-component="system-admin-next-action"
@@ -943,11 +1245,25 @@ export function OwnerAdminConsole() {
                 </div>
               </DetailPanel>
             ) : (
-              <EmptyState
-                name="system-admin-detail-empty"
-                icon={activeSection.icon}
-                message={activeSection.detailEmptyMessage}
-              />
+              <DetailPanel
+                avatar={
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                    <activeSection.icon className="h-5 w-5" />
+                  </div>
+                }
+                title={activeSection.listTitle}
+                subtitle={activeSection.detailEmptyMessage}
+                overlay={
+                  <div data-component="system-admin-detail-empty" className="flex items-center justify-center flex-none min-h-0">
+                    <div className="text-center text-v3-text-muted">
+                      <activeSection.icon className="mx-auto mb-3 h-12 w-12 opacity-30" />
+                      <p className="text-[0.85rem]">{activeSection.detailEmptyMessage}</p>
+                    </div>
+                  </div>
+                }
+              >
+                {null}
+              </DetailPanel>
             )}
           </SplitLayout>
         </div>

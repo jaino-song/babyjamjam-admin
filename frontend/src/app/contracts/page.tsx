@@ -51,6 +51,7 @@ import {
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -92,7 +93,7 @@ const TAB_ITEMS = [
   { label: "전체", value: "all" },
   { label: "대기", value: "in-progress" },
   { label: "완료", value: "completed" },
-  { label: "만료", value: "rejected" },
+  { label: "거부", value: "rejected" },
 ];
 
 const DETAIL_TABS = [
@@ -295,16 +296,39 @@ function normalizeDocumentYear(value: string | null | undefined, fallbackTimesta
 function InfoRowsCard({
   title,
   rows,
+  loading = false,
   className,
 }: {
   title: string;
   rows: InfoCardRow[];
+  loading?: boolean;
   className?: string;
 }) {
   return (
     <InfoCard title={title} className={className}>
-      {rows.map((row) => (
-        <InfoRow key={row.label} label={row.label} value={row.value} />
+      {rows.map((row, index) => (
+        <InfoRow
+          key={row.label}
+          label={row.label}
+          value={loading ? (
+            <div data-component="info-row-skeleton" className="flex w-full justify-end">
+              <Skeleton
+                className={cn(
+                  "bg-v3-border/70",
+                  row.label === "주소" ? "h-10 w-[78%] rounded-[12px]" : "h-4 rounded-full",
+                  row.label !== "주소" && ([
+                    "w-24",
+                    "w-20",
+                    "w-28",
+                    "w-32",
+                    "w-36",
+                    "w-24",
+                  ][index % 6]),
+                )}
+              />
+            </div>
+          ) : row.value}
+        />
       ))}
     </InfoCard>
   );
@@ -621,6 +645,7 @@ function ContractDetail({
     refetchOnWindowFocus: false,
   });
   const detailedDocument = detailQuery.data ?? doc;
+  const isBaseDetailLoading = detailQuery.isFetching || detailQuery.isPlaceholderData;
   const category = getStatusCategory(detailedDocument.current_status?.status_type);
   const statusType = mapCategoryToStatusType(category);
   const statusLabel = mapStatusToLabel(detailedDocument.current_status?.status_type);
@@ -673,6 +698,7 @@ function ContractDetail({
     refetchOnWindowFocus: false,
   });
   const customerAddress = documentAddress ?? clientAddressQuery.data ?? null;
+  const isCustomerInfoLoading = isBaseDetailLoading || (!documentAddress && clientAddressQuery.isLoading);
   const customerBirthDate =
     extractDocumentFieldValue(detailedDocument, [
       "이용자 생년월일",
@@ -763,6 +789,7 @@ function ContractDetail({
     servicePriceValue,
   ]);
   const serviceDays = pickServiceDaysValue(servicePeriodValues) ?? inferredServiceDays ?? "–";
+  const isServiceInfoLoading = isBaseDetailLoading || allVoucherPriceInfosQuery.isLoading;
   const contractDuration =
     pickContractDurationValue(servicePeriodValues) ??
     "–";
@@ -916,6 +943,7 @@ function ContractDetail({
     <InfoRowsCard
       key="document-profile"
       title="고객 정보"
+      loading={isCustomerInfoLoading}
       className="self-start"
       rows={[
         {
@@ -956,6 +984,7 @@ function ContractDetail({
     <InfoRowsCard
       key="document-contract"
       title="전자문서 정보"
+      loading={isBaseDetailLoading}
       rows={[
         { label: "문서명", value: detailedDocument.document_name },
         { label: "템플릿", value: detailedDocument.template?.name ?? "–" },
@@ -982,6 +1011,7 @@ function ContractDetail({
     <InfoRowsCard
       key="provider-primary"
       title="제공인력 1"
+      loading={isBaseDetailLoading}
       rows={[
         { label: "성명", value: provider1Name },
         { label: "연락처", value: provider1Contact },
@@ -990,6 +1020,7 @@ function ContractDetail({
     <InfoRowsCard
       key="provider-secondary"
       title="제공인력 2"
+      loading={isBaseDetailLoading}
       rows={[
         { label: "성명", value: provider2Name },
         { label: "연락처", value: provider2Contact },
@@ -1001,6 +1032,7 @@ function ContractDetail({
     <InfoRowsCard
       key="service-schedule"
       title="서비스 정보"
+      loading={isServiceInfoLoading}
       rows={[
         { label: "계약 기간", value: contractDuration },
         { label: "서비스 일수", value: serviceDays },
@@ -1013,6 +1045,7 @@ function ContractDetail({
     <InfoRowsCard
       key="service-pricing"
       title="서비스 비용"
+      loading={isServiceInfoLoading}
       rows={[
         { label: "서비스 비용", value: servicePrice },
         { label: "정부지원금", value: governmentGrant },
@@ -1068,7 +1101,7 @@ function ContractDetail({
             variant="positive"
             size="sm"
             data-component="contracts-detail-preview-trigger"
-            className="pt-1"
+            className="mt-0.5"
             onClick={() => setIsPreviewOpen(true)}
           >
             <Eye className="h-4 w-4" />
@@ -1077,7 +1110,7 @@ function ContractDetail({
           <button
             type="button"
             data-component="contracts-detail-activity-trigger"
-            className="rounded-[18px] p-1 transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
+            className="overflow-visible rounded-[18px] p-1 transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
             onClick={() => setIsActivityOpen(true)}
             aria-label="활동 기록 보기"
             title="활동 기록 보기"
@@ -1091,7 +1124,7 @@ function ContractDetail({
                   variant="ghost"
                   size="icon"
                   data-component="contracts-detail-more-trigger"
-                  className="h-9 w-9 rounded-full text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+                  className="mt-0.5 h-9 w-9 rounded-full border-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
                   aria-label="계약 작업 더보기"
                 >
                   <MoreVertical className="h-5 w-5" />

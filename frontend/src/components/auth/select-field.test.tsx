@@ -22,4 +22,22 @@ describe("SelectField", () => {
     expect(document.querySelector('[data-component="form-field-label-trailing"]')).toBeTruthy();
     expect(document.querySelector("p#역할-error")).toBeNull();
   });
+
+  it("reserves trailing space for inline errors even before they appear", () => {
+    render(
+      <SelectField
+        label="역할"
+        value=""
+        onValueChange={() => {}}
+        options={[{ value: "user", label: "일반 사용자" }]}
+        errorDisplay="inline"
+      />
+    );
+
+    const trailingSlot = document.querySelector('[data-component="form-field-label-trailing"]');
+
+    expect(trailingSlot).toBeTruthy();
+    expect(trailingSlot?.textContent).toContain("\u00A0");
+    expect(document.querySelector("#역할-error")).toBeNull();
+  });
 });

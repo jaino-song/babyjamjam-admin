@@ -16,7 +16,6 @@ import {
   Settings,
   Signal,
   Trash2,
-  Users,
   Wifi,
   Workflow,
 } from "lucide-react";
@@ -45,6 +44,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
 import { AlimtalkHistoryManager } from "@/components/app/alimtalk/AlimtalkHistoryManager";
 import { UpcomingAlimtalkManager } from "@/components/app/alimtalk/UpcomingAlimtalkManager";
+import { AlimtalkTenantApplicationSettings } from "@/components/app/alimtalk/AlimtalkTenantApplicationSettings";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -629,7 +629,6 @@ function GuideExampleDialog({
 }
 
 function TemplatePhonePreview({
-  templateName,
   tplType,
   tplEmType,
   content,
@@ -638,7 +637,6 @@ function TemplatePhonePreview({
   imagePreviewUrl,
   buttons,
 }: {
-  templateName: string;
   tplType: TplType;
   tplEmType: TplEmType;
   title?: string;
@@ -683,9 +681,6 @@ function TemplatePhonePreview({
                 <MessageCircle className="w-4 h-4 text-[#3C1E1E]" />
               </div>
               <div data-component="alimtalk-preview-message-content" className="flex flex-col gap-1 min-w-0 max-w-[85%]">
-                <span className="text-[0.7rem] font-semibold text-gray-800 pl-1 truncate">
-                  {templateName || "알림톡 템플릿"}
-                </span>
                 <div data-component="alimtalk-preview-message-card" className="rounded-xl bg-white shadow-sm overflow-hidden">
                   {tplEmType === "IMAGE" ? (
                     imagePreviewUrl ? (
@@ -1428,7 +1423,6 @@ function TemplateCreator({
 
         <div data-component="alimtalk-template-creator-preview" className="flex justify-center lg:sticky lg:top-24 self-start">
           <TemplatePhonePreview
-            templateName={tplName}
             tplType={tplType}
             tplEmType={tplEmType}
             title={tplTitle}
@@ -1714,7 +1708,6 @@ function TemplatesSection() {
           ) : (
             <div data-component="alimtalk-templates-preview-panel" className="flex justify-center py-2">
               <TemplatePhonePreview
-                templateName={selectedTemplate.name}
                 tplType={selectedTemplate.tplType}
                 tplEmType={selectedTemplate.tplEmType}
                 title={selectedTemplate.title}
@@ -1768,38 +1761,7 @@ export default function AlimtalkPage() {
 
           {activeSection === "settings" ? (
             <section data-component="alimtalk-settings">
-              <ContentPaper variant="v3">
-                <div data-component="alimtalk-settings-header" className="mb-4 flex items-center gap-3">
-                  <div data-component="alimtalk-settings-icon" className="flex items-center justify-center w-10 h-10 rounded-xl bg-gray-500/10">
-                    <Settings size={20} className="text-gray-500" />
-                  </div>
-                  <div data-component="alimtalk-settings-title-group">
-                    <h2 className="text-lg font-bold text-foreground">알림톡 설정</h2>
-                    <p className="text-sm text-muted-foreground">알림톡 발송 서비스를 설정합니다.</p>
-                  </div>
-                </div>
-                <Separator className="mb-6" />
-
-                <div data-component="alimtalk-settings-content" className="space-y-4">
-                  <div data-component="alimtalk-settings-provider" className="flex items-center gap-3 p-4 rounded-2xl border border-v3-border bg-white">
-                    <div data-component="alimtalk-settings-provider-icon" className="w-10 h-10 rounded-xl bg-v3-primary/10 flex items-center justify-center shrink-0">
-                      <Users className="w-5 h-5 text-v3-primary" />
-                    </div>
-                    <div data-component="alimtalk-settings-provider-text" className="flex-1 min-w-0">
-                      <p className="text-[0.85rem] font-semibold text-v3-dark">발송 서비스 제공자</p>
-                      <p className="text-[0.75rem] text-v3-text-muted">
-                        현재 설정은 설정 &gt; 알림 메뉴에서 변경할 수 있습니다.
-                      </p>
-                    </div>
-                    <a
-                      href="/settings"
-                      className="text-[0.8rem] font-semibold text-v3-primary hover:underline shrink-0"
-                    >
-                      설정으로 이동
-                    </a>
-                  </div>
-                </div>
-              </ContentPaper>
+              <AlimtalkTenantApplicationSettings />
             </section>
           ) : null}
         </div>

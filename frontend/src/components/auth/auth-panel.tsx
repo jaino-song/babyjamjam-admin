@@ -1,12 +1,13 @@
 import * as React from "react";
+import { SurfaceCard } from "@/components/ui/surface-card";
+import { SurfaceFrame } from "@/components/ui/surface-frame";
 import { cn } from "@/lib/utils";
-import { CardShell } from "@/components/ui/card-shell";
-import { AuthPanelHeader } from "@/components/auth/auth-panel-header";
 
 export interface AuthPanelProps {
   children: React.ReactNode;
   title?: React.ReactNode;
   subtitle?: React.ReactNode;
+  containerClassName?: string;
   className?: string;
   contentClassName?: string;
   disableAnimation?: boolean;
@@ -28,6 +29,7 @@ export function AuthPanel({
   children,
   title,
   subtitle,
+  containerClassName,
   className,
   contentClassName,
   disableAnimation = false,
@@ -49,20 +51,32 @@ export function AuthPanel({
   };
 
   return (
-    <div
-      data-component={componentSlots.container}
-      className="relative flex h-full min-h-0 w-full items-start justify-center overflow-y-auto py-4 md:py-8 lg:items-center"
+    <SurfaceFrame
+      data-component={componentName}
+      dataComponents={{
+        container: componentSlots.container,
+        glow: `${componentName}-glow`,
+        inner: `${componentName}-inner`,
+      }}
+      className={containerClassName}
     >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-2 mx-auto h-40 w-full max-w-[640px] rounded-full bg-[radial-gradient(circle_at_top,_rgba(18,54,106,0.16),_transparent_72%)] blur-3xl"
-      />
-
-      <div className="relative w-full max-w-[460px]">
-        <CardShell
-          data-component={componentSlots.card}
+        <SurfaceCard
+          data-component={componentName}
+          dataComponents={{
+            card: componentSlots.card,
+            header: componentSlots.header,
+            title: componentSlots.title,
+            subtitle: componentSlots.subtitle,
+            content: componentSlots.content,
+          }}
+          title={title}
+          subtitle={subtitle}
           animated={!disableAnimation}
-          className={className}
+          className={cn(
+            "max-h-[85dvh] overflow-x-hidden overflow-y-auto lg:max-h-[85%]",
+            className,
+          )}
+          contentClassName={contentClassName}
         >
           {hasHeaderActions ? (
             <div
@@ -74,22 +88,8 @@ export function AuthPanel({
             </div>
           ) : null}
 
-          <AuthPanelHeader
-            title={title}
-            subtitle={subtitle}
-            dataComponent={componentSlots.header}
-            titleDataComponent={componentSlots.title}
-            subtitleDataComponent={componentSlots.subtitle}
-          />
-
-          <div
-            data-component={componentSlots.content}
-            className={cn("flex flex-col gap-6", contentClassName)}
-          >
-            {children}
-          </div>
-        </CardShell>
-      </div>
-    </div>
+          {children}
+        </SurfaceCard>
+    </SurfaceFrame>
   );
 }

@@ -7,24 +7,20 @@ import { cn } from "@/lib/utils";
 export function V3MainContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const excluded = isLayoutExcluded(pathname);
+  const isSelectOrganizationPage = pathname === "/select-organization";
 
   return (
     <main
       data-component="main-content"
-      className="h-screen overflow-auto bg-v3-dim-white"
+      className={cn(
+        "h-screen overflow-y-auto overflow-x-hidden bg-v3-dim-white",
+        "p-4 pb-24 md:pt-8 md:pb-8",
+        excluded ? "pt-4 md:px-8" : "pt-20 md:pl-[312px] md:pr-24",
+        isSelectOrganizationPage && "overflow-hidden p-0 md:p-0",
+        "[&>*]:h-full"
+      )}
     >
-      <div
-        data-component="main-content-inner"
-        className={cn(
-          "min-h-full",
-          "p-4 md:p-8 md:pr-24",
-          "pb-24 md:pb-8",
-          excluded ? "pt-4 md:pt-8" : "pt-20 md:pt-8 md:ml-[280px]",
-          "[&>*]:h-full"
-        )}
-      >
-        {children}
-      </div>
+      {children}
     </main>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Check } from "lucide-react";
+import { Check, ChevronLeft } from "lucide-react";
 import { useCreateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { api } from "@/lib/api/client";
@@ -10,6 +10,7 @@ import type { CreateClientDto } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
+import { FormField } from "@/components/auth/form-field";
 import type { Employee } from "@/hooks/useEmployees";
 import { SteppedWizard } from "@/components/app/v3";
 import type { WizardStep } from "@/components/app/v3";
@@ -22,7 +23,7 @@ import voucherOptions from "@/components/app/messages/templates/json/voucher.jso
 import { cn } from "@/lib/utils";
 
 const INPUT_CLS =
-  "w-full px-4 py-3 rounded-[14px] border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
+  "h-auto w-full rounded-[14px] border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
 
 const SELECT_CLS =
   "w-full px-4 py-3 rounded-[14px] border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
@@ -86,8 +87,6 @@ export default function NewClientPage() {
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
-  const showPhoneValidationError =
-    phoneDigits.length === 11 && (isPhoneDuplicate || hasPhoneDuplicateCheckFailed);
   const phoneInlineMessage = phoneDigits.length === 11
     ? hasPhoneDuplicateCheckFailed
       ? getPhoneDuplicateCheckFailedMessage(locale)
@@ -304,74 +303,62 @@ export default function NewClientPage() {
   const steps: WizardStep[] = [
     {
       label: "기본 정보",
+      summaryTitle: store.name || undefined,
       content: (
         <div data-component="clients-new-basic-step" className={GRID_CLS}>
-          <div data-component="clients-new-basic-name-field" className="flex flex-col gap-1.5">
-            <label className={LABEL_CLS}>
-              {t(locale, "clients.form.name")} <span className="text-v3-burgundy">*</span>
-            </label>
-            <input
-              className={INPUT_CLS}
+          <div data-component="clients-new-basic-name-field">
+            <FormField
+              label={t(locale, "clients.form.name")}
+              required
+              type="text"
               value={store.name}
-              onChange={(e) => { setField("name", e.target.value); setError(null); }}
+              onChange={(e) => {
+                setField("name", e.target.value);
+                setError(null);
+              }}
               placeholder="홍길동"
             />
           </div>
-          <div data-component="clients-new-basic-birthday-field" className="flex flex-col gap-1.5">
-            <label className={LABEL_CLS}>{t(locale, "clients.form.birthday")}</label>
-            <input
-              className={INPUT_CLS}
+          <div data-component="clients-new-basic-birthday-field">
+            <FormField
+              label={t(locale, "clients.form.birthday")}
+              type="text"
               value={store.birthday}
               onChange={(e) => setField("birthday", e.target.value)}
+              inputMode="numeric"
               placeholder="YYMMDD"
               maxLength={6}
             />
           </div>
-          <div data-component="clients-new-basic-due-date-field" className="flex flex-col gap-1.5">
-            <label className={LABEL_CLS}>{t(locale, "clients.form.due-date")}</label>
-            <input
+          <div data-component="clients-new-basic-due-date-field">
+            <FormField
+              label={t(locale, "clients.form.due-date")}
               type="date"
-              className={INPUT_CLS}
               value={store.dueDate}
               onChange={(e) => setField("dueDate", e.target.value)}
             />
           </div>
-          <div data-component="clients-new-basic-phone-field" className="flex flex-col gap-1.5">
-            <div data-component="clients-new-basic-phone-label-row" className="flex items-center gap-2">
-              <label className={LABEL_CLS}>
-                {t(locale, "clients.form.phone")} <span className="text-v3-burgundy">*</span>
-              </label>
-              {phoneInlineMessage && (
-                <p
-                  data-component="clients-new-basic-phone-message"
-                  className="text-[0.72rem] font-medium text-v3-burgundy"
-                >
-                  {phoneInlineMessage}
-                </p>
-              )}
-            </div>
-            <input
-              className={cn(
-                INPUT_CLS,
-                showPhoneValidationError &&
-                  "border-v3-burgundy focus:border-v3-burgundy focus:shadow-[0_0_0_3px_hsla(349,65%,45%,0.08)]"
-              )}
+          <div data-component="clients-new-basic-phone-field">
+            <FormField
+              label={t(locale, "clients.form.phone")}
+              required
+              type="tel"
               value={store.phone}
               onChange={(e) => {
                 setField("phone", formatPhoneNumber(e.target.value));
                 setError(null);
               }}
+              inputMode="numeric"
               placeholder="010-1234-5678"
               maxLength={13}
-              aria-invalid={showPhoneValidationError}
-              aria-required="true"
-              required
+              error={phoneInlineMessage ?? undefined}
+              errorDisplay="inline"
             />
           </div>
-          <div data-component="clients-new-basic-address-field" className="flex flex-col gap-1.5 md:col-span-2">
-            <label className={LABEL_CLS}>{t(locale, "clients.form.address")}</label>
-            <input
-              className={INPUT_CLS}
+          <div data-component="clients-new-basic-address-field" className="md:col-span-2">
+            <FormField
+              label={t(locale, "clients.form.address")}
+              type="text"
               value={store.address}
               onChange={(e) => setField("address", e.target.value)}
               placeholder="서울시 강남구..."
@@ -381,28 +368,6 @@ export default function NewClientPage() {
             <div data-component="clients-new-basic-error" className="md:col-span-2 text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
               {error}
             </div>
-          )}
-        </div>
-      ),
-      summary: (
-        <div data-component="clients-new-basic-summary" className="flex gap-3 flex-wrap">
-          {store.name && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.name}
-            </span>
-          )}
-          {store.phone && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.phone}
-            </span>
-          )}
-          {store.address && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.address}
-            </span>
           )}
         </div>
       ),
@@ -645,28 +610,41 @@ export default function NewClientPage() {
 
   return (
     <>
-      <SteppedWizard
-        title={t(locale, "clients.form.add-title")}
-        subtitle="고객 정보를 단계별로 입력해 주세요"
-        steps={steps}
-        currentStep={currentStep}
-        onStepChange={handleStepChange}
-        onComplete={handleComplete}
-        onBack={() => router.push("/clients")}
-        backLabel="고객 목록으로 돌아가기"
-        completeLabel="등록"
-        isSubmitting={createClient.isPending}
-        isNextDisabled={
-          currentStep === 0 &&
-          (
-            phoneDigits.length !== 11 ||
-            isCheckingPhoneDuplicate ||
-            hasPhoneDuplicateCheckFailed ||
-            isPhoneDuplicate ||
-            lastCheckedPhoneDigits !== phoneDigits
-          )
-        }
-      />
+      <div data-component="clients-new-main-content" className="flex min-h-[calc(100dvh-6rem)] items-start justify-center py-6 md:py-8">
+        <div data-component="clients-new-main-content-inner" className="flex w-full flex-col">
+          <button
+            type="button"
+            onClick={() => router.push("/clients")}
+            className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
+          >
+            <ChevronLeft className="w-5 h-5 md:w-5 md:h-5 w-[18px] h-[18px]" />
+            고객 목록으로 돌아가기
+          </button>
+
+          <div data-component="clients-new-stepper-shell">
+            <SteppedWizard
+              title={t(locale, "clients.form.add-title")}
+              subtitle="고객 정보를 단계별로 입력해 주세요"
+              steps={steps}
+              currentStep={currentStep}
+              onStepChange={handleStepChange}
+              onComplete={handleComplete}
+              completeLabel="등록"
+              isSubmitting={createClient.isPending}
+              isNextDisabled={
+                currentStep === 0 &&
+                (
+                  phoneDigits.length !== 11 ||
+                  isCheckingPhoneDuplicate ||
+                  hasPhoneDuplicateCheckFailed ||
+                  isPhoneDuplicate ||
+                  lastCheckedPhoneDigits !== phoneDigits
+                )
+              }
+            />
+          </div>
+        </div>
+      </div>
 
       <EmployeeFormDialog
         open={isEmployeeDialogOpen}

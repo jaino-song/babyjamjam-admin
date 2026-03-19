@@ -13,7 +13,8 @@ import {
   Settings,
   Shield,
   LucideIcon,
-  Calculator
+  Calculator,
+  MessageCircle,
 } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
@@ -21,6 +22,8 @@ import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { ROLES } from "@/lib/constants/roles";
+import { SidebarNotifications } from "@/components/app/v3/SidebarNotifications";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 interface NavItem {
   label: string;
@@ -53,7 +56,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
   {
     title: "서비스 관리",
     items: [
-      { label: "메시지", href: "/messages", icon: Users },
+      { label: "메시지", href: "/messages", icon: MessageCircle },
       { label: "가격표", href: "/prices", icon: Calculator },
       { label: "알림톡", href: "/alimtalk", icon: KakaoTalkIcon },
     ],
@@ -78,6 +81,8 @@ export const V3Sidebar = () => {
   const user = useInitialUser();
   const locale = useLocale();
   const isOwner = user?.role === ROLES.owner;
+  const [isNavScrolling, setIsNavScrolling] = React.useState(false);
+  const scrollResetTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getNavItemName = (href: string) => {
     const segment = href.split("/").filter(Boolean).pop() || "";
@@ -99,12 +104,32 @@ export const V3Sidebar = () => {
       return {
         ...section,
         items: isOwner
-          ? [...section.items, { label: "관리자", href: "/system-admin", icon: Shield }]
+          ? [{ label: "관리자", href: "/system-admin", icon: Shield }, ...section.items]
           : section.items,
       };
     }),
     [isOwner]
   );
+
+  React.useEffect(() => {
+    return () => {
+      if (scrollResetTimeoutRef.current !== null) {
+        clearTimeout(scrollResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleNavScroll = () => {
+    setIsNavScrolling(true);
+
+    if (scrollResetTimeoutRef.current !== null) {
+      clearTimeout(scrollResetTimeoutRef.current);
+    }
+
+    scrollResetTimeoutRef.current = setTimeout(() => {
+      setIsNavScrolling(false);
+    }, 450);
+  };
 
   if (isLayoutExcluded(pathname)) {
     return null;
@@ -120,16 +145,31 @@ export const V3Sidebar = () => {
       aria-label="Sidebar Navigation"
       data-component="sidebar"
     >
-      <div className="flex items-center gap-3 px-6 pt-8 pb-6" data-component="sidebar-brand">
-        <div className="flex items-center justify-center w-12 h-12 rounded-xl shrink-0 shadow-sm overflow-hidden">
-          <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={48} height={48} className="w-full h-full object-cover" />
+      <div className="flex items-center justify-between gap-3 px-6 pt-8 pb-6" data-component="sidebar-brand">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex items-center justify-center w-12 h-12 rounded-xl shrink-0 shadow-sm overflow-hidden">
+            <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={48} height={48} className="w-full h-full object-cover" />
+          </div>
+          <div className="min-w-0">
+            <span className="block truncate text-xl font-bold text-v3-primary tracking-tight">
+              아가잼잼
+            </span>
+            {user?.organizationName && (
+              <span className="mt-0.5 block truncate text-[0.72rem] font-medium leading-none text-v3-text-muted">
+                {user.organizationName}
+              </span>
+            )}
+          </div>
         </div>
-        <span className="text-xl font-bold text-v3-primary tracking-tight">
-          아가잼잼
-        </span>
+        <SidebarNotifications />
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-4 py-2 space-y-6 custom-scrollbar" data-component="sidebar-nav">
+      <nav
+        className="flex-1 overflow-y-auto px-4 py-2 space-y-6 custom-scrollbar scrollbar-on-scroll"
+        data-component="sidebar-nav"
+        data-scroll-active={isNavScrolling ? "true" : "false"}
+        onScroll={handleNavScroll}
+      >
         {navSections.map((section, idx) => (
           <div key={section.title + idx}>
             <h3 className="px-4 mb-2 text-[0.65rem] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">
@@ -175,9 +215,12 @@ export const V3Sidebar = () => {
 
       <div className="p-4 mt-auto" data-component="sidebar-profile">
         <div className="flex items-center gap-3 p-3 rounded-2xl bg-v3-dim-white/50 border border-v3-border/50 hover:bg-white hover:shadow-v3-hover transition-all cursor-pointer group">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-v3-primary to-blue-600 flex items-center justify-center shadow-inner shrink-0 text-white font-bold text-sm">
-            {initials}
-          </div>
+          <Avatar className="h-10 w-10 shrink-0 rounded-full shadow-inner">
+            <AvatarImage src={user?.profileImage || ""} alt={user?.name || "사용자"} />
+            <AvatarFallback className="bg-gradient-to-br from-v3-primary to-blue-600 text-white font-bold text-sm">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
           <div className="flex flex-col min-w-0">
             <span className="text-[0.85rem] font-semibold text-gray-900 truncate group-hover:text-v3-primary transition-colors">
               {user?.name || "GUEST"}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, X } from "lucide-react";
+import { Check } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
@@ -17,12 +17,6 @@ import {
 import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
 import {
     Dialog,
-    DialogClose,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -38,6 +32,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { TitleDescChildrenMolecule } from "@/components/app/ui/TitleDescChildrenMolecule";
+import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import {
     DEFAULT_EMPLOYEE_GRADE,
     formatWorkAreaLabel,
@@ -215,44 +210,47 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
 
     return (
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-            <DialogContent
-                data-component="employees-form-dialog"
-                showCloseButton={false}
-                className="w-[min(720px,calc(100vw-1.5rem))] max-w-[720px] max-h-[90vh] rounded-[28px] border-none bg-v3-dim-white p-0 shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] overflow-hidden gap-0"
-            >
-                <DialogHeader className="border-b border-v3-border bg-white p-6 text-left">
-                    <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                            <span className="mb-3 inline-flex items-center rounded-full bg-white/80 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-v3-primary shadow-sm">
-                                Employee Profile
-                            </span>
-                            <DialogTitle className="text-[1.35rem] font-bold tracking-[-0.02em] text-v3-dark">
-                                {isEditMode
-                                    ? t(locale, "employees.form.edit-title")
-                                    : t(locale, "employees.form.create-title")}
-                            </DialogTitle>
-                            <p className="mt-2 text-[0.82rem] leading-6 text-v3-text-muted">
-                                이름, 연락처, 등급과 근무 가능 지역을 한 번에 정리합니다.
-                            </p>
-                        </div>
-                        <DialogClose asChild>
-                            <button
-                                type="button"
-                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/80 text-v3-text-muted shadow-sm transition-colors hover:bg-white hover:text-v3-dark"
-                            >
-                                <X className="h-4 w-4" />
-                                <span className="sr-only">Close</span>
-                            </button>
-                        </DialogClose>
+            <FormDialogShell
+                dataComponent="employees-form-dialog"
+                eyebrow="Employee Profile"
+                title={
+                    isEditMode
+                        ? t(locale, "employees.form.edit-title")
+                        : t(locale, "employees.form.create-title")
+                }
+                description="이름, 연락처, 등급과 근무 가능 지역을 한 번에 정리합니다."
+                dialogClassName="w-[min(720px,calc(100vw-1.5rem))] max-w-[720px] max-h-[90vh]"
+                footer={
+                    <div className="ml-auto flex w-full flex-col-reverse gap-2 sm:w-[360px] sm:flex-row sm:justify-end">
+                        <Button
+                            variant="neutral"
+                            size="md"
+                            onClick={handleClose}
+                            disabled={isLoading}
+                            data-component="employees-form-dialog-cancel"
+                            className="w-full sm:flex-1"
+                        >
+                            {t(locale, "common.cancel")}
+                        </Button>
+                        <Button
+                            variant="positive"
+                            size="md"
+                            onClick={handleSubmit}
+                            disabled={isLoading || !isFormValid}
+                            data-component="employees-form-dialog-submit"
+                            className="w-full sm:flex-1"
+                        >
+                            {isLoading ? (
+                                <Spinner className="h-4 w-4" />
+                            ) : isEditMode ? (
+                                t(locale, "common.save")
+                            ) : (
+                                t(locale, "common.create")
+                            )}
+                        </Button>
                     </div>
-                    <DialogDescription className="sr-only">
-                        {isEditMode
-                            ? t(locale, "employees.form.edit-description")
-                            : t(locale, "employees.form.create-description")}
-                    </DialogDescription>
-                </DialogHeader>
-
-                <div data-component="employees-form-dialog-content" className="space-y-5 overflow-y-auto px-6 py-6">
+                }
+            >
                     {error && (
                         <Alert
                             variant="destructive"
@@ -413,42 +411,7 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                             </div>
                         </TitleDescChildrenMolecule>
                     </TitleDescChildrenMolecule>
-                </div>
-
-                <DialogFooter
-                    data-component="employees-form-dialog-actions"
-                    className="border-t border-v3-border bg-white px-6 py-5 sm:justify-end"
-                >
-                    <div className="ml-auto flex w-full flex-col-reverse gap-2 sm:w-[360px] sm:flex-row sm:justify-end">
-                        <Button
-                            variant="neutral"
-                            size="md"
-                            onClick={handleClose}
-                            disabled={isLoading}
-                            data-component="employees-form-dialog-cancel"
-                            className="w-full sm:flex-1"
-                        >
-                            {t(locale, "common.cancel")}
-                        </Button>
-                        <Button
-                            variant="positive"
-                            size="md"
-                            onClick={handleSubmit}
-                            disabled={isLoading || !isFormValid}
-                            data-component="employees-form-dialog-submit"
-                            className="w-full sm:flex-1"
-                        >
-                            {isLoading ? (
-                                <Spinner className="h-4 w-4" />
-                            ) : isEditMode ? (
-                                t(locale, "common.save")
-                            ) : (
-                                t(locale, "common.create")
-                            )}
-                        </Button>
-                    </div>
-                </DialogFooter>
-            </DialogContent>
+            </FormDialogShell>
         </Dialog>
     );
 }

@@ -5,6 +5,7 @@ const DEFAULT_PGBOUNCER_CONNECTION_LIMIT = "5";
 export interface PrismaClientConfigResult {
     options?: Prisma.PrismaClientOptions;
     appliedDefaults: string[];
+    missingRequiredEnvVars: string[];
 }
 
 function stripWrappingQuotes(value: string): string {
@@ -21,8 +22,12 @@ function stripWrappingQuotes(value: string): string {
 export function createPrismaClientConfig(
     rawUrl = process.env["DATABASE_URL"],
 ): PrismaClientConfigResult {
+    const missingRequiredEnvVars = ["DATABASE_URL", "DIRECT_URL"].filter(
+        (envName) => !process.env[envName],
+    );
+
     if (!rawUrl) {
-        return { appliedDefaults: [] };
+        return { appliedDefaults: [], missingRequiredEnvVars };
     }
 
     const datasourceUrl = stripWrappingQuotes(rawUrl);
@@ -54,5 +59,6 @@ export function createPrismaClientConfig(
             },
         },
         appliedDefaults,
+        missingRequiredEnvVars,
     };
 }

@@ -23,11 +23,21 @@ export class ChannelTalkApiClient implements IChannelTalkApiPort {
     private readonly CHANNELTALK_API_URL: string;
     private readonly CHANNELTALK_ACCESS_KEY: string;
     private readonly CHANNELTALK_ACCESS_SECRET: string;
+    private readonly isConfigured: boolean;
 
     constructor(private readonly configService: ConfigService) {
-        this.CHANNELTALK_API_URL = configService.getOrThrow("CHANNELTALK_API_URL");
-        this.CHANNELTALK_ACCESS_KEY = configService.getOrThrow("CHANNELTALK_ACCESS_KEY");
-        this.CHANNELTALK_ACCESS_SECRET = configService.getOrThrow("CHANNELTALK_ACCESS_SECRET");
+        this.CHANNELTALK_API_URL = configService.get("CHANNELTALK_API_URL") || "";
+        this.CHANNELTALK_ACCESS_KEY = configService.get("CHANNELTALK_ACCESS_KEY") || "";
+        this.CHANNELTALK_ACCESS_SECRET = configService.get("CHANNELTALK_ACCESS_SECRET") || "";
+        this.isConfigured = Boolean(
+            this.CHANNELTALK_API_URL &&
+            this.CHANNELTALK_ACCESS_KEY &&
+            this.CHANNELTALK_ACCESS_SECRET,
+        );
+
+        if (!this.isConfigured) {
+            this.logger.warn("CHANNELTALK_API_URL, CHANNELTALK_ACCESS_KEY, and CHANNELTALK_ACCESS_SECRET not configured. ChannelTalk integration will be disabled.");
+        }
     }
 
     private getHeaders(): HeadersInit {
@@ -48,6 +58,7 @@ export class ChannelTalkApiClient implements IChannelTalkApiPort {
     }
 
     async upsertUserByMemberId(params: UpsertUserParams): Promise<ChannelTalkUser> {
+        this.assertConfigured();
         // Note: @ prefix is REQUIRED for memberId lookup
         const url = `${this.CHANNELTALK_API_URL}/open/v5/users/@${params.memberId}`;
 
@@ -78,6 +89,7 @@ export class ChannelTalkApiClient implements IChannelTalkApiPort {
     }
 
     async getUserByMemberId(memberId: string): Promise<ChannelTalkUser | null> {
+        this.assertConfigured();
         // Note: @ prefix is REQUIRED for memberId lookup
         const url = `${this.CHANNELTALK_API_URL}/open/v5/users/@${memberId}`;
 
@@ -103,6 +115,7 @@ export class ChannelTalkApiClient implements IChannelTalkApiPort {
     }
 
     async createEvent(params: CreateEventParams): Promise<ChannelTalkEvent> {
+        this.assertConfigured();
         // IMPORTANT: userId is Channel Talk's internal ID, NOT memberId
         const url = `${this.CHANNELTALK_API_URL}/open/v5/users/${params.userId}/events`;
 
@@ -130,5 +143,11 @@ export class ChannelTalkApiClient implements IChannelTalkApiPort {
 
         this.logger.log(`[ChannelTalk] Event created: ${params.name} for user ${params.userId}`);
         return data.event;
+    }
+
+    private assertConfigured() {
+        if (!this.isConfigured) {
+            throw new Error("ChannelTalk integration is not configured.");
+        }
     }
 }

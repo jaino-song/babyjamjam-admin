@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Check } from "lucide-react";
+import { Check, ChevronLeft } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCreateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
@@ -696,19 +696,32 @@ export default function NewClientPage() {
         )}
       </AnimatePresence>
 
-      <SteppedWizard
-        title={t(locale, "clients.form.add-title")}
-        subtitle="고객 정보를 단계별로 입력해 주세요"
-        steps={steps}
-        currentStep={currentStep}
-        onStepChange={handleStepChange}
-        onComplete={handleComplete}
-        onBack={() => router.push("/clients")}
-        backLabel="고객 목록으로 돌아가기"
-        completeLabel="등록"
-        isSubmitting={createClient.isPending}
-        isNextDisabled={!isStepSatisfied(currentStep)}
-      />
+      <div data-component="clients-new-main-content" className="flex min-h-[calc(100dvh-6rem)] items-start justify-center py-6 md:py-8">
+        <div data-component="clients-new-main-content-inner" className="flex w-full flex-col">
+          <button
+            type="button"
+            onClick={() => router.push("/clients")}
+            className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
+          >
+            <ChevronLeft className="w-5 h-5 md:w-5 md:h-5 w-[18px] h-[18px]" />
+            고객 목록으로 돌아가기
+          </button>
+
+          <div data-component="clients-new-stepper-shell">
+            <SteppedWizard
+              title={t(locale, "clients.form.add-title")}
+              subtitle="고객 정보를 단계별로 입력해 주세요"
+              steps={steps}
+              currentStep={currentStep}
+              onStepChange={handleStepChange}
+              onComplete={handleComplete}
+              completeLabel="등록"
+              isSubmitting={createClient.isPending}
+              isNextDisabled={!isStepSatisfied(currentStep)}
+            />
+          </div>
+        </div>
+      </div>
 
       <EmployeeFormDialog
         open={isEmployeeDialogOpen}

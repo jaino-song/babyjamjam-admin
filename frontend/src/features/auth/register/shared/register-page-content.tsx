@@ -1,0 +1,522 @@
+"use client";
+
+import * as React from "react";
+import { motion } from "framer-motion";
+import { Check, CheckCircle, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
+
+import { AuthInlineLink } from "@/components/auth/auth-inline-link";
+import { FormField } from "@/components/auth/form-field";
+import { PasswordRequirements } from "@/components/auth/password-requirements";
+import { SelectField } from "@/components/auth/select-field";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
+import { cn } from "@/lib/utils";
+import {
+  type RegisterStep,
+  REGISTER_STEP_TOTAL,
+  useRegisterPageController,
+} from "@/features/auth/register/shared/use-register-page-controller";
+
+const REGISTER_CARD_CLASS_NAME = "gap-5 !p-5 sm:!p-6 [&_[data-component='auth-register-title']]:!text-[1.72rem] md:[&_[data-component='auth-register-title']]:!text-[1.5rem] [&_[data-component='auth-register-subtitle']]:!max-w-[30ch] [&_[data-component='auth-register-subtitle']]:!text-[0.82rem] md:[&_[data-component='auth-register-subtitle']]:!text-[0.76rem]";
+const REGISTER_PRIMARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-bold md:text-[0.77rem]";
+const REGISTER_SECONDARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-semibold md:text-[0.77rem]";
+const REGISTER_PASSWORD_REQUIREMENTS_CLASS_NAME = "justify-center [&_li]:text-[0.78rem] [&_svg]:h-3.5 [&_svg]:w-3.5";
+const REGISTER_SUBTITLE = "필수 정보를 단계별로 입력해 주세요.";
+const REGISTER_STEP_TRANSITION = {
+  duration: 0.18,
+  ease: [0.22, 1, 0.36, 1] as const,
+};
+
+interface RegisterPageContentProps {
+  variant: AuthSurfaceVariant;
+}
+
+function AnimatedHeight({
+  children,
+  className,
+  dataComponent,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  dataComponent?: string;
+}) {
+  const innerRef = React.useRef<HTMLDivElement>(null);
+  const [height, setHeight] = React.useState<number | null>(null);
+  const frameRef = React.useRef<number | null>(null);
+
+  React.useLayoutEffect(() => {
+    const node = innerRef.current;
+    if (!node) {
+      return;
+    }
+
+    const updateHeight = () => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+      }
+
+      frameRef.current = requestAnimationFrame(() => {
+        setHeight(node.getBoundingClientRect().height);
+        frameRef.current = null;
+      });
+    };
+
+    updateHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateHeight();
+    });
+
+    observer.observe(node);
+
+    return () => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+      }
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <div
+      data-component={dataComponent}
+      className={cn(
+        "overflow-hidden transition-[height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        className,
+      )}
+      style={height === null ? undefined : { height }}
+    >
+      <div ref={innerRef}>{children}</div>
+    </div>
+  );
+}
+
+function DesktopRegisterStepIndicator({ currentStep }: { currentStep: RegisterStep }) {
+  return (
+    <div
+      data-component="auth-register-stepper-desktop"
+      className="flex min-h-[2.4rem] items-center justify-center gap-0 overflow-visible py-1"
+    >
+      {Array.from({ length: REGISTER_STEP_TOTAL }, (_, idx) => {
+        const step = idx + 1;
+        const isCompleted = idx < currentStep;
+        const isCurrent = idx === currentStep;
+
+        return (
+          <div key={step} data-component="auth-register-stepper-desktop-item" className="contents">
+            <div
+              data-component="auth-register-stepper-desktop-step"
+              className={cn("flex items-center overflow-visible py-0.5", isCurrent && "text-v3-primary", isCompleted && "text-v3-dark")}
+            >
+              <div
+                data-component="auth-register-stepper-desktop-circle"
+                className={cn(
+                  "flex h-7 w-7 items-center justify-center rounded-full text-[0.68rem] font-bold transition-all duration-300 will-change-transform",
+                  isCompleted && "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
+                  isCurrent && "scale-110 bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
+                  !isCompleted && !isCurrent && "border-2 border-v3-border bg-v3-dim-white text-v3-text-muted",
+                )}
+              >
+                {isCompleted ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : step}
+              </div>
+            </div>
+
+            {idx < REGISTER_STEP_TOTAL - 1 ? (
+              <div
+                data-component="auth-register-stepper-desktop-connector"
+                className={cn(
+                  "mx-1.5 h-0.5 w-10 rounded-full",
+                  idx < currentStep ? "bg-v3-primary" : "bg-v3-border",
+                )}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MobileRegisterStepIndicator({ currentStep }: { currentStep: RegisterStep }) {
+  const progress = ((currentStep + 1) / REGISTER_STEP_TOTAL) * 100;
+
+  return (
+    <div data-component="auth-register-stepper-mobile">
+      <div data-component="auth-register-stepper-mobile-header" className="mb-2 flex items-center justify-end">
+        <span className="text-[0.64rem] font-semibold text-v3-text-muted">
+          {currentStep + 1} / {REGISTER_STEP_TOTAL} 단계
+        </span>
+      </div>
+      <div data-component="auth-register-stepper-mobile-track" className="h-1.5 w-full overflow-hidden rounded-full bg-v3-border">
+        <div
+          data-component="auth-register-stepper-mobile-progress"
+          className="h-full rounded-full bg-gradient-to-r from-v3-primary to-blue-500 transition-all duration-400"
+          style={{
+            width: `${progress}%`,
+            transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function RegisterStepFields({
+  currentStep,
+  formData,
+  errors,
+  emailLinkableMessage,
+  isLoading,
+  isLoadingOrgs,
+  passwordStrength,
+  organizations,
+  roleOptions,
+  handleChange,
+  handleEmailBlur,
+  handlePhoneChange,
+  handleBirthDateChange,
+  handleSelectChange,
+}: Pick<
+  ReturnType<typeof useRegisterPageController>,
+  | "currentStep"
+  | "formData"
+  | "errors"
+  | "emailLinkableMessage"
+  | "isLoading"
+  | "isLoadingOrgs"
+  | "passwordStrength"
+  | "organizations"
+  | "roleOptions"
+  | "handleChange"
+  | "handleEmailBlur"
+  | "handlePhoneChange"
+  | "handleBirthDateChange"
+  | "handleSelectChange"
+>) {
+  return (
+    <div data-component="auth-register-step-fields" className="flex flex-col gap-[14px]">
+      {currentStep === 0 ? (
+        <>
+          <FormField
+            label="이메일"
+            type="email"
+            value={formData.email}
+            onChange={handleChange("email")}
+            onBlur={handleEmailBlur}
+            error={errors.email}
+            labelTrailing={emailLinkableMessage ? (
+              <span className="inline-flex items-center text-right text-[0.68rem] font-semibold leading-none text-v3-primary">
+                {emailLinkableMessage}
+              </span>
+            ) : undefined}
+            errorDisplay="inline"
+            disabled={isLoading}
+            autoComplete="email"
+            data-component="auth-register-email-field"
+          />
+
+          <FormField
+            label="이름"
+            type="text"
+            value={formData.name}
+            onChange={handleChange("name")}
+            error={errors.name}
+            errorDisplay="inline"
+            disabled={isLoading}
+            autoComplete="name"
+            data-component="auth-register-name-field"
+          />
+
+          <FormField
+            label="비밀번호"
+            type="password"
+            value={formData.password}
+            onChange={handleChange("password")}
+            error={errors.password}
+            errorDisplay="inline"
+            disabled={isLoading}
+            autoComplete="new-password"
+            data-component="auth-register-password-field"
+          />
+
+          <div
+            data-component="auth-register-password-requirements-wrap"
+            className={cn(
+              "grid overflow-hidden transition-[grid-template-rows,opacity,margin] duration-300 ease-out",
+              formData.password ? "mt-0 grid-rows-[1fr] opacity-100" : "mt-[-6px] grid-rows-[0fr] opacity-0",
+            )}
+          >
+            <div data-component="auth-register-password-requirements-inner" className="overflow-hidden">
+              <PasswordRequirements
+                requirements={passwordStrength.requirements}
+                orientation="horizontal"
+                className={REGISTER_PASSWORD_REQUIREMENTS_CLASS_NAME}
+              />
+            </div>
+          </div>
+
+          <FormField
+            label="비밀번호 확인"
+            type="password"
+            value={formData.confirmPassword}
+            onChange={handleChange("confirmPassword")}
+            error={errors.confirmPassword}
+            errorDisplay="inline"
+            disabled={isLoading}
+            autoComplete="new-password"
+            data-component="auth-register-confirm-field"
+          />
+        </>
+      ) : currentStep === 1 ? (
+        <>
+          <FormField
+            label="전화번호"
+            type="tel"
+            value={formData.phone}
+            onChange={handlePhoneChange}
+            error={errors.phone}
+            errorDisplay="inline"
+            disabled={isLoading}
+            autoComplete="tel"
+            inputMode="numeric"
+            maxLength={13}
+            placeholder="010-1234-5678"
+            data-component="auth-register-phone-field"
+          />
+
+          <FormField
+            label="생년월일"
+            type="text"
+            value={formData.birthDate}
+            onChange={handleBirthDateChange}
+            error={errors.birthDate}
+            errorDisplay="inline"
+            disabled={isLoading}
+            autoComplete="bday"
+            inputMode="numeric"
+            maxLength={10}
+            placeholder="1990-01-01"
+            data-component="auth-register-birthdate-field"
+          />
+        </>
+      ) : (
+        <>
+          <SelectField
+            label="지점명"
+            value={formData.organizationId}
+            onValueChange={handleSelectChange("organizationId")}
+            options={organizations}
+            placeholder={isLoadingOrgs ? "지점 목록 불러오는 중..." : "지점을 선택해주세요"}
+            error={errors.organizationId}
+            errorDisplay="inline"
+            disabled={isLoading || isLoadingOrgs}
+            data-component="auth-register-organization-field"
+          />
+
+          <SelectField
+            label="역할"
+            value={formData.role}
+            onValueChange={handleSelectChange("role")}
+            options={roleOptions}
+            placeholder="역할을 선택해주세요"
+            error={errors.role}
+            errorDisplay="inline"
+            disabled={isLoading}
+            data-component="auth-register-role-field"
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+export function RegisterPageContent({ variant }: RegisterPageContentProps) {
+  const controller = useRegisterPageController();
+  const {
+    serverError,
+    isLoading,
+    isSuccess,
+    accountsLinked,
+    currentStep,
+    handleSubmit,
+    handlePreviousStep,
+    clearServerError,
+    goToLogin,
+    isCurrentStepActionDisabled,
+  } = controller;
+
+  const primaryButtonClassName = cn(
+    REGISTER_PRIMARY_BUTTON_CLASS_NAME,
+    variant === "mobile" && "rounded-2xl",
+  );
+  const secondaryButtonClassName = cn(
+    REGISTER_SECONDARY_BUTTON_CLASS_NAME,
+    variant === "mobile" && "rounded-2xl",
+  );
+  const desktopStepNavigationWidthClassName =
+    variant === "desktop" ? "w-1/4" : undefined;
+
+  return (
+    <AuthSurface
+      variant={variant}
+      data-component="auth-register"
+      dataComponents={{
+        container: "auth-register-container",
+        card: "auth-register-card",
+        header: "auth-register-header",
+        title: "auth-register-title",
+        subtitle: "auth-register-subtitle",
+        content: "auth-register-content",
+      }}
+      title={isSuccess ? (accountsLinked ? "계정이 연결되었습니다!" : "회원가입 완료!") : "회원가입"}
+      subtitle={isSuccess ? "이메일 인증 후 로그인을 진행해 주세요." : REGISTER_SUBTITLE}
+      className={REGISTER_CARD_CLASS_NAME}
+      contentClassName="gap-0"
+      mobileWrapperClassName="px-4 py-6"
+    >
+      <AnimatedHeight dataComponent="auth-register-body-viewport">
+        <div
+          data-component="auth-register-body"
+          className={cn(
+            "flex flex-col",
+            isSuccess ? "items-center gap-6 text-center" : "gap-[18px]",
+          )}
+        >
+          {isSuccess ? (
+            <>
+              {accountsLinked ? (
+                <>
+                  <div data-component="auth-register-success-icon" className="rounded-full bg-primary/10 p-3">
+                    <Link2 className="h-12 w-12 text-primary" />
+                  </div>
+                  <p data-component="auth-register-success-message" className="text-muted-foreground">
+                    기존 카카오 계정에 비밀번호가 추가되었습니다.
+                    <br />
+                    이메일을 확인하여 계정을 활성화하면
+                    <br />
+                    카카오와 이메일 모두로 로그인할 수 있습니다.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div data-component="auth-register-success-icon" className="rounded-full bg-success/10 p-3">
+                    <CheckCircle className="h-12 w-12 text-success" />
+                  </div>
+                  <p data-component="auth-register-success-message" className="text-muted-foreground">
+                    인증 이메일이 발송되었습니다.
+                    <br />
+                    이메일을 확인하여 계정을 활성화해 주세요.
+                  </p>
+                </>
+              )}
+
+              <Button
+                data-component="auth-register-success-login-btn"
+                variant="positive"
+                size="md"
+                className={cn("w-full", primaryButtonClassName)}
+                onClick={goToLogin}
+              >
+                로그인 페이지로 이동
+              </Button>
+            </>
+          ) : (
+            <>
+              {variant === "desktop" ? (
+                <DesktopRegisterStepIndicator currentStep={currentStep} />
+              ) : (
+                <MobileRegisterStepIndicator currentStep={currentStep} />
+              )}
+
+              {serverError ? (
+                <div data-component="auth-register-alert">
+                  <Alert variant="destructive" onClose={clearServerError}>
+                    {serverError}
+                  </Alert>
+                </div>
+              ) : null}
+
+            <form
+              onSubmit={handleSubmit}
+              data-component="auth-register-form"
+              className="flex flex-col gap-[18px] [&_label]:text-[0.82rem] [&_p]:leading-[1.45]"
+            >
+              <motion.div
+                key={currentStep}
+                data-component={`auth-register-step-${currentStep + 1}`}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={REGISTER_STEP_TRANSITION}
+              >
+                <RegisterStepFields {...controller} />
+              </motion.div>
+
+                <div
+                  data-component="auth-register-actions"
+                  className="mt-1 flex items-center justify-between border-t border-v3-border pt-3"
+                >
+                <Button
+                  data-component="auth-register-prev-btn"
+                  type="button"
+                  variant="neutral"
+                  size="sm"
+                className={cn(
+                  secondaryButtonClassName,
+                  currentStep < REGISTER_STEP_TOTAL - 1 && desktopStepNavigationWidthClassName,
+                  currentStep === 0 && "pointer-events-none opacity-0",
+                )}
+                    onClick={handlePreviousStep}
+                    disabled={isLoading || currentStep === 0}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    이전
+                  </Button>
+
+                <Button
+                  data-component={currentStep < REGISTER_STEP_TOTAL - 1 ? "auth-register-next-btn" : "auth-register-submit-btn"}
+                  type="submit"
+                  variant="positive"
+                  size="sm"
+                className={cn(
+                  primaryButtonClassName,
+                  currentStep < REGISTER_STEP_TOTAL - 1
+                    ? desktopStepNavigationWidthClassName ?? "w-auto"
+                        : "flex-1 md:min-w-[132px] md:flex-none",
+                    )}
+                    disabled={isLoading || isCurrentStepActionDisabled}
+                  >
+                    {currentStep < REGISTER_STEP_TOTAL - 1 ? (
+                      <>
+                        다음
+                        <ChevronRight className="h-4 w-4" />
+                      </>
+                    ) : isLoading ? (
+                      <Spinner size="sm" />
+                    ) : (
+                      "회원가입"
+                    )}
+                  </Button>
+                </div>
+            </form>
+
+              <AuthInlineLink
+                dataComponent="auth-register-login-link"
+                href="/login"
+                prefixText="이미 계정이 있으신가요?"
+                linkLabel="로그인"
+                paragraphClassName="text-[0.82rem]"
+                linkClassName="text-[0.82rem]"
+              />
+            </>
+          )}
+        </div>
+      </AnimatedHeight>
+    </AuthSurface>
+  );
+}

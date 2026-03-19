@@ -22,17 +22,30 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
     private readonly ALIGO_USER_ID: string;
     private readonly ALIGO_SENDER_KEY: string;
     private readonly ALIGO_SENDER_PHONE: string;
+    private readonly isConfigured: boolean;
 
     constructor(private readonly configService: ConfigService) {
-        this.ALIGO_API_URL = configService.getOrThrow("ALIGO_API_URL");
+        this.ALIGO_API_URL = configService.get("ALIGO_API_URL") || "";
         this.ALIGO_SMS_API_URL = configService.get("ALIGO_SMS_API_URL") || "https://apis.aligo.in";
-        this.ALIGO_API_KEY = configService.getOrThrow("ALIGO_API_KEY");
-        this.ALIGO_USER_ID = configService.getOrThrow("ALIGO_USER_ID");
-        this.ALIGO_SENDER_KEY = configService.getOrThrow("ALIGO_SENDER_KEY");
-        this.ALIGO_SENDER_PHONE = configService.getOrThrow("ALIGO_SENDER_PHONE");
+        this.ALIGO_API_KEY = configService.get("ALIGO_API_KEY") || "";
+        this.ALIGO_USER_ID = configService.get("ALIGO_USER_ID") || "";
+        this.ALIGO_SENDER_KEY = configService.get("ALIGO_SENDER_KEY") || "";
+        this.ALIGO_SENDER_PHONE = configService.get("ALIGO_SENDER_PHONE") || "";
+        this.isConfigured = Boolean(
+            this.ALIGO_API_URL &&
+            this.ALIGO_API_KEY &&
+            this.ALIGO_USER_ID &&
+            this.ALIGO_SENDER_KEY &&
+            this.ALIGO_SENDER_PHONE,
+        );
+
+        if (!this.isConfigured) {
+            this.logger.warn("ALIGO_API_URL, ALIGO_API_KEY, ALIGO_USER_ID, ALIGO_SENDER_KEY, and ALIGO_SENDER_PHONE not configured. Aligo integration will be disabled.");
+        }
     }
 
     async sendAlimtalk(params: AligoSendAlimtalkParams): Promise<AligoAlimtalkResponse> {
+        this.assertConfigured();
         const url = `${this.ALIGO_API_URL}/akv10/alimtalk/send/`;
 
         const formData = new FormData();
@@ -84,6 +97,7 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
     }
 
     async sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {
+        this.assertConfigured();
         const url = `${this.ALIGO_SMS_API_URL}/send/`;
 
         const formData = new FormData();
@@ -129,6 +143,7 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
     }
 
     async createTemplate(params: AligoCreateTemplateParams): Promise<AligoTemplateCreateResponse> {
+        this.assertConfigured();
         const url = `${this.ALIGO_API_URL}/akv10/template/add/`;
 
         const formData = new FormData();
@@ -179,5 +194,11 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
         }
 
         return (await response.json()) as AligoTemplateCreateResponse;
+    }
+
+    private assertConfigured() {
+        if (!this.isConfigured) {
+            throw new Error("Aligo integration is not configured.");
+        }
     }
 }

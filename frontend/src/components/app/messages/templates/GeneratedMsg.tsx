@@ -70,7 +70,7 @@ export const GeneratedMsg = memo(function GeneratedMsg({
         >
           <div
             data-component="messages-generated-msg-detail-content"
-            className="flex flex-col rounded-[20px] border border-v3-border bg-v3-dim-white/30 p-5"
+            className="scrollbar-hide flex flex-col rounded-[20px] border border-v3-border bg-v3-dim-white/30 p-5"
           >
             <div
               data-component="messages-generated-msg-detail-content-header"

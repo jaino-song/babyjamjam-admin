@@ -22,25 +22,27 @@ export function normalizeEmployeeGrade(grade: string | null | undefined): string
     return LEGACY_GRADE_MAP[trimmedGrade] ?? trimmedGrade;
 }
 
-export function getEmployeeGradeBadgeStyle(grade: string): { label: string; className: string } {
+export function getEmployeeGradeBadgeStyle(
+    grade: string
+): { label: string; variant: "amber" | "success" | "primary" } {
     const normalizedGrade = normalizeEmployeeGrade(grade);
 
     switch (normalizedGrade) {
         case "프리미엄":
             return {
                 label: normalizedGrade,
-                className: "bg-amber-100 text-amber-700",
+                variant: "amber",
             };
         case "베스트":
             return {
                 label: normalizedGrade,
-                className: "bg-v3-green-light text-v3-green",
+                variant: "success",
             };
         case "스탠다드":
         default:
             return {
                 label: normalizedGrade,
-                className: "bg-v3-primary-light text-v3-primary",
+                variant: "primary",
             };
     }
 }

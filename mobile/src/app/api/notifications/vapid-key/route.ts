@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { E2E_VAPID_PUBLIC_KEY, isE2ETest } from "@/lib/e2e";
 
 /**
  * GET /api/notifications/vapid-key
@@ -8,6 +9,10 @@ import { serverAPIClient } from "@/lib/api/server";
  */
 export async function GET() {
     try {
+        if (isE2ETest()) {
+            return NextResponse.json({ publicKey: E2E_VAPID_PUBLIC_KEY });
+        }
+
         const response = await serverAPIClient.get("/notifications/vapid-key");
         return NextResponse.json(response.data);
     } catch (error: unknown) {

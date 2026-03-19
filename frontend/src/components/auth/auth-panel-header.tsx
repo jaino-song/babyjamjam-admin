@@ -47,7 +47,7 @@ export function AuthPanelHeader({
         <p
           data-component={subtitleDataComponent}
           className={cn(
-            "mx-auto max-w-[32ch] text-sm leading-5 text-v3-text-muted md:text-[0.84rem]",
+            "mx-auto max-w-[32ch] break-keep text-sm leading-5 text-v3-text-muted md:text-[0.84rem]",
             subtitleClassName
           )}
         >

@@ -50,6 +50,16 @@ export const authApi = {
         return data;
     },
 
+    checkEmailExists: async (email: string): Promise<{ exists: boolean; linkable: boolean }> => {
+        const { data } = await api.get('/auth/check-email', {
+            params: { email },
+        });
+        return {
+            exists: data?.exists === true,
+            linkable: data?.linkable === true,
+        };
+    },
+
     login: async (email: string, password: string): Promise<LoginResponse> => {
         const { data } = await api.post('/auth/login', { email, password });
         return data;
@@ -198,6 +208,11 @@ export interface AlimtalkProviderResponse {
     updatedAt?: string;
 }
 
+export interface NotificationPreferencesResponse {
+    emailNotificationsEnabled: boolean;
+    updatedAt?: string;
+}
+
 export type MessageDeliverySmsType = "AUTO" | "SMS" | "LMS";
 export type MessageDeliveryTriggerType = "immediate" | "scheduled";
 
@@ -239,6 +254,14 @@ export const settingsApi = {
     },
     updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
         const { data } = await api.put('/settings/alimtalk-provider', { provider });
+        return data;
+    },
+    getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {
+        const { data } = await api.get('/settings/notification-preferences');
+        return data;
+    },
+    updateNotificationPreferences: async (emailNotificationsEnabled: boolean): Promise<NotificationPreferencesResponse> => {
+        const { data } = await api.put('/settings/notification-preferences', { emailNotificationsEnabled });
         return data;
     },
 }

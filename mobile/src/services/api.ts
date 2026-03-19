@@ -67,6 +67,16 @@ export const authApi = {
         return data;
     },
 
+    checkEmailExists: async (email: string): Promise<{ exists: boolean; linkable: boolean }> => {
+        const { data } = await api.get('/auth/check-email', {
+            params: { email },
+        });
+        return {
+            exists: data?.exists === true,
+            linkable: data?.linkable === true,
+        };
+    },
+
     login: async (email: string, password: string): Promise<LoginResponse> => {
         const { data } = await api.post('/auth/login', { email, password });
         return data;

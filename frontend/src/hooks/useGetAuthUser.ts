@@ -8,6 +8,8 @@ export interface AuthUser {
     id: string;
     name: string;
     email?: string;
+    phone?: string | null;
+    birthDate?: string | null;
     profileImage?: string;
     role?: string;
     organizationName?: string | null;
@@ -30,8 +32,11 @@ const E2E_USER: AuthUser = {
     id: 'e2e-user',
     name: 'E2E Tester',
     email: 'e2e@example.com',
+    phone: '010-1234-5678',
+    birthDate: '1990-01-01',
     profileImage: '',
     role: 'admin',
+    organizationName: '테스트 지점',
 };
 
 const INITIAL_DATA_UPDATED_AT = Date.now();

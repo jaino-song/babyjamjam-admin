@@ -69,6 +69,8 @@ export const V3Sidebar = () => {
   const pathname = usePathname();
   const locale = useLocale();
   const user = useInitialUser();
+  const [isNavScrolling, setIsNavScrolling] = React.useState(false);
+  const scrollResetTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getNavItemName = (href: string) => {
     const segment = href.split("/").filter(Boolean).pop() || "";
@@ -79,6 +81,26 @@ export const V3Sidebar = () => {
     if (href === "/dashboard" && pathname === "/dashboard/analytics") return false;
     if (href === "/employees" && pathname === "/employees/schedule") return false;
     return pathname.startsWith(href);
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (scrollResetTimeoutRef.current !== null) {
+        clearTimeout(scrollResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleNavScroll = () => {
+    setIsNavScrolling(true);
+
+    if (scrollResetTimeoutRef.current !== null) {
+      clearTimeout(scrollResetTimeoutRef.current);
+    }
+
+    scrollResetTimeoutRef.current = setTimeout(() => {
+      setIsNavScrolling(false);
+    }, 450);
   };
   
   if (isLayoutExcluded(pathname)) {
@@ -102,7 +124,12 @@ export const V3Sidebar = () => {
         </span>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-4 py-2 space-y-6 custom-scrollbar" data-component="sidebar-nav">
+      <nav
+        className="flex-1 overflow-y-auto px-4 py-2 space-y-6 custom-scrollbar scrollbar-on-scroll"
+        data-component="sidebar-nav"
+        data-scroll-active={isNavScrolling ? "true" : "false"}
+        onScroll={handleNavScroll}
+      >
         {NAV_SECTIONS.map((section) => (
           <div key={section.title}>
             <h3 className="px-4 mb-2 text-[0.65rem] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">

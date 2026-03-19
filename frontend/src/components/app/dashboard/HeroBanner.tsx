@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { FileSignature, MessageSquare } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +37,6 @@ export function HeroBanner({
         "opacity-0 animate-fade-in"
       )}
     >
-      {/* Background decoration - creates depth without images */}
       <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
       <div className="absolute -left-10 -bottom-10 h-32 w-32 rounded-full bg-white/5 blur-xl" />
 
@@ -54,14 +54,14 @@ export function HeroBanner({
           >
             {title} <span className="text-2xl"></span>
           </h1>
-          {description && (
+          {description ? (
             <p
               className="text-sm text-primary-foreground/70 max-w-md opacity-0 animate-fade-in"
               style={{ animationDelay: "175ms" }}
             >
               {description}
             </p>
-          )}
+          ) : null}
         </div>
 
         <div
@@ -69,7 +69,7 @@ export function HeroBanner({
           className="flex gap-3 opacity-0 animate-fade-in"
           style={{ animationDelay: "200ms" }}
         >
-          {primaryActionLabel && (
+          {primaryActionLabel ? (
             <Button
               data-component="dashboard-hero-primary-action"
               variant="outline"
@@ -94,8 +94,9 @@ export function HeroBanner({
                 </Link>
               )}
             </Button>
-          )}
-          {secondaryActionLabel && (
+          ) : null}
+
+          {secondaryActionLabel ? (
             <Button
               data-component="dashboard-hero-secondary-action"
               variant="outline"
@@ -120,7 +121,7 @@ export function HeroBanner({
                 </Link>
               )}
             </Button>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

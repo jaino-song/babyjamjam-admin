@@ -22,6 +22,23 @@ describe("FormField", () => {
     expect(document.querySelector("p#비밀번호-확인-error")).toBeNull();
   });
 
+  it("reserves trailing space for inline errors even before they appear", () => {
+    render(
+      <FormField
+        label="이메일"
+        value=""
+        onChange={() => {}}
+        errorDisplay="inline"
+      />
+    );
+
+    const trailingSlot = document.querySelector('[data-component="form-field-label-trailing"]');
+
+    expect(trailingSlot).toBeTruthy();
+    expect(trailingSlot?.textContent).toContain("\u00A0");
+    expect(document.querySelector("#이메일-error")).toBeNull();
+  });
+
   it("keeps below-field errors for the default mode", () => {
     render(
       <FormField

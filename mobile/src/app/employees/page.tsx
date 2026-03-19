@@ -4,9 +4,9 @@ import { useState, useRef, useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
     Users,
+    UserCheck,
     Plus,
     Phone,
-    MapPin,
     CheckCircle,
     Clock,
     Briefcase,
@@ -34,6 +34,7 @@ import {
 } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { StatusPill } from "@/components/app/ui/status-badge";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -67,36 +68,21 @@ const EMPLOYEE_STATUS_LABEL: Record<EmployeeStatus, string> = {
 };
 
 function getGradeBadge(grade: string) {
-    const { label, className } = getEmployeeGradeBadgeStyle(grade);
+    const { label, variant } = getEmployeeGradeBadgeStyle(grade);
 
     return (
-        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${className}`}>
+        <StatusPill variant={variant} size="sm">
             {label}
-        </span>
+        </StatusPill>
     );
 }
 
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
-    if (openToNextWork) {
-        return (
-            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-v3-green-light text-v3-green">
-                근무 가능
-            </span>
-        );
-    }
-
     return (
-        <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-gray-100 text-v3-text-muted">
-            근무 불가
-        </span>
+        <StatusPill variant={openToNextWork ? "success" : "neutral"} size="sm">
+            {openToNextWork ? "근무 가능" : "근무 불가"}
+        </StatusPill>
     );
-}
-
-function getInitials(name: string): string {
-    if (!name) return "?";
-    const parts = name.trim().split(/\s+/);
-    if (parts.length === 1) return parts[0].slice(0, 2);
-    return parts[0][0] + parts[1][0];
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -338,8 +324,8 @@ export default function EmployeesPage() {
 
                                     return (
                                         <>
-                                            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-md">
-                                                {getInitials(employee.name)}
+                                            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center shrink-0 shadow-md">
+                                                <UserCheck className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
                                             </div>
 
                                             <div className="flex-1 min-w-0">
@@ -347,16 +333,11 @@ export default function EmployeesPage() {
                                                     <span className="font-bold text-[0.85rem] text-v3-dark truncate">
                                                         {employee.name}
                                                     </span>
-                                                    {getGradeBadge(employee.grade)}
                                                 </div>
                                                 <div className="flex items-center gap-3 text-[0.7rem] text-v3-text-muted">
                                                     <span className="flex items-center gap-1 truncate">
                                                         <Phone className="w-3 h-3" />
                                                         {formatPhoneNumber(employee.phone)}
-                                                    </span>
-                                                    <span className="flex items-center gap-1 shrink-0">
-                                                        <MapPin className="w-3 h-3" />
-                                                        {employee.workArea.length}개 지역
                                                     </span>
                                                 </div>
                                             </div>
@@ -413,8 +394,8 @@ export default function EmployeesPage() {
                         header={
                             <div>
                                 <div className="flex items-center gap-4">
-                                    <div className="w-20 h-20 shrink-0 rounded-2xl bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-2xl font-bold text-white shadow-lg">
-                                        {getInitials(selectedEmployee.name)}
+                                    <div className="w-20 h-20 shrink-0 rounded-2xl bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white shadow-lg">
+                                        <UserCheck className="w-7 h-7 shrink-0 transition-colors text-white" aria-hidden="true" />
                                     </div>
                                     <div>
                                         <h2 className="text-xl font-bold text-v3-dark">

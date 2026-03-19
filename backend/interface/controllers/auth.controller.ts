@@ -1,4 +1,4 @@
-import { Controller, Get, Req, Res, UseGuards, Request, Body, Post, Ip } from "@nestjs/common";
+import { Controller, Get, Req, Res, UseGuards, Request, Body, Post, Ip, Query } from "@nestjs/common";
 import { Response, Request as ExpressRequest } from "express";
 import { AuthGuard } from "@nestjs/passport";
 import { AuthService } from "../../application/services/auth.service";
@@ -78,6 +78,8 @@ export class AuthController {
                 id: true,
                 name: true,
                 email: true,
+                phone: true,
+                birthDate: true,
                 profileImage: true,
                 role: true,
             },
@@ -128,6 +130,27 @@ export class AuthController {
         }
 
         return result;
+    }
+
+    @Get("check-email")
+    @UseGuards(RateLimitGuard)
+    async checkEmail(@Query("email") email?: string) {
+        const normalizedEmail = email?.trim().toLowerCase();
+
+        if (!normalizedEmail) {
+            return { exists: false, linkable: false };
+        }
+
+        const user = await this.prisma.user.findUnique({
+            where: { email: normalizedEmail },
+            select: { id: true, kakaoId: true, passwordHash: true },
+        });
+
+        const linkable = Boolean(user?.kakaoId && !user.passwordHash);
+        return {
+            exists: Boolean(user),
+            linkable,
+        };
     }
 
     @Post("login")

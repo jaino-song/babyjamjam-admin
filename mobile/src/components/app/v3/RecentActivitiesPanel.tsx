@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatusPill } from "@/components/app/ui/status-badge";
 import { cn } from "@/lib/utils";
 import { AnimatedSlotList } from "./AnimatedSlotList";
 import type { Client } from "@/lib/client/types";
@@ -38,22 +39,25 @@ const SKELETON_ICON_BG = [
 
 const PRIORITY_COLORS: Record<
   number,
-  { iconBg: string; badgeBg: string; badgeText: string }
+  { iconBg: string; badgeBg: string; badgeText: string; badgeBorder: string }
 > = {
   1: {
     iconBg: "bg-[hsl(355,36%,45%)]",
     badgeBg: "bg-[hsl(355,40%,94%)]",
     badgeText: "text-[hsl(355,36%,45%)]",
+    badgeBorder: "border-[hsla(355,36%,45%,0.20)]",
   },
   2: {
     iconBg: "bg-[hsl(34,100%,55%)]",
     badgeBg: "bg-[hsl(34,100%,94%)]",
     badgeText: "text-[hsl(34,80%,38%)]",
+    badgeBorder: "border-[hsla(34,80%,38%,0.20)]",
   },
   3: {
     iconBg: "bg-v3-primary",
     badgeBg: "bg-[hsl(214,80%,95%)]",
     badgeText: "text-v3-primary",
+    badgeBorder: "border-[hsla(214,100%,34%,0.20)]",
   },
 };
 
@@ -170,9 +174,9 @@ export function RecentActivitiesPanel({
                       <span className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold">
                         조치 필요
                       </span>
-                      <span className="rounded-full bg-v3-dim-white border border-v3-border text-v3-text text-[9px] font-bold tracking-[0.04em] px-2 py-[3px] min-w-[36px] text-center">
+                      <StatusPill variant="neutral" size="sm">
                         {actionRequiredItems.length}건
-                      </span>
+                      </StatusPill>
                     </>
                   )}
                 </div>
@@ -220,6 +224,8 @@ export function RecentActivitiesPanel({
                     if (!item) return null;
                     const colors =
                       PRIORITY_COLORS[item.priority] || PRIORITY_COLORS[3];
+                    const badgeVariant =
+                      item.priority === 1 ? "danger" : item.priority === 2 ? "warning" : "primary";
 
                     return (
                       <>
@@ -236,15 +242,9 @@ export function RecentActivitiesPanel({
                             <span className="font-bold text-[0.85rem] text-v3-dark truncate">
                               {item.client.name}
                             </span>
-                            <span
-                              className={cn(
-                                "rounded-full px-2 py-0.5 text-[9px] font-bold shrink-0 border border-current/20",
-                                colors.badgeBg,
-                                colors.badgeText,
-                              )}
-                            >
+                            <StatusPill variant={badgeVariant} size="sm">
                               {item.reason}
-                            </span>
+                            </StatusPill>
                           </div>
                           <p className="text-[0.7rem] text-v3-text-muted truncate">
                             {item.client.type || "일반"} ·{" "}
@@ -271,9 +271,9 @@ export function RecentActivitiesPanel({
                       <span className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold">
                         곧 시작
                       </span>
-                      <span className="rounded-full bg-v3-dim-white border border-v3-border text-v3-text text-[9px] font-bold tracking-[0.04em] px-2 py-[3px] min-w-[36px] text-center">
+                      <StatusPill variant="neutral" size="sm">
                         {upcomingItems.length}건
-                      </span>
+                      </StatusPill>
                     </>
                   )}
                 </div>
@@ -335,9 +335,9 @@ export function RecentActivitiesPanel({
                             <span className="font-bold text-[0.85rem] text-v3-dark truncate">
                               {item.name}
                             </span>
-                            <span className="rounded-full px-2 py-0.5 text-[9px] font-bold shrink-0 border border-[hsl(270,45%,86%)] bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)]">
+                            <StatusPill variant="primary" size="sm">
                               {item.type || "일반"}
-                            </span>
+                            </StatusPill>
                           </div>
                           <p className="text-[0.7rem] text-v3-text-muted truncate">
                             {item.primaryEmployee?.name || "-"} ·{" "}

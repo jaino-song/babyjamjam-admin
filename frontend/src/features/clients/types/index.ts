@@ -11,6 +11,7 @@ export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 
 export interface Client {
     id: number;
     name: string;
+    createdAt?: string | null;
     birthday: string | null;           // YYMMDD format
     dueDate: string | null;
     address: string | null;

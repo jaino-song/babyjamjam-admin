@@ -6,6 +6,10 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "generate": "prisma generate",
+    "prestart": "prisma generate",
+    "prestart:dev": "prisma generate",
+    "pretest": "prisma generate",
     "build": "prisma generate && nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",

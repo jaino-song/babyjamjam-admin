@@ -1,9 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getRefreshToken, setAuthCookies, unauthorizedResponse, errorResponse } from "@/lib/api/route-utils";
+import {
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    getRefreshToken,
+    setAuthCookies,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
+        const authToken = getAuthToken(request);
+        if (!authToken) {
+            return unauthorizedResponse("Authentication required. Please log in.");
+        }
+
         const body = await request.json();
         const { executionTime } = body;
 
@@ -12,14 +24,26 @@ export async function POST(request: NextRequest) {
             return unauthorizedResponse("Refresh token not found. Please authenticate again.");
         }
 
-        const response = await serverAPIClient.post("/auth/refresh-token", {
+        const response = await serverAPIClient.post("/api/refresh-token", {
             executionTime,
             refreshToken,
+        }, {
+            headers: getAuthHeaders(authToken),
         });
 
-        const { accessToken, refreshToken: newRefreshToken } = response.data;
+        if (response.status >= 400) {
+            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
+            return NextResponse.json({ error: errorMessage }, { status: response.status });
+        }
 
-        // Update tokens in httpOnly cookies
+        const { accessToken, refreshToken: newRefreshToken } = response.data;
+        if (!accessToken || !newRefreshToken) {
+            return NextResponse.json(
+                { error: "Invalid response from refresh service" },
+                { status: 500 },
+            );
+        }
+
         const res = NextResponse.json({ success: true });
         return setAuthCookies(res, accessToken, newRefreshToken);
     } catch (error) {

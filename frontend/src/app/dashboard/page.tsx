@@ -4,8 +4,9 @@ import { redirect } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { useDashboardStats } from "@/hooks/useDashboardStats";
-import { useClients } from "@/hooks/useClients";
+import { useInfiniteClients } from "@/hooks/useClients";
 import { Client } from "@/lib/client/types";
+import { getActionRequiredStatus } from "@/lib/client/action-required";
 import { useInitialUser } from "@/providers/UserProvider";
 import { cn } from "@/lib/utils";
 import {
@@ -71,7 +72,7 @@ const mapServiceStatusToV3 = (status: string | null): StatusType => {
       return "pending";
     case "terminated":
     case "cancelled":
-      return "expired";
+      return "terminated";
     case "completed":
       return "completed";
     default:
@@ -111,47 +112,58 @@ const getStatusLabel = (status: string | null): string => {
   }
 };
 
+const getDocumentStatusLabel = (status: Client["documentStatus"], locale: ReturnType<typeof useLocale>) => {
+  if (status === null) return t(locale, "clients.form.doc-not-sent");
+
+  const labelMap: Record<Exclude<Client["documentStatus"], null>, string> = {
+    completed: t(locale, "clients.form.doc-completed"),
+    opened: t(locale, "clients.form.doc-opened"),
+    created: t(locale, "clients.form.doc-created"),
+    requested: t(locale, "clients.form.doc-requested"),
+    rejected: t(locale, "clients.form.doc-rejected"),
+    revoked: t(locale, "clients.form.doc-revoked"),
+    deleted: t(locale, "clients.form.doc-deleted"),
+  };
+
+  return labelMap[status];
+};
+
 export default function DashboardPage() {
   const { data: stats, isLoading: statsLoading } = useDashboardStats();
   const {
     data: clientsData,
     isLoading: clientsLoading,
+    isFetchingNextPage: clientsFetchingNextPage,
     isError: clientsError,
+    fetchNextPage: fetchNextClients,
+    hasNextPage: hasMoreClients = false,
     refetch: refetchClients,
-  } = useClients(1, 50);
+  } = useInfiniteClients(50);
   const user = useInitialUser();
   const locale = useLocale();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [activeDetailTab, setActiveDetailTab] = useState("basic");
 
-  const clients = useMemo(() => clientsData?.data ?? [], [clientsData?.data]);
-  const hasMoreClients = (clientsData?.total ?? 0) > 50;
+  const clients = useMemo(
+    () => clientsData?.pages.flatMap((page) => page.data) ?? [],
+    [clientsData?.pages]
+  );
 
   const actionRequiredClients = useMemo(() => {
     return clients
-      .filter((c) => {
-        const needsSignature = c.documentStatus && c.documentStatus !== "completed" && c.eDocId;
-        const notSent = !c.eDocId && c.serviceStatus === "active";
-        const replacementRequested = c.serviceStatus === "replacement_requested";
-        return needsSignature || notSent || replacementRequested;
-      })
-      .map((c): ActionRequiredItem => {
-        let reason: string;
-        let priority: number;
-
-        if (c.serviceStatus === "replacement_requested") {
-          reason = "교체 요청";
-          priority = 1;
-        } else if (c.documentStatus && c.documentStatus !== "completed" && c.eDocId) {
-          reason = "서명 대기";
-          priority = 2;
-        } else {
-          reason = "발송 대기";
-          priority = 3;
+      .map((client) => {
+        const status = getActionRequiredStatus(client);
+        if (!status) {
+          return null;
         }
 
-        return { client: c, reason, priority };
+        return {
+          client,
+          reason: status.reason,
+          priority: status.priority,
+        } satisfies ActionRequiredItem;
       })
+      .filter((item): item is ActionRequiredItem => item !== null)
       .sort((a, b) => a.priority - b.priority);
   }, [clients]);
 
@@ -176,6 +188,32 @@ export default function DashboardPage() {
     if (!selectedClient) return null;
     return clients.find((client) => client.id === selectedClient.id) ?? selectedClient;
   }, [clients, selectedClient]);
+
+  const selectedClientContractInfo = useMemo(() => {
+    if (!selectedClientData) {
+      return null;
+    }
+
+    const isDummyClient = selectedClientData.name.includes("[더미]");
+    const hasContractSignal = Boolean(selectedClientData.eDocId || selectedClientData.documentStatus);
+
+    if (!isDummyClient && !hasContractSignal) {
+      return null;
+    }
+
+    const baseDate = selectedClientData.startDate ? new Date(selectedClientData.startDate) : new Date();
+    const sentDate = new Date(baseDate);
+    sentDate.setDate(baseDate.getDate() - 3);
+
+    return {
+      contractName: isDummyClient ? "더미 산모신생아 서비스 계약서" : "산모신생아 서비스 계약서",
+      documentId: selectedClientData.eDocId ?? `dummy-edoc-${selectedClientData.id}`,
+      documentStatus: getDocumentStatusLabel(selectedClientData.documentStatus, locale),
+      sentDate: formatDate(sentDate.toISOString()),
+      contractPeriod: `${formatDate(selectedClientData.startDate)} ~ ${formatDate(selectedClientData.endDate)}`,
+      contractAmount: formatPrice(selectedClientData.fullPrice),
+    };
+  }, [selectedClientData, locale]);
 
   if (!user) {
     redirect("/logout");
@@ -225,6 +263,8 @@ export default function DashboardPage() {
               selectedId={selectedClientData?.id}
               onSelect={setSelectedClient}
               hasMore={hasMoreClients}
+              onLoadMore={fetchNextClients}
+              isFetchingMore={clientsFetchingNextPage}
             />
           </Block>
 
@@ -320,9 +360,22 @@ export default function DashboardPage() {
                 )}
 
                 {activeDetailTab === "contracts" && (
-                  <div data-component="dashboard-detail-contracts-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                    계약서 정보가 없습니다
-                  </div>
+                  selectedClientContractInfo ? (
+                    <div data-component="dashboard-detail-contracts-grid" className="grid grid-cols-2 gap-4">
+                      <InfoCard title="계약서 정보" className="col-span-2">
+                        <InfoRow label="계약서명" value={selectedClientContractInfo.contractName} />
+                        <InfoRow label="계약서 ID" value={selectedClientContractInfo.documentId} />
+                        <InfoRow label="문서 상태" value={selectedClientContractInfo.documentStatus} />
+                        <InfoRow label="발송일" value={selectedClientContractInfo.sentDate} />
+                        <InfoRow label="계약 기간" value={selectedClientContractInfo.contractPeriod} />
+                        <InfoRow label="계약 금액" value={selectedClientContractInfo.contractAmount} />
+                      </InfoCard>
+                    </div>
+                  ) : (
+                    <div data-component="dashboard-detail-contracts-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+                      계약서 정보가 없습니다
+                    </div>
+                  )
                 )}
 
                 {activeDetailTab === "alimtalk" && (

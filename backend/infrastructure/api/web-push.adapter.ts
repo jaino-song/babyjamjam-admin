@@ -15,10 +15,18 @@ export class WebPushAdapter implements IWebPushPort {
     private readonly logger = new Logger(WebPushAdapter.name);
     private readonly vapidPublicKey: string;
     private readonly vapidPrivateKey: string;
+    private readonly isConfigured: boolean;
 
     constructor(private configService: ConfigService) {
-        this.vapidPublicKey = this.configService.getOrThrow<string>('VAPID_PUBLIC_KEY');
-        this.vapidPrivateKey = this.configService.getOrThrow<string>('VAPID_PRIVATE_KEY');
+        this.vapidPublicKey = this.configService.get<string>('VAPID_PUBLIC_KEY') || '';
+        this.vapidPrivateKey = this.configService.get<string>('VAPID_PRIVATE_KEY') || '';
+
+        this.isConfigured = Boolean(this.vapidPublicKey && this.vapidPrivateKey);
+
+        if (!this.isConfigured) {
+            this.logger.warn('VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY not configured. Web push will be disabled.');
+            return;
+        }
 
         const vapidEmail = this.configService.get<string>('VAPID_EMAIL') || 'admin@example.com';
 
@@ -36,6 +44,10 @@ export class WebPushAdapter implements IWebPushPort {
         subscription: PushSubscriptionEntity,
         payload: string,
     ): Promise<boolean> {
+        if (!this.isConfigured) {
+            return false;
+        }
+
         const maxRetries = 2;
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -80,6 +92,13 @@ export class WebPushAdapter implements IWebPushPort {
         payload: string,
     ): Promise<Map<string, boolean>> {
         const results = new Map<string, boolean>();
+
+        if (!this.isConfigured) {
+            subscriptions.forEach((subscription) => {
+                results.set(subscription.endpoint, false);
+            });
+            return results;
+        }
 
         // 병렬로 전송하되 동시 연결 수 제한 (10개씩)
         const batchSize = 10;

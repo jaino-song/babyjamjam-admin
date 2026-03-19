@@ -15,11 +15,14 @@ describe("AuthController (Integration)", () => {
     let app: INestApplication;
     let authService: jest.Mocked<AuthService>;
     let prismaService: jest.Mocked<PrismaService>;
+    let authController: AuthController;
 
     const mockUser = {
         id: "user-uuid-123",
         name: "Test User",
         email: "test@example.com",
+        phone: "010-1234-5678",
+        birthDate: "1990-01-01",
         profileImage: "https://example.com/profile.jpg",
         role: "user",
         organizationName: null,
@@ -67,6 +70,10 @@ describe("AuthController (Integration)", () => {
                 findUnique: jest.fn(),
                 findFirst: jest.fn(),
                 create: jest.fn(),
+                update: jest.fn(),
+            },
+            organization: {
+                findUnique: jest.fn(),
             },
         };
 
@@ -95,9 +102,11 @@ describe("AuthController (Integration)", () => {
 
         authService = moduleFixture.get(AuthService);
         prismaService = moduleFixture.get(PrismaService);
+        authController = moduleFixture.get(AuthController);
     });
 
     afterEach(async () => {
+        (authController as any)?.rateLimitGuard?.onModuleDestroy?.();
         await app.close();
     });
 
@@ -212,6 +221,8 @@ describe("AuthController (Integration)", () => {
                         id: true,
                         name: true,
                         email: true,
+                        phone: true,
+                        birthDate: true,
                         profileImage: true,
                         role: true,
                     },
@@ -351,6 +362,49 @@ describe("AuthController (Integration)", () => {
                 expect(response.status).toBe(201);
                 expect(authService.exchangeCodeForTokens).toHaveBeenCalledWith(code);
             });
+        });
+    });
+
+    describe("GET /auth/check-email", () => {
+        it("returns exists=true when the email is already registered", async () => {
+            (prismaService.user.findUnique as jest.Mock).mockResolvedValue({ id: "user-uuid-123" });
+
+            const response = await request(app.getHttpServer())
+                .get("/auth/check-email")
+                .query({ email: "Test@Example.com" });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ exists: true, linkable: false });
+            expect(prismaService.user.findUnique).toHaveBeenCalledWith({
+                where: { email: "test@example.com" },
+                select: { id: true, kakaoId: true, passwordHash: true },
+            });
+        });
+
+        it("returns exists=false when the email is not registered", async () => {
+            (prismaService.user.findUnique as jest.Mock).mockResolvedValue(null);
+
+            const response = await request(app.getHttpServer())
+                .get("/auth/check-email")
+                .query({ email: "new@example.com" });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ exists: false, linkable: false });
+        });
+
+        it("returns linkable=true for kakao-only accounts", async () => {
+            (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
+                id: "user-uuid-123",
+                kakaoId: "kakao-123",
+                passwordHash: null,
+            });
+
+            const response = await request(app.getHttpServer())
+                .get("/auth/check-email")
+                .query({ email: "kakao@example.com" });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ exists: true, linkable: true });
         });
     });
 });

@@ -83,7 +83,7 @@ export function CardContainer({
               </h2>
             )}
             {subtitle && (
-              <p data-component={componentSlots.subtitle} className="text-xs md:text-[0.8rem] text-v3-text-muted">
+              <p data-component={componentSlots.subtitle} className="break-keep text-xs text-v3-text-muted md:text-[0.8rem]">
                 {subtitle}
               </p>
             )}
