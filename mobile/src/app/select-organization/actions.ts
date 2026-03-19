@@ -81,14 +81,29 @@ export async function setCurrentOrganization(organizationId: string): Promise<{
       sameSite: "lax",
       path: "/",
     } as const;
+    const refreshCookieBaseOptions = {
+      httpOnly: true,
+      secure: isSecureCookie,
+      sameSite: "lax",
+      path: "/",
+    } as const;
 
     if (autoLogin) {
       cookieStore.set("auth_token", data.accessToken, {
         ...authCookieBaseOptions,
         maxAge: data.role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
       });
+      if (data.refreshToken) {
+        cookieStore.set("refresh_token", data.refreshToken, {
+          ...refreshCookieBaseOptions,
+          maxAge: 7 * 24 * 60 * 60,
+        });
+      }
     } else {
       cookieStore.set("auth_token", data.accessToken, authCookieBaseOptions);
+      if (data.refreshToken) {
+        cookieStore.set("refresh_token", data.refreshToken, refreshCookieBaseOptions);
+      }
     }
 
     // Store selected organization ID in a separate cookie for client-side access

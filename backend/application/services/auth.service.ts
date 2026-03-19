@@ -601,7 +601,7 @@ export class AuthService {
             data: {
                 userId: user.id,
                 organizationId: organizationId,
-                role: 'user',
+                role: role,
             },
         });
 

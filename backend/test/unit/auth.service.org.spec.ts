@@ -18,6 +18,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         user_organization: {
             findFirst: jest.fn(),
             findMany: jest.fn(),
+            create: jest.fn(),
         },
         organization: {
             findUnique: jest.fn(),
@@ -343,6 +344,45 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 // #then
                 await expect(action).rejects.toThrow(ForbiddenException);
                 await expect(action).rejects.toThrow("User does not belong to target organization");
+            });
+        });
+    });
+
+    // ============================================
+    // registerWithEmail Tests
+    // ============================================
+    describe("registerWithEmail", () => {
+        it("should preserve the submitted organization role on membership creation", async () => {
+            prismaService.organization.findUnique.mockResolvedValue(mockOrganization);
+            prismaService.user.findUnique
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce({ name: "Manager User" });
+            prismaService.user.create.mockResolvedValue({
+                ...mockUser,
+                id: "new-user-uuid-123",
+                role: "manager",
+                emailVerified: false,
+            });
+            prismaService.user_organization.create.mockResolvedValue(undefined);
+            authTokenRepository.deleteByUserIdAndType.mockResolvedValue(undefined);
+            authTokenRepository.create.mockResolvedValue(undefined);
+
+            await service.registerWithEmail(
+                "manager@example.com",
+                "Password1!",
+                "Manager User",
+                "010-1234-5678",
+                "1990-01-01",
+                mockOrganization.id,
+                "manager",
+            );
+
+            expect(prismaService.user_organization.create).toHaveBeenCalledWith({
+                data: {
+                    userId: "new-user-uuid-123",
+                    organizationId: mockOrganization.id,
+                    role: "manager",
+                },
             });
         });
     });
