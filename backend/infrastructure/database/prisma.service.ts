@@ -16,21 +16,22 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
-    try {
-      if (this.missingRequiredEnvVars.length > 0) {
-        const error = new Error(
-          `Missing required environment variables: ${this.missingRequiredEnvVars.join(", ")}. ` +
-          "Create backend/.env (or export them in your shell) before starting the backend.",
-        );
-        this.logger.error("Failed to connect to database", error);
-        throw error;
-      }
+    if (this.missingRequiredEnvVars.length > 0) {
+      const error = new Error(
+        `Missing required environment variables: ${this.missingRequiredEnvVars.join(", ")}. ` +
+        "Create backend/.env (or export them in your shell) before starting the backend.",
+      );
+      this.logger.error("Failed to connect to database", error);
+      throw error;
+    }
 
-      if (this.appliedDefaults.length > 0) {
-        this.logger.log(
-          `Applied Prisma pooler defaults: ${this.appliedDefaults.join(", ")}`,
-        );
-      }
+    if (this.appliedDefaults.length > 0) {
+      this.logger.log(
+        `Applied Prisma pooler defaults: ${this.appliedDefaults.join(", ")}`,
+      );
+    }
+
+    try {
       await this.$connect();
       this.logger.log("Successfully connected to database");
     } catch (error) {

@@ -52,4 +52,7 @@ async function bootstrap() {
     await app.listen(3001);
     console.log("Server is running");
 }
-bootstrap();
+bootstrap().catch((error) => {
+    console.error("BOOTSTRAP FAILED:", error);
+    process.exit(1);
+});

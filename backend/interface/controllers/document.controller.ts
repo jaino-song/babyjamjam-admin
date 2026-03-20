@@ -14,6 +14,7 @@ import {
     Query,
     UseGuards,
 } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { Response } from "express";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { DocumentService } from "application/services/document.service";
@@ -23,7 +24,6 @@ import {
     max_file_size,
 } from "domain/entities/document.entity";
 import { FILE_STORAGE_PORT, FileStoragePort } from "domain/ports/file-storage.port";
-import { v4 as uuidv4 } from "uuid";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
@@ -87,8 +87,8 @@ export class DocumentController {
         const fileExtension =
             lastDotIndex >= 0 ? file.originalname.slice(lastDotIndex + 1) : "";
         const storagePath = fileExtension
-            ? `${uuidv4()}.${fileExtension}`
-            : uuidv4();
+            ? `${randomUUID()}.${fileExtension}`
+            : randomUUID();
         const mimeType = file.mimetype || "application/octet-stream";
 
         // upload to storage

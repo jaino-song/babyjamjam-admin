@@ -114,18 +114,30 @@ export class SbClientRepository implements IClientRepository {
 
     async update(organizationid: string, client: ClientEntity): Promise<ClientEntity> {
         const select = await this.getClientSelect();
-        const updated = await this.prismaService.client.update({
+        const result = await this.prismaService.client.updateMany({
             where: { id: client.id, organizationId: organizationid },
             data: ClientMapper.toPrismaUpdate(client),
+        });
+        if (result.count === 0) {
+            throw new Error("Client not found for organization");
+        }
+        const updated = await this.prismaService.client.findFirst({
+            where: { id: client.id, organizationId: organizationid },
             select,
         });
+        if (!updated) {
+            throw new Error("Client not found after update");
+        }
         return ClientMapper.toDomain(updated as any);
     }
 
     async delete(organizationid: string, id: number): Promise<void> {
-        await this.prismaService.client.delete({
+        const result = await this.prismaService.client.deleteMany({
             where: { id, organizationId: organizationid },
         });
+        if (result.count === 0) {
+            throw new Error("Client not found for organization");
+        }
     }
 
     async findByStartDate(organizationid: string, date: Date): Promise<ClientEntity[]> {

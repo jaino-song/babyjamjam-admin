@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
@@ -10,6 +10,7 @@ export function useCallbackPageController() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
+  const handledCodeRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -25,6 +26,12 @@ export function useCallbackPageController() {
         return;
       }
 
+      if (handledCodeRef.current === code) {
+        return;
+      }
+
+      handledCodeRef.current = code;
+
       try {
         const result = await exchangeToken(code);
 
@@ -33,8 +40,13 @@ export function useCallbackPageController() {
         }
 
         if (!result.success) {
-          console.error("[Auth Callback] Token exchange failed:", result.error);
-          setError(result.error || "Authentication Failed");
+            console.error("[Auth Callback] Token exchange failed:", result.error);
+            setError(result.error || "Authentication Failed");
+            return;
+        }
+
+        if (result.onboardingRequired) {
+          router.replace(result.onboardingRoute || "/kakao/onboarding");
           return;
         }
 

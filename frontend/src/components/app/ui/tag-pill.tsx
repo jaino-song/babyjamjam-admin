@@ -5,16 +5,16 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const tagPillVariants = cva(
-  "inline-flex items-center justify-center rounded-full px-2.5 py-1 text-[0.68rem] font-medium leading-none whitespace-nowrap shrink-0 transition-colors overflow-hidden",
+  "inline-flex items-center justify-center rounded-full border px-2.5 py-1 text-[0.68rem] font-medium leading-none whitespace-nowrap shrink-0 transition-colors overflow-hidden",
   {
     variants: {
       variant: {
-        amber: "bg-amber-100 text-amber-700",
-        emerald: "bg-emerald-100 text-emerald-700",
-        sky: "bg-sky-100 text-sky-700",
-        cyan: "bg-cyan-100 text-cyan-700",
-        indigo: "bg-indigo-100 text-indigo-700",
-        neutral: "bg-[hsl(220,20%,97%)] text-v3-text-muted",
+        amber: "bg-amber-100 border-amber-200 text-amber-700",
+        emerald: "bg-emerald-100 border-emerald-200 text-emerald-700",
+        sky: "bg-sky-100 border-sky-200 text-sky-700",
+        cyan: "bg-cyan-100 border-cyan-200 text-cyan-700",
+        indigo: "bg-indigo-100 border-indigo-200 text-indigo-700",
+        neutral: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
       },
       size: {
         default: "px-2.5 py-1 text-[0.68rem]",
@@ -48,4 +48,3 @@ export function TagPill({
     </span>
   );
 }
-

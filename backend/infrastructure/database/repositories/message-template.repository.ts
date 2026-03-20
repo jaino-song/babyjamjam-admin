@@ -36,16 +36,28 @@ export class MessageTemplateRepository implements IMessageTemplateRepository {
     }
 
     async update(organizationid: string, template: MessageTemplateEntity): Promise<MessageTemplateEntity> {
-        const updated = await this.prismaService.message_template.update({
+        const result = await this.prismaService.message_template.updateMany({
             where: { id: template.id, organizationId: organizationid },
             data: MessageTemplateMapper.toPrismaUpdate(template),
         });
+        if (result.count === 0) {
+            throw new Error("Message template not found for organization");
+        }
+        const updated = await this.prismaService.message_template.findFirst({
+            where: { id: template.id, organizationId: organizationid },
+        });
+        if (!updated) {
+            throw new Error("Message template not found after update");
+        }
         return MessageTemplateMapper.toDomain(updated);
     }
 
     async delete(organizationid: string, id: string): Promise<void> {
-        await this.prismaService.message_template.delete({
+        const result = await this.prismaService.message_template.deleteMany({
             where: { id, organizationId: organizationid },
         });
+        if (result.count === 0) {
+            throw new Error("Message template not found for organization");
+        }
     }
 }

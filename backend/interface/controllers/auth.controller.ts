@@ -1,4 +1,4 @@
-import { Controller, Get, Req, Res, UseGuards, Request, Body, Post, Ip, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Headers, Ip, Post, Query, Req, Request, Res, UseGuards } from "@nestjs/common";
 import { Response, Request as ExpressRequest } from "express";
 import { AuthGuard } from "@nestjs/passport";
 import { AuthService } from "../../application/services/auth.service";
@@ -17,10 +17,13 @@ import {
     LinkPasswordDto,
 } from "interface/dto/email-auth.dto";
 import { SelectOrganizationDto, SwitchOrganizationDto } from "interface/dto/organization-auth.dto";
+import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
 
 @Controller("auth")
 export class AuthController {
     private readonly rateLimitGuard: RateLimitGuard;
+    private static readonly PENDING_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
+    private static readonly PENDING_ONBOARDING_TOKEN_HEADER = "x-pending-onboarding-token";
 
     constructor(
         private readonly authService: AuthService,
@@ -61,8 +64,12 @@ export class AuthController {
         }
 
         // Normal login/registration flow
-        const tokens = await this.authService.validateKakaoUser(req.user);
-        const code = await this.authService.createAuthCode(tokens);
+        const result = await this.authService.validateKakaoUser(req.user);
+        const code = ("onboardingRequired" in result && result.onboardingRequired)
+            ? result.onboardingKind === "kakao_signup"
+                ? await this.authService.createPendingSignupCode(result.pendingSignupData)
+                : await this.authService.createPendingAccountOnboardingCode(result.userId)
+            : await this.authService.createAuthCode(result as { accessToken: string; refreshToken: string; requiresOrgSelection?: boolean });
 
         console.log(`[Auth] Redirecting to ${frontendURL}/callback (NODE_ENV: ${process.env['NODE_ENV']})`);
 
@@ -101,6 +108,72 @@ export class AuthController {
     async exchangeToken(@Body() body: TokenExchangeDto) {
         const tokens = await this.authService.exchangeCodeForTokens(body.code);
         return tokens;
+    }
+
+    @Get("kakao/pending-signup")
+    async getPendingKakaoSignup(
+        @Headers(AuthController.PENDING_SIGNUP_TOKEN_HEADER) headerToken?: string,
+        @Query("token") queryToken?: string,
+    ) {
+        const token = headerToken ?? queryToken;
+        if (!token) {
+            throw new BadRequestException("Pending signup token is required");
+        }
+
+        return this.authService.getPendingKakaoSignup(token);
+    }
+
+    @Post("kakao/complete-signup")
+    async completeKakaoOnboarding(
+        @Headers(AuthController.PENDING_SIGNUP_TOKEN_HEADER) headerToken: string | undefined,
+        @Query("token") queryToken: string | undefined,
+        @Body() body: CompleteKakaoOnboardingDto,
+    ) {
+        const token = headerToken ?? queryToken;
+        if (!token) {
+            throw new BadRequestException("Pending signup token is required");
+        }
+
+        return this.authService.completeKakaoOnboarding(
+            token,
+            body.phone,
+            body.birthDate,
+            body.organizationId,
+            body.role,
+        );
+    }
+
+    @Get("onboarding/pending")
+    async getPendingAccountOnboarding(
+        @Headers(AuthController.PENDING_ONBOARDING_TOKEN_HEADER) headerToken?: string,
+        @Query("token") queryToken?: string,
+    ) {
+        const token = headerToken ?? queryToken;
+        if (!token) {
+            throw new BadRequestException("Pending onboarding token is required");
+        }
+
+        return this.authService.getPendingAccountOnboarding(token);
+    }
+
+    @Post("onboarding/complete")
+    async completeAccountOnboarding(
+        @Headers(AuthController.PENDING_ONBOARDING_TOKEN_HEADER) headerToken: string | undefined,
+        @Query("token") queryToken: string | undefined,
+        @Body() body: CompleteKakaoOnboardingDto,
+    ) {
+        const token = headerToken ?? queryToken;
+        if (!token) {
+            throw new BadRequestException("Pending onboarding token is required");
+        }
+
+        return this.authService.completeAccountOnboarding(
+            token,
+            body.phone,
+            body.birthDate,
+            body.organizationId,
+            body.role,
+        );
     }
 
     @Post("refresh-token")
@@ -171,6 +244,17 @@ export class AuthController {
 
         // Reset rate limit on successful login
         this.rateLimitGuard.resetForKey(ip, body.email);
+
+        if ("onboardingRequired" in result && result.onboardingRequired) {
+            const pendingAccountOnboardingToken = await this.authService.startPendingAccountOnboarding(result.userId);
+
+            return {
+                success: true,
+                onboardingRequired: true,
+                onboardingRoute: "/onboarding",
+                pendingAccountOnboardingToken,
+            };
+        }
 
         return {
             success: true,

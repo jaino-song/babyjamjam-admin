@@ -8,10 +8,10 @@ import {
   LayoutDashboard,
   Users,
   UserCheck,
+  UserKey,
   FileText,
   FolderOpen,
   Settings,
-  Shield,
   LucideIcon,
   Calculator,
   MessageCircle,
@@ -104,7 +104,7 @@ export const V3Sidebar = () => {
       return {
         ...section,
         items: isOwner
-          ? [{ label: "관리자", href: "/system-admin", icon: Shield }, ...section.items]
+          ? [{ label: "관리자", href: "/system-admin", icon: UserKey }, ...section.items]
           : section.items,
       };
     }),

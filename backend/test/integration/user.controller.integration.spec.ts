@@ -4,6 +4,8 @@ import request from "supertest";
 import { UserController } from "interface/controllers/user.controller";
 import { UserService } from "application/services/user.service";
 import { UserEntity } from "domain/entities/user.entity";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 
 describe("UserController (Integration)", () => {
     // ============================================
@@ -12,6 +14,18 @@ describe("UserController (Integration)", () => {
 
     let app: INestApplication;
     let userService: jest.Mocked<UserService>;
+
+    const mockJwtGuard = {
+        canActivate: jest.fn((context) => {
+            const req = context.switchToHttp().getRequest();
+            req.user = { userId: "owner-user-id", role: "owner" };
+            return true;
+        }),
+    };
+
+    const mockOwnerOrAdminGuard = {
+        canActivate: jest.fn(() => true),
+    };
 
     type UserOverrides = Partial<{
         id: string;
@@ -42,6 +56,7 @@ describe("UserController (Integration)", () => {
     beforeEach(async () => {
         const mockUserService = {
             create: jest.fn(),
+            findDirectory: jest.fn(),
             findById: jest.fn(),
             findByKakaoId: jest.fn(),
             update: jest.fn(),
@@ -56,7 +71,12 @@ describe("UserController (Integration)", () => {
                     useValue: mockUserService,
                 },
             ],
-        }).compile();
+        })
+            .overrideGuard(JwtGuard)
+            .useValue(mockJwtGuard)
+            .overrideGuard(OwnerOrAdminGuard)
+            .useValue(mockOwnerOrAdminGuard)
+            .compile();
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));
@@ -67,6 +87,64 @@ describe("UserController (Integration)", () => {
 
     afterEach(async () => {
         await app.close();
+    });
+
+    // ============================================
+    // GET /users - Directory
+    // ============================================
+    describe("GET /users", () => {
+        it("should return the full directory for owner users", async () => {
+            const users = [
+                {
+                    id: "directory-user-1",
+                    kakaoId: "kakao-1",
+                    email: "owner@example.com",
+                    name: "Owner User",
+                    phone: "010-1111-2222",
+                    birthDate: "19900101",
+                    profileImage: null,
+                    role: "owner",
+                    createdAt: new Date("2025-01-01"),
+                    emailVerified: true,
+                    authProvider: "both",
+                    organizations: [{ id: "org-1", name: "본사", role: "owner" }],
+                },
+            ];
+            userService.findDirectory.mockResolvedValue(users);
+
+            const response = await request(app.getHttpServer()).get("/users");
+
+            expect(response.status).toBe(200);
+            expect(userService.findDirectory).toHaveBeenCalledWith({ organizationId: undefined });
+            expect(response.body).toHaveLength(1);
+        });
+
+        it("should scope directory by organization for admin users", async () => {
+            mockJwtGuard.canActivate.mockImplementationOnce((context) => {
+                const req = context.switchToHttp().getRequest();
+                req.user = { userId: "admin-user-id", role: "admin", organizationId: "org-admin-1" };
+                return true;
+            });
+            userService.findDirectory.mockResolvedValue([]);
+
+            const response = await request(app.getHttpServer()).get("/users");
+
+            expect(response.status).toBe(200);
+            expect(userService.findDirectory).toHaveBeenCalledWith({ organizationId: "org-admin-1" });
+        });
+
+        it("should reject admin directory requests without organization context", async () => {
+            mockJwtGuard.canActivate.mockImplementationOnce((context) => {
+                const req = context.switchToHttp().getRequest();
+                req.user = { userId: "admin-user-id", role: "admin" };
+                return true;
+            });
+
+            const response = await request(app.getHttpServer()).get("/users");
+
+            expect(response.status).toBe(403);
+            expect(userService.findDirectory).not.toHaveBeenCalled();
+        });
     });
 
     // ============================================

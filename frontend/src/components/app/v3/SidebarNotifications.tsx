@@ -273,7 +273,7 @@ export function SidebarNotifications() {
                   type="button"
                   aria-label="알림 닫기"
                   data-component="sidebar-notifications-close"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-v3-border bg-white text-v3-text-muted transition-colors hover:bg-v3-dim-white hover:text-v3-dark"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-v3-text-muted transition-colors hover:bg-v3-dim-white hover:text-v3-dark"
                   onClick={() => setOpen(false)}
                 >
                   <X className="h-4 w-4" />

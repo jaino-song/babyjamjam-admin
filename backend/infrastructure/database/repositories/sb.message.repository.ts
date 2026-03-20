@@ -34,16 +34,28 @@ export class SbMessageRepository implements IMessageRepository {
     }
 
     async update(organizationid: string, message: MessageEntity): Promise<MessageEntity> {
-        const updated = await this.prismaService.message.update({
+        const result = await this.prismaService.message.updateMany({
             where: { id: message.id, organizationId: organizationid },
             data: MessageMapper.toPrismaUpdate(message),
         });
+        if (result.count === 0) {
+            throw new Error("Message not found for organization");
+        }
+        const updated = await this.prismaService.message.findFirst({
+            where: { id: message.id, organizationId: organizationid },
+        });
+        if (!updated) {
+            throw new Error("Message not found after update");
+        }
         return MessageMapper.toDomain(updated);
     }
 
     async delete(organizationid: string, id: number): Promise<void> {
-        await this.prismaService.message.delete({
+        const result = await this.prismaService.message.deleteMany({
             where: { id, organizationId: organizationid },
         });
+        if (result.count === 0) {
+            throw new Error("Message not found for organization");
+        }
     }
 }

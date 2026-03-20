@@ -1,10 +1,23 @@
-import { Controller, Post, Body, Get, Query, Patch, Delete } from "@nestjs/common";
+import { Controller, Post, Body, Get, Query, Patch, Delete, Req, UseGuards, ForbiddenException } from "@nestjs/common";
 import { UserService } from "application/services/user.service";
 import { CreateUserDto, UpdateUserDto } from "../dto/user.dto";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 
 @Controller("users")
 export class UserController {
     constructor(private readonly userService: UserService) {}
+
+    @Get()
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    findDirectory(@Req() req: { user: { role: string; organizationId?: string } }) {
+        if (req.user.role !== "owner" && !req.user.organizationId) {
+            throw new ForbiddenException("Organization context is required");
+        }
+
+        const organizationId = req.user.role === "owner" ? undefined : req.user.organizationId;
+        return this.userService.findDirectory({ organizationId });
+    }
 
     @Post()
     create(@Body() createUserDto: CreateUserDto) {

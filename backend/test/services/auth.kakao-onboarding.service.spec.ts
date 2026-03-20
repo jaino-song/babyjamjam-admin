@@ -1,0 +1,456 @@
+import { BadRequestException } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { AuthService, type KakaoData } from "application/services/auth.service";
+import { AuthTokenEntity } from "domain/entities/auth-token.entity";
+import { EmailPort } from "domain/ports/email.port";
+import { IAuthTokenRepository } from "domain/repositories/auth-token.repository.interface";
+import { PrismaService } from "infrastructure/database/prisma.service";
+
+describe("AuthService Kakao onboarding", () => {
+    const createMockPrismaService = () => ({
+        user: {
+            findFirst: jest.fn(),
+            findUnique: jest.fn(),
+            create: jest.fn(),
+            update: jest.fn(),
+        },
+        user_organization: {
+            findFirst: jest.fn(),
+            findMany: jest.fn(),
+            create: jest.fn(),
+            update: jest.fn(),
+        },
+        organization: {
+            findUnique: jest.fn(),
+        },
+        auth_flow_state: {
+            create: jest.fn(),
+            findUnique: jest.fn(),
+            update: jest.fn(),
+            updateMany: jest.fn(),
+            deleteMany: jest.fn(),
+        },
+        $transaction: jest.fn(),
+    });
+
+    const createMockJwtService = () => ({
+        signAsync: jest.fn(),
+        verifyAsync: jest.fn(),
+    });
+
+    const createMockEmailService = (): EmailPort => ({
+        send: jest.fn().mockResolvedValue("mock-message-id"),
+        sendVerificationEmail: jest.fn().mockResolvedValue("mock-verification-id"),
+        sendPasswordResetEmail: jest.fn().mockResolvedValue("mock-reset-id"),
+    });
+
+    const createMockAuthTokenRepository = (): jest.Mocked<IAuthTokenRepository> => ({
+        findByToken: jest.fn(),
+        findByUserIdAndType: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+        deleteByUserIdAndType: jest.fn(),
+        deleteExpiredTokens: jest.fn(),
+    });
+
+    const kakaoData: KakaoData = {
+        kakaoId: "kakao_12345",
+        email: "kakao@example.com",
+        name: "Kakao User",
+        profileImage: "https://example.com/profile.png",
+    };
+
+    const existingUser = {
+        id: "user-1",
+        kakaoId: kakaoData.kakaoId,
+        email: kakaoData.email,
+        name: kakaoData.name,
+        profileImage: kakaoData.profileImage,
+        role: "user",
+        passwordHash: null,
+    };
+
+    let prisma: ReturnType<typeof createMockPrismaService>;
+    let jwt: ReturnType<typeof createMockJwtService>;
+    let emailService: EmailPort;
+    let authTokenRepository: jest.Mocked<IAuthTokenRepository>;
+    let service: AuthService;
+
+    beforeEach(() => {
+        prisma = createMockPrismaService();
+        prisma.$transaction.mockImplementation(async (callback: (tx: typeof prisma) => unknown) => callback(prisma));
+
+        jwt = createMockJwtService();
+        jwt.signAsync.mockResolvedValue("mock-jwt-token");
+        emailService = createMockEmailService();
+        authTokenRepository = createMockAuthTokenRepository();
+
+        service = new AuthService(
+            prisma as unknown as PrismaService,
+            jwt as unknown as JwtService,
+            emailService,
+            authTokenRepository,
+        );
+    });
+
+    it("returns onboardingRequired for brand-new Kakao users", async () => {
+        prisma.user.findFirst.mockResolvedValue(null);
+        prisma.user.findUnique.mockResolvedValue(null);
+
+        const result = await service.validateKakaoUser(kakaoData);
+
+        expect(result).toEqual({
+            onboardingRequired: true,
+            onboardingKind: "kakao_signup",
+            pendingSignupData: {
+                ...kakaoData,
+                email: "kakao@example.com",
+            },
+        });
+    });
+
+    it("returns account onboarding for existing Kakao users with missing required info", async () => {
+        prisma.user.findFirst.mockResolvedValue({
+            ...existingUser,
+            phone: null,
+            birthDate: null,
+            role: null,
+        } as never);
+        prisma.user_organization.findMany.mockResolvedValue([] as never);
+
+        const result = await service.validateKakaoUser(kakaoData);
+
+        expect(result).toEqual({
+            onboardingRequired: true,
+            onboardingKind: "account_completion",
+            userId: "user-1",
+            prefill: {
+                email: kakaoData.email,
+                name: kakaoData.name,
+                profileImage: kakaoData.profileImage,
+            },
+        });
+    });
+
+    it("exchanges a pending signup auth code into a persisted pending signup token", async () => {
+        prisma.auth_flow_state.findUnique.mockResolvedValue({
+            id: "flow-1",
+            kind: "pending_kakao_signup_exchange",
+            tokenHash: "hashed",
+            accessToken: null,
+            refreshToken: null,
+            requiresOrgSelection: false,
+            kakaoId: kakaoData.kakaoId,
+            email: kakaoData.email,
+            name: kakaoData.name,
+            profileImage: kakaoData.profileImage,
+            expiresAt: new Date(Date.now() + 60_000),
+            createdAt: new Date(),
+            consumedAt: null,
+        });
+        prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 1 });
+        prisma.auth_flow_state.create.mockResolvedValue({});
+
+        const result = await service.exchangeCodeForTokens("exchange-code");
+
+        expect(result).toMatchObject({
+            onboardingRequired: true,
+            prefill: {
+                email: kakaoData.email,
+                name: kakaoData.name,
+                profileImage: kakaoData.profileImage,
+            },
+        });
+        expect(prisma.auth_flow_state.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: "flow-1",
+                consumedAt: null,
+            },
+            data: {
+                consumedAt: expect.any(Date),
+            },
+        });
+        expect(prisma.auth_flow_state.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({
+                kind: "pending_kakao_signup",
+                kakaoId: kakaoData.kakaoId,
+                email: kakaoData.email,
+            }),
+        }));
+    });
+
+    it("rejects reused auth flow codes when atomic consume fails", async () => {
+        prisma.auth_flow_state.findUnique.mockResolvedValue({
+            id: "flow-1",
+            kind: "pending_kakao_signup_exchange",
+            tokenHash: "hashed",
+            accessToken: null,
+            refreshToken: null,
+            requiresOrgSelection: false,
+            kakaoId: kakaoData.kakaoId,
+            email: kakaoData.email,
+            name: kakaoData.name,
+            profileImage: kakaoData.profileImage,
+            expiresAt: new Date(Date.now() + 60_000),
+            createdAt: new Date(),
+            consumedAt: null,
+        });
+        prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(service.exchangeCodeForTokens("exchange-code")).rejects.toThrow("Authorization code already used");
+
+        expect(prisma.auth_flow_state.create).not.toHaveBeenCalled();
+    });
+
+    it("completes Kakao onboarding inside a transaction and creates membership", async () => {
+        const onboardingUser = {
+            ...existingUser,
+            phone: "010-1234-5678",
+            birthDate: "1990-01-01",
+            role: "manager",
+        };
+
+        prisma.auth_flow_state.findUnique.mockResolvedValue({
+            id: "pending-1",
+            kind: "pending_kakao_signup",
+            tokenHash: "hashed",
+            accessToken: null,
+            refreshToken: null,
+            requiresOrgSelection: false,
+            kakaoId: kakaoData.kakaoId,
+            email: kakaoData.email,
+            name: kakaoData.name,
+            profileImage: kakaoData.profileImage,
+            expiresAt: new Date(Date.now() + 60_000),
+            createdAt: new Date(),
+            consumedAt: null,
+        });
+        prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 1 });
+        prisma.organization.findUnique.mockResolvedValue({ id: "org-1" });
+        prisma.user.findFirst
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(onboardingUser as never);
+        prisma.user.create.mockResolvedValue(onboardingUser as never);
+        prisma.user_organization.findFirst
+            .mockResolvedValueOnce(null);
+        prisma.user_organization.findMany.mockResolvedValue([{ organizationId: "org-1", role: "manager" }] as never);
+        prisma.user_organization.create.mockResolvedValue({} as never);
+
+        const result = await service.completeKakaoOnboarding(
+            "pending-token",
+            "010-1234-5678",
+            "1990-01-01",
+            "org-1",
+            "manager",
+        );
+
+        expect(prisma.$transaction).toHaveBeenCalled();
+        expect(prisma.auth_flow_state.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: "pending-1",
+                consumedAt: null,
+            },
+            data: { consumedAt: expect.any(Date) },
+        });
+        expect(prisma.user.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({
+                kakaoId: kakaoData.kakaoId,
+                phone: "010-1234-5678",
+                birthDate: "1990-01-01",
+                role: "manager",
+            }),
+        }));
+        expect(prisma.user_organization.create).toHaveBeenCalledWith({
+            data: {
+                userId: "user-1",
+                organizationId: "org-1",
+                role: "manager",
+            },
+        });
+        expect(jwt.signAsync).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sub: "user-1",
+                role: "manager",
+                organizationId: "org-1",
+                orgRole: "manager",
+                type: "refresh",
+            }),
+            expect.any(Object),
+        );
+        expect(result).toMatchObject({
+            user: "user-1",
+            requiresOrgSelection: undefined,
+        });
+    });
+
+    it("rejects onboarding when the phone number already belongs to another user", async () => {
+        prisma.auth_flow_state.findUnique.mockResolvedValue({
+            id: "pending-1",
+            kind: "pending_kakao_signup",
+            tokenHash: "hashed",
+            accessToken: null,
+            refreshToken: null,
+            requiresOrgSelection: false,
+            kakaoId: kakaoData.kakaoId,
+            email: kakaoData.email,
+            name: kakaoData.name,
+            profileImage: kakaoData.profileImage,
+            expiresAt: new Date(Date.now() + 60_000),
+            createdAt: new Date(),
+            consumedAt: null,
+        });
+        prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 1 });
+        prisma.organization.findUnique.mockResolvedValue({ id: "org-1" });
+        prisma.user.findFirst
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({ id: "other-user" } as never);
+
+        await expect(
+            service.completeKakaoOnboarding(
+                "pending-token",
+                "010-1234-5678",
+                "1990-01-01",
+                "org-1",
+                "user",
+            ),
+        ).rejects.toThrow(BadRequestException);
+
+        expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it("returns account onboarding for existing email users with missing required info", async () => {
+        jest.spyOn(service, "verifyPassword").mockResolvedValue(true);
+
+        prisma.user.findUnique.mockResolvedValue({
+            id: "user-3",
+            email: "legacy@example.com",
+            name: "Legacy User",
+            profileImage: null,
+            phone: null,
+            birthDate: null,
+            role: null,
+            passwordHash: "hashed-password",
+            emailVerified: true,
+        } as never);
+        prisma.user_organization.findMany.mockResolvedValue([] as never);
+
+        const result = await service.validateEmailPassword("legacy@example.com", "Password1!");
+
+        expect(result).toEqual({
+            onboardingRequired: true,
+            onboardingKind: "account_completion",
+            userId: "user-3",
+            prefill: {
+                email: "legacy@example.com",
+                name: "Legacy User",
+            },
+        });
+    });
+
+    it("completes account onboarding for existing users and updates membership role", async () => {
+        prisma.auth_flow_state.findUnique.mockResolvedValue({
+            id: "pending-account-1",
+            kind: "pending_account_onboarding",
+            tokenHash: "hashed",
+            userId: "user-3",
+            expiresAt: new Date(Date.now() + 60_000),
+            createdAt: new Date(),
+            consumedAt: null,
+        } as never);
+        prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 1 });
+        prisma.user.findUnique
+            .mockResolvedValueOnce({
+                id: "user-3",
+                passwordHash: "hashed-password",
+            } as never)
+            .mockResolvedValueOnce({
+                id: "user-3",
+                email: "legacy@example.com",
+                name: "Legacy User",
+                profileImage: null,
+                phone: "010-1111-2222",
+                birthDate: "1990-01-01",
+                role: "manager",
+            } as never);
+        prisma.organization.findUnique.mockResolvedValue({ id: "org-1" } as never);
+        prisma.user.findFirst.mockResolvedValue(null as never);
+        prisma.user.update.mockResolvedValue({ id: "user-3" } as never);
+        prisma.user_organization.findFirst.mockResolvedValue({
+            id: "membership-1",
+            role: "user",
+        } as never);
+        prisma.user_organization.update.mockResolvedValue({} as never);
+        prisma.user_organization.findMany.mockResolvedValue([{ organizationId: "org-1", role: "manager" }] as never);
+
+        const result = await service.completeAccountOnboarding(
+            "pending-token",
+            "010-1111-2222",
+            "1990-01-01",
+            "org-1",
+            "manager",
+        );
+
+        expect(prisma.user.update).toHaveBeenCalledWith({
+            where: { id: "user-3" },
+            data: {
+                phone: "010-1111-2222",
+                birthDate: "1990-01-01",
+                role: "manager",
+            },
+        });
+        expect(prisma.user_organization.update).toHaveBeenCalledWith({
+            where: { id: "membership-1" },
+            data: { role: "manager" },
+        });
+        expect(result).toMatchObject({
+            user: "user-3",
+            requiresOrgSelection: undefined,
+        });
+    });
+
+    it("stores the selected role on organization membership during email registration", async () => {
+        jest.spyOn(service, "hashPassword").mockResolvedValue("hashed-password");
+
+        prisma.user.findUnique
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({ name: "Manager User" } as never);
+        prisma.organization.findUnique.mockResolvedValue({ id: "org-1" });
+        prisma.user.create.mockResolvedValue({
+            id: "user-2",
+            email: "manager@example.com",
+        } as never);
+        prisma.user_organization.create.mockResolvedValue({} as never);
+        authTokenRepository.deleteByUserIdAndType.mockResolvedValue();
+        authTokenRepository.create.mockResolvedValue(
+            AuthTokenEntity.reconstitute(
+                "token-1",
+                "user-2",
+                "hashed-token",
+                "email_verification",
+                new Date(Date.now() + 60_000),
+                new Date(),
+                null,
+            ),
+        );
+
+        await service.registerWithEmail(
+            "manager@example.com",
+            "Password1!",
+            "Manager User",
+            "010-1234-5678",
+            "1990-01-01",
+            "org-1",
+            "manager",
+        );
+
+        expect(prisma.user_organization.create).toHaveBeenCalledWith({
+            data: {
+                userId: "user-2",
+                organizationId: "org-1",
+                role: "manager",
+            },
+        });
+    });
+});
