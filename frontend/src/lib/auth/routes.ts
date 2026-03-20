@@ -8,6 +8,8 @@ export const AUTH_ROUTES = {
   resetPassword: "/reset-password",
   verifyEmail: "/verify-email",
   callback: "/callback",
+  kakaoOnboarding: "/kakao/onboarding",
+  onboarding: "/onboarding",
 } as const;
 
 export const PUBLIC_AUTH_PATHS = new Set<string>(Object.values(AUTH_ROUTES));
@@ -18,4 +20,3 @@ export function isPublicAuthPath(pathname: string | null | undefined): boolean {
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   return PUBLIC_AUTH_PATHS.has(normalized);
 }
-

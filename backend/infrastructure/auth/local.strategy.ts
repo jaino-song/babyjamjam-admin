@@ -19,10 +19,12 @@ export class LocalStrategy extends PassportStrategy(Strategy) {
     async validate(email: string, password: string): Promise<{ userId: string }> {
         const result = await this.authService.validateEmailPassword(email, password);
 
-        if (!result) {
+        if (!result || ("onboardingRequired" in result && result.onboardingRequired)) {
             throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다.');
         }
 
-        return { userId: result.user };
+        const validatedResult = result as { user: string };
+
+        return { userId: validatedResult.user };
     }
 }

@@ -65,6 +65,13 @@ export const registerSchema = z.object({
     path: ['confirmPassword'],
 });
 
+export const kakaoOnboardingSchema = z.object({
+    phone: phoneSchema,
+    birthDate: birthDateSchema,
+    organizationId: z.string().min(1, '지점을 선택해주세요.'),
+    role: z.enum(['admin', 'manager', 'user'], { message: '역할을 선택해주세요.' }),
+});
+
 // Login schema
 export const loginSchema = z.object({
     email: emailSchema,
@@ -96,6 +103,7 @@ export const linkPasswordSchema = z.object({
 
 // Type exports using Zod inference
 export type RegisterFormData = z.infer<typeof registerSchema>;
+export type KakaoOnboardingFormData = z.infer<typeof kakaoOnboardingSchema>;
 export type LoginFormData = z.infer<typeof loginSchema>;
 export type ForgotPasswordFormData = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordFormData = z.infer<typeof resetPasswordSchema>;

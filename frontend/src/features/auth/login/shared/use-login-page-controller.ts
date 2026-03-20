@@ -85,6 +85,11 @@ export function useLoginPageController() {
       const response = await loginWithEmail(result.data.email, result.data.password, autoLogin);
 
       if (response.success) {
+        if (response.onboardingRequired) {
+          router.replace(response.onboardingRoute || "/onboarding");
+          return;
+        }
+
         if (response.requiresOrgSelection) {
           router.replace("/select-organization");
         } else {

@@ -405,6 +405,25 @@ model auth_token {
   @@index([token])
 }
 
+model auth_flow_state {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind                 String    @db.VarChar
+  tokenHash            String    @unique @map("token_hash") @db.VarChar
+  userId               String?   @map("user_id") @db.Uuid
+  accessToken          String?   @map("access_token")
+  refreshToken         String?   @map("refresh_token")
+  requiresOrgSelection Boolean?  @default(false) @map("requires_org_selection")
+  kakaoId              String?   @map("kakao_id") @db.VarChar
+  email                String?   @db.VarChar
+  name                 String?   @db.VarChar
+  profileImage         String?   @map("profile_image") @db.VarChar
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  consumedAt           DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  @@index([kind, expiresAt], map: "idx_auth_flow_state_kind_expires_at")
+}
+
 model alimtalk_log {
   id             Int       @id @default(autoincrement())
   organizationId String?   @map("organization_id") @db.Uuid

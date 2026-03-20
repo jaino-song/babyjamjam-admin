@@ -29,14 +29,59 @@ export interface UserValidationResult {
     requiresOrgSelection?: boolean;
 }
 
-interface StoredAuthCode {
-    tokens: {
-        accessToken: string;
-        refreshToken: string;
-        requiresOrgSelection?: boolean;
-    };
-    expiresAt: number;
+export interface PendingKakaoSignupProfile {
+    email?: string;
+    name?: string;
+    profileImage?: string;
 }
+
+export interface PendingAccountOnboardingProfile extends PendingKakaoSignupProfile {
+    phone?: string;
+    birthDate?: string;
+    organizationId?: string;
+    role?: string;
+}
+
+export interface PendingKakaoSignupValidationResult {
+    onboardingRequired: true;
+    onboardingKind: "kakao_signup";
+    pendingSignupData: KakaoData;
+}
+
+export interface PendingAccountOnboardingValidationResult {
+    onboardingRequired: true;
+    onboardingKind: "account_completion";
+    userId: string;
+    prefill: PendingAccountOnboardingProfile;
+}
+
+export type KakaoUserValidationResult =
+    | UserValidationResult
+    | PendingKakaoSignupValidationResult
+    | PendingAccountOnboardingValidationResult;
+
+export type EmailUserValidationResult =
+    | UserValidationResult
+    | PendingAccountOnboardingValidationResult;
+
+export interface PendingKakaoSignupExchangeResult {
+    onboardingRequired: true;
+    onboardingRoute: "/kakao/onboarding";
+    pendingSignupToken: string;
+    prefill: PendingKakaoSignupProfile;
+}
+
+export interface PendingAccountOnboardingExchangeResult {
+    onboardingRequired: true;
+    onboardingRoute: "/onboarding";
+    pendingAccountOnboardingToken: string;
+}
+
+export type TokenExchangeResult = {
+    accessToken: string;
+    refreshToken: string;
+    requiresOrgSelection?: boolean;
+} | PendingKakaoSignupExchangeResult | PendingAccountOnboardingExchangeResult;
 
 export interface PasswordValidationResult {
     valid: boolean;
@@ -52,7 +97,6 @@ export interface RegistrationResult {
 
 @Injectable()
 export class AuthService {
-    private authCodes = new Map<string, StoredAuthCode>();
     private readonly logger = new Logger(AuthService.name);
     private readonly BCRYPT_SALT_ROUNDS = 12;
     private readonly FRONTEND_URL: string;
@@ -70,15 +114,6 @@ export class AuthService {
             this.FRONTEND_URL = process.env['PREVIEW_FRONTEND_URL'] ?? "http://localhost:3000";
         } else {
             this.FRONTEND_URL = process.env['DEVELOPMENT_FRONTEND_URL'] ?? "http://localhost:3000";
-        }
-    }
-
-    private cleanupExpiredCodes() {
-        const now = Date.now();
-        for (const [code, stored] of this.authCodes.entries()) {
-            if (now > stored.expiresAt) {
-                this.authCodes.delete(code);
-            }
         }
     }
 
@@ -111,54 +146,71 @@ export class AuthService {
         return { accessToken, refreshToken };
     }
 
-    async validateKakaoUser(kakaoData: KakaoData): Promise<UserValidationResult> {
-        // First, try to find user by kakaoId
-        let user = await this.prisma.user.findFirst({
-            where: {
-                kakaoId: kakaoData.kakaoId
+    private getPendingAccountOnboardingProfile(
+        user: {
+            id: string;
+            email: string | null;
+            name: string | null;
+            profileImage: string | null;
+            phone: string | null;
+            birthDate: string | null;
+            role: string | null;
+        },
+        userOrgs: Array<{ organizationId: string; role: string | null }>,
+    ): PendingAccountOnboardingProfile | null {
+        const [firstOrg] = userOrgs;
+
+        const needsPhone = !user.phone;
+        const needsBirthDate = !user.birthDate;
+        const needsRole = !user.role;
+        const needsOrganization = userOrgs.length === 0;
+        const needsOrgRole = userOrgs.length === 1 && !firstOrg?.role;
+
+        if (!needsPhone && !needsBirthDate && !needsRole && !needsOrganization && !needsOrgRole) {
+            return null;
+        }
+
+        return {
+            email: user.email ?? undefined,
+            name: user.name ?? undefined,
+            profileImage: user.profileImage ?? undefined,
+            phone: user.phone ?? undefined,
+            birthDate: user.birthDate ?? undefined,
+            organizationId: userOrgs.length === 1 ? firstOrg?.organizationId : undefined,
+            role: firstOrg?.role ?? user.role ?? undefined,
+        };
+    }
+
+    private async createLoginResultForUser(user: {
+        id: string;
+        email: string | null;
+        name: string | null;
+        profileImage: string | null;
+        phone: string | null;
+        birthDate: string | null;
+        role: string | null;
+    }): Promise<UserValidationResult | PendingAccountOnboardingValidationResult> {
+        const userOrgs = await this.prisma.user_organization.findMany({
+            where: { userId: user.id },
+            select: {
+                organizationId: true,
+                role: true,
             },
         });
 
-        if (!user) {
-            // If not found by kakaoId, check if a user exists with the same email
-            // This enables account linking: email-registered users can login with Kakao
-            if (kakaoData.email) {
-                const existingUserByEmail = await this.prisma.user.findUnique({
-                    where: { email: kakaoData.email.toLowerCase() },
-                });
+        const pendingAccountOnboardingProfile = user.role === "owner"
+            ? null
+            : this.getPendingAccountOnboardingProfile(user, userOrgs);
 
-                if (existingUserByEmail) {
-                    // Link Kakao account to existing email-based account
-                    this.logger.log(`Linking Kakao account to existing email user: ${existingUserByEmail.id}`);
-                    user = await this.prisma.user.update({
-                        where: { id: existingUserByEmail.id },
-                        data: {
-                            kakaoId: kakaoData.kakaoId,
-                            authProvider: existingUserByEmail.passwordHash ? 'both' : 'kakao',
-                            // Update profile info from Kakao if not already set
-                            name: existingUserByEmail.name || kakaoData.name,
-                            profileImage: existingUserByEmail.profileImage || kakaoData.profileImage,
-                        },
-                    });
-                }
-            }
-
-            // If still no user found, create a new one
-            if (!user) {
-                user = await this.prisma.user.create({
-                    data: {
-                        kakaoId: kakaoData.kakaoId,
-                        email: kakaoData.email?.toLowerCase(),
-                        name: kakaoData.name,
-                        profileImage: kakaoData.profileImage,
-                        role: "user",
-                        authProvider: "kakao",
-                    },
-                });
-            }
+        if (pendingAccountOnboardingProfile) {
+            return {
+                onboardingRequired: true,
+                onboardingKind: "account_completion",
+                userId: user.id,
+                prefill: pendingAccountOnboardingProfile,
+            };
         }
 
-        // Owners have implicit access to ALL organizations, so they always need to select
         if (user.role === 'owner') {
             const payload = {
                 sub: user.id,
@@ -181,14 +233,9 @@ export class AuthService {
                 user: user.id,
                 accessToken,
                 refreshToken,
-                requiresOrgSelection: true, // Owners always need to select an organization
+                requiresOrgSelection: true,
             };
         }
-
-        // Regular users: check organization membership
-        const userOrgs = await this.prisma.user_organization.findMany({
-            where: { userId: user.id }
-        });
 
         let organizationId: string | undefined;
         let orgRole: string | undefined;
@@ -202,7 +249,6 @@ export class AuthService {
         } else if (userOrgs.length > 1) {
             requiresOrgSelection = true;
         } else if (userOrgs.length === 0) {
-            // User has no organization membership - still need to handle this
             requiresOrgSelection = true;
         }
 
@@ -238,6 +284,56 @@ export class AuthService {
             refreshToken,
             requiresOrgSelection: requiresOrgSelection || undefined,
         };
+    }
+
+    async validateKakaoUser(kakaoData: KakaoData): Promise<KakaoUserValidationResult> {
+        // First, try to find user by kakaoId
+        let user = await this.prisma.user.findFirst({
+            where: {
+                kakaoId: kakaoData.kakaoId
+            },
+        });
+
+        if (!user) {
+            // If not found by kakaoId, check if a user exists with the same email
+            // This enables account linking: email-registered users can login with Kakao
+            if (kakaoData.email) {
+                const existingUserByEmail = await this.prisma.user.findUnique({
+                    where: { email: kakaoData.email.toLowerCase() },
+                });
+
+                if (existingUserByEmail) {
+                    // Link Kakao account to existing email-based account
+                    this.logger.log(`Linking Kakao account to existing email user: ${existingUserByEmail.id}`);
+                    user = await this.prisma.user.update({
+                        where: { id: existingUserByEmail.id },
+                        data: {
+                            kakaoId: kakaoData.kakaoId,
+                            authProvider: existingUserByEmail.passwordHash ? 'both' : 'kakao',
+                            // Update profile info from Kakao if not already set
+                            name: existingUserByEmail.name || kakaoData.name,
+                            profileImage: existingUserByEmail.profileImage || kakaoData.profileImage,
+                        },
+                    });
+                }
+            }
+
+            // If still no user found, start a pending Kakao onboarding flow instead.
+            if (!user) {
+                return {
+                    onboardingRequired: true,
+                    onboardingKind: "kakao_signup",
+                    pendingSignupData: {
+                        kakaoId: kakaoData.kakaoId,
+                        email: kakaoData.email?.toLowerCase(),
+                        name: kakaoData.name,
+                        profileImage: kakaoData.profileImage,
+                    },
+                };
+            }
+        }
+
+        return this.createLoginResultForUser(user);
     }
 
     async selectOrganization(userid: string, organizationid: string): Promise<{ accessToken: string; refreshToken: string }> {
@@ -351,33 +447,566 @@ export class AuthService {
         }));
     }
 
-    async createAuthCode(tokens: { accessToken: string; refreshToken: string; requiresOrgSelection?: boolean }): Promise<string> {
-        const code = crypto.randomBytes(32).toString("hex");
+    private async pruneAuthFlowStates(): Promise<void> {
+        try {
+            await this.prisma.auth_flow_state.deleteMany({
+                where: {
+                    OR: [
+                        { expiresAt: { lt: new Date() } },
+                        {
+                            consumedAt: { not: null },
+                            createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+                        },
+                    ],
+                },
+            });
+        } catch (error) {
+            this.logger.warn(`Failed to prune auth flow states: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
 
-        this.authCodes.set(code, {
-            tokens,
-            expiresAt: Date.now() + 30 * 1000,
+    private async createAuthFlowState(params: {
+        kind: string;
+        token: string;
+        expiresAt: Date;
+        userId?: string;
+        accessToken?: string;
+        refreshToken?: string;
+        requiresOrgSelection?: boolean;
+        kakaoData?: KakaoData;
+    }): Promise<void> {
+        await this.prisma.auth_flow_state.create({
+            data: {
+                kind: params.kind,
+                tokenHash: this.hashToken(params.token),
+                userId: params.userId,
+                accessToken: params.accessToken,
+                refreshToken: params.refreshToken,
+                requiresOrgSelection: params.requiresOrgSelection ?? false,
+                kakaoId: params.kakaoData?.kakaoId,
+                email: params.kakaoData?.email,
+                name: params.kakaoData?.name,
+                profileImage: params.kakaoData?.profileImage,
+                expiresAt: params.expiresAt,
+            },
+        });
+    }
+
+    private async getAuthFlowStateOrThrow(token: string, allowedKinds: string[]) {
+        const state = await this.prisma.auth_flow_state.findUnique({
+            where: { tokenHash: this.hashToken(token) },
         });
 
-        this.cleanupExpiredCodes();
+        if (!state || !allowedKinds.includes(state.kind)) {
+            throw new UnauthorizedException("Invalid authorization code");
+        }
+
+        if (state.consumedAt) {
+            throw new UnauthorizedException("Authorization code already used");
+        }
+
+        if (state.expiresAt.getTime() < Date.now()) {
+            throw new UnauthorizedException("Authorization code expired");
+        }
+
+        return state;
+    }
+
+    private async consumeAuthFlowStateOrThrow(token: string, allowedKinds: string[]) {
+        const hashedToken = this.hashToken(token);
+
+        return this.prisma.$transaction(async (tx) => {
+            const state = await tx.auth_flow_state.findUnique({
+                where: { tokenHash: hashedToken },
+            });
+
+            if (!state || !allowedKinds.includes(state.kind)) {
+                throw new UnauthorizedException("Invalid authorization code");
+            }
+
+            if (state.consumedAt) {
+                throw new UnauthorizedException("Authorization code already used");
+            }
+
+            if (state.expiresAt.getTime() < Date.now()) {
+                throw new UnauthorizedException("Authorization code expired");
+            }
+
+            const consumeResult = await tx.auth_flow_state.updateMany({
+                where: {
+                    id: state.id,
+                    consumedAt: null,
+                },
+                data: {
+                    consumedAt: new Date(),
+                },
+            });
+
+            if (consumeResult.count !== 1) {
+                throw new UnauthorizedException("Authorization code already used");
+            }
+
+            return state;
+        });
+    }
+
+    private async createPendingKakaoSignupState(kakaoData: KakaoData): Promise<string> {
+        const pendingSignupToken = this.generateToken();
+
+        await this.createAuthFlowState({
+            kind: "pending_kakao_signup",
+            token: pendingSignupToken,
+            kakaoData,
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        });
+
+        return pendingSignupToken;
+    }
+
+    private async createPendingAccountOnboardingState(userId: string): Promise<string> {
+        const pendingOnboardingToken = this.generateToken();
+
+        await this.createAuthFlowState({
+            kind: "pending_account_onboarding",
+            token: pendingOnboardingToken,
+            userId,
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        });
+
+        return pendingOnboardingToken;
+    }
+
+    private async getPendingKakaoSignupOrThrow(token: string) {
+        return this.getAuthFlowStateOrThrow(token, ["pending_kakao_signup"]);
+    }
+
+    private async getPendingAccountOnboardingOrThrow(token: string) {
+        return this.getAuthFlowStateOrThrow(token, ["pending_account_onboarding"]);
+    }
+
+    async createAuthCode(tokens: { accessToken: string; refreshToken: string; requiresOrgSelection?: boolean }): Promise<string> {
+        await this.pruneAuthFlowStates();
+
+        const code = this.generateToken();
+        await this.createAuthFlowState({
+            kind: "auth_code",
+            token: code,
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            requiresOrgSelection: tokens.requiresOrgSelection,
+            expiresAt: new Date(Date.now() + 30 * 1000),
+        });
 
         return code;
     }
 
-    async exchangeCodeForTokens(code: string): Promise<{ accessToken: string; refreshToken: string; requiresOrgSelection?: boolean }> {
-        const stored = this.authCodes.get(code);
+    async createPendingSignupCode(kakaoData: KakaoData): Promise<string> {
+        await this.pruneAuthFlowStates();
 
-        if (!stored) {
-            throw new UnauthorizedException("Invalid authorization code");
+        const code = this.generateToken();
+        await this.createAuthFlowState({
+            kind: "pending_kakao_signup_exchange",
+            token: code,
+            kakaoData,
+            expiresAt: new Date(Date.now() + 30 * 1000),
+        });
+
+        return code;
+    }
+
+    async createPendingAccountOnboardingCode(userId: string): Promise<string> {
+        await this.pruneAuthFlowStates();
+
+        const code = this.generateToken();
+        await this.createAuthFlowState({
+            kind: "pending_account_onboarding_exchange",
+            token: code,
+            userId,
+            expiresAt: new Date(Date.now() + 30 * 1000),
+        });
+
+        return code;
+    }
+
+    async startPendingAccountOnboarding(userId: string): Promise<string> {
+        await this.pruneAuthFlowStates();
+        return this.createPendingAccountOnboardingState(userId);
+    }
+
+    async exchangeCodeForTokens(code: string): Promise<TokenExchangeResult> {
+        const stored = await this.consumeAuthFlowStateOrThrow(code, [
+            "auth_code",
+            "pending_kakao_signup_exchange",
+            "pending_account_onboarding_exchange",
+        ]);
+
+        if (stored.kind === "auth_code") {
+            if (!stored.accessToken || !stored.refreshToken) {
+                throw new UnauthorizedException("Authorization code payload is invalid");
+            }
+
+            return {
+                accessToken: stored.accessToken,
+                refreshToken: stored.refreshToken,
+                requiresOrgSelection: stored.requiresOrgSelection || undefined,
+            };
         }
 
-        if (Date.now() > stored.expiresAt) {
-            this.authCodes.delete(code);
-            throw new UnauthorizedException("Authorization code expired");
+        if (stored.kind === "pending_account_onboarding_exchange") {
+            if (!stored.userId) {
+                throw new UnauthorizedException("Pending account onboarding payload is invalid");
+            }
+
+            const pendingAccountOnboardingToken = await this.createPendingAccountOnboardingState(stored.userId);
+
+            return {
+                onboardingRequired: true,
+                onboardingRoute: "/onboarding",
+                pendingAccountOnboardingToken,
+            };
         }
 
-        this.authCodes.delete(code);
-        return stored.tokens;
+        if (!stored.kakaoId) {
+            throw new UnauthorizedException("Pending Kakao signup payload is invalid");
+        }
+
+        const pendingSignupData: KakaoData = {
+            kakaoId: stored.kakaoId,
+            email: stored.email ?? undefined,
+            name: stored.name ?? undefined,
+            profileImage: stored.profileImage ?? undefined,
+        };
+        const pendingSignupToken = await this.createPendingKakaoSignupState(pendingSignupData);
+
+        return {
+            onboardingRequired: true,
+            onboardingRoute: "/kakao/onboarding",
+            pendingSignupToken,
+            prefill: {
+                email: stored.email ?? undefined,
+                name: stored.name ?? undefined,
+                profileImage: stored.profileImage ?? undefined,
+            },
+        };
+    }
+
+    async getPendingKakaoSignup(token: string): Promise<PendingKakaoSignupProfile> {
+        const stored = await this.getPendingKakaoSignupOrThrow(token);
+
+        return {
+            email: stored.email ?? undefined,
+            name: stored.name ?? undefined,
+            profileImage: stored.profileImage ?? undefined,
+        };
+    }
+
+    async getPendingAccountOnboarding(token: string): Promise<PendingAccountOnboardingProfile> {
+        const stored = await this.getPendingAccountOnboardingOrThrow(token);
+
+        if (!stored.userId) {
+            throw new UnauthorizedException("Pending account onboarding payload is invalid");
+        }
+
+        const user = await this.prisma.user.findUnique({
+            where: { id: stored.userId },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                profileImage: true,
+                phone: true,
+                birthDate: true,
+                role: true,
+            },
+        });
+
+        if (!user) {
+            throw new UnauthorizedException("Pending account onboarding user not found");
+        }
+
+        const userOrgs = await this.prisma.user_organization.findMany({
+            where: { userId: user.id },
+            select: {
+                organizationId: true,
+                role: true,
+            },
+        });
+
+        return this.getPendingAccountOnboardingProfile(user, userOrgs) ?? {
+            email: user.email ?? undefined,
+            name: user.name ?? undefined,
+            profileImage: user.profileImage ?? undefined,
+            phone: user.phone ?? undefined,
+            birthDate: user.birthDate ?? undefined,
+            organizationId: userOrgs.length === 1 ? userOrgs[0]?.organizationId : undefined,
+            role: userOrgs.length === 1 ? userOrgs[0]?.role ?? user.role ?? undefined : user.role ?? undefined,
+        };
+    }
+
+    async completeKakaoOnboarding(
+        token: string,
+        phone: string,
+        birthDate: string,
+        organizationId: string,
+        role: string,
+    ): Promise<UserValidationResult> {
+        const hashedToken = this.hashToken(token);
+
+        const onboardingResult = await this.prisma.$transaction(async (tx) => {
+            const stored = await tx.auth_flow_state.findUnique({
+                where: { tokenHash: hashedToken },
+            });
+
+            if (!stored || stored.kind !== 'pending_kakao_signup') {
+                throw new UnauthorizedException('Pending Kakao signup not found');
+            }
+
+            if (stored.consumedAt) {
+                throw new UnauthorizedException('Pending Kakao signup already used');
+            }
+
+            if (stored.expiresAt.getTime() < Date.now()) {
+                throw new UnauthorizedException('Pending Kakao signup expired');
+            }
+
+            if (!stored.kakaoId) {
+                throw new UnauthorizedException('Pending Kakao signup payload is invalid');
+            }
+
+            const consumeResult = await tx.auth_flow_state.updateMany({
+                where: {
+                    id: stored.id,
+                    consumedAt: null,
+                },
+                data: {
+                    consumedAt: new Date(),
+                },
+            });
+
+            if (consumeResult.count !== 1) {
+                throw new UnauthorizedException('Pending Kakao signup already used');
+            }
+
+            const organization = await tx.organization.findUnique({
+                where: { id: organizationId },
+                select: { id: true },
+            });
+            if (!organization) {
+                throw new BadRequestException('유효하지 않은 지점입니다.');
+            }
+
+            const pendingSignupData: KakaoData = {
+                kakaoId: stored.kakaoId,
+                email: stored.email ?? undefined,
+                name: stored.name ?? undefined,
+                profileImage: stored.profileImage ?? undefined,
+            };
+
+            let existingUser = await tx.user.findFirst({
+                where: { kakaoId: pendingSignupData.kakaoId },
+            });
+
+            const phoneOwner = await tx.user.findFirst({
+                where: { phone },
+            });
+            if (phoneOwner && phoneOwner.id !== existingUser?.id) {
+                throw new BadRequestException('이미 존재하는 사용자 입니다.');
+            }
+
+            if (!existingUser) {
+                existingUser = await tx.user.create({
+                    data: {
+                        kakaoId: pendingSignupData.kakaoId,
+                        email: pendingSignupData.email?.toLowerCase(),
+                        name: pendingSignupData.name,
+                        profileImage: pendingSignupData.profileImage,
+                        phone,
+                        birthDate,
+                        role,
+                        authProvider: 'kakao',
+                    },
+                });
+            } else {
+                existingUser = await tx.user.update({
+                    where: { id: existingUser.id },
+                    data: {
+                        email: existingUser.email ?? pendingSignupData.email?.toLowerCase(),
+                        name: existingUser.name ?? pendingSignupData.name,
+                        profileImage: existingUser.profileImage ?? pendingSignupData.profileImage,
+                        phone,
+                        birthDate,
+                        role,
+                        authProvider: existingUser.passwordHash ? 'both' : 'kakao',
+                    },
+                });
+            }
+
+            const membership = await tx.user_organization.findFirst({
+                where: {
+                    userId: existingUser.id,
+                    organizationId,
+                },
+            });
+
+            if (!membership) {
+                await tx.user_organization.create({
+                    data: {
+                        userId: existingUser.id,
+                        organizationId,
+                        role,
+                    },
+                });
+            }
+
+            return {
+                kakaoData: {
+                    kakaoId: pendingSignupData.kakaoId,
+                    email: existingUser.email ?? pendingSignupData.email,
+                    name: existingUser.name ?? pendingSignupData.name,
+                    profileImage: existingUser.profileImage ?? pendingSignupData.profileImage,
+                },
+            };
+        });
+
+        const loginResult = await this.validateKakaoUser(onboardingResult.kakaoData);
+
+        if ('onboardingRequired' in loginResult && loginResult.onboardingRequired) {
+            throw new UnauthorizedException('Kakao onboarding completion failed');
+        }
+
+        return loginResult as UserValidationResult;
+    }
+
+    async completeAccountOnboarding(
+        token: string,
+        phone: string,
+        birthDate: string,
+        organizationId: string,
+        role: string,
+    ): Promise<UserValidationResult> {
+        const hashedToken = this.hashToken(token);
+
+        const userId = await this.prisma.$transaction(async (tx) => {
+            const stored = await tx.auth_flow_state.findUnique({
+                where: { tokenHash: hashedToken },
+            });
+
+            if (!stored || stored.kind !== "pending_account_onboarding" || !stored.userId) {
+                throw new UnauthorizedException("Pending account onboarding not found");
+            }
+
+            if (stored.consumedAt) {
+                throw new UnauthorizedException("Pending account onboarding already used");
+            }
+
+            if (stored.expiresAt.getTime() < Date.now()) {
+                throw new UnauthorizedException("Pending account onboarding expired");
+            }
+
+            const consumeResult = await tx.auth_flow_state.updateMany({
+                where: {
+                    id: stored.id,
+                    consumedAt: null,
+                },
+                data: {
+                    consumedAt: new Date(),
+                },
+            });
+
+            if (consumeResult.count !== 1) {
+                throw new UnauthorizedException("Pending account onboarding already used");
+            }
+
+            const user = await tx.user.findUnique({
+                where: { id: stored.userId },
+                select: {
+                    id: true,
+                    passwordHash: true,
+                },
+            });
+
+            if (!user) {
+                throw new UnauthorizedException("Pending account onboarding user not found");
+            }
+
+            const organization = await tx.organization.findUnique({
+                where: { id: organizationId },
+                select: { id: true },
+            });
+            if (!organization) {
+                throw new BadRequestException("유효하지 않은 지점입니다.");
+            }
+
+            const phoneOwner = await tx.user.findFirst({
+                where: { phone },
+                select: { id: true },
+            });
+            if (phoneOwner && phoneOwner.id !== user.id) {
+                throw new BadRequestException("이미 존재하는 사용자 입니다.");
+            }
+
+            await tx.user.update({
+                where: { id: user.id },
+                data: {
+                    phone,
+                    birthDate,
+                    role,
+                },
+            });
+
+            const membership = await tx.user_organization.findFirst({
+                where: {
+                    userId: user.id,
+                    organizationId,
+                },
+                select: {
+                    id: true,
+                    role: true,
+                },
+            });
+
+            if (!membership) {
+                await tx.user_organization.create({
+                    data: {
+                        userId: user.id,
+                        organizationId,
+                        role,
+                    },
+                });
+            } else if (membership.role !== role) {
+                await tx.user_organization.update({
+                    where: { id: membership.id },
+                    data: { role },
+                });
+            }
+
+            return user.id;
+        });
+
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                profileImage: true,
+                phone: true,
+                birthDate: true,
+                role: true,
+            },
+        });
+
+        if (!user) {
+            throw new UnauthorizedException("User not found after completing onboarding");
+        }
+
+        const loginResult = await this.createLoginResultForUser(user);
+
+        if ("onboardingRequired" in loginResult && loginResult.onboardingRequired) {
+            throw new UnauthorizedException("Account onboarding completion failed");
+        }
+
+        return loginResult as UserValidationResult;
     }
 
     async refreshTokens(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
@@ -601,7 +1230,7 @@ export class AuthService {
             data: {
                 userId: user.id,
                 organizationId: organizationId,
-                role: role,
+                role,
             },
         });
 
@@ -694,7 +1323,7 @@ export class AuthService {
     async validateEmailPassword(
         email: string,
         password: string,
-    ): Promise<UserValidationResult | null> {
+    ): Promise<EmailUserValidationResult | null> {
         const user = await this.prisma.user.findUnique({
             where: { email: email.toLowerCase() },
         });
@@ -726,87 +1355,7 @@ export class AuthService {
             });
         }
 
-        // Generate tokens (same logic as validateKakaoUser)
-        // Owners have implicit access to ALL organizations, so they always need to select
-        if (user.role === 'owner') {
-            const payload = {
-                sub: user.id,
-                role: user.role,
-            };
-
-            const signOptions = { expiresIn: "30d" };
-            const refreshSignOptions = { expiresIn: "7d" };
-
-            const refreshToken = await this.jwt.signAsync(
-                { ...payload, type: 'refresh' },
-                refreshSignOptions
-            );
-            const accessToken = await this.jwt.signAsync(
-                { ...payload, type: 'access' },
-                signOptions
-            );
-
-            return {
-                user: user.id,
-                accessToken,
-                refreshToken,
-                requiresOrgSelection: true, // Owners always need to select an organization
-            };
-        }
-
-        // Regular users: check organization membership
-        const userOrgs = await this.prisma.user_organization.findMany({
-            where: { userId: user.id }
-        });
-
-        let organizationId: string | undefined;
-        let orgRole: string | undefined;
-        let requiresOrgSelection = false;
-
-        const [firstOrg] = userOrgs;
-
-        if (userOrgs.length === 1 && firstOrg) {
-            organizationId = firstOrg.organizationId;
-            orgRole = firstOrg.role ?? undefined;
-        } else if (userOrgs.length > 1) {
-            requiresOrgSelection = true;
-        } else if (userOrgs.length === 0) {
-            // User has no organization membership - still need to handle this
-            requiresOrgSelection = true;
-        }
-
-        const payload = {
-            sub: user.id,
-            role: user.role,
-            ...(organizationId && { organizationId, orgRole }),
-        };
-
-        const privilegedRoles = ["owner", "admin", "manager"];
-        const isPrivileged = user.role !== null && privilegedRoles.includes(user.role);
-
-        const signOptions = isPrivileged
-            ? { expiresIn: "30d" }
-            : { expiresIn: "3d" };
-
-        const refreshSignOptions = isPrivileged
-            ? { expiresIn: "7d" }
-            : { expiresIn: "1d" };
-
-        const refreshToken = await this.jwt.signAsync(
-            { ...payload, type: 'refresh' },
-            refreshSignOptions
-        );
-        const accessToken = await this.jwt.signAsync(
-            { ...payload, type: 'access' },
-            signOptions
-        );
-
-        return {
-            user: user.id,
-            accessToken,
-            refreshToken,
-            requiresOrgSelection: requiresOrgSelection || undefined,
-        };
+        return this.createLoginResultForUser(user);
     }
 
     /**
