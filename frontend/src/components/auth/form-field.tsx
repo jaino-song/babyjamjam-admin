@@ -63,6 +63,7 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
         helperText={error && !hideErrorMessage && !shouldShowInlineError ? error : undefined}
         helperTextClassName="text-sm animate-fade-in"
         helperTextId={errorId}
+        containerClassName="gap-2"
         inputClassName={cn(AUTH_FIELD_CONTROL_CLASS_NAME, className)}
         labelTrailing={trailingContent}
         dataComponent="form-field"
