@@ -20,6 +20,7 @@ import { getRoleLabel } from "@/lib/constants/roles";
 import { settingsApi } from "@/services/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -71,7 +72,8 @@ const THEME_OPTIONS = [
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("profile");
   const [selectedTheme, setSelectedTheme] = useState<string>("light");
-  const { data: user } = useGetAuthUser();
+  const authUserQuery = useGetAuthUser();
+  const { data: user } = authUserQuery;
   const queryClient = useQueryClient();
   const notificationPreferencesQuery = useQuery({
     queryKey: ["settings", "notification-preferences"],
@@ -111,6 +113,7 @@ export default function SettingsPage() {
   };
 
   const accountInitials = user?.name ? user.name.slice(0, 2) : "사용";
+  const isProfileSummaryLoading = authUserQuery.isLoading && !user;
 
   return (
     <section data-component="settings" className="space-y-6">
@@ -143,33 +146,62 @@ export default function SettingsPage() {
                       data-component="settings-profile-summary-avatar"
                       className="h-16 w-16 rounded-full border border-[hsl(var(--v3-border))]/60 bg-[hsl(var(--v3-primary))]/10"
                     >
-                      <AvatarImage src={user?.profileImage || ""} alt={user?.name || "사용자"} />
-                      <AvatarFallback className="bg-[hsl(var(--v3-primary))]/10 text-[hsl(var(--v3-primary))] text-lg font-bold">
-                        {accountInitials}
-                      </AvatarFallback>
+                      {!isProfileSummaryLoading ? (
+                        <>
+                          <AvatarImage src={user?.profileImage || ""} alt={user?.name || "사용자"} />
+                          <AvatarFallback className="bg-[hsl(var(--v3-primary))]/10 text-[hsl(var(--v3-primary))] text-lg font-bold">
+                            {accountInitials}
+                          </AvatarFallback>
+                        </>
+                      ) : (
+                        <AvatarFallback className="bg-[hsl(var(--v3-primary))]/10 p-0">
+                          <Skeleton className="h-full w-full rounded-full bg-[hsl(var(--v3-primary))]/15" />
+                        </AvatarFallback>
+                      )}
                     </Avatar>
                     <div data-component="settings-profile-summary-text">
-                      <p className="text-sm font-medium text-foreground">
-                        {user?.name || "사용자"}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {getRoleLabel(user?.role || "user")}
-                      </p>
+                      {isProfileSummaryLoading ? (
+                        <div className="space-y-2 pt-1">
+                          <Skeleton className="h-4 w-20 bg-[hsl(var(--v3-border))]/70" />
+                          <Skeleton className="h-3 w-12 bg-[hsl(var(--v3-border))]/55" />
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-sm font-medium text-foreground">
+                            {user?.name || "사용자"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {getRoleLabel(user?.role || "user")}
+                          </p>
+                        </>
+                      )}
                     </div>
                   </div>
 
                   <div data-component="settings-profile-readonly-grid" className="flex flex-col gap-4">
                     <div data-component="settings-profile-email-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
                       <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">이메일</p>
-                      <p className="mt-1 text-sm font-medium text-foreground break-all">{user?.email || "-"}</p>
+                      {isProfileSummaryLoading ? (
+                        <Skeleton className="mt-2 h-4 w-[78%] bg-[hsl(var(--v3-border))]/60" />
+                      ) : (
+                        <p className="mt-1 text-sm font-medium text-foreground break-all">{user?.email || "-"}</p>
+                      )}
                     </div>
                     <div data-component="settings-profile-phone-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
                       <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">전화번호</p>
-                      <p className="mt-1 text-sm font-medium text-foreground">{user?.phone || "-"}</p>
+                      {isProfileSummaryLoading ? (
+                        <Skeleton className="mt-2 h-4 w-28 bg-[hsl(var(--v3-border))]/60" />
+                      ) : (
+                        <p className="mt-1 text-sm font-medium text-foreground">{user?.phone || "-"}</p>
+                      )}
                     </div>
                     <div data-component="settings-profile-organization-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
                       <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">지점</p>
-                      <p className="mt-1 text-sm font-medium text-foreground">{user?.organizationName || "-"}</p>
+                      {isProfileSummaryLoading ? (
+                        <Skeleton className="mt-2 h-4 w-24 bg-[hsl(var(--v3-border))]/60" />
+                      ) : (
+                        <p className="mt-1 text-sm font-medium text-foreground">{user?.organizationName || "-"}</p>
+                      )}
                     </div>
                   </div>
                 </div>

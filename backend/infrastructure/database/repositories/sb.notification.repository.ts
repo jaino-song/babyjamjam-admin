@@ -62,10 +62,19 @@ export class SbNotificationRepository implements INotificationRepository {
     }
 
     async update(organizationid: string, notification: NotificationEntity): Promise<NotificationEntity> {
-        const updated = await this.prismaService.notification.update({
+        const result = await this.prismaService.notification.updateMany({
             where: { id: notification.id, organizationId: organizationid },
             data: NotificationMapper.toPrismaUpdate(notification),
         });
+        if (result.count === 0) {
+            throw new Error("Notification not found for organization");
+        }
+        const updated = await this.prismaService.notification.findFirst({
+            where: { id: notification.id, organizationId: organizationid },
+        });
+        if (!updated) {
+            throw new Error("Notification not found after update");
+        }
         return NotificationMapper.toDomain(updated);
     }
 

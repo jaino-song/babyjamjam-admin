@@ -98,6 +98,16 @@ export interface AlimtalkHistoryRecordView {
     employeeName: string | null;
 }
 
+interface ClientTriggerSource {
+    id: number;
+    name: string;
+    phone: string | null;
+    type: string | null;
+    startDate: Date | null;
+    endDate: Date | null;
+    createdAt?: Date | null;
+}
+
 @Injectable()
 export class AlimtalkTriggerService {
     constructor(
@@ -469,15 +479,7 @@ export class AlimtalkTriggerService {
 
     private buildClientJob(
         rule: AlimtalkTriggerRuleEntity,
-        client: {
-            id: number;
-            name: string;
-            phone: string | null;
-            type: string | null;
-            startDate: Date | null;
-            endDate: Date | null;
-            createdAt: Date;
-        },
+        client: ClientTriggerSource,
     ): AlimtalkTriggerJobEntity | null {
         if (!client.phone) return null;
 
@@ -562,19 +564,13 @@ export class AlimtalkTriggerService {
 
     private buildClientTemplateVariables(
         rule: AlimtalkTriggerRuleEntity,
-        client: {
-            name: string;
-            type: string | null;
-            startDate: Date | null;
-            endDate: Date | null;
-            createdAt: Date;
-        },
+        client: Pick<ClientTriggerSource, "name" | "type" | "startDate" | "endDate" | "createdAt">,
     ): Record<string, string> {
         switch (rule.templateKey) {
             case AlimtalkTriggerTemplateKey.CLIENT_WELCOME:
                 return {
                     clientName: client.name,
-                    registrationDate: this.formatDate(client.createdAt),
+                    registrationDate: this.formatDate(client.createdAt ?? null),
                     serviceType: client.type ?? "방문요양",
                 };
             case AlimtalkTriggerTemplateKey.SERVICE_START_REMINDER:
@@ -596,11 +592,11 @@ export class AlimtalkTriggerService {
 
     private getClientAnchorDate(
         eventType: AlimtalkTriggerEventType,
-        client: { createdAt: Date; startDate: Date | null; endDate: Date | null },
+        client: Pick<ClientTriggerSource, "createdAt" | "startDate" | "endDate">,
     ): Date | null {
         switch (eventType) {
             case AlimtalkTriggerEventType.CLIENT_CREATED:
-                return client.createdAt;
+                return client.createdAt ?? null;
             case AlimtalkTriggerEventType.SERVICE_START:
                 return client.startDate;
             case AlimtalkTriggerEventType.SERVICE_END:

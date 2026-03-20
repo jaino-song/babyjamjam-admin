@@ -61,16 +61,28 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
     }
 
     async update(organizationid: string, schedule: EmployeeScheduleEntity): Promise<EmployeeScheduleEntity> {
-        const updated = await this.prismaService.employee_schedule.update({
+        const result = await this.prismaService.employee_schedule.updateMany({
             where: { id: schedule.id, organizationId: organizationid },
             data: EmployeeScheduleMapper.toPrismaUpdate(schedule),
         });
+        if (result.count === 0) {
+            throw new Error("Employee schedule not found for organization");
+        }
+        const updated = await this.prismaService.employee_schedule.findFirst({
+            where: { id: schedule.id, organizationId: organizationid },
+        });
+        if (!updated) {
+            throw new Error("Employee schedule not found after update");
+        }
         return EmployeeScheduleMapper.toDomain(updated);
     }
 
     async delete(organizationid: string, id: number): Promise<void> {
-        await this.prismaService.employee_schedule.delete({
+        const result = await this.prismaService.employee_schedule.deleteMany({
             where: { id, organizationId: organizationid },
         });
+        if (result.count === 0) {
+            throw new Error("Employee schedule not found for organization");
+        }
     }
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Bell,
@@ -10,10 +11,11 @@ import {
   EllipsisVertical,
   KeyRound,
   Landmark,
-  MessageSquare,
+  MessageCircle,
   ShieldCheck,
   Sparkles,
   UserPlus,
+  UserKey,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -31,6 +33,7 @@ import {
 } from "@/components/app/v3";
 import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
 import { VoucherPriceUploadForm } from "@/components/app/settings/VoucherPriceUploadForm";
+import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { TagPill } from "@/components/app/ui/tag-pill";
@@ -40,6 +43,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { getSystemAdminUsers, type SystemAdminUser } from "@/lib/api/users";
 import { cn } from "@/lib/utils";
 
 type AdminSectionId = "signups" | "branches" | "accounts" | "notifications" | "subsidies";
@@ -108,6 +112,13 @@ interface SectionViewState {
   selectedRecordId: string | null;
 }
 
+type AdminTagPillVariant = "amber" | "emerald" | "sky" | "cyan" | "indigo" | "neutral";
+
+interface AdminListPill {
+  label: string;
+  variant: AdminTagPillVariant;
+}
+
 function getAdminRequestPillVariant(category: string) {
   switch (category) {
     case "signup":
@@ -119,7 +130,7 @@ function getAdminRequestPillVariant(category: string) {
   }
 }
 
-function getAdminTagPillVariant(sectionId: AdminSectionId) {
+function getAdminTagPillVariant(sectionId: AdminSectionId): AdminTagPillVariant {
   switch (sectionId) {
     case "signups":
       return "amber";
@@ -136,11 +147,90 @@ function getAdminTagPillVariant(sectionId: AdminSectionId) {
   }
 }
 
+function getAdminRolePillVariant(roleLabel: string): AdminTagPillVariant {
+  switch (roleLabel) {
+    case "오너":
+      return "emerald";
+    case "지점장":
+      return "amber";
+    case "매니저":
+      return "sky";
+    default:
+      return "neutral";
+  }
+}
+
+function getApplicantLabel(record: AdminRecord) {
+  const applicantName = record.applicantRows?.find((row) => row.label === "신청자")?.value ?? record.owner;
+  return applicantName ? `신청인: ${applicantName}` : null;
+}
+
+function usesUserAvatar(sectionId: AdminSectionId) {
+  return sectionId === "signups" || sectionId === "accounts";
+}
+
+function getBranchRequestPillVariant(category: string): AdminTagPillVariant {
+  switch (category) {
+    case "launch":
+      return "amber";
+    case "messaging":
+      return "sky";
+    case "alimtalk":
+      return "indigo";
+    default:
+      return "emerald";
+  }
+}
+
+function getBranchRequestPills(record: AdminRecord): AdminListPill[] {
+  const requestItems =
+    record.requests && record.requests.length > 0
+      ? record.requests.map((request) => ({
+          label: request.statusLabel,
+          variant: getBranchRequestPillVariant(request.category),
+        }))
+      : [{ label: record.statusLabel, variant: getBranchRequestPillVariant(record.category) }];
+
+  const seenLabels = new Set<string>();
+
+  return requestItems.filter((item) => {
+    if (seenLabels.has(item.label)) {
+      return false;
+    }
+
+    seenLabels.add(item.label);
+    return true;
+  });
+}
+
+function getListPillItems(sectionId: AdminSectionId, record: AdminRecord): AdminListPill[] {
+  if (sectionId === "branches") {
+    return getBranchRequestPills(record);
+  }
+
+  const rolePillLabel = sectionId === "accounts" ? record.listStatusLabel : null;
+  const listPillLabel = record.listBadgeLabel ?? rolePillLabel;
+
+  if (listPillLabel) {
+    return [
+      {
+        label: listPillLabel,
+        variant: rolePillLabel ? getAdminRolePillVariant(rolePillLabel) : getAdminTagPillVariant(sectionId),
+      },
+    ];
+  }
+
+  return record.tags.map((tag) => ({
+    label: tag,
+    variant: getAdminTagPillVariant(sectionId),
+  }));
+}
+
 const PERSISTENT_SYSTEM_ADMIN_STATS: readonly StatsBarItem[] = [
   { icon: UserPlus, value: 1, label: "회원가입 신청", counter: "건" },
   { icon: Building2, value: 3, label: "지점 개설 신청", counter: "건", colorIndex: 1 },
-  { icon: MessageSquare, value: 1, label: "메시지 신청", counter: "건", colorIndex: 2 },
-  { icon: Bell, value: 1, label: "알림톡 신청", counter: "건" },
+  { icon: MessageCircle, value: 1, label: "메시지 신청", counter: "건", colorIndex: 2 },
+  { icon: KakaoTalkIcon, value: 1, label: "알림톡 신청", counter: "건" },
 ] as const;
 
 const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
@@ -181,7 +271,7 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
         ],
         metrics: [
           { label: "예상 승인 시간", value: "12분", helper: "초기 템플릿 자동 연결 포함" },
-          { label: "동시 생성 계정", value: "2명", helper: "오너 1, 관리자 1" },
+          { label: "동시 생성 계정", value: "2명", helper: "오너 1, 지점장 1" },
           { label: "서류 누락", value: "0건", helper: "필수 제출 서류 검증 완료" },
           { label: "지점 상태", value: "개설 준비", helper: "본원 기준 지점 1개 생성 예정" },
         ],
@@ -509,8 +599,8 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
   {
     id: "accounts",
     label: "계정 관리",
-    icon: Users,
-    description: "오너, 관리자, 매니저 계정의 역할과 보안 상태를 한 화면에서 검토합니다.",
+    icon: UserKey,
+    description: "오너, 지점장, 매니저, 직원 계정의 역할과 보안 상태를 한 화면에서 검토합니다.",
     listTitle: "계정 관리",
     listSubtitle: "등록된 계정들을 관리할 수 있어요.",
     searchPlaceholder: "이름, 이메일, 조직, 역할 검색...",
@@ -518,93 +608,13 @@ const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
       { label: "전체", value: "all" },
       { label: "지점장", value: "branch-manager", activeClassName: "text-amber-700", indicatorClassName: "bg-amber-600" },
       { label: "매니저", value: "manager", activeClassName: "text-sky-700", indicatorClassName: "bg-sky-600" },
-      { label: "관리자", value: "admin", activeClassName: "text-emerald-700", indicatorClassName: "bg-emerald-600" },
+      { label: "직원", value: "user" },
+      { label: "오너", value: "owner", activeClassName: "text-emerald-700", indicatorClassName: "bg-emerald-600" },
     ],
-    stats: [
-      { icon: Users, value: 128, label: "전체 계정", counter: "명" },
-      { icon: ShieldCheck, value: 6, label: "오너 계정", counter: "명" },
-      { icon: KeyRound, value: 4, label: "권한 변경 대기", counter: "건", colorIndex: 1 },
-      { icon: AlertTriangle, value: 3, label: "보안 점검", counter: "건", colorIndex: 2 },
-    ],
+    stats: [],
     emptyMessage: "조건에 맞는 계정이 없습니다.",
     detailEmptyMessage: "계정을 선택하면 권한 구조와 보안 메모가 표시됩니다.",
-    records: [
-      {
-        id: "account-hq-owner",
-        title: "본사 owner 계정 정비",
-        listTitle: "정민호",
-        listSubtitle: "본사",
-        listStatusLabel: "관리자",
-        subtitle: "결재선 변경에 따른 소유권 재배치",
-        category: "admin",
-        statusLabel: "권한 변경",
-        statusVariant: "info",
-        updatedAt: "11분 전",
-        owner: "보안 담당 정민호",
-        summary: "본사 owner 2명 체계에서 단일 승인 체계로 줄이기 위한 권한 조정 요청입니다.",
-        tags: [],
-        detailRows: [
-          { label: "이름", value: "정민호" },
-          { label: "이메일", value: "hq-owner@agajamjam.kr" },
-          { label: "전화번호", value: "010-5678-1234" },
-          { label: "생년월일", value: "1985-04-12" },
-          { label: "역할", value: "관리자" },
-          { label: "인증 방식", value: "이메일" },
-          { label: "이메일 인증", value: "완료" },
-          { label: "가입일", value: "2025-06-01" },
-        ],
-      },
-      {
-        id: "account-songdo-manager",
-        title: "송도점 관리자 권한 부여",
-        listTitle: "이현지",
-        listSubtitle: "송도 3호점",
-        listStatusLabel: "지점장",
-        subtitle: "신규 지점 운영 준비에 따른 admin 승격",
-        category: "branch-manager",
-        statusLabel: "승격 검토",
-        statusVariant: "warning",
-        updatedAt: "49분 전",
-        owner: "지역 운영 리더 이현지",
-        summary: "오픈 예정 지점의 총괄 담당자를 manager에서 admin으로 조정하는 요청입니다.",
-        tags: [],
-        detailRows: [
-          { label: "이름", value: "이현지" },
-          { label: "이메일", value: "songdo.lead@agajamjam.kr" },
-          { label: "전화번호", value: "010-1234-5678" },
-          { label: "생년월일", value: "1990-08-22" },
-          { label: "역할", value: "지점장" },
-          { label: "인증 방식", value: "카카오" },
-          { label: "이메일 인증", value: "완료" },
-          { label: "가입일", value: "2025-09-15" },
-        ],
-      },
-      {
-        id: "account-bupyeong-security",
-        title: "부평점 휴면 계정 잠금",
-        listTitle: "민서현",
-        listSubtitle: "부평점",
-        listStatusLabel: "매니저",
-        subtitle: "미사용 계정과 장기 미인증 계정 동시 정리",
-        category: "manager",
-        statusLabel: "보안 점검",
-        statusVariant: "destructive",
-        updatedAt: "2시간 전",
-        owner: "품질 관리 민서현",
-        summary: "장기 미사용 계정과 최근 인증 오류가 누적된 계정을 묶어 선제 잠금이 필요합니다.",
-        tags: [],
-        detailRows: [
-          { label: "이름", value: "민서현" },
-          { label: "이메일", value: "seohyun.min@agajamjam.kr" },
-          { label: "전화번호", value: "010-3456-7890" },
-          { label: "생년월일", value: "1992-11-03" },
-          { label: "역할", value: "매니저" },
-          { label: "인증 방식", value: "카카오" },
-          { label: "이메일 인증", value: "완료" },
-          { label: "가입일", value: "2026-01-10" },
-        ],
-      },
-    ],
+    records: [],
   },
   {
     id: "subsidies",
@@ -836,12 +846,208 @@ const CATEGORY_BADGE_STYLE: Record<string, { bg: string; text: string; icon?: st
   messaging: { bg: "bg-v3-orange-light", text: "text-v3-orange" },
   alimtalk: { bg: "bg-v3-primary-light", text: "text-v3-primary" },
   notifications: { bg: "bg-indigo-100", text: "text-indigo-700", icon: "bg-indigo-500/12 text-indigo-700" },
+  owner: { bg: "bg-v3-green-light", text: "text-v3-green", icon: "bg-emerald-500/12 text-emerald-600" },
   admin: { bg: "bg-v3-green-light", text: "text-v3-green", icon: "bg-emerald-500/12 text-emerald-600" },
   "branch-manager": { bg: "bg-amber-100", text: "text-amber-700", icon: "bg-amber-500/12 text-amber-600" },
   manager: { bg: "bg-sky-100", text: "text-sky-700", icon: "bg-sky-500/12 text-sky-700" },
+  user: { bg: "bg-slate-100", text: "text-slate-700", icon: "bg-slate-500/12 text-slate-700" },
 };
 
-const DEFAULT_BADGE_STYLE = { bg: "bg-v3-green-light", text: "text-v3-green" };
+function formatAccountDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return date.toLocaleDateString("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+function formatBirthDate(value: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  const digits = value.replace(/\D/g, "");
+
+  if (digits.length === 8) {
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+  }
+
+  if (digits.length === 6) {
+    return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4, 6)}`;
+  }
+
+  return value;
+}
+
+function getAccountRoleLabel(role: string | null) {
+  switch (role) {
+    case "owner":
+      return "오너";
+    case "admin":
+      return "지점장";
+    case "manager":
+      return "매니저";
+    case "user":
+      return "직원";
+    default:
+      return "미지정";
+  }
+}
+
+function getAccountCategory(role: string | null) {
+  switch (role) {
+    case "owner":
+      return "owner";
+    case "admin":
+      return "branch-manager";
+    case "manager":
+      return "manager";
+    default:
+      return "user";
+  }
+}
+
+function getAccountAuthProviderLabel(authProvider: string) {
+  switch (authProvider) {
+    case "kakao":
+      return "카카오";
+    case "email":
+      return "이메일";
+    case "both":
+      return "카카오 + 이메일";
+    default:
+      return authProvider || "-";
+  }
+}
+
+function getAccountOrganizationLabel(user: SystemAdminUser) {
+  if (user.organizations.length === 0) {
+    return user.role === "owner" ? "오너 전용" : "소속 없음";
+  }
+
+  const [firstOrganization, ...restOrganizations] = user.organizations;
+  return restOrganizations.length > 0
+    ? `${firstOrganization.name} 외 ${restOrganizations.length}곳`
+    : firstOrganization.name;
+}
+
+function getAccountOrganizationSummary(user: SystemAdminUser) {
+  if (user.organizations.length === 0) {
+    return user.role === "owner" ? "오너 계정" : "소속 없음";
+  }
+
+  return user.organizations
+    .map((organization) =>
+      organization.role ? `${organization.name} (${getAccountRoleLabel(organization.role)})` : organization.name
+    )
+    .join(", ");
+}
+
+function getAccountStatus(user: SystemAdminUser): { label: string; variant: StatusVariant } {
+  if (!user.phone || !user.birthDate) {
+    return { label: "추가 정보 필요", variant: "warning" };
+  }
+
+  if (user.email && user.authProvider !== "kakao" && !user.emailVerified) {
+    return { label: "이메일 인증 필요", variant: "info" };
+  }
+
+  return { label: "정상", variant: "success" };
+}
+
+function buildAccountStats(users: readonly SystemAdminUser[]): readonly StatsBarItem[] {
+  const totalUsers = users.length;
+  const ownerUsers = users.filter((user) => user.role === "owner").length;
+  const unverifiedUsers = users.filter(
+    (user) => Boolean(user.email) && user.authProvider !== "kakao" && !user.emailVerified
+  ).length;
+  const incompleteUsers = users.filter((user) => !user.phone || !user.birthDate).length;
+
+  return [
+    { icon: Users, value: totalUsers, label: "전체 계정", counter: "명" },
+    { icon: ShieldCheck, value: ownerUsers, label: "오너 계정", counter: "명" },
+    { icon: KeyRound, value: unverifiedUsers, label: "이메일 인증 필요", counter: "명", colorIndex: 1 },
+    { icon: AlertTriangle, value: incompleteUsers, label: "추가 정보 필요", counter: "명", colorIndex: 2 },
+  ];
+}
+
+function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
+  return users.map((user) => {
+    const roleLabel = getAccountRoleLabel(user.role);
+    const authProviderLabel = getAccountAuthProviderLabel(user.authProvider);
+    const accountStatus = getAccountStatus(user);
+
+    return {
+      id: user.id,
+      title: `${roleLabel} 계정`,
+      subtitle: `${authProviderLabel} 로그인`,
+      listTitle: user.name ?? user.email ?? "이름 미등록",
+      listSubtitle: getAccountOrganizationLabel(user),
+      listStatusLabel: roleLabel,
+      category: getAccountCategory(user.role),
+      statusLabel: accountStatus.label,
+      statusVariant: accountStatus.variant,
+      updatedAt: formatAccountDate(user.createdAt),
+      owner: authProviderLabel,
+      summary: `${authProviderLabel} 로그인`,
+      tags: [],
+      detailRows: [
+        { label: "이름", value: user.name ?? "-" },
+        { label: "이메일", value: user.email ?? "-" },
+        { label: "전화번호", value: user.phone ?? "-" },
+        { label: "생년월일", value: formatBirthDate(user.birthDate) },
+        { label: "역할", value: roleLabel },
+        { label: "인증 방식", value: authProviderLabel },
+        {
+          label: "이메일 인증",
+          value:
+            user.email && user.authProvider !== "kakao"
+              ? user.emailVerified
+                ? "완료"
+                : "미완료"
+              : "해당 없음",
+        },
+        { label: "가입일", value: formatAccountDate(user.createdAt) },
+        { label: "소속", value: getAccountOrganizationSummary(user) },
+      ],
+    };
+  });
+}
+
+function buildOwnerAdminSections(
+  users: readonly SystemAdminUser[],
+  options: { isAccountsLoading: boolean; hasAccountsError: boolean }
+): readonly AdminSection[] {
+  return OWNER_ADMIN_SECTIONS.map((section) => {
+    if (section.id !== "accounts") {
+      return section;
+    }
+
+    return {
+      ...section,
+      stats: buildAccountStats(users),
+      records: buildAccountRecords(users),
+      emptyMessage: options.hasAccountsError
+        ? "계정 정보를 불러오지 못했습니다."
+        : options.isAccountsLoading
+          ? "계정 정보를 불러오는 중입니다."
+          : users.length === 0
+            ? "등록된 계정이 없습니다."
+            : section.emptyMessage,
+      detailEmptyMessage: options.hasAccountsError
+        ? "계정 정보를 다시 불러와 주세요."
+        : options.isAccountsLoading
+          ? "계정 정보를 불러오는 중입니다."
+          : section.detailEmptyMessage,
+    };
+  });
+}
 
 function filterSectionRecords(section: AdminSection, tab: string, query: string) {
   const normalizedQuery = query.trim().toLowerCase();
@@ -875,8 +1081,10 @@ function filterSectionRecords(section: AdminSection, tab: string, query: string)
   });
 }
 
-function createInitialViewState(): Record<AdminSectionId, SectionViewState> {
-  return OWNER_ADMIN_SECTIONS.reduce((acc, section) => {
+function createInitialViewState(
+  sections: readonly AdminSection[] = OWNER_ADMIN_SECTIONS
+): Record<AdminSectionId, SectionViewState> {
+  return sections.reduce((acc, section) => {
     acc[section.id] = {
       tab: "all",
       search: "",
@@ -908,13 +1116,29 @@ function resolveSelectedRecordId(
 
 export function OwnerAdminConsole() {
   const [activeSectionId, setActiveSectionId] = useState<AdminSectionId>("signups");
+  const {
+    data: systemAdminUsers = [],
+    isLoading: isSystemAdminUsersLoading,
+    error: systemAdminUsersError,
+  } = useQuery({
+    queryKey: ["systemAdminUsers"],
+    queryFn: getSystemAdminUsers,
+  });
+  const sections = useMemo(
+    () =>
+      buildOwnerAdminSections(systemAdminUsers, {
+        isAccountsLoading: isSystemAdminUsersLoading,
+        hasAccountsError: Boolean(systemAdminUsersError),
+      }),
+    [systemAdminUsers, isSystemAdminUsersLoading, systemAdminUsersError]
+  );
   const [viewStateBySection, setViewStateBySection] = useState<Record<AdminSectionId, SectionViewState>>(
     createInitialViewState
   );
 
   const activeSection = useMemo(
-    () => OWNER_ADMIN_SECTIONS.find((section) => section.id === activeSectionId) ?? OWNER_ADMIN_SECTIONS[0],
-    [activeSectionId]
+    () => sections.find((section) => section.id === activeSectionId) ?? sections[0],
+    [activeSectionId, sections]
   );
   const activeViewState = viewStateBySection[activeSectionId];
   const deferredSearchQuery = useDeferredValue(activeViewState.search);
@@ -925,10 +1149,19 @@ export function OwnerAdminConsole() {
   const filteredRecords = useMemo(() => {
     return filterSectionRecords(activeSection, activeViewState.tab, deferredSearchQuery);
   }, [activeSection, activeViewState.tab, deferredSearchQuery]);
+  const resolvedSelectedRecordId =
+    activeViewState.selectedRecordId === null
+      ? null
+      : resolveSelectedRecordId(
+          activeSection,
+          activeViewState.tab,
+          deferredSearchQuery,
+          activeViewState.selectedRecordId
+        );
 
   const selectedRecord = useMemo(
-    () => filteredRecords.find((record) => record.id === activeViewState.selectedRecordId) ?? null,
-    [filteredRecords, activeViewState.selectedRecordId]
+    () => filteredRecords.find((record) => record.id === resolvedSelectedRecordId) ?? null,
+    [filteredRecords, resolvedSelectedRecordId]
   );
   const showVoucherPriceUploadForm =
     activeSection.id === "subsidies" && selectedRecord?.id === "subsidy-2026-standard";
@@ -946,7 +1179,7 @@ export function OwnerAdminConsole() {
 
       <div className="flex flex-1 min-h-0 flex-col gap-6 lg:flex-row">
         <SectionNav
-          items={OWNER_ADMIN_SECTIONS.map((section) => ({
+          items={sections.map((section) => ({
             id: section.id,
             label: section.label,
             icon: section.icon,
@@ -1011,9 +1244,19 @@ export function OwnerAdminConsole() {
                 <div className="space-y-2 pb-4">
                   {filteredRecords.map((record, index) => {
                     const isActive = record.id === selectedRecord?.id;
-                    const ListIcon = activeSection.id === "branches" ? Building2 : activeSection.id === "accounts" ? Users : STATUS_ICON[record.statusVariant];
-                    const listPills = record.listBadgeLabel ? [record.listBadgeLabel] : record.tags;
-                    const hasSingleAsidePill = listPills.length === 1;
+                    const isUserAvatarSection = usesUserAvatar(activeSection.id);
+                    const ListIcon = isUserAvatarSection ? UserKey : activeSection.id === "branches" ? Building2 : STATUS_ICON[record.statusVariant];
+                    const rolePillLabel = activeSection.id === "accounts" ? record.listStatusLabel : null;
+                    const listSummary =
+                      activeSection.id === "branches"
+                        ? getApplicantLabel(record)
+                        : record.listSummary ?? (rolePillLabel ? null : record.summary);
+                    const listPillItems = getListPillItems(activeSection.id, record);
+                    const isBranchSection = activeSection.id === "branches";
+                    const branchRequestCount = isBranchSection ? listPillItems.length : 0;
+                    const branchHiddenPillCount = isBranchSection && branchRequestCount > 1 ? branchRequestCount - 1 : 0;
+                    const hasBranchAsidePill = isBranchSection && branchRequestCount > 0;
+                    const hasSingleAsidePill = !isBranchSection && listPillItems.length === 1;
 
                     return (
                       <button
@@ -1047,27 +1290,40 @@ export function OwnerAdminConsole() {
                                 {record.listSubtitle}
                               </p>
                             ) : null}
-                            <p className="mt-1.5 min-w-0 truncate text-[0.74rem] text-v3-text">
-                              {record.listSummary ?? record.summary}
-                            </p>
-                            {!hasSingleAsidePill && listPills.length > 0 ? (
+                            {listSummary ? (
+                              <p className="mt-1.5 min-w-0 truncate text-[0.74rem] text-v3-text">
+                                {listSummary}
+                              </p>
+                            ) : null}
+                            {!isBranchSection && !hasSingleAsidePill && listPillItems.length > 0 ? (
                               <div className="mt-2 flex flex-wrap items-center gap-1">
-                                {listPills.map((tag) => (
+                                {listPillItems.map((pill) => (
                                   <TagPill
-                                    key={tag}
-                                    variant={getAdminTagPillVariant(activeSection.id)}
+                                    key={pill.label}
+                                    variant={pill.variant}
                                   >
-                                    {tag}
+                                    {pill.label}
                                   </TagPill>
                                 ))}
                               </div>
                             ) : null}
                           </div>
 
-                          {hasSingleAsidePill ? (
+                          {hasBranchAsidePill ? (
+                            <div className="ml-auto flex shrink-0 items-center gap-1 self-center whitespace-nowrap pl-2">
+                              <TagPill variant={listPillItems[0].variant}>
+                                {listPillItems[0].label}
+                              </TagPill>
+                              {branchHiddenPillCount > 0 ? (
+                                <span className="text-[0.82rem] font-semibold text-v3-text-muted">
+                                  +{branchHiddenPillCount}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : hasSingleAsidePill ? (
                             <div className="ml-auto flex shrink-0 items-center self-center">
-                              <TagPill variant={getAdminTagPillVariant(activeSection.id)}>
-                                {listPills[0]}
+                              <TagPill variant={listPillItems[0].variant}>
+                                {listPillItems[0].label}
                               </TagPill>
                             </div>
                           ) : null}
@@ -1083,9 +1339,10 @@ export function OwnerAdminConsole() {
               <DetailPanel
                 avatar={(() => {
                   const iconStyle = CATEGORY_BADGE_STYLE[selectedRecord.category]?.icon;
+                  const DetailAvatarIcon = usesUserAvatar(activeSection.id) ? UserKey : activeSection.icon;
                   return (
                     <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]", iconStyle ?? "bg-v3-primary-light text-v3-primary")}>
-                      <activeSection.icon className="h-5 w-5" />
+                      <DetailAvatarIcon className="h-5 w-5" />
                     </div>
                   );
                 })()}
