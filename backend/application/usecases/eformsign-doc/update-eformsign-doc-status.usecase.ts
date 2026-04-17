@@ -31,7 +31,7 @@ export class UpdateEformsignDocStatusUsecase {
             throw new NotFoundException(`EformsignDoc with documentId ${params.documentId} not found`);
         }
 
-        // Reconstitute entity with updated fields
+        // Reconstitute entity with updated fields (preserve two-phase metadata)
         const updated = EformsignDocEntity.reconstitute({
             id: existing.id,
             documentId: existing.documentId,
@@ -48,6 +48,11 @@ export class UpdateEformsignDocStatusUsecase {
             expiredDate: existing.expiredDate,
             expired: params.expired ?? existing.expired,
             clientId: existing.clientId,
+            collectionStartDate: existing.collectionStartDate,
+            collectionEndDate: existing.collectionEndDate,
+            collectionPeriodDays: existing.collectionPeriodDays,
+            finalizedAt: existing.finalizedAt,
+            forceFinalize: existing.forceFinalize,
         });
 
         return this.eformsignDocRepository.update(organizationid, updated);

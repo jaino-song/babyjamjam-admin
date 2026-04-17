@@ -16,6 +16,11 @@ type EformsignDocRow = {
     expiredDate: Date;
     expired: boolean;
     clientId: number;
+    collectionStartDate?: Date | null;
+    collectionEndDate?: Date | null;
+    collectionPeriodDays?: number | null;
+    finalizedAt?: Date | null;
+    forceFinalize?: boolean;
 };
 
 export class EformsignDocMapper {
@@ -36,6 +41,11 @@ export class EformsignDocMapper {
             expiredDate: row.expiredDate,
             expired: row.expired,
             clientId: row.clientId,
+            collectionStartDate: row.collectionStartDate ?? null,
+            collectionEndDate: row.collectionEndDate ?? null,
+            collectionPeriodDays: row.collectionPeriodDays ?? null,
+            finalizedAt: row.finalizedAt ?? null,
+            forceFinalize: row.forceFinalize ?? false,
         });
     }
 
@@ -55,6 +65,11 @@ export class EformsignDocMapper {
             expiredDate: entity.expiredDate,
             expired: entity.expired,
             clientId: entity.clientId,
+            collectionStartDate: entity.collectionStartDate,
+            collectionEndDate: entity.collectionEndDate,
+            collectionPeriodDays: entity.collectionPeriodDays,
+            finalizedAt: entity.finalizedAt,
+            forceFinalize: entity.forceFinalize,
         };
     }
 
@@ -74,6 +89,11 @@ export class EformsignDocMapper {
             expiredDate: entity.expiredDate,
             expired: entity.expired,
             clientId: entity.clientId,
+            collectionStartDate: entity.collectionStartDate,
+            collectionEndDate: entity.collectionEndDate,
+            collectionPeriodDays: entity.collectionPeriodDays,
+            finalizedAt: entity.finalizedAt,
+            forceFinalize: entity.forceFinalize,
         };
     }
 }

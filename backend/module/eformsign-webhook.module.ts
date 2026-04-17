@@ -4,6 +4,7 @@ import { EformsignWebhookService } from "application/services/eformsign-webhook.
 import {
     UpdateEformsignDocStatusUsecase,
     LinkDocumentToClientUsecase,
+    StartDailyRecordCollectionUsecase,
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
@@ -25,6 +26,7 @@ import { AlimtalkModule } from "./alimtalk.module";
         EformsignWebhookService,
         UpdateEformsignDocStatusUsecase,
         LinkDocumentToClientUsecase,
+        StartDailyRecordCollectionUsecase,
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
             useClass: SbEformsignDocRepository,

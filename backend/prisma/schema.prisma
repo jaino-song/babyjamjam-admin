@@ -75,30 +75,30 @@ model chat_session {
 }
 
 model client {
-  id                                            Int                 @id @default(autoincrement())
-  name                                          String
-  address                                       String?
-  phone                                         String?
-  type                                          String?
-  duration                                      Int?                @db.SmallInt
-  fullPrice                                     String?             @map("full_price")
-  grant                                         String?
-  actualPrice                                   String?             @map("actual_price")
-  startDate                                     DateTime?           @map("start_date") @db.Date
-  endDate                                       DateTime?           @map("end_date") @db.Date
-  careCenter                                    Boolean             @map("care_center")
-  voucherClient                                 Boolean             @map("voucher_client")
-  birthday                                      String?             @db.VarChar(6)
-  breastPump                                    Boolean             @default(false) @map("breast_pump")
-  serviceStatus                                 String?             @map("service_status")
-  eDocId                                        String?             @unique @map("e_doc_id")
-  dueDate                                       DateTime?           @map("due_date") @db.Date
-  createdAt                                     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  organizationId                                String?             @map("organization_id") @db.Uuid
-  eformsignDocByEDocId                          eformsign_doc?      @relation("client_e_doc_idToeformsign_doc", fields: [eDocId], references: [documentId], onUpdate: NoAction)
-  organization                                  organization?       @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  eformsignDocs                                 eformsign_doc[]     @relation("eformsign_doc_client_idToclient")
-  employeeSchedules                             employee_schedule[]
+  id                   Int                 @id @default(autoincrement())
+  name                 String
+  address              String?
+  phone                String?
+  type                 String?
+  duration             Int?                @db.SmallInt
+  fullPrice            String?             @map("full_price")
+  grant                String?
+  actualPrice          String?             @map("actual_price")
+  startDate            DateTime?           @map("start_date") @db.Date
+  endDate              DateTime?           @map("end_date") @db.Date
+  careCenter           Boolean             @map("care_center")
+  voucherClient        Boolean             @map("voucher_client")
+  birthday             String?             @db.VarChar(6)
+  breastPump           Boolean             @default(false) @map("breast_pump")
+  serviceStatus        String?             @map("service_status")
+  eDocId               String?             @unique @map("e_doc_id")
+  dueDate              DateTime?           @map("due_date") @db.Date
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  organizationId       String?             @map("organization_id") @db.Uuid
+  eformsignDocByEDocId eformsign_doc?      @relation("client_e_doc_idToeformsign_doc", fields: [eDocId], references: [documentId], onUpdate: NoAction)
+  organization         organization?       @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  eformsignDocs        eformsign_doc[]     @relation("eformsign_doc_client_idToclient")
+  employeeSchedules    employee_schedule[]
 
   @@index([organizationId], map: "idx_client_organization")
   @@index([createdAt], map: "idx_client_created_at")
@@ -151,41 +151,64 @@ model document_category {
 }
 
 model eformsign_doc {
-  id                                     Int           @id @default(autoincrement())
-  documentId                             String        @unique @map("document_id")
-  createdDate                            DateTime      @map("created_date") @db.Timestamptz(6)
-  updatedDate                            DateTime      @map("updated_date") @db.Timestamptz(6)
-  statusType                             String        @map("status_type")
-  statusDetail                           String        @map("status_detail")
-  stepType                               String        @map("step_type")
-  stepIndex                              String        @map("step_index")
-  stepName                               String        @map("step_name")
-  stepRecipientType                      String        @map("step_recipient_type")
-  stepRecipientName                      String        @map("step_recipient_name")
-  stepRecipientSms                       String        @map("step_recipient_sms")
-  expiredDate                            DateTime      @map("expired_date") @db.Timestamptz(6)
-  expired                                Boolean       @default(false)
-  clientId                               Int           @map("client_id")
-  organizationId                         String?       @map("organization_id") @db.Uuid
-  clientByEDocId                         client?       @relation("client_e_doc_idToeformsign_doc")
-  client                                 client        @relation("eformsign_doc_client_idToclient", fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  organization                           organization? @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                   Int                  @id @default(autoincrement())
+  documentId           String               @unique @map("document_id")
+  createdDate          DateTime             @map("created_date") @db.Timestamptz(6)
+  updatedDate          DateTime             @map("updated_date") @db.Timestamptz(6)
+  statusType           String               @map("status_type")
+  statusDetail         String               @map("status_detail")
+  stepType             String               @map("step_type")
+  stepIndex            String               @map("step_index")
+  stepName             String               @map("step_name")
+  stepRecipientType    String               @map("step_recipient_type")
+  stepRecipientName    String               @map("step_recipient_name")
+  stepRecipientSms     String               @map("step_recipient_sms")
+  expiredDate          DateTime             @map("expired_date") @db.Timestamptz(6)
+  expired              Boolean              @default(false)
+  clientId             Int                  @map("client_id")
+  organizationId       String?              @map("organization_id") @db.Uuid
+  collectionStartDate  DateTime?            @map("collection_start_date") @db.Date
+  collectionEndDate    DateTime?            @map("collection_end_date") @db.Date
+  collectionPeriodDays Int?                 @map("collection_period_days")
+  finalizedAt          DateTime?            @map("finalized_at") @db.Timestamptz(6)
+  forceFinalize        Boolean              @default(false) @map("force_finalize")
+  clientByEDocId       client?              @relation("client_e_doc_idToeformsign_doc")
+  client               client               @relation("eformsign_doc_client_idToclient", fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  organization         organization?        @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  dailyRecordEntries   daily_record_entry[]
 
   @@index([organizationId], map: "idx_eformsign_doc_organization")
 }
 
+model daily_record_entry {
+  id             String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+  eformsignDocId Int           @map("eformsign_doc_id")
+  recordDate     DateTime      @map("record_date") @db.Date
+  content        String?
+  submittedBy    String?       @map("submitted_by") @db.Uuid
+  submittedAt    DateTime      @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  organizationId String?       @map("organization_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  eformsignDoc   eformsign_doc @relation(fields: [eformsignDocId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  organization   organization? @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([eformsignDocId, recordDate], map: "uniq_daily_record_entry_doc_date")
+  @@index([organizationId], map: "idx_daily_record_entry_organization")
+  @@index([eformsignDocId, recordDate], map: "idx_daily_record_entry_doc_date")
+}
+
 model employee {
-  id                            Int                 @id @db.SmallInt
-  name                          String
-  workArea                      String[]            @map("work_area")
-  phone                         String              @unique
-  grade                         String
-  openToNextWork                Boolean             @default(true) @map("open_to_next_work")
-  companyRegisteredDate         DateTime?           @map("company_registered_date") @db.Date
-  organizationId                String?             @map("organization_id") @db.Uuid
-  organization                  organization?       @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  primaryEmployeeSchedules      employee_schedule[] @relation("employee_schedule_primary_employee_idToemployee")
-  secondaryEmployeeSchedules    employee_schedule[] @relation("employee_schedule_secondary_employee_idToemployee")
+  id                         Int                 @id @db.SmallInt
+  name                       String
+  workArea                   String[]            @map("work_area")
+  phone                      String              @unique
+  grade                      String
+  openToNextWork             Boolean             @default(true) @map("open_to_next_work")
+  companyRegisteredDate      DateTime?           @map("company_registered_date") @db.Date
+  organizationId             String?             @map("organization_id") @db.Uuid
+  organization               organization?       @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  primaryEmployeeSchedules   employee_schedule[] @relation("employee_schedule_primary_employee_idToemployee")
+  secondaryEmployeeSchedules employee_schedule[] @relation("employee_schedule_secondary_employee_idToemployee")
 
   @@index([organizationId], map: "idx_employee_organization")
 }
@@ -251,35 +274,36 @@ model notification {
 }
 
 model organization {
-  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name               String
-  slug               String              @unique
-  phone              String?
-  address            String?
-  email              String?
-  description        String?
-  isActive           Boolean?            @default(true) @map("is_active")
-  smsSenderPhone     String?             @map("sms_sender_phone") @db.VarChar(20)
-  smsSenderApprovalStatus String         @default("not_requested") @map("sms_sender_approval_status") @db.VarChar(20)
-  smsSenderApprovalRequestedAt DateTime? @map("sms_sender_approval_requested_at") @db.Timestamptz(6)
-  smsSenderApprovalRequestedBy String?   @map("sms_sender_approval_requested_by") @db.Uuid
-  smsSenderApprovalApprovedAt DateTime?  @map("sms_sender_approval_approved_at") @db.Timestamptz(6)
-  smsSenderApprovalApprovedBy String?    @map("sms_sender_approval_approved_by") @db.Uuid
-  createdAt          DateTime?           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime?           @default(now()) @map("updated_at") @db.Timestamptz(6)
-  ownerId            String              @map("owner_id") @db.Uuid
-  areas              area[]
-  clients            client[]
-  documents          document[]
-  documentCategories document_category[]
-  eformsignDocs      eformsign_doc[]
-  employees          employee[]
-  employeeSchedules  employee_schedule[]
-  messages           message[]
-  messageTemplates   message_template[]
-  notifications      notification[]
-  owner              user                @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  userOrganizations  user_organization[]
+  id                           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                         String
+  slug                         String               @unique
+  phone                        String?
+  address                      String?
+  email                        String?
+  description                  String?
+  isActive                     Boolean?             @default(true) @map("is_active")
+  smsSenderPhone               String?              @map("sms_sender_phone") @db.VarChar(20)
+  smsSenderApprovalStatus      String               @default("not_requested") @map("sms_sender_approval_status") @db.VarChar(20)
+  smsSenderApprovalRequestedAt DateTime?            @map("sms_sender_approval_requested_at") @db.Timestamptz(6)
+  smsSenderApprovalRequestedBy String?              @map("sms_sender_approval_requested_by") @db.Uuid
+  smsSenderApprovalApprovedAt  DateTime?            @map("sms_sender_approval_approved_at") @db.Timestamptz(6)
+  smsSenderApprovalApprovedBy  String?              @map("sms_sender_approval_approved_by") @db.Uuid
+  createdAt                    DateTime?            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime?            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  ownerId                      String               @map("owner_id") @db.Uuid
+  areas                        area[]
+  clients                      client[]
+  dailyRecordEntries           daily_record_entry[]
+  documents                    document[]
+  documentCategories           document_category[]
+  eformsignDocs                eformsign_doc[]
+  employees                    employee[]
+  employeeSchedules            employee_schedule[]
+  messages                     message[]
+  messageTemplates             message_template[]
+  notifications                notification[]
+  owner                        user                 @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  userOrganizations            user_organization[]
 
   @@index([isActive], map: "idx_organization_is_active")
   @@index([ownerId], map: "idx_organization_owner")
@@ -330,26 +354,26 @@ model system_template_version {
 }
 
 model user {
-  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email             String?             @unique @db.VarChar
-  name              String?             @db.VarChar
-  phone             String?             @db.VarChar
-  birthDate         String?             @map("birth_date") @db.VarChar
-  profileImage      String?             @map("profile_image") @db.VarChar
-  role              String?             @db.VarChar
-  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamp(6)
-  kakaoId           String?             @unique(map: "user_kakaoId_key") @map("kakao_id") @db.VarChar
-  passwordHash      String?             @map("password_hash") @db.VarChar
-  emailVerified     Boolean             @default(false) @map("email_verified")
-  emailVerifiedAt   DateTime?           @map("email_verified_at") @db.Timestamptz(6)
-  authProvider      String              @default("kakao") @map("auth_provider")
-  chatFeedback      chat_feedback[]
-  chatSessions      chat_session[]
-  notifications     notification[]
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email              String?             @unique @db.VarChar
+  name               String?             @db.VarChar
+  phone              String?             @db.VarChar
+  birthDate          String?             @map("birth_date") @db.VarChar
+  profileImage       String?             @map("profile_image") @db.VarChar
+  role               String?             @db.VarChar
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamp(6)
+  kakaoId            String?             @unique(map: "user_kakaoId_key") @map("kakao_id") @db.VarChar
+  passwordHash       String?             @map("password_hash") @db.VarChar
+  emailVerified      Boolean             @default(false) @map("email_verified")
+  emailVerifiedAt    DateTime?           @map("email_verified_at") @db.Timestamptz(6)
+  authProvider       String              @default("kakao") @map("auth_provider")
+  chatFeedback       chat_feedback[]
+  chatSessions       chat_session[]
+  notifications      notification[]
   ownedOrganizations organization[]
-  pushSubscriptions push_subscription[]
-  userOrganizations user_organization[]
-  authTokens        auth_token[]
+  pushSubscriptions  push_subscription[]
+  userOrganizations  user_organization[]
+  authTokens         auth_token[]
 }
 
 model user_organization {
@@ -395,7 +419,7 @@ model auth_token {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String    @map("user_id") @db.Uuid
   token     String    @unique
-  type      String    // "email_verification" | "password_reset"
+  type      String // "email_verification" | "password_reset"
   expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
@@ -427,7 +451,7 @@ model auth_flow_state {
 model alimtalk_log {
   id             Int       @id @default(autoincrement())
   organizationId String?   @map("organization_id") @db.Uuid
-  provider       String    // "aligo" | "channeltalk"
+  provider       String // "aligo" | "channeltalk"
   templateKey    String    @map("template_key")
   triggerJobId   String?   @map("trigger_job_id")
   receiver       String
@@ -452,17 +476,17 @@ model alimtalk_log {
 }
 
 model alimtalk_trigger_rule {
-  id             String    @id @default(dbgenerated("gen_random_uuid()::text"))
-  organizationId String?   @map("organization_id") @db.Uuid
+  id             String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  organizationId String?  @map("organization_id") @db.Uuid
   name           String
-  isActive       Boolean   @default(true) @map("is_active")
-  eventType      String    @map("event_type")
-  offsetType     String    @map("offset_type")
-  offsetDays     Int       @default(0) @map("offset_days")
-  recipientType  String    @map("recipient_type")
-  templateKey    String    @map("template_key")
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  isActive       Boolean  @default(true) @map("is_active")
+  eventType      String   @map("event_type")
+  offsetType     String   @map("offset_type")
+  offsetDays     Int      @default(0) @map("offset_days")
+  recipientType  String   @map("recipient_type")
+  templateKey    String   @map("template_key")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([organizationId], map: "idx_alimtalk_trigger_rule_organization")
   @@index([organizationId, isActive], map: "idx_alimtalk_trigger_rule_active")
@@ -470,23 +494,23 @@ model alimtalk_trigger_rule {
 }
 
 model alimtalk_trigger_job {
-  id               String    @id @default(dbgenerated("gen_random_uuid()::text"))
-  organizationId   String?   @map("organization_id") @db.Uuid
-  ruleId           String    @map("rule_id")
-  status           String    @default("pending")
-  scheduledFor     DateTime  @map("scheduled_for") @db.Timestamptz(6)
-  sentAt           DateTime? @map("sent_at") @db.Timestamptz(6)
-  canceledAt       DateTime? @map("canceled_at") @db.Timestamptz(6)
-  cancelReason     String?   @map("cancel_reason")
-  clientId         Int?      @map("client_id")
-  employeeScheduleId Int?    @map("employee_schedule_id")
-  recipientType    String    @map("recipient_type")
-  recipientPhone   String?   @map("recipient_phone")
-  templateKey      String    @map("template_key")
-  dedupeKey        String    @unique @map("dedupe_key")
-  payload          Json      @default("{}")
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                 String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  organizationId     String?   @map("organization_id") @db.Uuid
+  ruleId             String    @map("rule_id")
+  status             String    @default("pending")
+  scheduledFor       DateTime  @map("scheduled_for") @db.Timestamptz(6)
+  sentAt             DateTime? @map("sent_at") @db.Timestamptz(6)
+  canceledAt         DateTime? @map("canceled_at") @db.Timestamptz(6)
+  cancelReason       String?   @map("cancel_reason")
+  clientId           Int?      @map("client_id")
+  employeeScheduleId Int?      @map("employee_schedule_id")
+  recipientType      String    @map("recipient_type")
+  recipientPhone     String?   @map("recipient_phone")
+  templateKey        String    @map("template_key")
+  dedupeKey          String    @unique @map("dedupe_key")
+  payload            Json      @default("{}")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([organizationId], map: "idx_alimtalk_trigger_job_organization")
   @@index([ruleId], map: "idx_alimtalk_trigger_job_rule_id")

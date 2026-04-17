@@ -17,6 +17,7 @@ import { ClientModule } from "module/client.module";
 import { EmployeeScheduleModule } from "module/employee-schedule.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { EformsignWebhookModule } from "module/eformsign-webhook.module";
+import { DailyRecordModule } from "module/daily-record.module";
 import { AreaTemplateModule } from "module/area-template.module";
 import { DocumentModule } from "module/document.module";
 import { DatabaseModule } from "infrastructure/database/database.module";
@@ -60,6 +61,7 @@ const ENV_FILE_PATHS = [
         EmployeeScheduleModule,
         EformsignDocModule,
         EformsignWebhookModule,
+        DailyRecordModule,
         AreaTemplateModule,
         DocumentModule,
         TenantModule,

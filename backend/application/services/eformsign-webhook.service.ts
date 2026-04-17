@@ -1,12 +1,22 @@
 import { Injectable, Logger, Inject } from "@nestjs/common";
 import { UpdateEformsignDocStatusUsecase } from "application/usecases/eformsign-doc/update-eformsign-doc-status.usecase";
 import { LinkDocumentToClientUsecase } from "application/usecases/eformsign-doc/link-document-to-client.usecase";
+import { StartDailyRecordCollectionUsecase } from "application/usecases/eformsign-doc/start-daily-record-collection.usecase";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
 import { AlimtalkService } from "./alimtalk.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+
+/**
+ * Names (or name fragments) that identify 서비스제공기록지 documents.
+ * Matched against webhook `template_name` or `document_title`.
+ */
+const SERVICE_PROVISION_RECORD_NAME_PATTERNS = [
+    "서비스제공기록지",
+    "서비스 제공 기록지",
+];
 
 /**
  * Eformsign document status codes (from document.status field)
@@ -53,6 +63,7 @@ export class EformsignWebhookService {
     constructor(
         private readonly updateStatusUsecase: UpdateEformsignDocStatusUsecase,
         private readonly linkDocumentUsecase: LinkDocumentToClientUsecase,
+        private readonly startDailyRecordCollectionUsecase: StartDailyRecordCollectionUsecase,
         private readonly alimtalkService: AlimtalkService,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
@@ -63,6 +74,16 @@ export class EformsignWebhookService {
         @Inject(EMPLOYEE_REPOSITORY)
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
+
+    /**
+     * Detects 서비스제공기록지 (service provision record) documents by name.
+     * Matched against any of: template_name, document_title, workflow_name.
+     */
+    private isServiceProvisionRecord(names: (string | undefined)[]): boolean {
+        return names.some(name =>
+            name && SERVICE_PROVISION_RECORD_NAME_PATTERNS.some(pattern => name.includes(pattern))
+        );
+    }
 
     async processWebhook(organizationid: string, payload: EformsignWebhookPayloadDto): Promise<void> {
         const { event_type, webhook_id, document, ready_document_pdf, document_action } = payload;
@@ -99,12 +120,32 @@ export class EformsignWebhookService {
         organizationid: string,
         pdfEvent: NonNullable<EformsignWebhookPayloadDto["ready_document_pdf"]>
     ): Promise<void> {
-        const { document_id: documentId, document_status: status, workflow_seq, workflow_name } = pdfEvent;
+        const {
+            document_id: documentId,
+            document_status: status,
+            document_title,
+            template_name,
+            workflow_seq,
+            workflow_name,
+        } = pdfEvent;
 
         this.logger.log(`PDF ready event: ${documentId} -> status=${status}, workflow=${workflow_name}`);
 
+        // For doc_complete on 서비스제공기록지, status type is 070 (collecting) instead of 050.
+        const isRecordDoc =
+            status === DOCUMENT_STATUS.DOC_COMPLETE &&
+            this.isServiceProvisionRecord([template_name, document_title, workflow_name]);
+
+        // If we already set this document to 070 via a prior document event, do NOT downgrade it
+        // back to 050 via the PDF event. Check current state first.
+        const existing = await this.eformsignDocRepository.findByDocumentId(organizationid, documentId);
+        const alreadyCollecting = existing?.statusType === "070";
+
         // Map status to Korean detail and determine status type
-        const { statusType, statusDetail } = this.mapStatus(status);
+        const { statusType, statusDetail } =
+            isRecordDoc || alreadyCollecting
+                ? { statusType: "070", statusDetail: "일일기록 수집 중" }
+                : this.mapStatus(status);
 
         // Update document status in DB
         try {
@@ -118,7 +159,7 @@ export class EformsignWebhookService {
                 expired: false,
             });
 
-            this.logger.log(`Document ${documentId} status updated from PDF event: ${status} -> ${statusDetail}`);
+            this.logger.log(`Document ${documentId} status updated from PDF event: ${status} -> ${statusDetail}${isRecordDoc || alreadyCollecting ? " (서비스제공기록지 Phase 1)" : ""}`);
         } catch (error) {
             // Document not found - frontend must create record first
             this.logger.warn(
@@ -128,9 +169,17 @@ export class EformsignWebhookService {
             return;
         }
 
-        if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
-            this.logger.log(`Document ${documentId} completed (from PDF event), linking to client`);
+        if (status === DOCUMENT_STATUS.DOC_COMPLETE && !alreadyCollecting) {
+            // Phase 1 chain — only runs once. If the document event already handled it
+            // (alreadyCollecting), the collection window was initialized and we don't re-run.
+            this.logger.log(`Document ${documentId} completed (from PDF event), running Phase 1 chain`);
             try {
+                if (isRecordDoc) {
+                    await this.startDailyRecordCollectionUsecase.execute(organizationid, {
+                        documentId,
+                    });
+                }
+
                 await this.linkDocumentUsecase.execute(organizationid, documentId);
                 this.logger.log(`Document ${documentId} successfully linked to client`);
 
@@ -140,7 +189,7 @@ export class EformsignWebhookService {
                     workflow_name
                 );
             } catch (error) {
-                this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
+                this.logger.error(`Failed Phase 1 chain for document ${documentId} (PDF event): ${error}`);
             }
         }
     }
@@ -186,12 +235,19 @@ export class EformsignWebhookService {
         organizationid: string,
         document: NonNullable<EformsignWebhookPayloadDto["document"]>
     ): Promise<void> {
-        const { id: documentId, status, document_title, workflow_seq, workflow_name } = document;
+        const { id: documentId, status, document_title, template_name, workflow_seq, workflow_name } = document;
 
         this.logger.log(`Document event: ${documentId} -> status=${status}, title=${document_title}`);
 
+        // For doc_complete on 서비스제공기록지, the final status is 070 (collecting) instead of 050 (completed)
+        const isRecordDoc =
+            status === DOCUMENT_STATUS.DOC_COMPLETE &&
+            this.isServiceProvisionRecord([template_name, document_title, workflow_name]);
+
         // Map status to Korean detail and determine status type
-        const { statusType, statusDetail } = this.mapStatus(status);
+        const { statusType, statusDetail } = isRecordDoc
+            ? { statusType: "070", statusDetail: "일일기록 수집 중" }
+            : this.mapStatus(status);
 
         // Update document status in DB
         try {
@@ -205,7 +261,7 @@ export class EformsignWebhookService {
                 expired: false,
             });
 
-            this.logger.log(`Document ${documentId} status updated: ${status} -> ${statusDetail}`);
+            this.logger.log(`Document ${documentId} status updated: ${status} -> ${statusDetail}${isRecordDoc ? " (서비스제공기록지 Phase 1)" : ""}`);
         } catch (error) {
             // Document might not exist in our DB - frontend must create it first
             this.logger.warn(
@@ -216,8 +272,18 @@ export class EformsignWebhookService {
         }
 
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
-            this.logger.log(`Document ${documentId} completed, linking to client`);
+            // Phase 1 chain runs for BOTH record and non-record documents.
+            // For record docs, this is Phase 1 of two phases; the document remains in status 070
+            // and requires finalize() later to reach 050.
+            this.logger.log(`Document ${documentId} completed, running Phase 1 chain`);
             try {
+                if (isRecordDoc) {
+                    // Initialize collection window for Phase 2
+                    await this.startDailyRecordCollectionUsecase.execute(organizationid, {
+                        documentId,
+                    });
+                }
+
                 await this.linkDocumentUsecase.execute(organizationid, documentId);
                 this.logger.log(`Document ${documentId} successfully linked to client`);
 
@@ -227,7 +293,7 @@ export class EformsignWebhookService {
                     workflow_name
                 );
             } catch (error) {
-                this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
+                this.logger.error(`Failed Phase 1 chain for document ${documentId}: ${error}`);
             }
         }
     }

@@ -3,9 +3,9 @@ interface EformsignDocProps {
     documentId: string;
     createdDate: Date;
     updatedDate: Date;
-    // doc status code example: 060 = pending, 050 = completed, 080 = rejected
+    // doc status code example: 060 = pending, 050 = completed, 070 = collecting daily records, 080 = rejected
     statusType: string;
-    // doc status detail example: "대기", "완료", "거부"
+    // doc status detail example: "대기", "완료", "일일기록 수집 중", "거부"
     statusDetail: string;
     // step type example: "05" = participant, "06" = reviewer
     stepType: string;
@@ -25,6 +25,13 @@ interface EformsignDocProps {
     expired: boolean;
     // FK to client
     clientId: number;
+    // Two-phase (서비스제공기록지) collection window — null for non-record docs
+    collectionStartDate?: Date | null;
+    collectionEndDate?: Date | null;
+    collectionPeriodDays?: number | null;
+    // Phase 2 finalization metadata
+    finalizedAt?: Date | null;
+    forceFinalize?: boolean;
 }
 
 export class EformsignDocEntity {
@@ -93,6 +100,11 @@ export class EformsignDocEntity {
     get expiredDate(): Date { return this.props.expiredDate; }
     get expired(): boolean { return this.props.expired; }
     get clientId(): number { return this.props.clientId; }
+    get collectionStartDate(): Date | null { return this.props.collectionStartDate ?? null; }
+    get collectionEndDate(): Date | null { return this.props.collectionEndDate ?? null; }
+    get collectionPeriodDays(): number | null { return this.props.collectionPeriodDays ?? null; }
+    get finalizedAt(): Date | null { return this.props.finalizedAt ?? null; }
+    get forceFinalize(): boolean { return this.props.forceFinalize ?? false; }
 
     /**
      * Use this for "API JSON → select fields → create entity".
