@@ -7,6 +7,7 @@ import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { TokenExchangeDto } from "interface/dto/token-exchange.dto";
 import { RefreshTokenDto } from "interface/dto/refresh-token.dto";
 import { RateLimitGuard } from "../../infrastructure/auth/rate-limit.guard";
+import { getAuthTokenMaxAgeMs } from "../../application/services/auth-token-policy";
 import {
     RegisterDto,
     LoginDto,
@@ -396,15 +397,29 @@ export class AuthController {
 
     // ==================== Private Helper Methods ====================
 
+    private getRoleFromToken(token: string): string | null {
+        const [, payload] = token.split(".");
+        if (!payload) return null;
+
+        try {
+            const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { role?: unknown };
+            return typeof decoded.role === "string" ? decoded.role : null;
+        } catch {
+            return null;
+        }
+    }
+
     private setAuthCookies(res: Response, tokens: { accessToken: string; refreshToken: string }) {
         const isProduction = process.env['NODE_ENV'] === 'production';
+        const role = this.getRoleFromToken(tokens.accessToken);
+        const maxAge = getAuthTokenMaxAgeMs(role);
 
         res.cookie('auth_token', tokens.accessToken, {
             httpOnly: true,
             secure: isProduction,
             sameSite: 'lax',
             path: '/',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+            maxAge,
         });
 
         res.cookie('refresh_token', tokens.refreshToken, {
@@ -412,7 +427,7 @@ export class AuthController {
             secure: isProduction,
             sameSite: 'lax',
             path: '/',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
+            maxAge,
         });
     }
 }

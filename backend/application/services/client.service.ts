@@ -15,6 +15,8 @@ import { AlimtalkService } from "./alimtalk.service";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
+const ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS = 2;
+const ACTION_REQUIRED_SEND_THRESHOLD_DAYS = 6;
 
 // Document status type for eformsign documents
 // Maps to eformsign_doc.statusType values:
@@ -60,6 +62,27 @@ export interface PaginatedClientWithEmployees {
     page: number;
     limit: number;
     totalPages: number;
+}
+
+export type ActionRequiredReason = "교체 요청" | "서명 필요" | "발송 필요";
+
+export interface ClientActionRequiredAlert {
+    id: number;
+    name: string;
+    createdAt: Date | null;
+    reason: ActionRequiredReason;
+    priority: 1 | 2 | 3;
+}
+
+export interface DashboardOverview {
+    stats: {
+        activeClients: number;
+        contractsNotSent: number;
+        contractsPendingSignature: number;
+        upcomingThisMonth: number;
+        upcomingNextMonth: number;
+    };
+    clients: PaginatedClientWithEmployees;
 }
 
 @Injectable()
@@ -664,5 +687,135 @@ export class ClientService {
             ]);
 
         return { activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth };
+    }
+
+    async getDashboardOverview(
+        organizationid: string,
+        limit = 50,
+    ): Promise<DashboardOverview> {
+        const [stats, clients] = await Promise.all([
+            this.getStats(organizationid),
+            this.findAllPaginated(organizationid, 1, limit),
+        ]);
+
+        return { stats, clients };
+    }
+
+    async getActionRequiredAlerts(
+        organizationid: string,
+        limit = 3,
+    ): Promise<ClientActionRequiredAlert[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const sendThresholdDate = new Date(today);
+        sendThresholdDate.setDate(today.getDate() + ACTION_REQUIRED_SEND_THRESHOLD_DAYS);
+        sendThresholdDate.setHours(23, 59, 59, 999);
+
+        const signatureThresholdDate = new Date(today);
+        signatureThresholdDate.setDate(today.getDate() + ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS);
+        signatureThresholdDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                organizationId: organizationid,
+                OR: [
+                    { serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED },
+                    {
+                        eDocId: null,
+                        OR: [
+                            { serviceStatus: null },
+                            { serviceStatus: { notIn: [SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
+                        ],
+                        startDate: { lte: sendThresholdDate },
+                    },
+                    {
+                        eDocId: { not: null },
+                        OR: [
+                            { serviceStatus: null },
+                            { serviceStatus: { notIn: [SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
+                        ],
+                        startDate: { lte: signatureThresholdDate },
+                        eformsignDocByEDocId: { statusType: { not: "050" } },
+                    },
+                ],
+            },
+            select: {
+                id: true,
+                name: true,
+                createdAt: true,
+                startDate: true,
+                endDate: true,
+                serviceStatus: true,
+                eDocId: true,
+                eformsignDocByEDocId: {
+                    select: {
+                        statusType: true,
+                    },
+                },
+            },
+            orderBy: { createdAt: "desc" },
+            take: Math.max(limit * 4, 12),
+        });
+
+        return clients
+            .map((client): ClientActionRequiredAlert | null => {
+                const serviceStatus = computeServiceStatus(
+                    client.serviceStatus,
+                    client.startDate,
+                    client.endDate,
+                );
+
+                if (serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED) {
+                    return {
+                        id: client.id,
+                        name: client.name,
+                        createdAt: client.createdAt ?? null,
+                        reason: "교체 요청",
+                        priority: 1,
+                    };
+                }
+
+                if (serviceStatus === SERVICE_STATUS.COMPLETED || serviceStatus === SERVICE_STATUS.TERMINATED) {
+                    return null;
+                }
+
+                if (!client.startDate) {
+                    return null;
+                }
+
+                const start = new Date(client.startDate);
+                start.setHours(0, 0, 0, 0);
+                const daysUntilStart = Math.round((start.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+                if (!client.eDocId && daysUntilStart <= ACTION_REQUIRED_SEND_THRESHOLD_DAYS) {
+                    return {
+                        id: client.id,
+                        name: client.name,
+                        createdAt: client.createdAt ?? null,
+                        reason: "발송 필요",
+                        priority: 3,
+                    };
+                }
+
+                if (
+                    client.eDocId &&
+                    client.eformsignDocByEDocId?.statusType !== "050" &&
+                    daysUntilStart <= ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS
+                ) {
+                    return {
+                        id: client.id,
+                        name: client.name,
+                        createdAt: client.createdAt ?? null,
+                        reason: "서명 필요",
+                        priority: 2,
+                    };
+                }
+
+                return null;
+            })
+            .filter((alert): alert is ClientActionRequiredAlert => alert !== null)
+            .sort((a, b) => a.priority - b.priority)
+            .slice(0, limit);
     }
 }

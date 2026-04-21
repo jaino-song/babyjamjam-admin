@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import dynamic from "next/dynamic";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import {
   FileText,
@@ -19,7 +20,6 @@ import {
 } from "lucide-react";
 import {
   useDeleteEformsignDocument,
-  useEformsignDocumentsByType,
 } from "@/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
@@ -85,7 +85,14 @@ import { inferVoucherDurationFromAmounts } from "@/lib/voucher/duration";
 import { clientsApi } from "@/features/clients/api/clients.api";
 import type { Client, PaginatedResponse } from "@/lib/client/types";
 import { ContractsListItem } from "@/components/app/contracts/ContractsListItem";
-import { ContractDocumentPreviewModal } from "@/components/app/contracts/ContractDocumentPreviewModal";
+
+const ContractDocumentPreviewModal = dynamic(
+  () =>
+    import("@/components/app/contracts/ContractDocumentPreviewModal").then(
+      (module) => module.ContractDocumentPreviewModal
+    ),
+  { ssr: false }
+);
 
 const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
 
@@ -356,12 +363,10 @@ export default function ContractsPage() {
   const deleteDocument = useDeleteEformsignDocument();
   const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);
 
-  // Fetch all docs (for stats) - single request for total counts
-  const { data: allData, isLoading: isLoadingAll } = useEformsignDocumentsByType(isAuthenticated, null);
-
   // Fetch filtered docs with infinite scroll for the current tab
   const {
     documents: infiniteDocuments,
+    allDocuments,
     isLoading: isLoadingInfinite,
     isFetchingNextPage,
     hasNextPage,
@@ -372,10 +377,17 @@ export default function ContractsPage() {
     filterType,
     excludedNames: EXCLUDED_CUSTOMER_NAMES,
   });
+  const [statsDocuments, setStatsDocuments] = useState<EformsignDocument[]>([]);
+
+  useEffect(() => {
+    if (filterType === null && allDocuments.length > 0) {
+      setStatsDocuments(allDocuments);
+    }
+  }, [allDocuments, filterType]);
 
   const isBootstrappingAuth = isLoadingAuth && !isAuthenticated;
   // Initial loading: first auth bootstrap or first "all" data fetch
-  const isInitialLoading = isBootstrappingAuth || isLoadingAll;
+  const isInitialLoading = isBootstrappingAuth || isLoadingInfinite;
   // Content loading: fetching filtered data after initial load is complete
   const isContentLoading = !isInitialLoading && isLoadingInfinite;
 
@@ -392,7 +404,8 @@ export default function ContractsPage() {
   }, [infiniteDocuments, searchQuery]);
 
   const stats = useMemo(() => {
-    const allDocs = (allData?.documents || []).filter((doc) => {
+    const docsForStats = statsDocuments.length > 0 ? statsDocuments : allDocuments;
+    const allDocs = docsForStats.filter((doc) => {
       const name = getCustomerName(doc);
       return name && !EXCLUDED_CUSTOMER_NAMES.includes(name);
     });
@@ -425,16 +438,16 @@ export default function ContractsPage() {
     }
 
     return { completed, sendRequired, drafting, expired };
-  }, [allData?.documents]);
+  }, [allDocuments, statsDocuments]);
 
   const selectedDocument = useMemo(() => {
     if (!selectedDocId) return null;
     return (
       documents.find((d) => d.id === selectedDocId) ??
-      allData?.documents?.find((d) => d.id === selectedDocId) ??
+      allDocuments.find((d) => d.id === selectedDocId) ??
       null
     );
-  }, [selectedDocId, documents, allData?.documents]);
+  }, [selectedDocId, documents, allDocuments]);
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);

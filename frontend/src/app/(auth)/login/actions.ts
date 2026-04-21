@@ -3,13 +3,7 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
-import { jwtDecode } from "jwt-decode";
-
-interface TokenPayload {
-    sub: string;
-    role: string | null;
-    type: "access" | "refresh";
-}
+import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -82,8 +76,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             });
 
             cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
-            cookieStore.delete("auth_token");
-            cookieStore.delete("refresh_token");
+            clearAuthSessionCookies(cookieStore);
 
             return {
                 success: true,
@@ -94,54 +87,11 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
 
         const loginData = data as LoginSuccessResponse;
 
-        let role = "user";
-        try {
-            const decoded = jwtDecode<TokenPayload>(loginData.accessToken);
-            role = decoded.role || "user";
-        } catch {
-            console.error("[Server Action] Failed to decode token");
-        }
-
-        const authCookieBaseOptions = {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-        } as const;
-
-        if (autoLogin) {
-            cookieStore.set("auth_token", loginData.accessToken, {
-                ...authCookieBaseOptions,
-                maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-            });
-        } else {
-            cookieStore.set("auth_token", loginData.accessToken, authCookieBaseOptions);
-        }
-
-        const refreshCookieBaseOptions = {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-        } as const;
-
-        if (autoLogin) {
-            cookieStore.set("refresh_token", loginData.refreshToken, {
-                ...refreshCookieBaseOptions,
-                maxAge: 7 * 24 * 60 * 60,
-            });
-        } else {
-            cookieStore.set("refresh_token", loginData.refreshToken, refreshCookieBaseOptions);
-        }
-
-        if (autoLogin) {
-            cookieStore.set("auto_login", "1", {
-                ...authCookieBaseOptions,
-                maxAge: 30 * 24 * 60 * 60,
-            });
-        } else {
-            cookieStore.set("auto_login", "0", authCookieBaseOptions);
-        }
+        setAuthSessionCookies(cookieStore, {
+            accessToken: loginData.accessToken,
+            refreshToken: loginData.refreshToken,
+            autoLogin,
+        });
 
         cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);

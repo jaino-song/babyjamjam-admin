@@ -3,8 +3,10 @@
 import { redirect } from "next/navigation";
 import { useMemo, useState } from "react";
 
-import { useDashboardStats } from "@/hooks/useDashboardStats";
-import { useInfiniteClients } from "@/hooks/useClients";
+import {
+  fetchDashboardClientPage,
+  useDashboardOverview,
+} from "@/hooks/useDashboardStats";
 import { Client } from "@/lib/client/types";
 import { getActionRequiredStatus } from "@/lib/client/action-required";
 import { useInitialUser } from "@/providers/UserProvider";
@@ -129,25 +131,48 @@ const getDocumentStatusLabel = (status: Client["documentStatus"], locale: Return
 };
 
 export default function DashboardPage() {
-  const { data: stats, isLoading: statsLoading } = useDashboardStats();
   const {
-    data: clientsData,
-    isLoading: clientsLoading,
-    isFetchingNextPage: clientsFetchingNextPage,
-    isError: clientsError,
-    fetchNextPage: fetchNextClients,
-    hasNextPage: hasMoreClients = false,
-    refetch: refetchClients,
-  } = useInfiniteClients(50);
+    data: overview,
+    isLoading: overviewLoading,
+    isError: overviewError,
+    refetch: refetchOverview,
+  } = useDashboardOverview(50);
   const user = useInitialUser();
   const locale = useLocale();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [activeDetailTab, setActiveDetailTab] = useState("basic");
+  const [extraClientPages, setExtraClientPages] = useState<Client[][]>([]);
+  const [isFetchingNextClients, setIsFetchingNextClients] = useState(false);
 
-  const clients = useMemo(
-    () => clientsData?.pages.flatMap((page) => page.data) ?? [],
-    [clientsData?.pages]
+  const stats = overview?.stats;
+  const initialClientsPage = overview?.clients;
+
+  const clients = useMemo(() => {
+    const initialClients = initialClientsPage?.data ?? [];
+    return [...initialClients, ...extraClientPages.flat()];
+  }, [extraClientPages, initialClientsPage?.data]);
+
+  const hasMoreClients = Boolean(
+    initialClientsPage && 1 + extraClientPages.length < initialClientsPage.totalPages
   );
+
+  const fetchNextClients = async () => {
+    if (!initialClientsPage || isFetchingNextClients || !hasMoreClients) return;
+
+    setIsFetchingNextClients(true);
+    try {
+      const nextPage = 2 + extraClientPages.length;
+      const page = await fetchDashboardClientPage(nextPage, initialClientsPage.limit);
+      setExtraClientPages((prev) => [...prev, page.data]);
+    } finally {
+      setIsFetchingNextClients(false);
+    }
+  };
+
+  const refetchClients = async () => {
+    setExtraClientPages([]);
+    await refetchOverview();
+  };
 
   const actionRequiredClients = useMemo(() => {
     return clients
@@ -234,7 +259,7 @@ export default function DashboardPage() {
       <Block name="dashboard-stats" className="shrink-0">
         <StatsBar
           name="dashboard"
-          isLoading={statsLoading}
+          isLoading={overviewLoading}
           items={DASHBOARD_STAT_KEYS.map((s) => ({
             icon: s.icon,
             value: stats?.[s.valueKey] ?? 0,
@@ -257,14 +282,14 @@ export default function DashboardPage() {
             <RecentActivitiesPanel
               actionRequiredItems={actionRequiredClients}
               upcomingItems={upcomingClients}
-              isLoading={clientsLoading}
-              isError={clientsError}
+              isLoading={overviewLoading}
+              isError={overviewError}
               onRetry={() => refetchClients()}
               selectedId={selectedClientData?.id}
               onSelect={setSelectedClient}
               hasMore={hasMoreClients}
-              onLoadMore={fetchNextClients}
-              isFetchingMore={clientsFetchingNextPage}
+              onLoadMore={() => void fetchNextClients()}
+              isFetchingMore={isFetchingNextClients}
             />
           </Block>
 

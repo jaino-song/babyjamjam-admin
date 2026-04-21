@@ -13,7 +13,7 @@ export interface AnimatedSlotListProps<T> {
   isLoading: boolean;
   /** Number of skeleton slots to show while loading (only used when count is not provided). Default: 4 */
   loadingCount?: number;
-  /** Number of skeleton slots to append while fetching more. Defaults to loadingCount. */
+  /** Number of skeleton slots to append while fetching more. Defaults to 0 to avoid reserving empty list space. */
   fetchingMoreCount?: number;
   className?: string;
   itemDataComponent?: string;
@@ -57,7 +57,7 @@ export function AnimatedSlotList<T>({
   const previousIsLoadingRef = useRef(isLoading);
 
   const itemsLength = items?.length ?? 0;
-  const effectiveFetchingMoreCount = fetchingMoreCount ?? loadingCount;
+  const effectiveFetchingMoreCount = fetchingMoreCount ?? 0;
   const slotCount: number =
     count !== undefined
       ? count
