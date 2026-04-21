@@ -10,7 +10,7 @@ import {
 } from "interface/dto/message-sender-approval.dto";
 import { PhoneNumber } from "domain/value-objects/phone-number.vo";
 
-type OrganizationSenderApprovalRecord = {
+type BranchSenderApprovalRecord = {
     senderPhone: string | null;
     approvalStatus: MessageSenderApprovalStatus;
     requestedAt: Date | null;
@@ -21,13 +21,13 @@ type OrganizationSenderApprovalRecord = {
 export class MessageSenderApprovalService {
     constructor(private readonly prisma: PrismaService) {}
 
-    canRequest(orgRole?: string | null): boolean {
-        return orgRole === "admin" || orgRole === "manager";
+    canRequest(branchRole?: string | null): boolean {
+        return branchRole === "admin" || branchRole === "manager";
     }
 
-    async getState(organizationId: string): Promise<OrganizationSenderApprovalRecord> {
-        const organization = await this.prisma.organization.findUnique({
-            where: { id: organizationId },
+    async getState(branchId: string): Promise<BranchSenderApprovalRecord> {
+        const branch = await this.prisma.branch.findUnique({
+            where: { id: branchId },
             select: {
                 smsSenderPhone: true,
                 smsSenderApprovalStatus: true,
@@ -36,29 +36,29 @@ export class MessageSenderApprovalService {
             },
         });
 
-        if (!organization) {
-            throw new NotFoundException("Organization not found");
+        if (!branch) {
+            throw new NotFoundException("Branch not found");
         }
 
         return {
-            senderPhone: organization.smsSenderPhone ?? null,
+            senderPhone: branch.smsSenderPhone ?? null,
             approvalStatus: this.normalizeStatus(
-                organization.smsSenderApprovalStatus,
+                branch.smsSenderApprovalStatus,
             ),
-            requestedAt: organization.smsSenderApprovalRequestedAt ?? null,
-            approvedAt: organization.smsSenderApprovalApprovedAt ?? null,
+            requestedAt: branch.smsSenderApprovalRequestedAt ?? null,
+            approvedAt: branch.smsSenderApprovalApprovedAt ?? null,
         };
     }
 
     async requestApproval(params: {
-        organizationId: string;
+        branchId: string;
         userId: string;
-        orgRole?: string | null;
+        branchRole?: string | null;
         senderPhone: string;
-    }): Promise<OrganizationSenderApprovalRecord> {
-        if (!this.canRequest(params.orgRole)) {
+    }): Promise<BranchSenderApprovalRecord> {
+        if (!this.canRequest(params.branchRole)) {
             throw new ForbiddenException(
-                "Only organization admins or managers can request sender approval.",
+                "Only branch admins or managers can request sender approval.",
             );
         }
 
@@ -67,8 +67,8 @@ export class MessageSenderApprovalService {
             throw new BadRequestException("유효한 발신번호를 입력해 주세요.");
         }
 
-        const organization = await this.prisma.organization.update({
-            where: { id: params.organizationId },
+        const branch = await this.prisma.branch.update({
+            where: { id: params.branchId },
             data: {
                 smsSenderPhone: senderPhone.toString(),
                 smsSenderApprovalStatus: "pending",
@@ -86,17 +86,17 @@ export class MessageSenderApprovalService {
         });
 
         return {
-            senderPhone: organization.smsSenderPhone ?? null,
+            senderPhone: branch.smsSenderPhone ?? null,
             approvalStatus: this.normalizeStatus(
-                organization.smsSenderApprovalStatus,
+                branch.smsSenderApprovalStatus,
             ),
-            requestedAt: organization.smsSenderApprovalRequestedAt ?? null,
-            approvedAt: organization.smsSenderApprovalApprovedAt ?? null,
+            requestedAt: branch.smsSenderApprovalRequestedAt ?? null,
+            approvedAt: branch.smsSenderApprovalApprovedAt ?? null,
         };
     }
 
-    async ensureApproved(organizationId: string): Promise<string> {
-        const state = await this.getState(organizationId);
+    async ensureApproved(branchId: string): Promise<string> {
+        const state = await this.getState(branchId);
         if (state.approvalStatus !== "approved" || !state.senderPhone) {
             throw new ForbiddenException(
                 "관리자 승인이 완료된 발신번호가 있어야 문자 발송 기능을 사용할 수 있습니다.",

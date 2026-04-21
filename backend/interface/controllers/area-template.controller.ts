@@ -20,31 +20,31 @@ export class AreaTemplateController {
     constructor(private readonly areaTemplateService: AreaTemplateService) {}
 
     @Post()
-    create(@CurrentTenant() tenant: { organizationId?: string }, @Body() dto: CreateAreaTemplateDto) {
-        return this.areaTemplateService.create(tenant.organizationId ?? "", dto);
+    create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateAreaTemplateDto) {
+        return this.areaTemplateService.create(tenant.branchId ?? "", dto);
     }
 
     @Get("area")
-    findByArea(@CurrentTenant() tenant: { organizationId?: string }, @Query("area") area: string) {
-        return this.areaTemplateService.findByArea(tenant.organizationId ?? "", area);
+    findByArea(@CurrentTenant() tenant: { branchId?: string }, @Query("area") area: string) {
+        return this.areaTemplateService.findByArea(tenant.branchId ?? "", area);
     }
 
     @Get()
-    findAll(@CurrentTenant() tenant: { organizationId?: string }) {
-        return this.areaTemplateService.findAll(tenant.organizationId ?? "");
+    findAll(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.areaTemplateService.findAll(tenant.branchId ?? "");
     }
 
     @Patch()
     update(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("area") area: string,
         @Body() dto: UpdateAreaTemplateDto
     ) {
-        return this.areaTemplateService.update(tenant.organizationId ?? "", area, dto);
+        return this.areaTemplateService.update(tenant.branchId ?? "", area, dto);
     }
 
     @Delete()
-    delete(@CurrentTenant() tenant: { organizationId?: string }, @Query("area") area: string) {
-        return this.areaTemplateService.delete(tenant.organizationId ?? "", area);
+    delete(@CurrentTenant() tenant: { branchId?: string }, @Query("area") area: string) {
+        return this.areaTemplateService.delete(tenant.branchId ?? "", area);
     }
 }

@@ -9,55 +9,55 @@ export interface PaginatedResult<T> {
 }
 
 export interface IClientRepository {
-    findById(organizationid: string, id: number): Promise<ClientEntity | null>;
-    findAll(organizationid: string): Promise<ClientEntity[]>;
+    findById(branchid: string, id: number): Promise<ClientEntity | null>;
+    findAll(branchid: string): Promise<ClientEntity[]>;
     findAllPaginated(
-        organizationid: string,
+        branchid: string,
         page: number,
         limit: number,
         search?: string
     ): Promise<PaginatedResult<ClientEntity>>;
-    create(organizationid: string, client: ClientEntity): Promise<ClientEntity>;
-    update(organizationid: string, client: ClientEntity): Promise<ClientEntity>;
-    delete(organizationid: string, id: number): Promise<void>;
+    create(branchid: string, client: ClientEntity): Promise<ClientEntity>;
+    update(branchid: string, client: ClientEntity): Promise<ClientEntity>;
+    delete(branchid: string, id: number): Promise<void>;
 
     // Date-based queries for scheduler (P3)
     /**
      * Find clients whose service starts on a specific date
      * Used for contract reminders (3-day, 1-day before)
      */
-    findByStartDate(organizationid: string, date: Date): Promise<ClientEntity[]>;
+    findByStartDate(branchid: string, date: Date): Promise<ClientEntity[]>;
 
     /**
      * Find clients whose service ends on a specific date
      * Used for survey requests
      */
-    findByEndDate(organizationid: string, date: Date): Promise<ClientEntity[]>;
+    findByEndDate(branchid: string, date: Date): Promise<ClientEntity[]>;
 
     /**
      * Find clients created on a specific date (for payment reminders)
      * Used to send payment reminders X days after registration
      */
-    findByCreatedDate(organizationid: string, date: Date): Promise<ClientEntity[]>;
+    findByCreatedDate(branchid: string, date: Date): Promise<ClientEntity[]>;
 
     /**
      * Find clients whose service starts within the next N days (inclusive)
      * Used for daily summary notifications
      */
-    findStartingWithinDays(organizationid: string, days: number): Promise<ClientEntity[]>;
+    findStartingWithinDays(branchid: string, days: number): Promise<ClientEntity[]>;
 
     /**
      * Find clients whose service ends within the next N days (inclusive)
      * Used for daily summary notifications
      */
-    findEndingWithinDays(organizationid: string, days: number): Promise<ClientEntity[]>;
+    findEndingWithinDays(branchid: string, days: number): Promise<ClientEntity[]>;
 
     /**
      * Find clients with incomplete contracts (eformsign doc not completed)
      * whose service starts within the next N days
      */
     findWithIncompleteContractsStartingWithinDays(
-        organizationid: string,
+        branchid: string,
         days: number
     ): Promise<ClientEntity[]>;
 
@@ -66,7 +66,7 @@ export interface IClientRepository {
      * whose service starts within the next N days
      */
     findWithoutContractSentStartingWithinDays(
-        organizationid: string,
+        branchid: string,
         days: number
     ): Promise<ClientEntity[]>;
 }

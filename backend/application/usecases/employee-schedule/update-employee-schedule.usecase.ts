@@ -19,11 +19,11 @@ export class UpdateEmployeeScheduleUsecase {
     ) {}
 
     async execute(
-        organizationid: string,
+        branchid: string,
         id: number,
         updates: UpdateEmployeeScheduleParams
     ): Promise<EmployeeScheduleEntity> {
-        const schedule = await this.employeeScheduleRepository.findById(organizationid, id);
+        const schedule = await this.employeeScheduleRepository.findById(branchid, id);
         if (!schedule) {
             throw new NotFoundException(`Employee schedule with id ${id} not found`);
         }
@@ -39,6 +39,6 @@ export class UpdateEmployeeScheduleUsecase {
             updates.replaced ?? schedule.replaced,
         );
 
-        return this.employeeScheduleRepository.update(organizationid, updated);
+        return this.employeeScheduleRepository.update(branchid, updated);
     }
 }

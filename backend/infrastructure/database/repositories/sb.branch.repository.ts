@@ -1,13 +1,13 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { IOrganizationRepository } from "domain/repositories/organization.repository.interface";
+import { IBranchRepository } from "domain/repositories/branch.repository.interface";
 
 @Injectable()
-export class SbOrganizationRepository implements IOrganizationRepository {
+export class SbBranchRepository implements IBranchRepository {
     constructor(private readonly prisma: PrismaService) {}
 
     async findAllActive(): Promise<{ id: string; name: string }[]> {
-        return this.prisma.organization.findMany({
+        return this.prisma.branch.findMany({
             where: { isActive: true },
             select: { id: true, name: true },
         });

@@ -16,11 +16,11 @@ export class UpdateMessageTemplateUsecase {
     ) {}
 
     async execute(
-        organizationid: string,
+        branchid: string,
         id: string,
         params: UpdateMessageTemplateParams
     ): Promise<MessageTemplateEntity> {
-        const existing = await this.messageTemplateRepository.findById(organizationid, id);
+        const existing = await this.messageTemplateRepository.findById(branchid, id);
         if (!existing) {
             throw new NotFoundException(`Template with id ${id} not found`);
         }
@@ -32,6 +32,6 @@ export class UpdateMessageTemplateUsecase {
             throw new BadRequestException(validation.errors.join(", "));
         }
 
-        return this.messageTemplateRepository.update(organizationid, existing);
+        return this.messageTemplateRepository.update(branchid, existing);
     }
 }

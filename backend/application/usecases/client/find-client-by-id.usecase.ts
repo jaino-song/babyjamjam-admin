@@ -9,7 +9,7 @@ export class FindClientByIdUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    execute(organizationid: string, id: number): Promise<ClientEntity | null> {
-        return this.clientRepository.findById(organizationid, id);
+    execute(branchid: string, id: number): Promise<ClientEntity | null> {
+        return this.clientRepository.findById(branchid, id);
     }
 }

@@ -86,7 +86,7 @@ export class NotificationController {
     @Get()
     @UseGuards(JwtGuard, TenantGuard)
     async getNotifications(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Request() req: { user: JwtPayload },
         @Query() query: GetNotificationsQueryDto,
     ): Promise<NotificationResponseDto[]> {
@@ -94,7 +94,7 @@ export class NotificationController {
             return [];
         }
         const notifications = await this.notificationService.getNotifications(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             req.user.userId,
             { limit: query.limit, offset: query.offset },
         );
@@ -107,14 +107,14 @@ export class NotificationController {
     @Get("unread/count")
     @UseGuards(JwtGuard, TenantGuard)
     async getUnreadCount(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Request() req: { user: JwtPayload }
     ): Promise<UnreadCountResponseDto> {
         if (req.user.userId === 'dev-user') {
             return { count: 0 };
         }
         const count = await this.notificationService.countUnreadNotifications(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             req.user.userId
         );
         return { count };
@@ -126,12 +126,12 @@ export class NotificationController {
     @Patch(":id/read")
     @UseGuards(JwtGuard, TenantGuard)
     async markAsRead(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Request() req: { user: JwtPayload },
         @Param("id", ParseIntPipe) id: number,
     ): Promise<NotificationResponseDto> {
         const notification = await this.notificationService.markAsRead(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             id,
             req.user.userId
         );
@@ -144,10 +144,10 @@ export class NotificationController {
     @Patch("read-all")
     @UseGuards(JwtGuard, TenantGuard)
     async markAllAsRead(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Request() req: { user: JwtPayload }
     ): Promise<{ success: boolean }> {
-        await this.notificationService.markAllAsRead(tenant.organizationId ?? "", req.user.userId);
+        await this.notificationService.markAllAsRead(tenant.branchId ?? "", req.user.userId);
         return { success: true };
     }
 
@@ -159,11 +159,11 @@ export class NotificationController {
     @Post("send")
     @UseGuards(JwtGuard, TenantGuard, OwnerOrAdminGuard)
     async sendNotification(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: SendNotificationDto,
     ): Promise<NotificationResponseDto> {
         const notification = await this.notificationService.sendNotification(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             dto.userId,
             dto.title,
             dto.body,

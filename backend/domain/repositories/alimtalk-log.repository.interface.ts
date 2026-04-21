@@ -4,8 +4,8 @@ export interface IAlimtalkLogRepository {
     save(log: AlimtalkLogEntity): Promise<AlimtalkLogEntity>;
     update(log: AlimtalkLogEntity): Promise<AlimtalkLogEntity>;
     findPendingRetries(): Promise<AlimtalkLogEntity[]>;
-    findRecentByOrganization(
-        organizationId: string,
+    findRecentByBranch(
+        branchId: string,
         limit?: number,
     ): Promise<AlimtalkLogEntity[]>;
 }

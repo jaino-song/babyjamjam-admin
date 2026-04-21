@@ -53,7 +53,7 @@ export class SendNotificationUsecase {
      * Send notification to a specific user
      */
     async execute(
-        organizationid: string,
+        branchid: string,
         params: SendNotificationParams
     ): Promise<NotificationEntity> {
         const { userId, title, body, data } = params;
@@ -61,7 +61,7 @@ export class SendNotificationUsecase {
         // 알림 이력 저장
         const notification = NotificationEntity.create(userId, title, body, data);
         const savedNotification = await this.notificationRepository.create(
-            organizationid,
+            branchid,
             notification
         );
 

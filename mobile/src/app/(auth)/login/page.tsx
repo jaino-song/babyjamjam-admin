@@ -96,8 +96,8 @@ const LoginPage = () => {
             const response = await loginWithEmail(result.data.email, result.data.password, autoLogin);
 
             if (response.success) {
-                if (response.requiresOrgSelection) {
-                    router.replace("/select-organization");
+                if (response.requiresBranchSelection) {
+                    router.replace("/select-branch");
                 } else {
                     router.replace("/dashboard");
                 }

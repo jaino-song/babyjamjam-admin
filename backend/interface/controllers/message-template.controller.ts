@@ -10,8 +10,8 @@ export class MessageTemplateController {
     constructor(private readonly messageTemplateService: MessageTemplateService) {}
 
     @Post()
-    create(@CurrentTenant() tenant: { organizationId?: string }, @Body() dto: CreateMessageTemplateDto) {
-        return this.messageTemplateService.create(tenant.organizationId ?? "", {
+    create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateMessageTemplateDto) {
+        return this.messageTemplateService.create(tenant.branchId ?? "", {
             name: dto.name,
             content: dto.content,
             variables: dto.variables,
@@ -19,22 +19,22 @@ export class MessageTemplateController {
     }
 
     @Get()
-    findAll(@CurrentTenant() tenant: { organizationId?: string }) {
-        return this.messageTemplateService.findAll(tenant.organizationId ?? "");
+    findAll(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.messageTemplateService.findAll(tenant.branchId ?? "");
     }
 
     @Get(":id")
-    findById(@CurrentTenant() tenant: { organizationId?: string }, @Param("id") id: string) {
-        return this.messageTemplateService.findById(tenant.organizationId ?? "", id);
+    findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
+        return this.messageTemplateService.findById(tenant.branchId ?? "", id);
     }
 
     @Patch(":id")
     update(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
         @Body() dto: UpdateMessageTemplateDto
     ) {
-        return this.messageTemplateService.update(tenant.organizationId ?? "", id, {
+        return this.messageTemplateService.update(tenant.branchId ?? "", id, {
             name: dto.name,
             content: dto.content,
             variables: dto.variables,
@@ -42,7 +42,7 @@ export class MessageTemplateController {
     }
 
     @Delete(":id")
-    delete(@CurrentTenant() tenant: { organizationId?: string }, @Param("id") id: string) {
-        return this.messageTemplateService.delete(tenant.organizationId ?? "", id);
+    delete(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
+        return this.messageTemplateService.delete(tenant.branchId ?? "", id);
     }
 }

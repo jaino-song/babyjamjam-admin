@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS "auth_flow_state" (
   "user_id" UUID,
   "access_token" TEXT,
   "refresh_token" TEXT,
-  "requires_org_selection" BOOLEAN NOT NULL DEFAULT FALSE,
+  "requires_branch_selection" BOOLEAN NOT NULL DEFAULT FALSE,
   "kakao_id" VARCHAR,
   "email" VARCHAR,
   "name" VARCHAR,

@@ -7,7 +7,7 @@ enum AppRoute: Hashable {
     case forgotPassword
     case resetPassword(token: String)
     case verifyEmail
-    case selectOrg
+    case selectBranch
     case dashboard
     case clientList
     case clientDetail(id: String)
@@ -37,7 +37,7 @@ struct AppNavigation: View {
                 onNavigateToForgotPassword: { path.append(AppRoute.forgotPassword) },
                 onNavigateToVerifyEmail: { path.append(AppRoute.verifyEmail) },
                 onNavigateToDashboard: { path = NavigationPath(); path.append(AppRoute.dashboard) },
-                onNavigateToSelectOrg: { path.append(AppRoute.selectOrg) }
+                onNavigateToSelectBranch: { path.append(AppRoute.selectBranch) }
             )
             .navigationDestination(for: AppRoute.self) { route in
                 switch route {
@@ -49,8 +49,8 @@ struct AppNavigation: View {
                     ResetPasswordView(token: token, onNavigateToLogin: { path = NavigationPath() })
                 case .verifyEmail:
                     VerifyEmailView(onNavigateToLogin: { path = NavigationPath() })
-                case .selectOrg:
-                    SelectOrgView(organizations: [], onNavigateToDashboard: { path = NavigationPath(); path.append(AppRoute.dashboard) })
+                case .selectBranch:
+                    SelectBranchView(branches: [], onNavigateToDashboard: { path = NavigationPath(); path.append(AppRoute.dashboard) })
                 case .dashboard:
                     DashboardView(
                         onNavigateToClients: { path.append(AppRoute.clientList) },
@@ -102,7 +102,7 @@ struct AppNavigation: View {
                         onNavigateToForgotPassword: { path.append(AppRoute.forgotPassword) },
                         onNavigateToVerifyEmail: { path.append(AppRoute.verifyEmail) },
                         onNavigateToDashboard: { path = NavigationPath(); path.append(AppRoute.dashboard) },
-                        onNavigateToSelectOrg: { path.append(AppRoute.selectOrg) }
+                        onNavigateToSelectBranch: { path.append(AppRoute.selectBranch) }
                     )
                 }
             }

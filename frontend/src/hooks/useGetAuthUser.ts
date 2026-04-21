@@ -12,7 +12,7 @@ export interface AuthUser {
     birthDate?: string | null;
     profileImage?: string;
     role?: string;
-    organizationName?: string | null;
+    branchName?: string | null;
 }
 
 interface UseGetAuthUserOptions {
@@ -36,7 +36,7 @@ const E2E_USER: AuthUser = {
     birthDate: '1990-01-01',
     profileImage: '',
     role: 'admin',
-    organizationName: '테스트 지점',
+    branchName: '테스트 지점',
 };
 
 const INITIAL_DATA_UPDATED_AT = Date.now();

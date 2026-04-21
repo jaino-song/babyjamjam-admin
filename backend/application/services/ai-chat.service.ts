@@ -358,7 +358,7 @@ export class AIChatService {
         sessionId: string | undefined,
         userId: string,
         userMessage: string,
-        organizationid: string,
+        branchid: string,
     ): AsyncGenerator<ChatStreamEvent> {
         let session = sessionId
             ? await this.sessionRepository.findById(sessionId)
@@ -374,7 +374,7 @@ export class AIChatService {
 
         if (this.shouldDirectDashboardStats(userMessage)) {
             yield { type: 'tool_call', toolName: 'getDashboardStats', toolStatus: 'executing' };
-            const dashboardResult = await this.toolExecutor.execute(organizationid, "getDashboardStats", {});
+            const dashboardResult = await this.toolExecutor.execute(branchid, "getDashboardStats", {});
 
             if (dashboardResult.success && this.isDashboardStatsData(dashboardResult.data)) {
                 const responseText = this.formatDashboardResponse(userMessage, dashboardResult.data);
@@ -418,7 +418,7 @@ export class AIChatService {
 
                                 yield { type: 'tool_call', toolName: name, toolStatus: 'executing' };
 
-                                const result = await this.toolExecutor.execute(organizationid, name, args);
+                                const result = await this.toolExecutor.execute(branchid, name, args);
 
                                 if (result.requiresConfirmation) {
                                     yield {

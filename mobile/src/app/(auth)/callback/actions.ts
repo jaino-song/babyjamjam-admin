@@ -17,7 +17,7 @@ interface APIErrorResponse {
     error: string;
 }
 
-export async function exchangeToken(code: string): Promise<{ success: boolean; error?: string; requiresOrgSelection?: boolean }> {
+export async function exchangeToken(code: string): Promise<{ success: boolean; error?: string; requiresBranchSelection?: boolean }> {
     try {
         console.log("[Server Action] Exchanging token for code");
         
@@ -55,9 +55,9 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
         });
 
         console.log("[Server Action] Token exchange successful");
-        console.log("[Server Action] requiresOrgSelection:", data.requiresOrgSelection);
+        console.log("[Server Action] requiresBranchSelection:", data.requiresBranchSelection);
 
-        return { success: true, requiresOrgSelection: data.requiresOrgSelection || false };
+        return { success: true, requiresBranchSelection: data.requiresBranchSelection || false };
     } catch (error) {
         console.error("[Server Action] Token Exchange Error:", error);
 

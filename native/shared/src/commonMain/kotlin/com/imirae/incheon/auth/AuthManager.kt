@@ -1,7 +1,7 @@
 package com.imirae.incheon.auth
 
 import com.imirae.incheon.data.remote.AuthService
-import com.imirae.incheon.domain.models.Organization
+import com.imirae.incheon.domain.models.Branch
 import com.imirae.incheon.network.ApiResult
 import com.imirae.incheon.network.TokenProvider
 import com.imirae.incheon.network.platformEngine
@@ -24,11 +24,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 
-sealed class OrganizationsUiState {
-    data object Idle : OrganizationsUiState()
-    data object Loading : OrganizationsUiState()
-    data class Loaded(val organizations: List<Organization>) : OrganizationsUiState()
-    data class Error(val message: String) : OrganizationsUiState()
+sealed class BranchesUiState {
+    data object Idle : BranchesUiState()
+    data object Loading : BranchesUiState()
+    data class Loaded(val branches: List<Branch>) : BranchesUiState()
+    data class Error(val message: String) : BranchesUiState()
 }
 
 class AuthManager(
@@ -40,8 +40,8 @@ class AuthManager(
     private val stepUpAuth = StepUpAuth(secureStorage)
     private val _authState = MutableStateFlow<AuthState>(AuthState.Initial)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
-    private val _organizationsState = MutableStateFlow<OrganizationsUiState>(OrganizationsUiState.Idle)
-    val organizationsState: StateFlow<OrganizationsUiState> = _organizationsState.asStateFlow()
+    private val _branchesState = MutableStateFlow<BranchesUiState>(BranchesUiState.Idle)
+    val branchesState: StateFlow<BranchesUiState> = _branchesState.asStateFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val refreshMutex = Mutex()
     private var refreshInFlight: Deferred<String?>? = null
@@ -94,8 +94,8 @@ class AuthManager(
                         registerDeviceWithBackend(result.data.accessToken, deviceId)
                     }
 
-                    if (result.data.requiresOrgSelection) {
-                        _authState.value = AuthState.RequiresOrgSelection
+                    if (result.data.requiresBranchSelection) {
+                        _authState.value = AuthState.RequiresBranchSelection
                     } else {
                         loadProfile()
                     }
@@ -143,11 +143,11 @@ class AuthManager(
         }
     }
 
-    fun selectOrganization(orgId: String) {
+    fun selectBranch(branchId: String) {
         scope.launch {
             _authState.value = AuthState.Loading
             updateActivity()
-            when (val result = authService.selectOrganization(orgId)) {
+            when (val result = authService.selectBranch(branchId)) {
                 is ApiResult.Success -> {
                     persistTokens(result.data.accessToken, result.data.refreshToken ?: secureStorage.getString(refreshTokenKey).orEmpty())
                     loadProfile()
@@ -157,15 +157,15 @@ class AuthManager(
         }
     }
 
-    fun loadOrganizations() {
+    fun loadBranches() {
         scope.launch {
-            _organizationsState.value = OrganizationsUiState.Loading
-            when (val result = authService.getOrganizations()) {
+            _branchesState.value = BranchesUiState.Loading
+            when (val result = authService.getBranches()) {
                 is ApiResult.Success -> {
-                    _organizationsState.value = OrganizationsUiState.Loaded(result.data.organizations)
+                    _branchesState.value = BranchesUiState.Loaded(result.data.branches)
                 }
                 is ApiResult.Error -> {
-                    _organizationsState.value = OrganizationsUiState.Error(result.error.userMessage())
+                    _branchesState.value = BranchesUiState.Error(result.error.userMessage())
                 }
             }
         }
@@ -206,7 +206,7 @@ class AuthManager(
                 _authState.value = AuthState.Authenticated(
                     result.data.id,
                     result.data.role,
-                    result.data.organizationName
+                    result.data.branchName
                 )
                 updateActivity()
             }

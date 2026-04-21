@@ -13,7 +13,7 @@ interface APIErrorResponse {
 interface TokenExchangeSuccessResponse {
     accessToken: string;
     refreshToken: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
 }
 
 interface TokenExchangePendingSignupResponse {
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
         cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
 
-        return NextResponse.json({ message: "Success", requiresOrgSelection: data.requiresOrgSelection || false }, { status: 200 });
+        return NextResponse.json({ message: "Success", requiresBranchSelection: data.requiresBranchSelection || false }, { status: 200 });
     } catch (error) {
         console.error("Token Exchange Error:", error);
         console.error("Backend URL:", serverAPIClient.defaults.baseURL);

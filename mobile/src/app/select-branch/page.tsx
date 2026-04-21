@@ -9,11 +9,11 @@ import { CardHeader } from "@/components/app/v3";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { getUserOrganizations, setCurrentOrganization } from "./actions";
+import { getUserBranches, setCurrentBranch } from "./actions";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 
-interface Organization {
+interface Branch {
     id: string;
     name: string;
     slug: string;
@@ -21,50 +21,50 @@ interface Organization {
     role: string;
 }
 
-export default function SelectOrganizationPage() {
+export default function SelectBranchPage() {
     const router = useRouter();
     const locale = useLocale();
-    const [organizations, setOrganizations] = useState<Organization[]>([]);
+    const [branches, setBranches] = useState<Branch[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selecting, setSelecting] = useState<string | null>(null);
 
     useEffect(() => {
-        const fetchOrganizations = async () => {
+        const fetchBranches = async () => {
             try {
-                const result = await getUserOrganizations();
+                const result = await getUserBranches();
 
                 if (!result.success) {
-                    setError(result.error || "조직 목록을 불러오는데 실패했습니다.");
+                    setError(result.error || "지점 목록을 불러오는데 실패했습니다.");
                     return;
                 }
 
-                // If user has only one organization AND is not an owner, auto-select it
+                // If user has only one branch AND is not an owner, auto-select it
                 // Owners should always see the selection screen to explicitly choose
-                const isOwner = result.organizations?.some(org => org.role === 'owner');
-                if (result.organizations?.length === 1 && !isOwner) {
-                    const org = result.organizations[0];
-                    await handleSelectOrganization(org.id);
+                const isOwner = result.branches?.some(org => org.role === 'owner');
+                if (result.branches?.length === 1 && !isOwner) {
+                    const org = result.branches[0];
+                    await handleSelectBranch(org.id);
                     return;
                 }
 
-                setOrganizations(result.organizations || []);
+                setBranches(result.branches || []);
             } catch (err) {
-                console.error("[Select Organization] Error fetching organizations:", err);
+                console.error("[Select Branch] Error fetching branches:", err);
                 setError("지점 목록을 불러오는데 실패했습니다.");
             } finally {
                 setLoading(false);
             }
         };
 
-        fetchOrganizations();
+        fetchBranches();
     }, [router]);
 
-    const handleSelectOrganization = async (organizationId: string) => {
-        setSelecting(organizationId);
+    const handleSelectBranch = async (branchId: string) => {
+        setSelecting(branchId);
 
         try {
-            const result = await setCurrentOrganization(organizationId);
+            const result = await setCurrentBranch(branchId);
 
             if (!result.success) {
                 setError(result.error || "지점 선택에 실패했습니다.");
@@ -75,7 +75,7 @@ export default function SelectOrganizationPage() {
             // Redirect to dashboard after successful selection
             router.replace("/dashboard");
         } catch (err) {
-            console.error("[Select Organization] Error selecting organization:", err);
+            console.error("[Select Branch] Error selecting branch:", err);
             setError("지점 선택에 실패했습니다.");
             setSelecting(null);
         }
@@ -83,7 +83,7 @@ export default function SelectOrganizationPage() {
 
     if (loading) {
         return (
-            <div data-component="select-org" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-4">
+            <div data-component="select-branch" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-4">
                 <Spinner size="lg" />
                 <p className="text-foreground">지점 목록을 불러오는 중...</p>
             </div>
@@ -92,8 +92,8 @@ export default function SelectOrganizationPage() {
 
     if (error) {
         return (
-            <div data-component="select-org" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-4 px-4">
-                <div data-component="select-org-error">
+            <div data-component="select-branch" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-4 px-4">
+                <div data-component="select-branch-error">
                     <p className="text-destructive">{error}</p>
                 </div>
                 <Button variant="outline" onClick={() => router.push("/login")}>
@@ -103,11 +103,11 @@ export default function SelectOrganizationPage() {
         );
     }
 
-    if (organizations.length === 0) {
+    if (branches.length === 0) {
         return (
-            <div data-component="select-org" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-6 px-4 text-center">
+            <div data-component="select-branch" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-6 px-4 text-center">
                 <Building2 className="w-16 h-16 text-muted-foreground/50" />
-                <div data-component="select-org-empty">
+                <div data-component="select-branch-empty">
                     <h2 className="text-xl font-bold text-foreground mb-2">
                         접근 가능한 지점이 없습니다
                     </h2>
@@ -118,7 +118,7 @@ export default function SelectOrganizationPage() {
                         권한이 부여되면 이 페이지를 새로고침하세요.
                     </p>
                 </div>
-                <div data-component="select-org-empty-actions" className="flex gap-3">
+                <div data-component="select-branch-empty-actions" className="flex gap-3">
                     <Button onClick={() => window.location.reload()}>
                         새로고침
                     </Button>
@@ -128,7 +128,7 @@ export default function SelectOrganizationPage() {
                             // Clear auth cookies and redirect to login
                             document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
                             document.cookie = "refresh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-                            document.cookie = "selected_organization_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+                            document.cookie = "selected_branch_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
                             router.replace("/login");
                         }}
                     >
@@ -155,16 +155,16 @@ export default function SelectOrganizationPage() {
     };
 
     return (
-        <div data-component="select-org" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-4 px-4">
+        <div data-component="select-branch" className="flex flex-col items-center justify-center min-h-[calc(100dvh-8rem)] gap-4 px-4">
             <CardHeader title="지점 선택" subtitle="지점을 선택해주세요" align="center" />
 
-            <div data-component="select-org-list" className="flex flex-col gap-3 w-full max-w-md">
-                {organizations.map((org) => (
+            <div data-component="select-branch-list" className="flex flex-col gap-3 w-full max-w-md">
+                {branches.map((org) => (
                     <Card
                         key={org.id}
                         className={`cursor-pointer transition-all hover-lift ${selecting ? "opacity-60 cursor-not-allowed" : ""
                             }`}
-                        onClick={() => !selecting && handleSelectOrganization(org.id)}
+                        onClick={() => !selecting && handleSelectBranch(org.id)}
                     >
                         <CardContent className="p-4">
                             <div className="flex items-center justify-between gap-4">

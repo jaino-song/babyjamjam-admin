@@ -4,7 +4,7 @@
 
 - Authorization model is **deny-by-default**.
 - UI guards are UX aids only; final enforcement happens on server APIs.
-- Access decisions require all of: authenticated principal, role, organization scope, and resource ownership/assignment where applicable.
+- Access decisions require all of: authenticated principal, role, branch scope, and resource ownership/assignment where applicable.
 - Canonical native roles: `admin`, `manager`, `employee`.
 - Transitional role mapping: legacy `owner` maps to `admin` policy set until a separate owner policy is introduced.
 
@@ -61,7 +61,7 @@ Legend: `Y` full allow, `L` limited allow, `N` deny.
 | `/settings/voucher-price` | voucher pricing admin | Y | N | N | system-wide mutable data |
 | `/admin` | admin feedback dashboard | Y | N | N | admin guard + API guard |
 | `/admin/feedback/[id]` | admin feedback detail | Y | N | N | admin guard + API guard |
-| `/select-organization` | org selection | Y | Y | Y | requires auth token |
+| `/select-branch` | org selection | Y | Y | Y | requires auth token |
 | `/logout` | logout endpoint/page | Y | Y | Y | session invalidation |
 | `/test` | non-production test page | L | N | N | disabled in production build |
 | `/(auth)/login` | login | Public | Public | Public | unauthenticated entry |
@@ -104,7 +104,7 @@ Legend: `Y` full allow, `L` limited allow, `N` deny.
 5. Employee reading unassigned client -> `403`.
 6. Manager deleting employee record -> `403`.
 7. Non-admin updating voucher price tables -> `403`.
-8. Cross-organization access with valid token -> `403`.
+8. Cross-branch access with valid token -> `403`.
 9. Expired role/session claim used after role downgrade -> `403` after refresh.
 10. Deep-link target without permission -> page blocked and server call `403`.
 

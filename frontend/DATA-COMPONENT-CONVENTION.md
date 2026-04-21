@@ -62,7 +62,7 @@ When querying elements, prefer `data-component` first. Fall back to `data-slot` 
 | `/callback` | `auth-callback` |
 | `/chat` | `chat` |
 | `/files` | `files` |
-| `/select-organization` | `select-org` |
+| `/select-branch` | `select-org` |
 | `/login` | `login` |
 | `/logout` | `logout` |
 | `/test` | `test` |

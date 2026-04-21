@@ -1,7 +1,7 @@
 package com.imirae.incheon.domain.models
 import kotlinx.serialization.Serializable
 @Serializable data class LoginRequest(val email: String, val password: String)
-@Serializable data class LoginResponse(val accessToken: String, val refreshToken: String, val requiresOrgSelection: Boolean = false)
+@Serializable data class LoginResponse(val accessToken: String, val refreshToken: String, val requiresBranchSelection: Boolean = false)
 @Serializable data class RegisterRequest(val name: String, val email: String, val password: String, val phone: String? = null)
 @Serializable data class RegisterResponse(val success: Boolean, val message: String? = null, val code: String? = null)
 @Serializable data class ForgotPasswordRequest(val email: String)
@@ -9,8 +9,8 @@ import kotlinx.serialization.Serializable
 @Serializable data class TokenRefreshRequest(val refreshToken: String)
 @Serializable data class TokenRefreshResponse(val accessToken: String, val refreshToken: String)
 @Serializable data class VerifyEmailResponse(val success: Boolean, val message: String? = null)
-@Serializable data class UserProfile(val id: String, val name: String, val email: String, val role: String, val phone: String? = null, val profileImage: String? = null, val organizationName: String? = null)
-@Serializable data class Organization(val id: String, val name: String, val slug: String? = null, val description: String? = null, val role: String? = null)
-@Serializable data class OrganizationsResponse(val organizations: List<Organization> = emptyList())
-@Serializable data class SelectOrganizationRequest(val organizationId: String)
-@Serializable data class SelectOrganizationResponse(val accessToken: String, val refreshToken: String? = null)
+@Serializable data class UserProfile(val id: String, val name: String, val email: String, val role: String, val phone: String? = null, val profileImage: String? = null, val branchName: String? = null)
+@Serializable data class Branch(val id: String, val name: String, val slug: String? = null, val description: String? = null, val role: String? = null)
+@Serializable data class BranchesResponse(val branches: List<Branch> = emptyList())
+@Serializable data class SelectBranchRequest(val branchId: String)
+@Serializable data class SelectBranchResponse(val accessToken: String, val refreshToken: String? = null)

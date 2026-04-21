@@ -14,7 +14,7 @@ interface APIErrorResponse {
 interface LoginResult {
     success: boolean;
     error?: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
     emailVerificationRequired?: boolean;
     onboardingRequired?: boolean;
     onboardingRoute?: "/onboarding";
@@ -24,7 +24,7 @@ interface LoginSuccessResponse {
     success: true;
     accessToken: string;
     refreshToken: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
 }
 
 interface LoginOnboardingResponse {
@@ -96,8 +96,8 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
 
-        // Use requiresOrgSelection from backend response
-        return { success: true, requiresOrgSelection: loginData.requiresOrgSelection || false };
+        // Use requiresBranchSelection from backend response
+        return { success: true, requiresBranchSelection: loginData.requiresBranchSelection || false };
     } catch (error) {
         console.error("[Server Action] Email Login Error:", error);
 

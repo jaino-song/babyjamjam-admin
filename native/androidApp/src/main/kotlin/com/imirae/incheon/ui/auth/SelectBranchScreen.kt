@@ -18,22 +18,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.imirae.incheon.auth.AuthState
-import com.imirae.incheon.auth.OrganizationsUiState
+import com.imirae.incheon.auth.BranchesUiState
 import com.imirae.incheon.design.DesignTokens
 import com.imirae.incheon.viewmodel.AuthViewModel
 
 @Composable
-fun SelectOrgScreen(
+fun SelectBranchScreen(
     viewModel: AuthViewModel,
     onNavigateToDashboard: () -> Unit,
     onNavigateToLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val authState by viewModel.authState.collectAsState()
-    val orgsState by viewModel.organizationsState.collectAsState()
+    val branchesState by viewModel.branchesState.collectAsState()
 
     LaunchedEffect(Unit) {
-        viewModel.loadOrganizations()
+        viewModel.loadBranches()
     }
 
     LaunchedEffect(authState) {
@@ -47,7 +47,7 @@ fun SelectOrgScreen(
         contentAlignment = Alignment.Center
     ) {
         Card(
-            modifier = Modifier.widthIn(max = 400.dp).padding(DesignTokens.Spacing.lg.dp).testTag("auth-select-org-card"),
+            modifier = Modifier.widthIn(max = 400.dp).padding(DesignTokens.Spacing.lg.dp).testTag("auth-select-branch-card"),
             shape = RoundedCornerShape(DesignTokens.Radius.lg.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -65,31 +65,31 @@ fun SelectOrgScreen(
                 )
 
                 Text(
-                    "조직 선택",
+                    "지점 선택",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.testTag("auth-select-org-title")
+                    modifier = Modifier.testTag("auth-select-branch-title")
                 )
 
                 Text(
-                    "사용할 조직을 선택해 주세요.",
+                    "사용할 지점을 선택해 주세요.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
 
-                when (val state = orgsState) {
-                    is OrganizationsUiState.Idle,
-                    is OrganizationsUiState.Loading -> {
+                when (val state = branchesState) {
+                    is BranchesUiState.Idle,
+                    is BranchesUiState.Loading -> {
                         CircularProgressIndicator(modifier = Modifier.size(32.dp))
                         Text(
-                            "조직 목록을 불러오는 중...",
+                            "지점 목록을 불러오는 중...",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
-                    is OrganizationsUiState.Error -> {
+                    is BranchesUiState.Error -> {
                         Text(
                             state.message,
                             style = MaterialTheme.typography.bodyMedium,
@@ -97,7 +97,7 @@ fun SelectOrgScreen(
                             textAlign = TextAlign.Center
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { viewModel.loadOrganizations() }) {
+                            OutlinedButton(onClick = { viewModel.loadBranches() }) {
                                 Text("다시 시도")
                             }
                             OutlinedButton(onClick = onNavigateToLogin) {
@@ -106,16 +106,16 @@ fun SelectOrgScreen(
                         }
                     }
 
-                    is OrganizationsUiState.Loaded -> {
-                        if (state.organizations.isEmpty()) {
+                    is BranchesUiState.Loaded -> {
+                        if (state.branches.isEmpty()) {
                             Text(
-                                "접근 가능한 조직이 없습니다.\n관리자에게 조직 접근 권한을 요청해주세요.",
+                                "접근 가능한 지점이 없습니다.\n관리자에게 지점 접근 권한을 요청해주세요.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(onClick = { viewModel.loadOrganizations() }) {
+                                OutlinedButton(onClick = { viewModel.loadBranches() }) {
                                     Text("새로고침")
                                 }
                                 OutlinedButton(onClick = onNavigateToLogin) {
@@ -129,12 +129,12 @@ fun SelectOrgScreen(
                                 verticalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.sm.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                items(state.organizations) { org ->
+                                items(state.branches) { org ->
                                     Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable(enabled = !isSelecting) { viewModel.selectOrganization(org.id) }
-                                            .testTag("auth-select-org-item-${org.id}"),
+                                            .clickable(enabled = !isSelecting) { viewModel.selectBranch(org.id) }
+                                            .testTag("auth-select-branch-item-${org.id}"),
                                         shape = RoundedCornerShape(DesignTokens.Radius.md.dp),
                                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                                     ) {

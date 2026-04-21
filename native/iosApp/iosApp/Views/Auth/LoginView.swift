@@ -12,7 +12,7 @@ struct LoginView: View {
     var onNavigateToForgotPassword: () -> Void = {}
     var onNavigateToVerifyEmail: () -> Void = {}
     var onNavigateToDashboard: () -> Void = {}
-    var onNavigateToSelectOrg: () -> Void = {}
+    var onNavigateToSelectBranch: () -> Void = {}
 
     var body: some View {
         ScrollView {
@@ -158,7 +158,7 @@ struct LoginView: View {
         .frame(maxWidth: 400)
         .onChange(of: viewModel.authState) { _, newState in
             if newState is AuthState.Authenticated { onNavigateToDashboard() }
-            if newState is AuthState.RequiresOrgSelection { onNavigateToSelectOrg() }
+            if newState is AuthState.RequiresBranchSelection { onNavigateToSelectBranch() }
         }
     }
 

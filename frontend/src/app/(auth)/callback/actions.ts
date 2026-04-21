@@ -14,7 +14,7 @@ interface APIErrorResponse {
 interface TokenExchangeSuccessResponse {
     accessToken: string;
     refreshToken: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
 }
 
 interface TokenExchangePendingSignupResponse {
@@ -55,7 +55,7 @@ export async function exchangeToken(
 ): Promise<{
     success: boolean;
     error?: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
     onboardingRequired?: boolean;
     onboardingRoute?: "/kakao/onboarding" | "/onboarding";
 }> {
@@ -115,7 +115,7 @@ export async function exchangeToken(
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
         cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
 
-        return { success: true, requiresOrgSelection: data.requiresOrgSelection || false };
+        return { success: true, requiresBranchSelection: data.requiresBranchSelection || false };
     } catch (error) {
         console.error("[Server Action] Token Exchange Error:", error);
 

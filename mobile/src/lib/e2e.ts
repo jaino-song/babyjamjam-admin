@@ -4,7 +4,7 @@ export const E2E_AUTH_USER = {
   email: "e2e@example.com",
   profileImage: "",
   role: "admin",
-  organizationName: "E2E Organization",
+  branchName: "E2E Branch",
 } as const;
 
 export const E2E_VAPID_PUBLIC_KEY =

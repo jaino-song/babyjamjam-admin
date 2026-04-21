@@ -8,13 +8,13 @@ export interface DocumentFilter {
 }
 
 export interface IDocumentRepository {
-    findById(organizationid: string, id: string): Promise<DocumentEntity | null>;
-    findByOrgId(organizationid: string, orgid: string): Promise<DocumentEntity[]>;
-    findByCategoryId(organizationid: string, categoryId: string): Promise<DocumentEntity[]>;
-    findAll(organizationid: string): Promise<DocumentEntity[]>;
-    create(organizationid: string, doc: DocumentEntity): Promise<DocumentEntity>;
-    update(organizationid: string, doc: DocumentEntity): Promise<DocumentEntity>;
-    delete(organizationid: string, id: string): Promise<void>;
+    findById(branchid: string, id: string): Promise<DocumentEntity | null>;
+    findByOrgId(branchid: string, orgId: string): Promise<DocumentEntity[]>;
+    findByCategoryId(branchid: string, categoryId: string): Promise<DocumentEntity[]>;
+    findAll(branchid: string): Promise<DocumentEntity[]>;
+    create(branchid: string, doc: DocumentEntity): Promise<DocumentEntity>;
+    update(branchid: string, doc: DocumentEntity): Promise<DocumentEntity>;
+    delete(branchid: string, id: string): Promise<void>;
 }
 
 export const DOCUMENT_REPOSITORY = 'DOCUMENT_REPOSITORY';

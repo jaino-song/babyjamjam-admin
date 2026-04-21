@@ -51,7 +51,7 @@ describe("SbEmployeeRepository", () => {
         );
     };
 
-    const organizationId = "org-1";
+    const branchId = "org-1";
 
     let employeeModel: ReturnType<typeof createMockPrismaEmployee>;
     let prisma: PrismaService;
@@ -78,11 +78,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findFirst.mockResolvedValue(row);
 
                 // Act
-                const result = await repository.findById(organizationId, 1);
+                const result = await repository.findById(branchId, 1);
 
                 // Assert
                 expect(employeeModel.findFirst).toHaveBeenCalledWith({
-                    where: { id: 1, organizationId: organizationId },
+                    where: { id: 1, branchId: branchId },
                 });
                 expect(result).toBeInstanceOf(EmployeeEntity);
                 expect(result).toMatchObject({
@@ -103,11 +103,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findFirst.mockResolvedValue(null);
 
                 // Act
-                const result = await repository.findById(organizationId, 999);
+                const result = await repository.findById(branchId, 999);
 
                 // Assert
                 expect(employeeModel.findFirst).toHaveBeenCalledWith({
-                    where: { id: 999, organizationId: organizationId },
+                    where: { id: 999, branchId: branchId },
                 });
                 expect(result).toBeNull();
             });
@@ -128,7 +128,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                const result = await repository.findAll(organizationId);
+                const result = await repository.findAll(branchId);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith(
@@ -137,7 +137,7 @@ describe("SbEmployeeRepository", () => {
                             primaryEmployeeSchedules: expect.any(Object),
                             secondaryEmployeeSchedules: expect.any(Object),
                         }),
-                        where: { organizationId: organizationId },
+                        where: { branchId: branchId },
                     }),
                 );
                 expect(result).toHaveLength(2);
@@ -152,7 +152,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([]);
 
                 // Act
-                const result = await repository.findAll(organizationId);
+                const result = await repository.findAll(branchId);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -169,7 +169,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([row]);
 
                 // Act
-                const result = await repository.findAll(organizationId);
+                const result = await repository.findAll(branchId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -185,7 +185,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([row]);
 
                 // Act
-                const result = await repository.findAll(organizationId);
+                const result = await repository.findAll(branchId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -201,7 +201,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([row]);
 
                 // Act
-                const result = await repository.findAll(organizationId);
+                const result = await repository.findAll(branchId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -216,7 +216,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([row]);
 
                 // Act
-                const result = await repository.findAll(organizationId);
+                const result = await repository.findAll(branchId);
 
                 // Assert
                 expect(result).toHaveLength(1);
@@ -246,7 +246,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(organizationId, entity);
+                const result = await repository.create(branchId, entity);
 
                 // Assert
                 expect(employeeModel.findFirst).toHaveBeenCalledWith({
@@ -262,7 +262,7 @@ describe("SbEmployeeRepository", () => {
                         grade: "베스트",
                         openToNextWork: false,
                         companyRegisteredDate: new Date("2024-02-01T00:00:00.000Z"),
-                        organizationId: organizationId,
+                        branchId: branchId,
                     },
                 });
                 expect(result).toMatchObject({ id: 5, name: "Test Employee" });
@@ -278,7 +278,7 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(organizationId, entity);
+                const result = await repository.create(branchId, entity);
 
                 // Assert
                 expect(employeeModel.create).toHaveBeenCalledWith({
@@ -315,11 +315,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(organizationId, entity);
+                const result = await repository.update(branchId, entity);
 
                 // Assert
                 expect(employeeModel.update).toHaveBeenCalledWith({
-                    where: { id: 7, organizationId: organizationId },
+                    where: { id: 7, branchId: branchId },
                     data: {
                         name: "Charlie",
                         workArea: ["Busan"],
@@ -343,11 +343,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.delete.mockResolvedValue(undefined);
 
                 // Act
-                await repository.delete(organizationId, 3);
+                await repository.delete(branchId, 3);
 
                 // Assert
                 expect(employeeModel.delete).toHaveBeenCalledWith({
-                    where: { id: 3, organizationId: organizationId },
+                    where: { id: 3, branchId: branchId },
                 });
             });
         });
@@ -363,11 +363,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByWorkArea(organizationId, "Incheon");
+                await repository.findByWorkArea(branchId, "Incheon");
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { workArea: { has: "Incheon" }, organizationId: organizationId },
+                    where: { workArea: { has: "Incheon" }, branchId: branchId },
                 });
             });
         });
@@ -380,11 +380,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByGrade(organizationId, "프리미엄");
+                await repository.findByGrade(branchId, "프리미엄");
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { grade: "프리미엄", organizationId: organizationId },
+                    where: { grade: "프리미엄", branchId: branchId },
                 });
             });
 
@@ -396,11 +396,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findByGrade(organizationId, grade);
+                await repository.findByGrade(branchId, grade);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { grade, organizationId: organizationId },
+                    where: { grade, branchId: branchId },
                 });
             });
         });
@@ -413,11 +413,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByOpenToNextWork(organizationId, true);
+                await repository.findByOpenToNextWork(branchId, true);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { openToNextWork: true, organizationId: organizationId },
+                    where: { openToNextWork: true, branchId: branchId },
                 });
             });
         });
@@ -428,11 +428,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findByOpenToNextWork(organizationId, false);
+                await repository.findByOpenToNextWork(branchId, false);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { openToNextWork: false, organizationId: organizationId },
+                    where: { openToNextWork: false, branchId: branchId },
                 });
             });
         });
@@ -446,7 +446,7 @@ describe("SbEmployeeRepository", () => {
                 const date = new Date("2024-05-05T12:00:00.000Z");
 
                 // Act
-                await repository.findByRegisteredDate(organizationId, date);
+                await repository.findByRegisteredDate(branchId, date);
 
                 // Assert
                 const call = employeeModel.findMany.mock.calls[0][0];
@@ -467,7 +467,7 @@ describe("SbEmployeeRepository", () => {
                 const end = new Date("2024-01-31T23:59:59.000Z");
 
                 // Act
-                await repository.findByRegisteredDateRange(organizationId, start, end);
+                await repository.findByRegisteredDateRange(branchId, start, end);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
@@ -476,7 +476,7 @@ describe("SbEmployeeRepository", () => {
                             gte: start,
                             lte: end,
                         },
-                        organizationId: organizationId,
+                        branchId: branchId,
                     },
                 });
             });
@@ -493,11 +493,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.update.mockResolvedValue(createEmployeeRow());
 
                 // Act
-                await repository.changeOpenToNextWork(organizationId, 10, false);
+                await repository.changeOpenToNextWork(branchId, 10, false);
 
                 // Assert
                 expect(employeeModel.update).toHaveBeenCalledWith({
-                    where: { id: 10, organizationId: organizationId },
+                    where: { id: 10, branchId: branchId },
                     data: { openToNextWork: false },
                 });
             });
@@ -509,11 +509,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.update.mockResolvedValue(createEmployeeRow({ openToNextWork: true }));
 
                 // Act
-                await repository.changeOpenToNextWork(organizationId, 15, true);
+                await repository.changeOpenToNextWork(branchId, 15, true);
 
                 // Assert
                 expect(employeeModel.update).toHaveBeenCalledWith({
-                    where: { id: 15, organizationId: organizationId },
+                    where: { id: 15, branchId: branchId },
                     data: { openToNextWork: true },
                 });
             });
@@ -531,11 +531,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                const result = await repository.findAllOpenToNextWork(organizationId);
+                const result = await repository.findAllOpenToNextWork(branchId);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { openToNextWork: true, organizationId: organizationId },
+                    where: { openToNextWork: true, branchId: branchId },
                 });
                 expect(result).toHaveLength(2);
             });

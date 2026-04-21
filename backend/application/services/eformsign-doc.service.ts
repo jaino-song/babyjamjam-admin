@@ -46,9 +46,9 @@ export class EformsignDocService {
      * Create a new eformsign doc record in local DB
      * @param params - document creation parameters
      */
-    async create(organizationid: string, params: CreateEformsignDocParams): Promise<EformsignDocEntity> {
+    async create(branchid: string, params: CreateEformsignDocParams): Promise<EformsignDocEntity> {
         this.logger.log(`Creating eformsign doc record: documentId=${params.documentId}, clientId=${params.clientId}, linkToClient=${params.linkToClient}`);
-        const result = await this.createEformsignDocUsecase.execute(organizationid, params);
+        const result = await this.createEformsignDocUsecase.execute(branchid, params);
         this.logger.log(`Successfully created eformsign doc record: id=${result.id}, documentId=${result.documentId}`);
         return result;
     }
@@ -56,29 +56,29 @@ export class EformsignDocService {
     /**
      * Find a stored eformsign doc by its DB id
      */
-    findById(organizationid: string, id: number): Promise<EformsignDocEntity | null> {
-        return this.findEformsignDocByIdUsecase.execute(organizationid, id);
+    findById(branchid: string, id: number): Promise<EformsignDocEntity | null> {
+        return this.findEformsignDocByIdUsecase.execute(branchid, id);
     }
 
     /**
      * Find a stored eformsign doc by the eformsign documentId
      */
-    findByDocumentId(organizationid: string, documentId: string): Promise<EformsignDocEntity | null> {
-        return this.findEformsignDocByDocumentIdUsecase.execute(organizationid, documentId);
+    findByDocumentId(branchid: string, documentId: string): Promise<EformsignDocEntity | null> {
+        return this.findEformsignDocByDocumentIdUsecase.execute(branchid, documentId);
     }
 
     /**
      * Find all stored eformsign docs linked to a client
      */
-    findByClientId(organizationid: string, clientId: number): Promise<EformsignDocEntity[]> {
-        return this.findEformsignDocsByClientIdUsecase.execute(organizationid, clientId);
+    findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
+        return this.findEformsignDocsByClientIdUsecase.execute(branchid, clientId);
     }
 
     /**
      * List all stored eformsign docs
      */
-    findAll(organizationid: string): Promise<EformsignDocEntity[]> {
-        return this.listEformsignDocsUsecase.execute(organizationid);
+    findAll(branchid: string): Promise<EformsignDocEntity[]> {
+        return this.listEformsignDocsUsecase.execute(branchid);
     }
 
     // ============ External API Operations ============
@@ -119,9 +119,9 @@ export class EformsignDocService {
     }
 
     createAndSendContract(
-        organizationid: string,
+        branchid: string,
         params: CreateAndSendContractParams
     ): Promise<CreateAndSendContractResult> {
-        return this.createAndSendContractUsecase.execute(organizationid, params);
+        return this.createAndSendContractUsecase.execute(branchid, params);
     }
 }

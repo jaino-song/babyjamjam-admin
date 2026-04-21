@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
             success: true,
             message: "로그인 성공",
-            requiresOrgSelection: data.requiresOrgSelection,
+            requiresBranchSelection: data.requiresBranchSelection,
         }, { status: 200 });
     } catch (error) {
         console.error("[Auth Login] Error:", error);

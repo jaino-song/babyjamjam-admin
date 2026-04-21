@@ -29,37 +29,37 @@ async function main() {
 
   console.log('Found user:', user.email || user.id);
 
-  // Find organization
-  const org = await prisma.organization.findFirst();
+  // Find branch
+  const org = await prisma.branch.findFirst();
 
   if (!org) {
-    console.error('No organization found. Run migrate-to-multi-tenancy-clean.ts first.');
+    console.error('No branch found. Run migrate-to-multi-tenancy-clean.ts first.');
     process.exit(1);
   }
 
   console.log('Found org:', org.name);
 
   // Check if already linked
-  const existing = await prisma.user_organization.findFirst({
-    where: { userId: user.id, organizationId: org.id }
+  const existing = await prisma.user_branch.findFirst({
+    where: { userId: user.id, branchId: org.id }
   });
 
   if (existing) {
-    console.log('User already linked to organization');
+    console.log('User already linked to branch');
     return;
   }
 
   // Create link
-  await prisma.user_organization.create({
+  await prisma.user_branch.create({
     data: {
       id: crypto.randomUUID(),
       userId: user.id,
-      organizationId: org.id,
+      branchId: org.id,
       role: 'admin',
     }
   });
 
-  console.log('✓ User linked to organization as admin');
+  console.log('✓ User linked to branch as admin');
 }
 
 main()

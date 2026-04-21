@@ -122,27 +122,27 @@ export class AlimtalkTriggerService {
         private readonly logRepository: IAlimtalkLogRepository,
     ) {}
 
-    async listRules(organizationId: string): Promise<AlimtalkTriggerRuleEntity[]> {
+    async listRules(branchId: string): Promise<AlimtalkTriggerRuleEntity[]> {
         if (!(await this.hasTriggerSchema())) {
             return [];
         }
-        return this.ruleRepository.findAll(organizationId);
+        return this.ruleRepository.findAll(branchId);
     }
 
     async listUpcomingJobs(
-        organizationId: string,
+        branchId: string,
         limit = 200,
     ): Promise<UpcomingAlimtalkTriggerJobView[]> {
         if (!(await this.hasTriggerSchema())) {
             return [];
         }
 
-        const jobs = await this.jobRepository.findUpcomingPendingByOrganization(organizationId, limit);
+        const jobs = await this.jobRepository.findUpcomingPendingByBranch(branchId, limit);
         if (jobs.length === 0) {
             return [];
         }
 
-        const rules = await this.ruleRepository.findAll(organizationId);
+        const rules = await this.ruleRepository.findAll(branchId);
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
 
         return jobs.map((job) => {
@@ -173,14 +173,14 @@ export class AlimtalkTriggerService {
     }
 
     async listHistory(
-        organizationId: string,
+        branchId: string,
         limit = 200,
     ): Promise<AlimtalkHistoryRecordView[]> {
         if (!(await hasTable(this.prisma, "alimtalk_log"))) {
             return [];
         }
 
-        const logs = await this.logRepository.findRecentByOrganization(organizationId, limit);
+        const logs = await this.logRepository.findRecentByBranch(branchId, limit);
         if (logs.length === 0) {
             return [];
         }
@@ -203,7 +203,7 @@ export class AlimtalkTriggerService {
             : [];
 
         const jobsById = new Map(jobs.map((job) => [job.id, job]));
-        const rules = await this.ruleRepository.findAll(organizationId);
+        const rules = await this.ruleRepository.findAll(branchId);
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
 
         return logs.map((log) => {
@@ -242,9 +242,9 @@ export class AlimtalkTriggerService {
         });
     }
 
-    async getRule(organizationId: string, id: string): Promise<AlimtalkTriggerRuleEntity> {
+    async getRule(branchId: string, id: string): Promise<AlimtalkTriggerRuleEntity> {
         await this.ensureTriggerSchemaReady();
-        const rule = await this.ruleRepository.findById(organizationId, id);
+        const rule = await this.ruleRepository.findById(branchId, id);
         if (!rule) {
             throw new NotFoundException(`Trigger rule ${id} not found`);
         }
@@ -269,34 +269,34 @@ export class AlimtalkTriggerService {
     }
 
     async createRule(
-        organizationId: string,
+        branchId: string,
         params: UpsertRuleParams,
     ): Promise<AlimtalkTriggerRuleEntity> {
         await this.ensureTriggerSchemaReady();
-        await this.messageSenderApprovalService.ensureApproved(organizationId);
+        await this.messageSenderApprovalService.ensureApproved(branchId);
         this.validateRule(params);
         const rule = await this.ruleRepository.create(
-            organizationId,
+            branchId,
             AlimtalkTriggerRuleEntity.create({
-                organizationId,
+                branchId,
                 ...params,
                 offsetDays: this.normalizeOffsetDays(params.offsetType, params.offsetDays),
             }),
         );
         if (rule.isActive) {
-            await this.rebuildJobsForRule(organizationId, rule, false);
+            await this.rebuildJobsForRule(branchId, rule, false);
         }
         return rule;
     }
 
     async updateRule(
-        organizationId: string,
+        branchId: string,
         id: string,
         params: Partial<UpsertRuleParams>,
     ): Promise<AlimtalkTriggerRuleEntity> {
         await this.ensureTriggerSchemaReady();
-        await this.messageSenderApprovalService.ensureApproved(organizationId);
-        const rule = await this.getRule(organizationId, id);
+        await this.messageSenderApprovalService.ensureApproved(branchId);
+        const rule = await this.getRule(branchId, id);
         const nextState: UpsertRuleParams = {
             name: params.name ?? rule.name,
             isActive: params.isActive ?? rule.isActive,
@@ -312,19 +312,19 @@ export class AlimtalkTriggerService {
             ...nextState,
             offsetDays: this.normalizeOffsetDays(nextState.offsetType, nextState.offsetDays),
         });
-        const updated = await this.ruleRepository.update(organizationId, rule);
+        const updated = await this.ruleRepository.update(branchId, rule);
         await this.cancelPendingJobsForRule(updated.id, "Rule updated");
         if (updated.isActive) {
-            await this.rebuildJobsForRule(organizationId, updated, false);
+            await this.rebuildJobsForRule(branchId, updated, false);
         }
         return updated;
     }
 
-    async deleteRule(organizationId: string, id: string): Promise<void> {
+    async deleteRule(branchId: string, id: string): Promise<void> {
         await this.ensureTriggerSchemaReady();
-        await this.getRule(organizationId, id);
+        await this.getRule(branchId, id);
         await this.cancelPendingJobsForRule(id, "Rule deleted");
-        await this.ruleRepository.delete(organizationId, id);
+        await this.ruleRepository.delete(branchId, id);
     }
 
     async dispatchDueJobs(): Promise<void> {
@@ -348,7 +348,7 @@ export class AlimtalkTriggerService {
     }
 
     async syncClientRulesForClient(
-        organizationId: string,
+        branchId: string,
         clientId: number,
         includePast: boolean,
     ): Promise<void> {
@@ -358,7 +358,7 @@ export class AlimtalkTriggerService {
 
         const supportsCreatedAt = await hasColumn(this.prisma, "client", "created_at");
         const client = await this.prisma.client.findFirst({
-            where: { id: clientId, organizationId },
+            where: { id: clientId, branchId },
             select: {
                 id: true,
                 name: true,
@@ -371,7 +371,7 @@ export class AlimtalkTriggerService {
         });
         if (!client) return;
 
-        const rules = await this.ruleRepository.findActiveByEventTypes(organizationId, [
+        const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
             AlimtalkTriggerEventType.CLIENT_CREATED,
             AlimtalkTriggerEventType.SERVICE_START,
             AlimtalkTriggerEventType.SERVICE_END,
@@ -389,7 +389,7 @@ export class AlimtalkTriggerService {
     }
 
     async syncEmployeeAssignmentRulesForSchedule(
-        organizationId: string,
+        branchId: string,
         employeeScheduleId: number,
         includePast: boolean,
     ): Promise<void> {
@@ -397,7 +397,7 @@ export class AlimtalkTriggerService {
             return;
         }
         const schedule = await this.prisma.employee_schedule.findFirst({
-            where: { id: employeeScheduleId, organizationId },
+            where: { id: employeeScheduleId, branchId },
             include: {
                 client: true,
                 primaryEmployee: true,
@@ -406,7 +406,7 @@ export class AlimtalkTriggerService {
         });
         if (!schedule) return;
 
-        const rules = await this.ruleRepository.findActiveByEventTypes(organizationId, [
+        const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
             AlimtalkTriggerEventType.EMPLOYEE_ASSIGNED,
         ]);
 
@@ -423,18 +423,18 @@ export class AlimtalkTriggerService {
     }
 
     async hasActiveRulesForEvents(
-        organizationId: string,
+        branchId: string,
         eventTypes: AlimtalkTriggerEventType[],
     ): Promise<boolean> {
         if (!(await this.hasTriggerSchema())) {
             return false;
         }
-        const rules = await this.ruleRepository.findActiveByEventTypes(organizationId, eventTypes);
+        const rules = await this.ruleRepository.findActiveByEventTypes(branchId, eventTypes);
         return rules.length > 0;
     }
 
     private async rebuildJobsForRule(
-        organizationId: string,
+        branchId: string,
         rule: AlimtalkTriggerRuleEntity,
         includePast: boolean,
     ): Promise<void> {
@@ -450,7 +450,7 @@ export class AlimtalkTriggerService {
         }
 
         const clients = await this.prisma.client.findMany({
-            where: { organizationId },
+            where: { branchId },
             select: {
                 id: true,
                 name: true,
@@ -497,7 +497,7 @@ export class AlimtalkTriggerService {
         };
 
         return AlimtalkTriggerJobEntity.create({
-            organizationId: rule.organizationId ?? undefined,
+            branchId: rule.branchId ?? undefined,
             ruleId: rule.id,
             scheduledFor,
             clientId: client.id,
@@ -531,7 +531,7 @@ export class AlimtalkTriggerService {
         const scheduledFor = new Date();
         const memberId = `employee:${employee.id}`;
         return AlimtalkTriggerJobEntity.create({
-            organizationId: rule.organizationId ?? undefined,
+            branchId: rule.branchId ?? undefined,
             ruleId: rule.id,
             scheduledFor,
             clientId: schedule.clientId,

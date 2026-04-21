@@ -21,7 +21,7 @@ import { AlimtalkTriggerRuleEntity } from "domain/entities/alimtalk-trigger-rule
 describe("AlimtalkTriggerController (Integration)", () => {
     type RuleOverrides = Partial<{
         id: string;
-        organizationId: string | null;
+        branchId: string | null;
         name: string;
         isActive: boolean;
         eventType: AlimtalkTriggerEventType;
@@ -45,14 +45,14 @@ describe("AlimtalkTriggerController (Integration)", () => {
         listTemplates: jest.Mock;
     };
 
-    const organizationId = "org-1";
+    const branchId = "org-1";
 
     const createMockRule = (
         overrides: RuleOverrides = {},
     ) =>
         AlimtalkTriggerRuleEntity.reconstitute(
             overrides.id ?? "rule-1",
-            overrides.organizationId ?? organizationId,
+            overrides.branchId ?? branchId,
             overrides.name ?? "고객 등록 즉시 발송",
             overrides.isActive ?? true,
             overrides.eventType ?? AlimtalkTriggerEventType.CLIENT_CREATED,
@@ -157,9 +157,9 @@ describe("AlimtalkTriggerController (Integration)", () => {
                 const requestContext = context.switchToHttp().getRequest();
                 requestContext.user = {
                     userId: "user-1",
-                    organizationId,
+                    branchId,
                     role: "admin",
-                    orgRole: "admin",
+                    branchRole: "admin",
                 };
                 return true;
             },
@@ -197,7 +197,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
-            expect(triggerService.listRules).toHaveBeenCalledWith(organizationId);
+            expect(triggerService.listRules).toHaveBeenCalledWith(branchId);
         });
     });
 
@@ -208,7 +208,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
             const response = await request(app.getHttpServer()).get("/alimtalk-trigger-jobs/upcoming");
 
             expect(response.status).toBe(200);
-            expect(triggerService.listUpcomingJobs).toHaveBeenCalledWith(organizationId, 200);
+            expect(triggerService.listUpcomingJobs).toHaveBeenCalledWith(branchId, 200);
         });
 
         it("caps the limit at 500", async () => {
@@ -219,7 +219,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
                 .query({ limit: 999 });
 
             expect(response.status).toBe(200);
-            expect(triggerService.listUpcomingJobs).toHaveBeenCalledWith(organizationId, 500);
+            expect(triggerService.listUpcomingJobs).toHaveBeenCalledWith(branchId, 500);
         });
     });
 
@@ -233,7 +233,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
-            expect(triggerService.listHistory).toHaveBeenCalledWith(organizationId, 25);
+            expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25);
         });
     });
 
@@ -265,7 +265,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
 
             expect(response.status).toBe(201);
             expect(triggerService.createRule).toHaveBeenCalledWith(
-                organizationId,
+                branchId,
                 expect.objectContaining({
                     name: "서비스 시작 리마인드",
                     offsetDays: 2,
@@ -298,7 +298,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
             const response = await request(app.getHttpServer()).get("/alimtalk-trigger-rules/rule-42");
 
             expect(response.status).toBe(200);
-            expect(triggerService.getRule).toHaveBeenCalledWith(organizationId, "rule-42");
+            expect(triggerService.getRule).toHaveBeenCalledWith(branchId, "rule-42");
         });
     });
 
@@ -321,7 +321,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(triggerService.updateRule).toHaveBeenCalledWith(
-                organizationId,
+                branchId,
                 "rule-42",
                 expect.objectContaining({
                     name: "비활성 규칙",
@@ -349,7 +349,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
             const response = await request(app.getHttpServer()).delete("/alimtalk-trigger-rules/rule-42");
 
             expect(response.status).toBe(200);
-            expect(triggerService.deleteRule).toHaveBeenCalledWith(organizationId, "rule-42");
+            expect(triggerService.deleteRule).toHaveBeenCalledWith(branchId, "rule-42");
         });
     });
 

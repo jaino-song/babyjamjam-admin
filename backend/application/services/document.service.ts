@@ -9,7 +9,7 @@ export class DocumentService {
         private readonly documentRepository: IDocumentRepository,
     ) {}
 
-    async create(organizationId: string, params: {
+    async create(branchId: string, params: {
         name: string;
         description?: string;
         categoryId: string;
@@ -18,7 +18,7 @@ export class DocumentService {
         filesize: number;
         storagepath: string;
         storageurl?: string;
-        orgid?: string;
+        branchid?: string;
         uploadedby: string;
     }): Promise<DocumentEntity> {
         const doc = DocumentEntity.create({
@@ -30,17 +30,17 @@ export class DocumentService {
             fileSize: params.filesize,
             storagePath: params.storagepath,
             storageUrl: params.storageurl,
-            orgId: params.orgid,
+            orgId: params.branchid,
             uploadedBy: params.uploadedby,
         });
-        return this.documentRepository.create(organizationId, doc);
+        return this.documentRepository.create(branchId, doc);
     }
 
     /**
      * Find a document by ID
      */
-    async findById(organizationId: string, id: string): Promise<DocumentEntity> {
-        const doc = await this.documentRepository.findById(organizationId, id);
+    async findById(branchId: string, id: string): Promise<DocumentEntity> {
+        const doc = await this.documentRepository.findById(branchId, id);
         if (!doc) {
             throw new NotFoundException(`Document with id ${id} not found`);
         }
@@ -48,25 +48,25 @@ export class DocumentService {
     }
 
     /**
-     * Find documents by organization ID
+     * Find documents by branch ID
      */
-    async findByOrgId(organizationId: string, orgId: string): Promise<DocumentEntity[]> {
-        return this.documentRepository.findByOrgId(organizationId, orgId);
+    async findByOrgId(branchId: string, orgId: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findByOrgId(branchId, orgId);
     }
 
-    async findByCategoryId(organizationId: string, categoryId: string): Promise<DocumentEntity[]> {
-        return this.documentRepository.findByCategoryId(organizationId, categoryId);
+    async findByCategoryId(branchId: string, categoryId: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findByCategoryId(branchId, categoryId);
     }
 
     /**
      * List all documents
      */
-    async findAll(organizationId: string): Promise<DocumentEntity[]> {
-        return this.documentRepository.findAll(organizationId);
+    async findAll(branchId: string): Promise<DocumentEntity[]> {
+        return this.documentRepository.findAll(branchId);
     }
 
     async update(
-        organizationId: string,
+        branchId: string,
         id: string,
         updates: {
             name?: string;
@@ -75,7 +75,7 @@ export class DocumentService {
             tags?: string[];
         },
     ): Promise<DocumentEntity> {
-        const existing = await this.findById(organizationId, id);
+        const existing = await this.findById(branchId, id);
 
         const updated = DocumentEntity.reconstitute(
             existing.id,
@@ -93,14 +93,14 @@ export class DocumentService {
             new Date(),
         );
 
-        return this.documentRepository.update(organizationId, updated);
+        return this.documentRepository.update(branchId, updated);
     }
 
     /**
      * Delete a document
      */
-    async delete(organizationId: string, id: string): Promise<void> {
-        await this.findById(organizationId, id); // Ensure it exists
-        await this.documentRepository.delete(organizationId, id);
+    async delete(branchId: string, id: string): Promise<void> {
+        await this.findById(branchId, id); // Ensure it exists
+        await this.documentRepository.delete(branchId, id);
     }
 }

@@ -1,0 +1,295 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Flag, Save } from "lucide-react";
+import { ContentPaper } from "@/components/app/root/content-paper";
+import { SectionNav } from "@/components/app/v3";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
+import { settingsApi, type RibbonConfig } from "@/services/api";
+import { useToast } from "@/hooks/use-toast";
+import { Toaster } from "@/components/ui/toaster";
+
+const SECTIONS = [
+  { id: "ribbon", label: "리본 배너", icon: Flag },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]["id"];
+
+const DEFAULT_CONFIG: RibbonConfig = {
+  enabled: false,
+  message: "",
+  backgroundColor: "#004AAD",
+  textColor: "#FFFFFF",
+  linkText: "",
+  linkHref: "",
+  linkColor: "#FFB27B",
+};
+
+export default function WebsiteAdminPage() {
+  const [activeSection, setActiveSection] = useState<SectionId>("ribbon");
+  const [form, setForm] = useState<RibbonConfig>(DEFAULT_CONFIG);
+  const [isDirty, setIsDirty] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const ribbonQuery = useQuery({
+    queryKey: ["settings", "ribbon-config"],
+    queryFn: settingsApi.getRibbonConfig,
+  });
+
+  useEffect(() => {
+    if (ribbonQuery.data) {
+      setForm(ribbonQuery.data);
+      setIsDirty(false);
+    }
+  }, [ribbonQuery.data]);
+
+  const updateMutation = useMutation({
+    mutationFn: settingsApi.updateRibbonConfig,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["settings", "ribbon-config"], data);
+      setIsDirty(false);
+      toast({ title: "저장 완료", description: "리본 배너 설정이 저장되었습니다." });
+    },
+    onError: () => {
+      toast({ title: "저장 실패", description: "설정 저장 중 오류가 발생했습니다.", variant: "destructive" });
+    },
+  });
+
+  const updateField = <K extends keyof RibbonConfig>(key: K, value: RibbonConfig[K]) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setIsDirty(true);
+  };
+
+  const handleSave = () => {
+    updateMutation.mutate(form);
+  };
+
+  return (
+    <section data-component="website-admin" className="space-y-6">
+      <div data-component="website-admin-content" className="flex flex-col lg:flex-row gap-8">
+        <SectionNav
+          items={SECTIONS}
+          activeId={activeSection}
+          onSelect={(id) => setActiveSection(id as SectionId)}
+        />
+
+        <div data-component="website-admin-sections" className="flex-1 min-w-0">
+          {activeSection === "ribbon" && (
+            <section data-component="website-admin-ribbon">
+              <ContentPaper variant="v3">
+                <div className="mb-4 flex items-center gap-3">
+                  <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--v3-primary))]/10">
+                    <Flag size={20} className="text-[hsl(var(--v3-primary))]" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-foreground">리본 배너</h2>
+                    <p className="text-sm text-muted-foreground">홈페이지 상단에 표시되는 알림 리본을 관리합니다.</p>
+                  </div>
+                </div>
+                <Separator className="mb-6" />
+
+                {ribbonQuery.isLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Spinner size="lg" />
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Enable toggle */}
+                    <div className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="ribbon-enabled" className="text-sm font-medium">활성화</Label>
+                        <p className="text-sm text-muted-foreground">리본 배너를 홈페이지에 표시합니다.</p>
+                      </div>
+                      <Switch
+                        variant="v3"
+                        id="ribbon-enabled"
+                        checked={form.enabled}
+                        onCheckedChange={(checked) => updateField("enabled", checked)}
+                      />
+                    </div>
+
+                    <Separator />
+
+                    {/* Message */}
+                    <div>
+                      <Label htmlFor="ribbon-message" className="text-sm font-medium">메시지</Label>
+                      <input
+                        id="ribbon-message"
+                        type="text"
+                        value={form.message}
+                        onChange={(e) => updateField("message", e.target.value)}
+                        placeholder="리본에 표시할 메시지를 입력하세요"
+                        className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                      />
+                    </div>
+
+                    {/* Colors */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <Label htmlFor="ribbon-bg" className="text-sm font-medium">배경 색상</Label>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <input
+                            id="ribbon-bg"
+                            type="color"
+                            value={form.backgroundColor}
+                            onChange={(e) => updateField("backgroundColor", e.target.value)}
+                            className="w-10 h-10 rounded-lg border border-[hsl(var(--v3-border))] cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={form.backgroundColor}
+                            onChange={(e) => updateField("backgroundColor", e.target.value)}
+                            className="flex-1 px-3 py-2 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <Label htmlFor="ribbon-text-color" className="text-sm font-medium">텍스트 색상</Label>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <input
+                            id="ribbon-text-color"
+                            type="color"
+                            value={form.textColor}
+                            onChange={(e) => updateField("textColor", e.target.value)}
+                            className="w-10 h-10 rounded-lg border border-[hsl(var(--v3-border))] cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={form.textColor}
+                            onChange={(e) => updateField("textColor", e.target.value)}
+                            className="flex-1 px-3 py-2 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <Label htmlFor="ribbon-link-color" className="text-sm font-medium">링크 색상</Label>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <input
+                            id="ribbon-link-color"
+                            type="color"
+                            value={form.linkColor}
+                            onChange={(e) => updateField("linkColor", e.target.value)}
+                            className="w-10 h-10 rounded-lg border border-[hsl(var(--v3-border))] cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={form.linkColor}
+                            onChange={(e) => updateField("linkColor", e.target.value)}
+                            className="flex-1 px-3 py-2 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Link settings */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="ribbon-link-text" className="text-sm font-medium">링크 텍스트</Label>
+                        <input
+                          id="ribbon-link-text"
+                          type="text"
+                          value={form.linkText}
+                          onChange={(e) => updateField("linkText", e.target.value)}
+                          placeholder="자세히 보기"
+                          className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="ribbon-link-href" className="text-sm font-medium">링크 URL</Label>
+                        <input
+                          id="ribbon-link-href"
+                          type="text"
+                          value={form.linkHref}
+                          onChange={(e) => updateField("linkHref", e.target.value)}
+                          placeholder="/pricing"
+                          className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Preview */}
+                    <div>
+                      <Label className="text-sm font-medium mb-3 block">미리보기</Label>
+                      <div
+                        className="rounded-xl overflow-hidden border border-[hsl(var(--v3-border))]"
+                      >
+                        <div
+                          style={{
+                            background: form.backgroundColor,
+                            color: form.textColor,
+                            padding: "10px 24px",
+                            fontSize: "13px",
+                            fontWeight: 500,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "8px",
+                            letterSpacing: "-0.01em",
+                            opacity: form.enabled ? 1 : 0.4,
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: "50%",
+                              background: form.linkColor,
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span>{form.message || "메시지를 입력하세요"}</span>
+                          {form.linkText && (
+                            <span style={{ color: form.linkColor, fontWeight: 600 }}>
+                              {form.linkText} ›
+                            </span>
+                          )}
+                        </div>
+                        {!form.enabled && (
+                          <div className="bg-muted/50 text-center py-1 text-xs text-muted-foreground">
+                            비활성 상태 — 홈페이지에 표시되지 않습니다
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Save button */}
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleSave}
+                        disabled={!isDirty || updateMutation.isPending}
+                        className={`
+                          inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+                          ${isDirty
+                            ? "bg-[hsl(var(--v3-primary))] text-white hover:bg-[hsl(var(--v3-primary-hover))] shadow-md shadow-blue-500/20"
+                            : "bg-muted text-muted-foreground cursor-not-allowed"
+                          }
+                        `}
+                      >
+                        {updateMutation.isPending ? (
+                          <Spinner size="sm" />
+                        ) : (
+                          <Save size={16} />
+                        )}
+                        저장
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </ContentPaper>
+            </section>
+          )}
+        </div>
+      </div>
+      <Toaster />
+    </section>
+  );
+}

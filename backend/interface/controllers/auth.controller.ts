@@ -17,7 +17,7 @@ import {
     ResendVerificationDto,
     LinkPasswordDto,
 } from "interface/dto/email-auth.dto";
-import { SelectOrganizationDto, SwitchOrganizationDto } from "interface/dto/organization-auth.dto";
+import { SelectBranchDto, SwitchBranchDto } from "interface/dto/branch-auth.dto";
 import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
 
 @Controller("auth")
@@ -70,7 +70,7 @@ export class AuthController {
             ? result.onboardingKind === "kakao_signup"
                 ? await this.authService.createPendingSignupCode(result.pendingSignupData)
                 : await this.authService.createPendingAccountOnboardingCode(result.userId)
-            : await this.authService.createAuthCode(result as { accessToken: string; refreshToken: string; requiresOrgSelection?: boolean });
+            : await this.authService.createAuthCode(result as { accessToken: string; refreshToken: string; requiresBranchSelection?: boolean });
 
         console.log(`[Auth] Redirecting to ${frontendURL}/callback (NODE_ENV: ${process.env['NODE_ENV']})`);
 
@@ -80,7 +80,7 @@ export class AuthController {
     @Get("me")
     @UseGuards(JwtGuard)
     async getCurrentUser(@Request() req: any) {
-        const user = await this.prisma.user.findUnique({
+        const userPromise = this.prisma.user.findUnique({
             where: { id: req.user.userId },
             select: {
                 id: true,
@@ -92,17 +92,17 @@ export class AuthController {
                 role: true,
             },
         });
-
-        let organizationName: string | null = null;
-        if (req.user.organizationId) {
-            const org = await this.prisma.organization.findUnique({
-                where: { id: req.user.organizationId },
+        const branchPromise = req.user.branchId
+            ? this.prisma.branch.findUnique({
+                where: { id: req.user.branchId },
                 select: { name: true },
-            });
-            organizationName = org?.name ?? null;
-        }
+            })
+            : Promise.resolve(null);
 
-        return { ...user, organizationName };
+        const [user, org] = await Promise.all([userPromise, branchPromise]);
+        const branchName = org?.name ?? null;
+
+        return { ...user, branchName };
     }
 
     @Post("token")
@@ -139,7 +139,7 @@ export class AuthController {
             token,
             body.phone,
             body.birthDate,
-            body.organizationId,
+            body.branchId,
             body.role,
         );
     }
@@ -172,7 +172,7 @@ export class AuthController {
             token,
             body.phone,
             body.birthDate,
-            body.organizationId,
+            body.branchId,
             body.role,
         );
     }
@@ -194,7 +194,7 @@ export class AuthController {
             body.name,
             body.phone,
             body.birthDate,
-            body.organizationId,
+            body.branchId,
             body.role,
         );
 
@@ -331,35 +331,35 @@ export class AuthController {
         }
     }
 
-    // ==================== Organization Selection Endpoints ====================
+    // ==================== Branch Selection Endpoints ====================
 
-    @Get("organizations")
+    @Get("branches")
     @UseGuards(JwtGuard)
-    async getUserOrganizations(@Request() req: any) {
-        const organizations = await this.authService.getUserOrganizations(req.user.userId);
-        return { organizations };
+    async getUserBranches(@Request() req: any) {
+        const branches = await this.authService.getUserBranches(req.user.userId);
+        return { branches };
     }
 
-    @Get("organizations/all")
-    async getAllActiveOrganizations() {
-        const organizations = await this.prisma.organization.findMany({
+    @Get("branches/all")
+    async getAllActiveBranches() {
+        const branches = await this.prisma.branch.findMany({
             where: { isActive: true },
             select: { id: true, name: true },
             orderBy: { name: 'asc' },
         });
-        return organizations;
+        return branches;
     }
 
-    @Post("select-organization")
+    @Post("select-branch")
     @UseGuards(JwtGuard)
-    async selectOrganization(
-        @Body() body: SelectOrganizationDto,
+    async selectBranch(
+        @Body() body: SelectBranchDto,
         @Request() req: any,
         @Res({ passthrough: true }) res: Response
     ) {
-        const tokens = await this.authService.selectOrganization(
+        const tokens = await this.authService.selectBranch(
             req.user.userId,
-            body.organizationId
+            body.branchId
         );
 
         this.setAuthCookies(res, tokens);
@@ -367,17 +367,17 @@ export class AuthController {
         return { success: true, ...tokens };
     }
 
-    @Post("switch-organization")
+    @Post("switch-branch")
     @UseGuards(JwtGuard)
-    async switchOrganization(
-        @Body() body: SwitchOrganizationDto,
+    async switchBranch(
+        @Body() body: SwitchBranchDto,
         @Request() req: any,
         @Res({ passthrough: true }) res: Response
     ) {
-        const tokens = await this.authService.switchOrganization(
+        const tokens = await this.authService.switchBranch(
             req.user.userId,
-            body.currentOrganizationId,
-            body.newOrganizationId
+            body.currentBranchId,
+            body.newBranchId
         );
 
         this.setAuthCookies(res, tokens);
@@ -390,7 +390,7 @@ export class AuthController {
         // Clear auth cookies
         res.clearCookie('auth_token', { path: '/' });
         res.clearCookie('refresh_token', { path: '/' });
-        res.clearCookie('selected_organization_id', { path: '/' });
+        res.clearCookie('selected_branch_id', { path: '/' });
 
         return { success: true, message: 'Logged out successfully' };
     }

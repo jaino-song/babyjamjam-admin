@@ -9,8 +9,8 @@ export class FindEformsignDocByDocumentIdUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
     ) {}
 
-    execute(organizationid: string, documentId: string): Promise<EformsignDocEntity | null> {
-        return this.eformsignDocRepository.findByDocumentId(organizationid, documentId);
+    execute(branchid: string, documentId: string): Promise<EformsignDocEntity | null> {
+        return this.eformsignDocRepository.findByDocumentId(branchid, documentId);
     }
 }
 

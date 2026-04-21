@@ -49,7 +49,7 @@ beforeEach(() => {
     data: [
       {
         id: "rule-1",
-        organizationId: "org-1",
+        branchId: "org-1",
         name: "서비스 시작 안내",
         isActive: true,
         eventType: "SERVICE_START",

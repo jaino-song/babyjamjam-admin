@@ -9,7 +9,7 @@ import {
 import { UserEntity } from "domain/entities/user.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
-export interface UserDirectoryOrganization {
+export interface UserDirectoryBranch {
     id: string;
     name: string;
     role: string | null;
@@ -27,7 +27,7 @@ export interface UserDirectoryItem {
     createdAt: Date;
     emailVerified: boolean;
     authProvider: string;
-    organizations: UserDirectoryOrganization[];
+    branches: UserDirectoryBranch[];
 }
 
 @Injectable()
@@ -57,13 +57,13 @@ export class UserService {
         return this.updateUserUsecase.execute(id, params);
     }
 
-    async findDirectory(params?: { organizationId?: string }): Promise<UserDirectoryItem[]> {
+    async findDirectory(params?: { branchId?: string }): Promise<UserDirectoryItem[]> {
         const users = await this.prismaService.user.findMany({
-            where: params?.organizationId
+            where: params?.branchId
                 ? {
                     OR: [
-                        { userOrganizations: { some: { organizationId: params.organizationId } } },
-                        { ownedOrganizations: { some: { id: params.organizationId } } },
+                        { userBranches: { some: { branchId: params.branchId } } },
+                        { ownedBranches: { some: { id: params.branchId } } },
                     ],
                 }
                 : undefined,
@@ -80,18 +80,18 @@ export class UserService {
                 createdAt: true,
                 emailVerified: true,
                 authProvider: true,
-                ownedOrganizations: {
+                ownedBranches: {
                     orderBy: { createdAt: "asc" },
                     select: {
                         id: true,
                         name: true,
                     },
                 },
-                userOrganizations: {
+                userBranches: {
                     orderBy: { joinedAt: "asc" },
                     select: {
                         role: true,
-                        organization: {
+                        branch: {
                             select: {
                                 id: true,
                                 name: true,
@@ -103,21 +103,21 @@ export class UserService {
         });
 
         return users.map((user) => {
-            const organizations = new Map<string, UserDirectoryOrganization>();
+            const branches = new Map<string, UserDirectoryBranch>();
 
-            user.ownedOrganizations.forEach((organization) => {
-                organizations.set(organization.id, {
-                    id: organization.id,
-                    name: organization.name,
+            user.ownedBranches.forEach((branch) => {
+                branches.set(branch.id, {
+                    id: branch.id,
+                    name: branch.name,
                     role: "owner",
                 });
             });
 
-            user.userOrganizations.forEach((membership) => {
-                if (!organizations.has(membership.organization.id)) {
-                    organizations.set(membership.organization.id, {
-                        id: membership.organization.id,
-                        name: membership.organization.name,
+            user.userBranches.forEach((membership) => {
+                if (!branches.has(membership.branch.id)) {
+                    branches.set(membership.branch.id, {
+                        id: membership.branch.id,
+                        name: membership.branch.name,
                         role: membership.role ?? null,
                     });
                 }
@@ -135,7 +135,7 @@ export class UserService {
                 createdAt: user.createdAt,
                 emailVerified: user.emailVerified,
                 authProvider: user.authProvider,
-                organizations: Array.from(organizations.values()),
+                branches: Array.from(branches.values()),
             };
         });
     }

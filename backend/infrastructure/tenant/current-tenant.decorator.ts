@@ -6,9 +6,9 @@ export const CurrentTenant = createParamDecorator(
         const request = ctx.switchToHttp().getRequest();
         return {
             userId: request.user?.userId,
-            organizationId: request.user?.organizationId,
+            branchId: request.user?.branchId,
             role: request.user?.role,
-            orgRole: request.user?.orgRole,
+            branchRole: request.user?.branchRole,
         };
     },
 );

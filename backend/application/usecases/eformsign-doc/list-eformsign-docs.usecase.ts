@@ -9,8 +9,8 @@ export class ListEformsignDocsUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
     ) {}
 
-    execute(organizationid: string): Promise<EformsignDocEntity[]> {
-        return this.eformsignDocRepository.findAll(organizationid);
+    execute(branchid: string): Promise<EformsignDocEntity[]> {
+        return this.eformsignDocRepository.findAll(branchid);
     }
 }
 

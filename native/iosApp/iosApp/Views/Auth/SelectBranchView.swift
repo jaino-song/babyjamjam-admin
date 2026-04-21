@@ -1,14 +1,14 @@
 import SwiftUI
 
-struct OrganizationItem: Identifiable {
+struct BranchItem: Identifiable {
     let id: String
     let name: String
     let role: String
 }
 
-struct SelectOrgView: View {
+struct SelectBranchView: View {
     @StateObject private var viewModel = AuthViewModelWrapper()
-    let organizations: [OrganizationItem]
+    let branches: [BranchItem]
 
     var onNavigateToDashboard: () -> Void = {}
 
@@ -18,12 +18,12 @@ struct SelectOrgView: View {
                 .font(.system(size: 48))
                 .foregroundColor(.appPrimary)
 
-            Text("조직 선택")
+            Text("지점 선택")
                 .font(.appHeading2)
                 .fontWeight(.bold)
-                .accessibilityIdentifier("auth-select-org-title")
+                .accessibilityIdentifier("auth-select-branch-title")
 
-            Text("사용할 조직을 선택해 주세요.")
+            Text("사용할 지점을 선택해 주세요.")
                 .font(.appBody)
                 .foregroundColor(.appMuted)
 
@@ -31,9 +31,9 @@ struct SelectOrgView: View {
                 ProgressView()
             }
 
-            ForEach(organizations) { org in
+            ForEach(branches) { org in
                 Button(action: {
-                    viewModel.selectOrganization(orgId: org.id)
+                    viewModel.selectBranch(branchId: org.id)
                 }) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -54,7 +54,7 @@ struct SelectOrgView: View {
                     .cornerRadius(CGFloat(AppTheme.Radius.md))
                 }
                 .disabled(viewModel.isLoading)
-                .accessibilityIdentifier("auth-select-org-item-\(org.id)")
+                .accessibilityIdentifier("auth-select-branch-item-\(org.id)")
             }
         }
         .padding(24)

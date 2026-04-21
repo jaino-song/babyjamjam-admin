@@ -18,11 +18,11 @@ export class UpdateEmployeeUsecase {
     ) {}
 
     async execute(
-        organizationid: string,
+        branchid: string,
         id: number,
         updates: UpdateEmployeeParams
     ): Promise<EmployeeEntity> {
-        const employee = await this.employeeRepository.findById(organizationid, id);
+        const employee = await this.employeeRepository.findById(branchid, id);
         if (!employee) {
             throw new NotFoundException(`Employee with id ${id} not found`);
         }
@@ -35,6 +35,6 @@ export class UpdateEmployeeUsecase {
             updates.openToNextWork,
         );
 
-        return this.employeeRepository.update(organizationid, employee);
+        return this.employeeRepository.update(branchid, employee);
     }
 }

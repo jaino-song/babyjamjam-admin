@@ -59,12 +59,12 @@
 | T-08 | Denial of service | API abuse, retry storms, chat stream exhaustion | TB-2/TB-3 | Service degradation | server rate limiting, client exponential backoff with jitter, circuit breakers, queue/timeout limits | Medium |
 | T-09 | Denial of service | Push payload flood or malformed payload causes app instability | TB-4/TB-1 | UX outage, battery drain | payload schema validation, payload size caps, dedupe ids, notification throttling | Low |
 | T-10 | Elevation of privilege | Client-only role checks bypassed | TB-1/TB-3 | Unauthorized admin access | server-side guard enforcement, deny-by-default RBAC, 403 contract tests | Medium |
-| T-11 | Elevation of privilege | Cross-organization access via IDOR | TB-3 | Tenant data breach | mandatory org scoping in all queries, ownership checks, integration tests for negative paths | Medium |
+| T-11 | Elevation of privilege | Cross-branch access via IDOR | TB-3 | Tenant data breach | mandatory org scoping in all queries, ownership checks, integration tests for negative paths | Medium |
 | T-12 | Elevation of privilege | Missing step-up auth for sensitive actions | TB-1/TB-3 | High-impact unauthorized actions | biometric step-up gate for recording/admin/account changes, short step-up session window | Low |
 
 ## 6. Mandatory security controls
 
-1. **Server-side authorization is source of truth**: every sensitive API path validates `user`, `role`, `organization`, and resource scope.
+1. **Server-side authorization is source of truth**: every sensitive API path validates `user`, `role`, `branch`, and resource scope.
 2. **Session policy**: refresh token rotation on each use, idle timeout at 30 minutes, per-device session tracking, remote logout endpoint.
 3. **Fail-secure behavior**: token parse failure forces logout, unknown deep link is dropped, permission loss blocks action.
 4. **Input hardening at trust boundaries**: validate deep links, push payloads, file MIME/size/name, and API inputs.

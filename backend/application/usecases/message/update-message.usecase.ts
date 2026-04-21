@@ -10,18 +10,18 @@ export class UpdateMessageUsecase {
     ) {}
 
     async execute(
-        organizationid: string,
+        branchid: string,
         id: number,
         title: string,
         text: string
     ): Promise<MessageEntity> {
-        const message = await this.messageRepository.findById(organizationid, id);
+        const message = await this.messageRepository.findById(branchid, id);
         if (!message) {
             throw new NotFoundException(`Message with id ${id} not found`);
         }
 
         message.edit(title, text);
 
-        return this.messageRepository.update(organizationid, message);
+        return this.messageRepository.update(branchid, message);
     }
 }

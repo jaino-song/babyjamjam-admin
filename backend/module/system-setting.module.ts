@@ -6,10 +6,11 @@ import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/sy
 import { SystemSettingService } from "application/services/system-setting.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemSettingController } from "interface/controllers/system-setting.controller";
+import { PublicSettingsController } from "interface/controllers/public-settings.controller";
 
 @Module({
     imports: [DatabaseModule],
-    controllers: [SystemSettingController],
+    controllers: [SystemSettingController, PublicSettingsController],
     providers: [
         { provide: SYSTEM_SETTING_REPOSITORY, useClass: SbSystemSettingRepository },
         GetSettingUsecase,

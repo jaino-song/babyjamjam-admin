@@ -43,7 +43,7 @@ fun LoginScreen(
     onNavigateToForgotPassword: () -> Unit,
     onNavigateToVerifyEmail: () -> Unit,
     onNavigateToDashboard: () -> Unit,
-    onNavigateToSelectOrg: () -> Unit,
+    onNavigateToSelectBranch: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val authState by viewModel.authState.collectAsState()
@@ -63,7 +63,7 @@ fun LoginScreen(
     LaunchedEffect(authState) {
         when (authState) {
             is AuthState.Authenticated -> onNavigateToDashboard()
-            is AuthState.RequiresOrgSelection -> onNavigateToSelectOrg()
+            is AuthState.RequiresBranchSelection -> onNavigateToSelectBranch()
             else -> {}
         }
     }

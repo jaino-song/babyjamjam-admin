@@ -16,7 +16,7 @@ export class CreateMessageTemplateUsecase {
     ) {}
 
     async execute(
-        organizationid: string,
+        branchid: string,
         params: CreateMessageTemplateParams
     ): Promise<MessageTemplateEntity> {
         const template = MessageTemplateEntity.create(params);
@@ -26,6 +26,6 @@ export class CreateMessageTemplateUsecase {
             throw new BadRequestException(validation.errors.join(", "));
         }
 
-        return this.messageTemplateRepository.create(organizationid, template);
+        return this.messageTemplateRepository.create(branchid, template);
     }
 }

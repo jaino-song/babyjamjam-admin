@@ -1,6 +1,6 @@
 import { isPublicAuthPath } from "@/lib/auth/routes";
 
-export const LAYOUT_EXCLUDED_ROUTES = ["/", "/logout", "/chat", "/select-organization"];
+export const LAYOUT_EXCLUDED_ROUTES = ["/", "/logout", "/chat", "/select-branch"];
 export const LAYOUT_EXCLUDED_PREFIXES = ["/admin/"];
 
 export const isLayoutExcluded = (pathname: string) =>

@@ -5,8 +5,8 @@ import { jwtDecode } from "jwt-decode";
 interface TokenPayload {
   sub: string;
   role: string | null;
-  organizationId?: string;
-  orgRole?: string;
+  branchId?: string;
+  branchRole?: string;
   type: "access" | "refresh";
   exp?: number;
 }
@@ -176,9 +176,9 @@ const PUBLIC_ROUTES = [
   "/sw.js",
 ];
 
-// Routes that require auth but NOT organization selection
+// Routes that require auth but NOT branch selection
 const AUTH_ONLY_ROUTES = [
-  "/select-organization",
+  "/select-branch",
 ];
 
 export async function middleware(request: NextRequest) {
@@ -227,7 +227,7 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Check if route only requires auth (not organization)
+  // Check if route only requires auth (not branch)
   if (AUTH_ONLY_ROUTES.some((route) => pathname.startsWith(route))) {
     const response = refreshedSession
       ? nextWithUpdatedRequestCookies(request, {
@@ -247,14 +247,14 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // For all other routes, check if organization is selected
+  // For all other routes, check if branch is selected
   try {
     const decoded = jwtDecode<TokenPayload>(authToken);
 
-    // No organization selected - redirect to select-organization
-    if (!decoded.organizationId) {
-      const selectOrgUrl = new URL("/select-organization", request.url);
-      const response = NextResponse.redirect(selectOrgUrl);
+    // No branch selected - redirect to select-branch
+    if (!decoded.branchId) {
+      const selectBranchUrl = new URL("/select-branch", request.url);
+      const response = NextResponse.redirect(selectBranchUrl);
       if (refreshedSession) {
         setSessionCookies(response, {
           accessToken: refreshedSession.accessToken,

@@ -9,9 +9,9 @@ export class ListEmployeesByRegisteredDateRangeUsecase {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    execute(organizationid: string, startDate: Date, endDate: Date): Promise<EmployeeEntity[]> {
+    execute(branchid: string, startDate: Date, endDate: Date): Promise<EmployeeEntity[]> {
         return this.employeeRepository.findByRegisteredDateRange(
-            organizationid,
+            branchid,
             startDate,
             endDate
         );

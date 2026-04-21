@@ -38,15 +38,15 @@ export const authApi = {
         name?: string;
         phone: string;
         birthDate: string;
-        organizationId: string;
+        branchId: string;
         role: string;
     }): Promise<AuthResponse> => {
         const { data } = await api.post('/auth/register', params);
         return data;
     },
 
-    getOrganizations: async (): Promise<{ id: string; name: string }[]> => {
-        const { data } = await api.get('/auth/organizations/all');
+    getBranches: async (): Promise<{ id: string; name: string }[]> => {
+        const { data } = await api.get('/auth/branches/all');
         return data;
     },
 
@@ -247,6 +247,55 @@ export interface SendMessageDeliverySmsResponse {
     };
 }
 
+export interface RibbonConfig {
+    enabled: boolean;
+    message: string;
+    backgroundColor: string;
+    textColor: string;
+    linkText: string;
+    linkHref: string;
+    linkColor: string;
+}
+
+export interface RibbonConfigResponse extends RibbonConfig {
+    updatedAt?: string;
+}
+
+export interface ConsultationInquiry {
+    id: string;
+    branchId: string;
+    publicBranchSlug: string;
+    motherName: string;
+    phone: string;
+    address: string;
+    dueDate: string;
+    birthExperience: string;
+    voucherType: string | null;
+    preferredCaregiverName: string | null;
+    referralSource: string;
+    privacyAcceptedAt: string;
+    source: string;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+    branchName?: string;
+}
+
+export interface ConsultationInquiryListResponse {
+    data: ConsultationInquiry[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+}
+
+export interface ConsultationInquiryListParams {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+}
+
 export const settingsApi = {
     getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {
         const { data } = await api.get('/settings/alimtalk-provider');
@@ -264,7 +313,22 @@ export const settingsApi = {
         const { data } = await api.put('/settings/notification-preferences', { emailNotificationsEnabled });
         return data;
     },
+    getRibbonConfig: async (): Promise<RibbonConfigResponse> => {
+        const { data } = await api.get('/settings/ribbon-config');
+        return data;
+    },
+    updateRibbonConfig: async (config: RibbonConfig): Promise<RibbonConfigResponse> => {
+        const { data } = await api.put('/settings/ribbon-config', config);
+        return data;
+    },
 }
+
+export const consultationInquiriesApi = {
+    list: async (params: ConsultationInquiryListParams = {}): Promise<ConsultationInquiryListResponse> => {
+        const { data } = await api.get("/consultation-inquiries", { params });
+        return data;
+    },
+};
 
 export const messageDeliveryApi = {
     sendSms: async (

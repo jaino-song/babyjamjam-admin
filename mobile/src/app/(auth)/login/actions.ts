@@ -20,7 +20,7 @@ interface APIErrorResponse {
 interface LoginResult {
     success: boolean;
     error?: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
     emailVerificationRequired?: boolean;
 }
 
@@ -103,10 +103,10 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         }
 
         console.log("[Server Action] Email login successful");
-        console.log("[Server Action] requiresOrgSelection:", data.requiresOrgSelection);
+        console.log("[Server Action] requiresBranchSelection:", data.requiresBranchSelection);
 
-        // Use requiresOrgSelection from backend response
-        return { success: true, requiresOrgSelection: data.requiresOrgSelection || false };
+        // Use requiresBranchSelection from backend response
+        return { success: true, requiresBranchSelection: data.requiresBranchSelection || false };
     } catch (error) {
         console.error("[Server Action] Email Login Error:", error);
 

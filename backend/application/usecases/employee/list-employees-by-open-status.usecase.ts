@@ -9,7 +9,7 @@ export class ListEmployeesByOpenStatusUsecase {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    execute(organizationid: string, openToNextWork: boolean): Promise<EmployeeEntity[]> {
-        return this.employeeRepository.findByOpenToNextWork(organizationid, openToNextWork);
+    execute(branchid: string, openToNextWork: boolean): Promise<EmployeeEntity[]> {
+        return this.employeeRepository.findByOpenToNextWork(branchid, openToNextWork);
     }
 }

@@ -9,8 +9,8 @@ export class CreateMessageUsecase {
         private readonly messageRepository: IMessageRepository,
     ) {}
 
-    execute(organizationid: string, title: string, text: string): Promise<MessageEntity> {
+    execute(branchid: string, title: string, text: string): Promise<MessageEntity> {
         const message = MessageEntity.create(title, text);
-        return this.messageRepository.create(organizationid, message);
+        return this.messageRepository.create(branchid, message);
     }
 }

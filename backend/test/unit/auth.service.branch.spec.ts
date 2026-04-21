@@ -15,12 +15,12 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             findUnique: jest.fn(),
             create: jest.fn(),
         },
-        user_organization: {
+        user_branch: {
             findFirst: jest.fn(),
             findMany: jest.fn(),
             create: jest.fn(),
         },
-        organization: {
+        branch: {
             findUnique: jest.fn(),
         },
     });
@@ -51,37 +51,37 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         kakaoId: "kakao-12345",
         email: "test@example.com",
         name: "Test User",
-        profileImage: null,
         phone: "010-1234-5678",
         birthDate: "1990-01-01",
+        profileImage: null,
         role: "user",
     };
 
-    const mockOrganization = {
+    const mockBranch = {
         id: "org-uuid-123",
-        name: "Test Organization",
+        name: "Test Branch",
         slug: "test-org",
         isActive: true,
     };
 
-    const mockUserOrganization = {
+    const mockUserBranch = {
         id: "user-org-uuid-123",
         userId: mockUser.id,
-        organizationId: mockOrganization.id,
+        branchId: mockBranch.id,
         role: "admin",
     };
 
-    const mockOrganization2 = {
+    const mockBranch2 = {
         id: "org-uuid-456",
-        name: "Second Organization",
+        name: "Second Branch",
         slug: "second-org",
         isActive: true,
     };
 
-    const mockUserOrganization2 = {
+    const mockUserBranch2 = {
         id: "user-org-uuid-456",
         userId: mockUser.id,
-        organizationId: mockOrganization2.id,
+        branchId: mockBranch2.id,
         role: "member",
     };
 
@@ -122,8 +122,8 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     // validateKakaoUser Tests
     // ============================================
     describe("validateKakaoUser", () => {
-        describe("given user with exactly 1 organization", () => {
-            it("should include organizationId in JWT", async () => {
+        describe("given user with exactly 1 branch", () => {
+            it("should include branchId in JWT", async () => {
                 // #given
                 const kakaoData = {
                     kakaoId: "kakao-12345",
@@ -132,8 +132,8 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 };
 
                 prismaService.user.findFirst.mockResolvedValue(mockUser);
-                prismaService.user_organization.findMany.mockResolvedValue([mockUserOrganization]);
-                prismaService.organization.findUnique.mockResolvedValue(mockOrganization);
+                prismaService.user_branch.findMany.mockResolvedValue([mockUserBranch]);
+                prismaService.branch.findUnique.mockResolvedValue(mockBranch);
 
                 // #when
                 const result = await service.validateKakaoUser(kakaoData);
@@ -143,12 +143,12 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const accessCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "access"
                 );
-                expect(accessCall?.[0]).toHaveProperty("organizationId", mockOrganization.id);
+                expect(accessCall?.[0]).toHaveProperty("branchId", mockBranch.id);
             });
         });
 
-        describe("given user with multiple organizations", () => {
-            it("should NOT include organizationId in JWT", async () => {
+        describe("given user with multiple branches", () => {
+            it("should NOT include branchId in JWT", async () => {
                 // #given
                 const kakaoData = {
                     kakaoId: "kakao-12345",
@@ -157,9 +157,9 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 };
 
                 prismaService.user.findFirst.mockResolvedValue(mockUser);
-                prismaService.user_organization.findMany.mockResolvedValue([
-                    mockUserOrganization,
-                    mockUserOrganization2,
+                prismaService.user_branch.findMany.mockResolvedValue([
+                    mockUserBranch,
+                    mockUserBranch2,
                 ]);
 
                 // #when
@@ -170,10 +170,10 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const accessCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "access"
                 );
-                expect(accessCall?.[0]).not.toHaveProperty("organizationId");
+                expect(accessCall?.[0]).not.toHaveProperty("branchId");
             });
 
-            it("should set requiresOrgSelection=true in result", async () => {
+            it("should set requiresBranchSelection=true in result", async () => {
                 // #given
                 const kakaoData = {
                     kakaoId: "kakao-12345",
@@ -182,21 +182,21 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 };
 
                 prismaService.user.findFirst.mockResolvedValue(mockUser);
-                prismaService.user_organization.findMany.mockResolvedValue([
-                    mockUserOrganization,
-                    mockUserOrganization2,
+                prismaService.user_branch.findMany.mockResolvedValue([
+                    mockUserBranch,
+                    mockUserBranch2,
                 ]);
 
                 // #when
                 const result = await service.validateKakaoUser(kakaoData);
 
                 // #then
-                expect(result).toHaveProperty("requiresOrgSelection", true);
+                expect(result).toHaveProperty("requiresBranchSelection", true);
             });
         });
 
-        describe("given user with no organizations", () => {
-            it("should require account onboarding", async () => {
+        describe("given user with no branches", () => {
+            it("should require account completion instead of issuing branch-scoped JWT", async () => {
                 // #given
                 const kakaoData = {
                     kakaoId: "kakao-12345",
@@ -205,62 +205,59 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 };
 
                 prismaService.user.findFirst.mockResolvedValue(mockUser);
-                prismaService.user_organization.findMany.mockResolvedValue([]);
+                prismaService.user_branch.findMany.mockResolvedValue([]);
 
                 // #when
                 const result = await service.validateKakaoUser(kakaoData);
 
                 // #then
-                const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[0]?.type === "access"
-                );
-                expect(accessCall).toBeUndefined();
                 expect(result).toHaveProperty("onboardingRequired", true);
                 expect(result).toHaveProperty("onboardingKind", "account_completion");
+                expect(jwtService.signAsync).not.toHaveBeenCalled();
             });
         });
     });
 
     // ============================================
-    // selectOrganization Tests (NEW METHOD)
+    // selectBranch Tests (NEW METHOD)
     // ============================================
-    describe("selectOrganization", () => {
-        describe("given user belongs to organization", () => {
-            it("should issue JWT with selected organizationId", async () => {
+    describe("selectBranch", () => {
+        describe("given user belongs to branch", () => {
+            it("should issue JWT with selected branchId", async () => {
                 // #given
                 const userId = mockUser.id;
-                const organizationId = mockOrganization.id;
+                const branchId = mockBranch.id;
 
                 prismaService.user.findUnique.mockResolvedValue(mockUser);
-                prismaService.user_organization.findFirst.mockResolvedValue(mockUserOrganization);
+                prismaService.user_branch.findFirst.mockResolvedValue(mockUserBranch);
 
                 // #when
-                await service.selectOrganization(userId, organizationId);
+                await service.selectBranch(userId, branchId);
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "access"
                 );
-                expect(accessCall?.[0]).toHaveProperty("organizationId", organizationId);
-                expect(accessCall?.[0]).toHaveProperty("orgRole", "admin");
+                expect(accessCall?.[0]).toHaveProperty("branchId", branchId);
+                expect(accessCall?.[0]).toHaveProperty("branchRole", "admin");
             });
         });
 
-        describe("given user does NOT belong to organization", () => {
+        describe("given user does NOT belong to branch", () => {
             it("should throw ForbiddenException", async () => {
                 // #given
                 const userId = mockUser.id;
                 const invalidOrgId = "org-uuid-999";
 
                 prismaService.user.findUnique.mockResolvedValue(mockUser);
-                prismaService.user_organization.findFirst.mockResolvedValue(null);
+                prismaService.user_branch.findFirst.mockResolvedValue(null);
 
                 // #when
-                const action = () => service.selectOrganization(userId, invalidOrgId);
+                const action = () => service.selectBranch(userId, invalidOrgId);
 
                 // #then
                 await expect(action).rejects.toThrow(ForbiddenException);
-                await expect(action).rejects.toThrow("User does not belong to this organization");
+                await expect(action).rejects.toThrow("User does not belong to this branch");
             });
         });
 
@@ -268,12 +265,12 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             it("should throw UnauthorizedException", async () => {
                 // #given
                 const invalidUserId = "user-uuid-999";
-                const organizationId = mockOrganization.id;
+                const branchId = mockBranch.id;
 
                 prismaService.user.findUnique.mockResolvedValue(null);
 
                 // #when
-                const action = () => service.selectOrganization(invalidUserId, organizationId);
+                const action = () => service.selectBranch(invalidUserId, branchId);
 
                 // #then
                 await expect(action).rejects.toThrow(UnauthorizedException);
@@ -282,23 +279,23 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         });
 
         describe("given user has member role", () => {
-            it("should include orgRole in JWT", async () => {
+            it("should include branchRole in JWT", async () => {
                 // #given
                 const userId = mockUser.id;
-                const organizationId = mockOrganization.id;
-                const memberUserOrg = { ...mockUserOrganization, role: "member" };
+                const branchId = mockBranch.id;
+                const memberUserOrg = { ...mockUserBranch, role: "member" };
 
                 prismaService.user.findUnique.mockResolvedValue(mockUser);
-                prismaService.user_organization.findFirst.mockResolvedValue(memberUserOrg);
+                prismaService.user_branch.findFirst.mockResolvedValue(memberUserOrg);
 
                 // #when
-                await service.selectOrganization(userId, organizationId);
+                await service.selectBranch(userId, branchId);
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "access"
                 );
-                expect(accessCall?.[0]).toHaveProperty("orgRole", "member");
+                expect(accessCall?.[0]).toHaveProperty("branchRole", "member");
             });
         });
 
@@ -310,18 +307,18 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         ])("should issue $expectedExpiresIn tokens for $role role", async ({ role, expectedExpiresIn }) => {
             // #given
             const userId = mockUser.id;
-            const organizationId = mockOrganization.id;
+            const branchId = mockBranch.id;
             const user = { ...mockUser, role };
 
             prismaService.user.findUnique.mockResolvedValue(user);
             if (role === "owner") {
-                prismaService.organization.findUnique.mockResolvedValue(mockOrganization);
+                prismaService.branch.findUnique.mockResolvedValue(mockBranch);
             } else {
-                prismaService.user_organization.findFirst.mockResolvedValue(mockUserOrganization);
+                prismaService.user_branch.findFirst.mockResolvedValue(mockUserBranch);
             }
 
             // #when
-            await service.selectOrganization(userId, organizationId);
+            await service.selectBranch(userId, branchId);
 
             // #then
             const accessCall = jwtService.signAsync.mock.calls.find(
@@ -336,51 +333,51 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     });
 
     // ============================================
-    // switchOrganization Tests (NEW METHOD)
+    // switchBranch Tests (NEW METHOD)
     // ============================================
-    describe("switchOrganization", () => {
-        describe("given switching to a new organization user belongs to", () => {
-            it("should issue new JWT with new organizationId", async () => {
+    describe("switchBranch", () => {
+        describe("given switching to a new branch user belongs to", () => {
+            it("should issue new JWT with new branchId", async () => {
                 // #given
                 const userId = mockUser.id;
-                const currentOrgId = mockOrganization.id;
-                const newOrgId = mockOrganization2.id;
+                const currentOrgId = mockBranch.id;
+                const newOrgId = mockBranch2.id;
 
                 prismaService.user.findUnique.mockResolvedValue(mockUser);
-                prismaService.user_organization.findFirst.mockImplementation((opts: any) => {
-                    if (opts.where.organizationId === newOrgId) {
-                        return Promise.resolve(mockUserOrganization2);
+                prismaService.user_branch.findFirst.mockImplementation((opts: any) => {
+                    if (opts.where.branchId === newOrgId) {
+                        return Promise.resolve(mockUserBranch2);
                     }
-                    return Promise.resolve(mockUserOrganization);
+                    return Promise.resolve(mockUserBranch);
                 });
 
                 // #when
-                await service.switchOrganization(userId, currentOrgId, newOrgId);
+                await service.switchBranch(userId, currentOrgId, newOrgId);
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "access"
                 );
-                expect(accessCall?.[0]).toHaveProperty("organizationId", newOrgId);
+                expect(accessCall?.[0]).toHaveProperty("branchId", newOrgId);
             });
         });
 
-        describe("given user does NOT belong to target organization", () => {
+        describe("given user does NOT belong to target branch", () => {
             it("should throw ForbiddenException", async () => {
                 // #given
                 const userId = mockUser.id;
-                const currentOrgId = mockOrganization.id;
+                const currentOrgId = mockBranch.id;
                 const invalidOrgId = "org-uuid-999";
 
                 prismaService.user.findUnique.mockResolvedValue(mockUser);
-                prismaService.user_organization.findFirst.mockResolvedValue(null);
+                prismaService.user_branch.findFirst.mockResolvedValue(null);
 
                 // #when
-                const action = () => service.switchOrganization(userId, currentOrgId, invalidOrgId);
+                const action = () => service.switchBranch(userId, currentOrgId, invalidOrgId);
 
                 // #then
                 await expect(action).rejects.toThrow(ForbiddenException);
-                await expect(action).rejects.toThrow("User does not belong to target organization");
+                await expect(action).rejects.toThrow("User does not belong to target branch");
             });
         });
     });
@@ -389,8 +386,8 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     // registerWithEmail Tests
     // ============================================
     describe("registerWithEmail", () => {
-        it("should preserve the submitted organization role on membership creation", async () => {
-            prismaService.organization.findUnique.mockResolvedValue(mockOrganization);
+        it("should preserve the submitted branch role on membership creation", async () => {
+            prismaService.branch.findUnique.mockResolvedValue(mockBranch);
             prismaService.user.findUnique
                 .mockResolvedValueOnce(null)
                 .mockResolvedValueOnce({ name: "Manager User" });
@@ -400,7 +397,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 role: "manager",
                 emailVerified: false,
             });
-            prismaService.user_organization.create.mockResolvedValue(undefined);
+            prismaService.user_branch.create.mockResolvedValue(undefined);
             authTokenRepository.deleteByUserIdAndType.mockResolvedValue(undefined);
             authTokenRepository.create.mockResolvedValue(undefined);
 
@@ -410,14 +407,14 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 "Manager User",
                 "010-1234-5678",
                 "1990-01-01",
-                mockOrganization.id,
+                mockBranch.id,
                 "manager",
             );
 
-            expect(prismaService.user_organization.create).toHaveBeenCalledWith({
+            expect(prismaService.user_branch.create).toHaveBeenCalledWith({
                 data: {
                     userId: "new-user-uuid-123",
-                    organizationId: mockOrganization.id,
+                    branchId: mockBranch.id,
                     role: "manager",
                 },
             });
@@ -428,15 +425,15 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     // refreshTokens Tests
     // ============================================
     describe("refreshTokens", () => {
-        describe("given refresh token with organizationId", () => {
-            it("should preserve organizationId in new tokens", async () => {
+        describe("given refresh token with branchId", () => {
+            it("should preserve branchId in new tokens", async () => {
                 // #given
                 const refreshToken = "valid-refresh-token";
                 const decodedPayload = {
                     sub: mockUser.id,
                     role: mockUser.role,
                     type: "refresh" as const,
-                    organizationId: mockOrganization.id,
+                    branchId: mockBranch.id,
                 };
 
                 jwtService.verifyAsync.mockResolvedValue(decodedPayload);
@@ -452,13 +449,13 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const refreshCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "refresh"
                 );
-                expect(accessCall?.[0]).toHaveProperty("organizationId", mockOrganization.id);
-                expect(refreshCall?.[0]).toHaveProperty("organizationId", mockOrganization.id);
+                expect(accessCall?.[0]).toHaveProperty("branchId", mockBranch.id);
+                expect(refreshCall?.[0]).toHaveProperty("branchId", mockBranch.id);
             });
         });
 
-        describe("given refresh token without organizationId", () => {
-            it("should issue tokens without organizationId", async () => {
+        describe("given refresh token without branchId", () => {
+            it("should issue tokens without branchId", async () => {
                 // #given
                 const refreshToken = "valid-refresh-token";
                 const decodedPayload = {
@@ -480,25 +477,25 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const refreshCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "refresh"
                 );
-                expect(accessCall?.[0]).not.toHaveProperty("organizationId");
-                expect(refreshCall?.[0]).not.toHaveProperty("organizationId");
+                expect(accessCall?.[0]).not.toHaveProperty("branchId");
+                expect(refreshCall?.[0]).not.toHaveProperty("branchId");
             });
         });
 
-        describe("given user no longer belongs to organization from refresh token", () => {
-            it("should issue tokens without organizationId", async () => {
+        describe("given user no longer belongs to branch from refresh token", () => {
+            it("should issue tokens without branchId", async () => {
                 // #given
                 const refreshToken = "valid-refresh-token";
                 const decodedPayload = {
                     sub: mockUser.id,
                     role: mockUser.role,
                     type: "refresh" as const,
-                    organizationId: mockOrganization.id,
+                    branchId: mockBranch.id,
                 };
 
                 jwtService.verifyAsync.mockResolvedValue(decodedPayload);
                 prismaService.user.findUnique.mockResolvedValue(mockUser);
-                prismaService.user_organization.findFirst.mockResolvedValue(null);
+                prismaService.user_branch.findFirst.mockResolvedValue(null);
 
                 // #when
                 await service.refreshTokens(refreshToken);
@@ -510,62 +507,62 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const refreshCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "refresh"
                 );
-                expect(accessCall?.[0]).not.toHaveProperty("organizationId");
-                expect(refreshCall?.[0]).not.toHaveProperty("organizationId");
+                expect(accessCall?.[0]).not.toHaveProperty("branchId");
+                expect(refreshCall?.[0]).not.toHaveProperty("branchId");
             });
         });
     });
 
     // ============================================
-    // getUserOrganizations Tests (NEW METHOD)
+    // getUserBranches Tests (NEW METHOD)
     // ============================================
-    describe("getUserOrganizations", () => {
-        describe("given user with organizations", () => {
-            it("should return list of organizations with roles", async () => {
+    describe("getUserBranches", () => {
+        describe("given user with branches", () => {
+            it("should return list of branches with roles", async () => {
                 // #given
                 const userId = mockUser.id;
 
                 prismaService.user.findUnique.mockResolvedValue({ role: "user" });
-                prismaService.user_organization.findMany.mockResolvedValue([
-                    { ...mockUserOrganization, organization: mockOrganization },
-                    { ...mockUserOrganization2, organization: mockOrganization2 },
+                prismaService.user_branch.findMany.mockResolvedValue([
+                    { ...mockUserBranch, branch: mockBranch },
+                    { ...mockUserBranch2, branch: mockBranch2 },
                 ]);
 
                 // #when
-                const result = await service.getUserOrganizations(userId);
+                const result = await service.getUserBranches(userId);
 
                 // #then
                 expect(result).toHaveLength(2);
                 expect(result[0]).toMatchObject({
-                    id: mockOrganization.id,
-                    name: mockOrganization.name,
-                    slug: mockOrganization.slug,
+                    id: mockBranch.id,
+                    name: mockBranch.name,
+                    slug: mockBranch.slug,
                     role: "admin",
                 });
                 expect(result[1]).toMatchObject({
-                    id: mockOrganization2.id,
-                    name: mockOrganization2.name,
-                    slug: mockOrganization2.slug,
+                    id: mockBranch2.id,
+                    name: mockBranch2.name,
+                    slug: mockBranch2.slug,
                     role: "member",
                 });
             });
         });
 
-        describe("given user with no organizations", () => {
+        describe("given user with no branches", () => {
             it("should return empty array", async () => {
                 // #given
                 const userId = mockUser.id;
 
                 prismaService.user.findUnique.mockResolvedValue({ role: "user" });
-                prismaService.user_organization.findMany.mockResolvedValue([]);
+                prismaService.user_branch.findMany.mockResolvedValue([]);
 
                 // #when
-                const result = await service.getUserOrganizations(userId);
+                const result = await service.getUserBranches(userId);
 
                 // #then
                 expect(result).toHaveLength(0);
                 expect(result).toEqual([]);
-                expect(prismaService.organization.findUnique).not.toHaveBeenCalled();
+                expect(prismaService.branch.findUnique).not.toHaveBeenCalled();
             });
         });
     });

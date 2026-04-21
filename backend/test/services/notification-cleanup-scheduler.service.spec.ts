@@ -1,28 +1,28 @@
 import { NotificationCleanupSchedulerService } from "application/services/notification-cleanup-scheduler.service";
 import { CleanupNotificationsUsecase } from "application/usecases/notification/cleanup-notifications.usecase";
-import { IOrganizationRepository } from "domain/repositories/organization.repository.interface";
+import { IBranchRepository } from "domain/repositories/branch.repository.interface";
 
 describe("NotificationCleanupSchedulerService", () => {
     const createMockCleanupUsecase = () => ({
         execute: jest.fn(),
     });
-    const createMockOrganizationRepository = () => ({
+    const createMockBranchRepository = () => ({
         findAllActive: jest.fn(),
     });
 
     let scheduler: NotificationCleanupSchedulerService;
     let cleanupUsecase: ReturnType<typeof createMockCleanupUsecase>;
-    let organizationRepository: ReturnType<typeof createMockOrganizationRepository>;
+    let branchRepository: ReturnType<typeof createMockBranchRepository>;
 
     beforeEach(() => {
         cleanupUsecase = createMockCleanupUsecase();
-        organizationRepository = createMockOrganizationRepository();
-        organizationRepository.findAllActive.mockResolvedValue([
+        branchRepository = createMockBranchRepository();
+        branchRepository.findAllActive.mockResolvedValue([
             { id: "org-1", name: "Org 1" },
         ]);
         scheduler = new NotificationCleanupSchedulerService(
             cleanupUsecase as unknown as CleanupNotificationsUsecase,
-            organizationRepository as unknown as IOrganizationRepository,
+            branchRepository as unknown as IBranchRepository,
         );
     });
 
@@ -42,9 +42,9 @@ describe("NotificationCleanupSchedulerService", () => {
             });
         });
 
-        describe("given multiple active organizations", () => {
-            it("should run cleanup for each active organization", async () => {
-                organizationRepository.findAllActive.mockResolvedValue([
+        describe("given multiple active branches", () => {
+            it("should run cleanup for each active branch", async () => {
+                branchRepository.findAllActive.mockResolvedValue([
                     { id: "org-1", name: "Org 1" },
                     { id: "org-2", name: "Org 2" },
                 ]);
@@ -74,9 +74,9 @@ describe("NotificationCleanupSchedulerService", () => {
             });
         });
 
-        describe("given no active organizations", () => {
+        describe("given no active branches", () => {
             it("should skip cleanup", async () => {
-                organizationRepository.findAllActive.mockResolvedValue([]);
+                branchRepository.findAllActive.mockResolvedValue([]);
 
                 await scheduler.cleanupOldNotifications();
 

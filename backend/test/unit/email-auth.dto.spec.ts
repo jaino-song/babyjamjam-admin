@@ -11,7 +11,7 @@ describe("RegisterDto", () => {
             name: "홍길동123!",
             phone: "010-1234-5678",
             birthDate: "1990-01-01",
-            organizationId: "550e8400-e29b-41d4-a716-446655440000",
+            branchId: "550e8400-e29b-41d4-a716-446655440000",
             role: "user",
         });
 
@@ -27,7 +27,7 @@ describe("RegisterDto", () => {
             name: "  홍길동  ",
             phone: "010-1234-5678",
             birthDate: "1990-01-01",
-            organizationId: "550e8400-e29b-41d4-a716-446655440000",
+            branchId: "550e8400-e29b-41d4-a716-446655440000",
             role: "user",
         });
 

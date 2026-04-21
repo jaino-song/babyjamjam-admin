@@ -10,13 +10,13 @@ export class UserController {
 
     @Get()
     @UseGuards(JwtGuard, OwnerOrAdminGuard)
-    findDirectory(@Req() req: { user: { role: string; organizationId?: string } }) {
-        if (req.user.role !== "owner" && !req.user.organizationId) {
-            throw new ForbiddenException("Organization context is required");
+    findDirectory(@Req() req: { user: { role: string; branchId?: string } }) {
+        if (req.user.role !== "owner" && !req.user.branchId) {
+            throw new ForbiddenException("Branch context is required");
         }
 
-        const organizationId = req.user.role === "owner" ? undefined : req.user.organizationId;
-        return this.userService.findDirectory({ organizationId });
+        const branchId = req.user.role === "owner" ? undefined : req.user.branchId;
+        return this.userService.findDirectory({ branchId });
     }
 
     @Post()

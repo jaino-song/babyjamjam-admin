@@ -26,7 +26,7 @@ All security-relevant events should include these fields where applicable:
 | `request_id` | per-request correlation id |
 | `trace_id` | distributed trace id |
 | `actor_id_hash` | hashed user id, never raw token |
-| `organization_id` | tenant scope |
+| `branch_id` | tenant scope |
 | `resource_type` | client/employee/contract/file/admin |
 | `resource_id` | target resource id (if non-sensitive) |
 | `result` | success/failure/denied |
@@ -106,7 +106,7 @@ Alert on:
   "request_id": "req_1f3b6c",
   "trace_id": "tr_8df42d",
   "actor_id_hash": "usr_4f9a2d",
-  "organization_id": "org_102",
+  "branch_id": "org_102",
   "resource_type": "admin-feedback",
   "resource_id": "feedback_381",
   "result": "denied",

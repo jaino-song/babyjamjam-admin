@@ -18,13 +18,13 @@ export class AlimtalkTriggerController {
     constructor(private readonly triggerService: AlimtalkTriggerService) {}
 
     @Get("alimtalk-trigger-rules")
-    listRules(@CurrentTenant() tenant: { organizationId?: string }) {
-        return this.triggerService.listRules(tenant.organizationId ?? "");
+    listRules(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.triggerService.listRules(tenant.branchId ?? "");
     }
 
     @Get("alimtalk-trigger-jobs/upcoming")
     listUpcomingJobs(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("limit") limit?: string,
     ) {
         const parsedLimit = Number(limit);
@@ -32,12 +32,12 @@ export class AlimtalkTriggerController {
             ? Math.min(Math.floor(parsedLimit), 500)
             : 200;
 
-        return this.triggerService.listUpcomingJobs(tenant.organizationId ?? "", safeLimit);
+        return this.triggerService.listUpcomingJobs(tenant.branchId ?? "", safeLimit);
     }
 
     @Get("alimtalk-logs")
     listHistory(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("limit") limit?: string,
     ) {
         const parsedLimit = Number(limit);
@@ -45,40 +45,40 @@ export class AlimtalkTriggerController {
             ? Math.min(Math.floor(parsedLimit), 500)
             : 200;
 
-        return this.triggerService.listHistory(tenant.organizationId ?? "", safeLimit);
+        return this.triggerService.listHistory(tenant.branchId ?? "", safeLimit);
     }
 
     @Post("alimtalk-trigger-rules")
     createRule(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: CreateAlimtalkTriggerRuleDto,
     ) {
-        return this.triggerService.createRule(tenant.organizationId ?? "", dto);
+        return this.triggerService.createRule(tenant.branchId ?? "", dto);
     }
 
     @Get("alimtalk-trigger-rules/:id")
     getRule(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
     ) {
-        return this.triggerService.getRule(tenant.organizationId ?? "", id);
+        return this.triggerService.getRule(tenant.branchId ?? "", id);
     }
 
     @Patch("alimtalk-trigger-rules/:id")
     updateRule(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
         @Body() dto: UpdateAlimtalkTriggerRuleDto,
     ) {
-        return this.triggerService.updateRule(tenant.organizationId ?? "", id, dto);
+        return this.triggerService.updateRule(tenant.branchId ?? "", id, dto);
     }
 
     @Delete("alimtalk-trigger-rules/:id")
     deleteRule(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
     ) {
-        return this.triggerService.deleteRule(tenant.organizationId ?? "", id);
+        return this.triggerService.deleteRule(tenant.branchId ?? "", id);
     }
 
     @Get("alimtalk-trigger-templates")

@@ -252,7 +252,7 @@ export default function DashboardPage() {
       <div data-component="dashboard-hero" className="shrink-0">
         <HeroBanner
           title={user?.name ? `${user?.name} 님` : "다시 로그인 해주세요"}
-          subtitle={user?.organizationName ?? ""}
+          subtitle={user?.branchName ?? ""}
         />
       </div>
 

@@ -41,14 +41,14 @@ function makeStorageState() {
 
   // Known valid IDs for local dev (used elsewhere in workspace scripts).
   const userId = "ac5f25d7-f8cc-4c68-82a5-db6dc2968c5f";
-  const organizationId = "33dbe950-1574-4951-b7b4-92d97ab29512";
+  const branchId = "33dbe950-1574-4951-b7b4-92d97ab29512";
 
   const token = signJwtHS256(
     {
       sub: userId,
       role: "owner",
-      organizationId,
-      orgRole: "admin",
+      branchId,
+      branchRole: "admin",
       type: "access",
       exp,
     },
@@ -68,8 +68,8 @@ function makeStorageState() {
         expires: exp,
       },
       {
-        name: "selected_organization_id",
-        value: organizationId,
+        name: "selected_branch_id",
+        value: branchId,
         domain: "localhost",
         path: "/",
         httpOnly: false,

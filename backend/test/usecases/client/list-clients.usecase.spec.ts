@@ -4,7 +4,7 @@ import { MockClientRepository, ClientFactory } from "../../utils";
 describe("ListClientsUsecase", () => {
     let usecase: ListClientsUsecase;
     let mockRepository: MockClientRepository;
-    const organizationId = "org-1";
+    const branchId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockClientRepository();
@@ -20,7 +20,7 @@ describe("ListClientsUsecase", () => {
             // Arrange - empty repository
 
             // Act
-            const result = await usecase.execute(organizationId);
+            const result = await usecase.execute(branchId);
 
             // Assert
             expect(result).toEqual([]);
@@ -32,7 +32,7 @@ describe("ListClientsUsecase", () => {
             mockRepository.setData(clients);
 
             // Act
-            const result = await usecase.execute(organizationId);
+            const result = await usecase.execute(branchId);
 
             // Assert
             expect(result).toHaveLength(3);
@@ -48,7 +48,7 @@ describe("ListClientsUsecase", () => {
             mockRepository.setData([voucherClient, careCenterClient]);
 
             // Act
-            const result = await usecase.execute(organizationId);
+            const result = await usecase.execute(branchId);
 
             // Assert
             expect(result).toHaveLength(2);
