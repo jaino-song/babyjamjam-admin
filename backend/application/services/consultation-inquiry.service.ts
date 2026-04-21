@@ -77,6 +77,7 @@ export class ConsultationInquiryService {
         const limit = query.limit ?? 20;
         const search = query.search?.trim() || undefined;
         const status = query.status || "all";
+        const readState = query.readState || "all";
 
         const result = await this.repository.findManyByBranch({
             branchId,
@@ -84,6 +85,7 @@ export class ConsultationInquiryService {
             limit,
             search,
             status,
+            readState,
         });
 
         return {

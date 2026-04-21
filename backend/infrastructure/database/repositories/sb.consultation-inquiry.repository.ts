@@ -114,6 +114,12 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
             where.status = params.status;
         }
 
+        if (params.readState === "read") {
+            where.readAt = { not: null };
+        } else if (params.readState === "unread") {
+            where.readAt = null;
+        }
+
         if (params.search) {
             where.OR = [
                 { motherName: { contains: params.search } },

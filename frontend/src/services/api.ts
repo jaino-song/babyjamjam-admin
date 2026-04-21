@@ -295,6 +295,7 @@ export interface ConsultationInquiryListParams {
     limit?: number;
     search?: string;
     status?: string;
+    readState?: string;
 }
 
 export const settingsApi = {

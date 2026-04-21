@@ -136,6 +136,7 @@ describe("ConsultationInquiryService", () => {
             limit: 20,
             search: undefined,
             status: "all",
+            readState: "all",
         });
         expect(result).toEqual({
             data: [inquiry],
