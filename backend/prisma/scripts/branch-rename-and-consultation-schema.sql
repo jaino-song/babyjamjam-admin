@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS "consultation_inquiry" (
   "privacy_accepted_at" TIMESTAMPTZ(6) NOT NULL,
   "source" TEXT NOT NULL DEFAULT 'website',
   "status" TEXT NOT NULL DEFAULT 'new',
+  "read_at" TIMESTAMPTZ(6),
   "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW(),
   "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW(),
   CONSTRAINT "consultation_inquiry_branch_id_fkey"
@@ -100,12 +101,17 @@ CREATE TABLE IF NOT EXISTS "consultation_inquiry" (
     ON DELETE NO ACTION ON UPDATE NO ACTION
 );
 
+ALTER TABLE "consultation_inquiry"
+  ADD COLUMN IF NOT EXISTS "read_at" TIMESTAMPTZ(6);
+
 CREATE INDEX IF NOT EXISTS "idx_branch_region"
   ON "branch" ("region");
 CREATE INDEX IF NOT EXISTS "idx_consultation_inquiry_branch_created"
   ON "consultation_inquiry" ("branch_id", "created_at");
 CREATE INDEX IF NOT EXISTS "idx_consultation_inquiry_branch_status"
   ON "consultation_inquiry" ("branch_id", "status");
+CREATE INDEX IF NOT EXISTS "idx_consultation_inquiry_branch_read_at"
+  ON "consultation_inquiry" ("branch_id", "read_at");
 CREATE INDEX IF NOT EXISTS "idx_consultation_inquiry_phone"
   ON "consultation_inquiry" ("phone");
 CREATE INDEX IF NOT EXISTS "idx_consultation_inquiry_public_branch_slug"

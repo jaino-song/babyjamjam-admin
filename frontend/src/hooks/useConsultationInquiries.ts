@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
     consultationInquiriesApi,
@@ -19,5 +19,16 @@ export function useConsultationInquiries(params: ConsultationInquiryListParams) 
         queryKey: consultationInquiryQueryKeys.list(params),
         queryFn: () => consultationInquiriesApi.list(params),
         staleTime: 1000 * 60,
+    });
+}
+
+export function useMarkConsultationInquiryRead() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (id: string) => consultationInquiriesApi.markRead(id),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: consultationInquiryQueryKeys.all });
+        },
     });
 }

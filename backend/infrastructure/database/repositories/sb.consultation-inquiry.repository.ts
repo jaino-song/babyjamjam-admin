@@ -33,6 +33,7 @@ function toEntity(row: InquiryWithBranch): ConsultationInquiryEntity {
         privacyAcceptedAt: row.privacyAcceptedAt,
         source: row.source,
         status: row.status,
+        readAt: row.readAt,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         branchName: row.branch.name,
@@ -57,6 +58,27 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
         });
     }
 
+    async findNotificationRecipientUserIds(branchId: string): Promise<string[]> {
+        const branch = await this.prisma.branch.findUnique({
+            where: { id: branchId },
+            select: {
+                ownerId: true,
+                userBranches: {
+                    select: { userId: true },
+                },
+            },
+        });
+
+        if (!branch) {
+            return [];
+        }
+
+        return Array.from(new Set([
+            branch.ownerId,
+            ...branch.userBranches.map((membership) => membership.userId),
+        ]));
+    }
+
     async create(params: CreateConsultationInquiryParams): Promise<ConsultationInquiryEntity> {
         const row = await this.prisma.consultation_inquiry.create({
             data: {
@@ -73,6 +95,7 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
                 privacyAcceptedAt: params.privacyAcceptedAt,
                 source: params.source,
                 status: params.status,
+                readAt: params.readAt ?? null,
             },
             include: {
                 branch: { select: { name: true } },
@@ -116,5 +139,31 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
             data: data.map(toEntity),
             total,
         };
+    }
+
+    async markRead(branchId: string, id: string): Promise<ConsultationInquiryEntity> {
+        await this.prisma.consultation_inquiry.updateMany({
+            where: {
+                id,
+                branchId,
+                readAt: null,
+            },
+            data: {
+                readAt: new Date(),
+            },
+        });
+
+        const row = await this.prisma.consultation_inquiry.findFirst({
+            where: { id, branchId },
+            include: {
+                branch: { select: { name: true } },
+            },
+        });
+
+        if (!row) {
+            throw new Error("Consultation inquiry not found for branch");
+        }
+
+        return toEntity(row);
     }
 }

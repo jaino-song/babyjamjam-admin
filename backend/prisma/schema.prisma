@@ -373,26 +373,28 @@ model user_branch {
 }
 
 model consultation_inquiry {
-  id                     String   @id @default(dbgenerated("gen_random_uuid()::text"))
-  branchId               String   @map("branch_id") @db.Uuid
-  publicBranchSlug       String   @map("public_branch_slug")
-  motherName             String   @map("mother_name")
+  id                     String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  branchId               String    @map("branch_id") @db.Uuid
+  publicBranchSlug       String    @map("public_branch_slug")
+  motherName             String    @map("mother_name")
   phone                  String
   address                String
-  dueDate                DateTime @map("due_date") @db.Date
-  birthExperience        String   @map("birth_experience")
-  voucherType            String?  @map("voucher_type")
-  preferredCaregiverName String?  @map("preferred_caregiver_name")
-  referralSource         String   @map("referral_source")
-  privacyAcceptedAt      DateTime @map("privacy_accepted_at") @db.Timestamptz(6)
-  source                 String   @default("website")
-  status                 String   @default("new")
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  branch                 branch   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  dueDate                DateTime  @map("due_date") @db.Date
+  birthExperience        String    @map("birth_experience")
+  voucherType            String?   @map("voucher_type")
+  preferredCaregiverName String?   @map("preferred_caregiver_name")
+  referralSource         String    @map("referral_source")
+  privacyAcceptedAt      DateTime  @map("privacy_accepted_at") @db.Timestamptz(6)
+  source                 String    @default("website")
+  status                 String    @default("new")
+  readAt                 DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch                 branch    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([branchId, createdAt], map: "idx_consultation_inquiry_branch_created")
   @@index([branchId, status], map: "idx_consultation_inquiry_branch_status")
+  @@index([branchId, readAt], map: "idx_consultation_inquiry_branch_read_at")
   @@index([phone], map: "idx_consultation_inquiry_phone")
   @@index([publicBranchSlug], map: "idx_consultation_inquiry_public_branch_slug")
 }

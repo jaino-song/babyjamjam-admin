@@ -17,7 +17,7 @@ import {
 } from "@/components/app/v3";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useConsultationInquiries } from "@/hooks/useConsultationInquiries";
+import { useConsultationInquiries, useMarkConsultationInquiryRead } from "@/hooks/useConsultationInquiries";
 import { cn } from "@/lib/utils";
 import type { ConsultationInquiry } from "@/services/api";
 
@@ -72,6 +72,14 @@ function getStatusVariant(status: string): "warning" | "success" | "neutral" {
     return STATUS_VARIANT[status] ?? "neutral";
 }
 
+function getReadLabel(readAt: string | null): string {
+    return readAt ? "읽음" : "읽지 않음";
+}
+
+function getReadVariant(readAt: string | null): "neutral" | "warning" {
+    return readAt ? "neutral" : "warning";
+}
+
 export default function ConsultationsPage() {
     const [activeStatus, setActiveStatus] = useState("all");
     const [search, setSearch] = useState("");
@@ -88,14 +96,16 @@ export default function ConsultationsPage() {
     );
 
     const { data, isLoading } = useConsultationInquiries(queryParams);
+    const markRead = useMarkConsultationInquiryRead();
     const inquiries = useMemo(() => data?.data ?? [], [data?.data]);
-    const activeInquiry = selectedInquiry && inquiries.some((item) => item.id === selectedInquiry.id)
-        ? selectedInquiry
+    const activeInquiry = selectedInquiry
+        ? inquiries.find((item) => item.id === selectedInquiry.id) ?? selectedInquiry
         : null;
 
     const stats = useMemo(() => {
         return {
             total: data?.total ?? 0,
+            unreadCount: inquiries.filter((item) => !item.readAt).length,
             newCount: inquiries.filter((item) => item.status === "new").length,
             contactedCount: inquiries.filter((item) => item.status === "contacted").length,
             closedCount: inquiries.filter((item) => item.status === "closed").length,
@@ -109,7 +119,7 @@ export default function ConsultationsPage() {
                 isLoading={isLoading}
                 items={[
                     { icon: Headset, value: stats.total, label: "전체 상담", counter: "건" },
-                    { icon: CalendarClock, value: stats.newCount, label: "신규", counter: "건", colorIndex: 1 },
+                    { icon: CalendarClock, value: stats.unreadCount, label: "읽지 않음", counter: "건", colorIndex: 1 },
                     { icon: Phone, value: stats.contactedCount, label: "연락 완료", counter: "건", colorIndex: 2 },
                     { icon: Search, value: stats.closedCount, label: "종료", counter: "건", colorIndex: 3 },
                 ]}
@@ -153,7 +163,12 @@ export default function ConsultationsPage() {
                                         : !slotLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
                                 );
                             }}
-                            onSlotClick={(inquiry) => setSelectedInquiry(inquiry)}
+                            onSlotClick={(inquiry) => {
+                                setSelectedInquiry(inquiry);
+                                if (!inquiry.readAt) {
+                                    markRead.mutate(inquiry.id);
+                                }
+                            }}
                             render={({ item, isLoading: slotLoading }) => {
                                 if (slotLoading) {
                                     return (
@@ -183,6 +198,9 @@ export default function ConsultationsPage() {
                                                 <StatusPill variant={getStatusVariant(item.status)} size="sm">
                                                     {getStatusLabel(item.status)}
                                                 </StatusPill>
+                                                <StatusPill variant={getReadVariant(item.readAt)} size="sm">
+                                                    {getReadLabel(item.readAt)}
+                                                </StatusPill>
                                             </div>
                                             <div className="flex min-w-0 items-center gap-2 text-[0.72rem] text-v3-text-muted">
                                                 <Phone className="h-3.5 w-3.5 shrink-0" />
@@ -207,9 +225,14 @@ export default function ConsultationsPage() {
                         title={activeInquiry.motherName}
                         subtitle={`${activeInquiry.branchName ?? "현재 지점"} · ${formatDateTime(activeInquiry.createdAt)}`}
                         badges={
-                            <StatusPill variant={getStatusVariant(activeInquiry.status)} size="sm">
-                                {getStatusLabel(activeInquiry.status)}
-                            </StatusPill>
+                            <>
+                                <StatusPill variant={getStatusVariant(activeInquiry.status)} size="sm">
+                                    {getStatusLabel(activeInquiry.status)}
+                                </StatusPill>
+                                <StatusPill variant={getReadVariant(activeInquiry.readAt)} size="sm">
+                                    {getReadLabel(activeInquiry.readAt)}
+                                </StatusPill>
+                            </>
                         }
                     >
                         <div data-component="consultations-detail" className="space-y-4">
@@ -226,6 +249,7 @@ export default function ConsultationsPage() {
                                 <InfoRow label="희망 관리사" value={activeInquiry.preferredCaregiverName || "-"} />
                                 <InfoRow label="신청 경로" value={activeInquiry.source} />
                                 <InfoRow label="개인정보 동의" value={formatDateTime(activeInquiry.privacyAcceptedAt)} />
+                                <InfoRow label="읽음 상태" value={getReadLabel(activeInquiry.readAt)} />
                             </InfoCard>
 
                             <InfoCard title="지점">

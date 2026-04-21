@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 
 import { ConsultationInquiryService } from "application/services/consultation-inquiry.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -31,5 +31,13 @@ export class ConsultationInquiryController {
         @Query() query: ConsultationInquiryListQueryDto,
     ) {
         return this.service.listForBranch(tenant.branchId ?? "", query);
+    }
+
+    @Patch(":id/read")
+    markRead(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("id") id: string,
+    ) {
+        return this.service.markRead(tenant.branchId ?? "", id);
     }
 }

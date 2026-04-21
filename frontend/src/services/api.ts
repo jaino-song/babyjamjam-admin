@@ -276,6 +276,7 @@ export interface ConsultationInquiry {
     privacyAcceptedAt: string;
     source: string;
     status: string;
+    readAt: string | null;
     createdAt: string;
     updatedAt: string;
     branchName?: string;
@@ -326,6 +327,10 @@ export const settingsApi = {
 export const consultationInquiriesApi = {
     list: async (params: ConsultationInquiryListParams = {}): Promise<ConsultationInquiryListResponse> => {
         const { data } = await api.get("/consultation-inquiries", { params });
+        return data;
+    },
+    markRead: async (id: string): Promise<ConsultationInquiry> => {
+        const { data } = await api.patch(`/consultation-inquiries/${id}/read`);
         return data;
     },
 };
