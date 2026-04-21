@@ -14,7 +14,7 @@ describe("auth name handling", () => {
       name: "홍길동123",
       phone: "010-1234-5678",
       birthDate: "1990-01-01",
-      organizationId: "org-1",
+      branchId: "org-1",
       role: "user",
     });
 
@@ -34,7 +34,7 @@ describe("auth name handling", () => {
       name: "  홍길동  ",
       phone: "010-1234-5678",
       birthDate: "1990-01-01",
-      organizationId: "org-1",
+      branchId: "org-1",
       role: "user",
     });
 

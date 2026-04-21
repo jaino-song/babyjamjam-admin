@@ -11,19 +11,19 @@ export class LinkDocumentToClientUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    async execute(organizationid: string, documentId: string): Promise<void> {
-        const doc = await this.eformsignDocRepository.findByDocumentId(organizationid, documentId);
+    async execute(branchid: string, documentId: string): Promise<void> {
+        const doc = await this.eformsignDocRepository.findByDocumentId(branchid, documentId);
         if (!doc) {
             throw new NotFoundException(`Document ${documentId} not found`);
         }
 
-        const client = await this.clientRepository.findById(organizationid, doc.clientId);
+        const client = await this.clientRepository.findById(branchid, doc.clientId);
         if (!client) {
             throw new NotFoundException(`Client ${doc.clientId} not found`);
         }
 
         // Update client's e_doc_id to link the signed document
         client.update({ eDocId: documentId });
-        await this.clientRepository.update(organizationid, client);
+        await this.clientRepository.update(branchid, client);
     }
 }

@@ -5,7 +5,7 @@ export interface SendAligoAlimtalkDto {
     receiver: string;
     variables: Record<string, string>;
     buttonUrl?: string;
-    organizationId?: string;
+    branchId?: string;
     clientId?: number;
     triggerJobId?: string;
 }

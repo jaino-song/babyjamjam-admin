@@ -80,9 +80,9 @@ describe("ClientController (Integration)", () => {
                 const requestContext = context.switchToHttp().getRequest();
                 requestContext.user = {
                     userId: "user-1",
-                    organizationId: "org-1",
+                    branchId: "org-1",
                     role: "admin",
-                    orgRole: "admin",
+                    branchRole: "admin",
                 };
                 return true;
             },

@@ -195,12 +195,12 @@ export default function SettingsPage() {
                         <p className="mt-1 text-sm font-medium text-foreground">{user?.phone || "-"}</p>
                       )}
                     </div>
-                    <div data-component="settings-profile-organization-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
+                    <div data-component="settings-profile-branch-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
                       <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">지점</p>
                       {isProfileSummaryLoading ? (
                         <Skeleton className="mt-2 h-4 w-24 bg-[hsl(var(--v3-border))]/60" />
                       ) : (
-                        <p className="mt-1 text-sm font-medium text-foreground">{user?.organizationName || "-"}</p>
+                        <p className="mt-1 text-sm font-medium text-foreground">{user?.branchName || "-"}</p>
                       )}
                     </div>
                   </div>

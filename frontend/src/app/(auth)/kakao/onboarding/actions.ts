@@ -14,14 +14,14 @@ interface TokenPayload {
 interface CompleteKakaoOnboardingInput {
     phone: string;
     birthDate: string;
-    organizationId: string;
+    branchId: string;
     role: string;
 }
 
 interface CompleteKakaoOnboardingSuccessResponse {
     accessToken: string;
     refreshToken: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
 }
 
 const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
@@ -29,7 +29,7 @@ const PENDING_KAKAO_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
 
 export async function completeKakaoOnboarding(
     input: CompleteKakaoOnboardingInput,
-): Promise<{ success: boolean; error?: string; requiresOrgSelection?: boolean }> {
+): Promise<{ success: boolean; error?: string; requiresBranchSelection?: boolean }> {
     const cookieStore = await cookies();
     const pendingSignupToken = cookieStore.get(PENDING_KAKAO_SIGNUP_COOKIE)?.value;
 
@@ -96,7 +96,7 @@ export async function completeKakaoOnboarding(
 
         return {
             success: true,
-            requiresOrgSelection: response.data.requiresOrgSelection || false,
+            requiresBranchSelection: response.data.requiresBranchSelection || false,
         };
     } catch (error) {
         if (error instanceof AxiosError) {

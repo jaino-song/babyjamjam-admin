@@ -23,7 +23,7 @@ export async function logout(): Promise<{ success: boolean; error?: string }> {
     cookieStore.delete("auth_token");
     cookieStore.delete("refresh_token");
     cookieStore.delete("auto_login");
-    cookieStore.delete("selected_organization_id");
+    cookieStore.delete("selected_branch_id");
 
     return { success: true };
   } catch (error) {

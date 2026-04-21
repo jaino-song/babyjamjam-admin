@@ -90,8 +90,8 @@ export function useLoginPageController() {
           return;
         }
 
-        if (response.requiresOrgSelection) {
-          router.replace("/select-organization");
+        if (response.requiresBranchSelection) {
+          router.replace("/select-branch");
         } else {
           router.replace("/dashboard");
         }

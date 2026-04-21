@@ -5,8 +5,8 @@ export interface IAlimtalkTriggerJobRepository {
     update(job: AlimtalkTriggerJobEntity): Promise<AlimtalkTriggerJobEntity>;
     findById(id: string): Promise<AlimtalkTriggerJobEntity | null>;
     findDuePending(limit?: number): Promise<AlimtalkTriggerJobEntity[]>;
-    findUpcomingPendingByOrganization(
-        organizationId: string,
+    findUpcomingPendingByBranch(
+        branchId: string,
         limit?: number,
     ): Promise<AlimtalkTriggerJobEntity[]>;
     findPendingByRuleId(ruleId: string): Promise<AlimtalkTriggerJobEntity[]>;

@@ -10,8 +10,8 @@ export class ClientController {
     constructor(private readonly clientService: ClientService) {}
 
     @Post()
-    create(@CurrentTenant() tenant: { organizationId?: string }, @Body() dto: CreateClientDto) {
-        return this.clientService.create(tenant.organizationId ?? "", {
+    create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateClientDto) {
+        return this.clientService.create(tenant.branchId ?? "", {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
             secondaryEmployeeId: dto.secondaryEmployeeId ?? null,
@@ -36,44 +36,44 @@ export class ClientController {
 
     @Get()
     findAll(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("page") page?: string,
         @Query("limit") limit?: string,
         @Query("search") search?: string,
         @Query("filter") filter?: string,
     ) {
         if (filter) {
-            return this.clientService.findByFilter(tenant.organizationId ?? "", filter);
+            return this.clientService.findByFilter(tenant.branchId ?? "", filter);
         }
         if (page && limit) {
             return this.clientService.findAllPaginated(
-                tenant.organizationId ?? "",
+                tenant.branchId ?? "",
                 Number(page),
                 Number(limit),
                 search,
             );
         }
-        return this.clientService.findAll(tenant.organizationId ?? "");
+        return this.clientService.findAll(tenant.branchId ?? "");
     }
 
 
     @Get("stats")
-    getStats(@CurrentTenant() tenant: { organizationId?: string }) {
-        return this.clientService.getStats(tenant.organizationId ?? "");
+    getStats(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.clientService.getStats(tenant.branchId ?? "");
     }
 
     @Get(":id")
-    findById(@CurrentTenant() tenant: { organizationId?: string }, @Param("id") id: string) {
-        return this.clientService.findById(tenant.organizationId ?? "", Number(id));
+    findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
+        return this.clientService.findById(tenant.branchId ?? "", Number(id));
     }
 
     @Patch(":id")
     update(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
         @Body() dto: UpdateClientDto
     ) {
-        return this.clientService.update(tenant.organizationId ?? "", Number(id), {
+        return this.clientService.update(tenant.branchId ?? "", Number(id), {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
             secondaryEmployeeId: dto.secondaryEmployeeId,
@@ -97,8 +97,8 @@ export class ClientController {
     }
 
     @Delete(":id")
-    delete(@CurrentTenant() tenant: { organizationId?: string }, @Param("id") id: string) {
-        return this.clientService.delete(tenant.organizationId ?? "", Number(id));
+    delete(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
+        return this.clientService.delete(tenant.branchId ?? "", Number(id));
     }
 
     /**
@@ -107,11 +107,11 @@ export class ClientController {
      */
     @Patch(":id/terminate")
     terminate(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
         @Body() dto: TerminateServiceDto
     ) {
-        return this.clientService.terminateService(tenant.organizationId ?? "", Number(id), dto.reason);
+        return this.clientService.terminateService(tenant.branchId ?? "", Number(id), dto.reason);
     }
 
     /**
@@ -120,12 +120,12 @@ export class ClientController {
      */
     @Patch(":id/request-replacement")
     requestReplacement(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
         @Body() dto: RequestReplacementDto
     ) {
         return this.clientService.requestReplacement(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             Number(id),
             dto.newPrimaryEmployeeId,
             dto.newSecondaryEmployeeId,
@@ -136,7 +136,7 @@ export class ClientController {
      * Complete a replacement and restore service to normal status
      */
     @Patch(":id/complete-replacement")
-    completeReplacement(@CurrentTenant() tenant: { organizationId?: string }, @Param("id") id: string) {
-        return this.clientService.completeReplacement(tenant.organizationId ?? "", Number(id));
+    completeReplacement(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
+        return this.clientService.completeReplacement(tenant.branchId ?? "", Number(id));
     }
 }

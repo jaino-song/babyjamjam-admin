@@ -63,7 +63,7 @@ export function AlimtalkTenantApplicationSettings() {
   );
   const [requestedAt, setRequestedAt] = useState<string | null>(null);
 
-  const tenantName = authUser?.organizationName?.trim() || "현재 선택된 지점";
+  const tenantName = authUser?.branchName?.trim() || "현재 선택된 지점";
   const allAgreed = ALIGO_POLICY_ITEMS.every((item) => agreements[item.id]);
   const canSubmit = allAgreed;
   const listItems = useMemo<TenantApplicationListItem[]>(

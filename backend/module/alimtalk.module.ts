@@ -12,8 +12,8 @@ import { AlimtalkTriggerSchedulerService } from "application/services/alimtalk-t
 import { AlimtalkTriggerDeliveryService } from "application/services/alimtalk-trigger-delivery.service";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
-import { ORGANIZATION_REPOSITORY } from "domain/repositories/organization.repository.interface";
-import { SbOrganizationRepository } from "infrastructure/database/repositories/sb.organization.repository";
+import { BRANCH_REPOSITORY } from "domain/repositories/branch.repository.interface";
+import { SbBranchRepository } from "infrastructure/database/repositories/sb.branch.repository";
 import { EMPLOYEE_SCHEDULE_REPOSITORY } from "domain/repositories/employee-schedule.repository.interface";
 import { SbEmployeeScheduleRepository } from "infrastructure/database/repositories/sb.employee-schedule.repository";
 import { EMPLOYEE_REPOSITORY } from "domain/repositories/employee.repository.interface";
@@ -32,7 +32,7 @@ import { AlimtalkTemplateService } from "application/services/alimtalk-template.
     controllers: [AlimtalkTriggerController, AlimtalkTemplateController],
     providers: [
         { provide: CLIENT_REPOSITORY, useClass: SbClientRepository },
-        { provide: ORGANIZATION_REPOSITORY, useClass: SbOrganizationRepository },
+        { provide: BRANCH_REPOSITORY, useClass: SbBranchRepository },
         { provide: EMPLOYEE_SCHEDULE_REPOSITORY, useClass: SbEmployeeScheduleRepository },
         { provide: EMPLOYEE_REPOSITORY, useClass: SbEmployeeRepository },
         { provide: ALIMTALK_TRIGGER_RULE_REPOSITORY, useClass: SbAlimtalkTriggerRuleRepository },

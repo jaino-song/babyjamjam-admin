@@ -24,57 +24,57 @@ type PrismaDocumentRow = {
 export class DocumentRepository implements IDocumentRepository {
     constructor(private readonly prismaService: PrismaService) {}
 
-    async findById(organizationid: string, id: string): Promise<DocumentEntity | null> {
+    async findById(branchid: string, id: string): Promise<DocumentEntity | null> {
         const doc = await this.prismaService.document.findFirst({
-            where: { id, organizationId: organizationid },
+            where: { id, branchId: branchid },
         });
         return doc ? DocumentMapper.toDomain(doc) : null;
     }
 
-    async findByOrgId(organizationid: string, orgid: string): Promise<DocumentEntity[]> {
+    async findByOrgId(branchid: string, orgId: string): Promise<DocumentEntity[]> {
         const docs = await this.prismaService.document.findMany({
-            where: { orgId: orgid, organizationId: organizationid },
+            where: { orgId, branchId: branchid },
         });
         return docs.map(DocumentMapper.toDomain);
     }
 
-    async findByCategoryId(organizationid: string, categoryId: string): Promise<DocumentEntity[]> {
+    async findByCategoryId(branchid: string, categoryId: string): Promise<DocumentEntity[]> {
         const docs = await this.prismaService.document.findMany({
-            where: { categoryId, organizationId: organizationid },
+            where: { categoryId, branchId: branchid },
         });
         return docs.map(DocumentMapper.toDomain);
     }
 
-    async findAll(organizationid: string): Promise<DocumentEntity[]> {
+    async findAll(branchid: string): Promise<DocumentEntity[]> {
         const docs = await this.prismaService.document.findMany({
-            where: { organizationId: organizationid },
+            where: { branchId: branchid },
         });
         return docs.map(DocumentMapper.toDomain);
     }
 
-    async create(organizationid: string, doc: DocumentEntity): Promise<DocumentEntity> {
+    async create(branchid: string, doc: DocumentEntity): Promise<DocumentEntity> {
         const created = await this.prismaService.document.create({
             data: {
                 ...DocumentMapper.toPrismaCreate(doc),
-                organizationId: organizationid,
+                branchId: branchid,
             },
         });
         return DocumentMapper.toDomain(created);
     }
 
-    async update(organizationid: string, doc: DocumentEntity): Promise<DocumentEntity> {
+    async update(branchid: string, doc: DocumentEntity): Promise<DocumentEntity> {
         if (!doc.id) {
             throw new Error("Cannot update document without id");
         }
         const result = await this.prismaService.document.updateMany({
-            where: { id: doc.id, organizationId: organizationid },
+            where: { id: doc.id, branchId: branchid },
             data: DocumentMapper.toPrismaUpdate(doc),
         });
         if (result.count === 0) {
-            throw new Error("Document not found for organization");
+            throw new Error("Document not found for branch");
         }
         const updated = await this.prismaService.document.findFirst({
-            where: { id: doc.id, organizationId: organizationid },
+            where: { id: doc.id, branchId: branchid },
         });
         if (!updated) {
             throw new Error("Document not found after update");
@@ -82,9 +82,9 @@ export class DocumentRepository implements IDocumentRepository {
         return DocumentMapper.toDomain(updated);
     }
 
-    async delete(organizationid: string, id: string): Promise<void> {
+    async delete(branchid: string, id: string): Promise<void> {
         await this.prismaService.document.deleteMany({
-            where: { id, organizationId: organizationid },
+            where: { id, branchId: branchid },
         });
     }
 }

@@ -570,7 +570,7 @@ Create a new feature module when:
 
 ---
 
-## Component Organization
+## Component Branch
 
 Components within a feature module should follow this pattern:
 

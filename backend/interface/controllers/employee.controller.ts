@@ -15,75 +15,75 @@ export class EmployeeController {
     constructor(private readonly employeeService: EmployeeService) {}
 
     @Post()
-    create(@CurrentTenant() tenant: { organizationId?: string }, @Body() dto: CreateEmployeeDto) {
-        return this.employeeService.create(tenant.organizationId ?? "", dto);
+    create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateEmployeeDto) {
+        return this.employeeService.create(tenant.branchId ?? "", dto);
     }
 
     @Get()
-    findAll(@CurrentTenant() tenant: { organizationId?: string }) {
-        return this.employeeService.findAll(tenant.organizationId ?? "");
+    findAll(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.employeeService.findAll(tenant.branchId ?? "");
     }
 
     @Get("work-area")
     findByWorkArea(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("workArea") workArea: string
     ) {
-        return this.employeeService.findByWorkArea(tenant.organizationId ?? "", workArea);
+        return this.employeeService.findByWorkArea(tenant.branchId ?? "", workArea);
     }
 
     @Get("grade")
-    findByGrade(@CurrentTenant() tenant: { organizationId?: string }, @Query("grade") grade: string) {
-        return this.employeeService.findByGrade(tenant.organizationId ?? "", grade);
+    findByGrade(@CurrentTenant() tenant: { branchId?: string }, @Query("grade") grade: string) {
+        return this.employeeService.findByGrade(tenant.branchId ?? "", grade);
     }
 
     @Get("open-status")
     findByOpenStatus(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("openToNextWork") openToNextWork?: string
     ) {
         const flag = openToNextWork === undefined ? true : openToNextWork === "true";
-        return this.employeeService.findByOpenStatus(tenant.organizationId ?? "", flag);
+        return this.employeeService.findByOpenStatus(tenant.branchId ?? "", flag);
     }
 
     @Get("registered-date")
     findByRegisteredDate(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("date") date: string
     ) {
-        return this.employeeService.findByRegisteredDate(tenant.organizationId ?? "", new Date(date));
+        return this.employeeService.findByRegisteredDate(tenant.branchId ?? "", new Date(date));
     }
 
     @Get("registered-range")
     findByRegisteredDateRange(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query() query: EmployeesByRegisteredRangeDto
     ) {
         return this.employeeService.findByRegisteredDateRange(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             new Date(query.startDate),
             new Date(query.endDate)
         );
     }
 
     @Get("open-to-next-work")
-    findAllOpenToNextWork(@CurrentTenant() tenant: { organizationId?: string }) {
-        return this.employeeService.findAllOpenToNextWork(tenant.organizationId ?? "");
+    findAllOpenToNextWork(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.employeeService.findAllOpenToNextWork(tenant.branchId ?? "");
     }
 
     @Get("id")
-    findById(@CurrentTenant() tenant: { organizationId?: string }, @Query("id") id: string) {
-        return this.employeeService.findById(tenant.organizationId ?? "", Number(id));
+    findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
+        return this.employeeService.findById(tenant.branchId ?? "", Number(id));
     }
 
     @Patch("open-status")
     changeOpenStatus(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("id") id: string,
         @Body() dto: ChangeEmployeeOpenStatusDto
     ) {
         return this.employeeService.changeOpenStatus(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             Number(id),
             dto.openToNextWork
         );
@@ -91,15 +91,15 @@ export class EmployeeController {
 
     @Patch()
     update(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("id") id: string,
         @Body() dto: UpdateEmployeeDto
     ) {
-        return this.employeeService.update(tenant.organizationId ?? "", Number(id), dto);
+        return this.employeeService.update(tenant.branchId ?? "", Number(id), dto);
     }
 
     @Delete()
-    delete(@CurrentTenant() tenant: { organizationId?: string }, @Query("id") id: string) {
-        return this.employeeService.delete(tenant.organizationId ?? "", Number(id));
+    delete(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
+        return this.employeeService.delete(tenant.branchId ?? "", Number(id));
     }
 }

@@ -33,7 +33,7 @@ These routes exist in both apps and should be treated as the primary merge targe
 - `/messages/templates`
 - `/messages/templates/new`
 - `/messages/templates/[id]/edit`
-- `/select-organization`
+- `/select-branch`
 - `/settings`
 - `/test`
 

@@ -13,28 +13,28 @@ import {
 export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepository {
     constructor(private readonly prisma: PrismaService) {}
 
-    async findAll(organizationId: string): Promise<AlimtalkTriggerRuleEntity[]> {
+    async findAll(branchId: string): Promise<AlimtalkTriggerRuleEntity[]> {
         const rows = await this.prisma.alimtalk_trigger_rule.findMany({
-            where: { organizationId },
+            where: { branchId },
             orderBy: { createdAt: "desc" },
         });
         return rows.map((row) => this.toDomain(row));
     }
 
-    async findById(organizationId: string, id: string): Promise<AlimtalkTriggerRuleEntity | null> {
+    async findById(branchId: string, id: string): Promise<AlimtalkTriggerRuleEntity | null> {
         const row = await this.prisma.alimtalk_trigger_rule.findFirst({
-            where: { id, organizationId },
+            where: { id, branchId },
         });
         return row ? this.toDomain(row) : null;
     }
 
     async findActiveByEventTypes(
-        organizationId: string,
+        branchId: string,
         eventTypes: AlimtalkTriggerEventType[],
     ): Promise<AlimtalkTriggerRuleEntity[]> {
         const rows = await this.prisma.alimtalk_trigger_rule.findMany({
             where: {
-                organizationId,
+                branchId,
                 isActive: true,
                 eventType: { in: eventTypes },
             },
@@ -44,12 +44,12 @@ export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepo
     }
 
     async create(
-        organizationId: string,
+        branchId: string,
         rule: AlimtalkTriggerRuleEntity,
     ): Promise<AlimtalkTriggerRuleEntity> {
         const row = await this.prisma.alimtalk_trigger_rule.create({
             data: {
-                organizationId,
+                branchId,
                 name: rule.name,
                 isActive: rule.isActive,
                 eventType: rule.eventType,
@@ -63,13 +63,13 @@ export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepo
     }
 
     async update(
-        organizationId: string,
+        branchId: string,
         rule: AlimtalkTriggerRuleEntity,
     ): Promise<AlimtalkTriggerRuleEntity> {
         const row = await this.prisma.alimtalk_trigger_rule.update({
             where: { id: rule.id },
             data: {
-                organizationId,
+                branchId,
                 name: rule.name,
                 isActive: rule.isActive,
                 eventType: rule.eventType,
@@ -82,15 +82,15 @@ export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepo
         return this.toDomain(row);
     }
 
-    async delete(organizationId: string, id: string): Promise<void> {
+    async delete(branchId: string, id: string): Promise<void> {
         await this.prisma.alimtalk_trigger_rule.deleteMany({
-            where: { id, organizationId },
+            where: { id, branchId },
         });
     }
 
     private toDomain(row: {
         id: string;
-        organizationId: string | null;
+        branchId: string | null;
         name: string;
         isActive: boolean;
         eventType: string;
@@ -103,7 +103,7 @@ export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepo
     }): AlimtalkTriggerRuleEntity {
         return AlimtalkTriggerRuleEntity.reconstitute(
             row.id,
-            row.organizationId,
+            row.branchId,
             row.name,
             row.isActive,
             row.eventType as AlimtalkTriggerEventType,

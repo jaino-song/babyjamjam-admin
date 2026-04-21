@@ -5,7 +5,7 @@ export type AlimtalkLogStatus = "pending" | "sent" | "failed";
 export class AlimtalkLogEntity {
     constructor(
         public readonly id: number,
-        public organizationId: string | null,
+        public branchId: string | null,
         public provider: string,
         public templateKey: string,
         public triggerJobId: string | null,
@@ -54,7 +54,7 @@ export class AlimtalkLogEntity {
     }
 
     static create(params: {
-        organizationId?: string;
+        branchId?: string;
         provider: string;
         templateKey: string;
         triggerJobId?: string;
@@ -66,7 +66,7 @@ export class AlimtalkLogEntity {
         const now = new Date();
         return new AlimtalkLogEntity(
             0,
-            params.organizationId ?? null,
+            params.branchId ?? null,
             params.provider,
             params.templateKey,
             params.triggerJobId ?? null,
@@ -87,7 +87,7 @@ export class AlimtalkLogEntity {
 
     static reconstitute(
         id: number,
-        organizationId: string | null,
+        branchId: string | null,
         provider: string,
         templateKey: string,
         triggerJobId: string | null,
@@ -105,7 +105,7 @@ export class AlimtalkLogEntity {
         updatedAt: Date = createdAt,
     ): AlimtalkLogEntity {
         return new AlimtalkLogEntity(
-            id, organizationId, provider, templateKey, triggerJobId, receiver, clientId,
+            id, branchId, provider, templateKey, triggerJobId, receiver, clientId,
             messageBody, variables, status, aligoMid, errorMessage, attempts,
             lastAttemptAt, nextRetryAt, createdAt, updatedAt,
         );

@@ -1,11 +1,11 @@
 import { MessageEntity } from "../entities/message.entity";
 
 export interface IMessageRepository {
-    findAll(organizationid: string): Promise<MessageEntity[]>;
-    findById(organizationid: string, id: number): Promise<MessageEntity | null>;
-    create(organizationid: string, message: MessageEntity): Promise<MessageEntity>;
-    update(organizationid: string, message: MessageEntity): Promise<MessageEntity>;
-    delete(organizationid: string, id: number): Promise<void>;
+    findAll(branchid: string): Promise<MessageEntity[]>;
+    findById(branchid: string, id: number): Promise<MessageEntity | null>;
+    create(branchid: string, message: MessageEntity): Promise<MessageEntity>;
+    update(branchid: string, message: MessageEntity): Promise<MessageEntity>;
+    delete(branchid: string, id: number): Promise<void>;
 }
 
 export const MESSAGE_REPOSITORY = 'MESSAGE_REPOSITORY';

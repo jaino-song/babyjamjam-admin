@@ -64,7 +64,7 @@ export class EformsignController {
 
     @Post("generate-document")
     async generateDocument(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Body()
         body: {
             contractData: ContractDataDto;
@@ -78,7 +78,7 @@ export class EformsignController {
             let templateId: string | undefined;
             if (body.contractData.area) {
                 const areaTemplate = await this.areaTemplateService.findByArea(
-                    tenant.organizationId ?? "",
+                    tenant.branchId ?? "",
                     body.contractData.area
                 );
                 templateId = areaTemplate?.templateId;

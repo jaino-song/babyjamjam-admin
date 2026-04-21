@@ -38,7 +38,7 @@ export class CreateDocumentDto {
 
     @IsOptional()
     @IsString()
-    orgid?: string;
+    branchid?: string;
 
     @IsString()
     uploadedby!: string;
@@ -150,7 +150,7 @@ export class UploadDocumentDto {
 
     @IsOptional()
     @IsString()
-    orgid?: string;
+    branchid?: string;
 
     @IsOptional()
     @IsString()

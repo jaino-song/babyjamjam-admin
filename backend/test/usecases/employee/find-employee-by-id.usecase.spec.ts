@@ -4,7 +4,7 @@ import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 describe("FindEmployeeByIdUsecase", () => {
     let usecase: FindEmployeeByIdUsecase;
     let mockRepository: MockEmployeeRepository;
-    const organizationId = "org-1";
+    const branchId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -25,7 +25,7 @@ describe("FindEmployeeByIdUsecase", () => {
             mockRepository.setData([existingEmployee]);
 
             // Act
-            const result = await usecase.execute(organizationId, 1);
+            const result = await usecase.execute(branchId, 1);
 
             // Assert
             expect(result).not.toBeNull();
@@ -37,7 +37,7 @@ describe("FindEmployeeByIdUsecase", () => {
             // Arrange - empty repository
 
             // Act
-            const result = await usecase.execute(organizationId, 999);
+            const result = await usecase.execute(branchId, 999);
 
             // Assert
             expect(result).toBeNull();
@@ -49,7 +49,7 @@ describe("FindEmployeeByIdUsecase", () => {
             mockRepository.setData(employees);
 
             // Act
-            const result = await usecase.execute(organizationId, 3);
+            const result = await usecase.execute(branchId, 3);
 
             // Assert
             expect(result).not.toBeNull();
@@ -70,7 +70,7 @@ describe("FindEmployeeByIdUsecase", () => {
             mockRepository.setData([employee]);
 
             // Act
-            const result = await usecase.execute(organizationId, 10);
+            const result = await usecase.execute(branchId, 10);
 
             // Assert
             expect(result?.workArea).toEqual(["인천 연수구", "인천 남동구"]);

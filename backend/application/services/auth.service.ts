@@ -17,6 +17,8 @@ export interface KakaoData {
 export interface TokenPayload {
     sub: string;
     role: string | null;
+    branchId?: string;
+    branchRole?: string;
     organizationId?: string;
     orgRole?: string;
     type: 'access' | 'refresh';
@@ -26,7 +28,7 @@ export interface UserValidationResult {
     user: string;
     accessToken: string;
     refreshToken: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
 }
 
 export interface PendingKakaoSignupProfile {
@@ -38,7 +40,7 @@ export interface PendingKakaoSignupProfile {
 export interface PendingAccountOnboardingProfile extends PendingKakaoSignupProfile {
     phone?: string;
     birthDate?: string;
-    organizationId?: string;
+    branchId?: string;
     role?: string;
 }
 
@@ -80,7 +82,7 @@ export interface PendingAccountOnboardingExchangeResult {
 export type TokenExchangeResult = {
     accessToken: string;
     refreshToken: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
 } | PendingKakaoSignupExchangeResult | PendingAccountOnboardingExchangeResult;
 
 export interface PasswordValidationResult {
@@ -117,16 +119,16 @@ export class AuthService {
         }
     }
 
-    private async issueOrganizationTokens(
+    private async issueBranchTokens(
         user: { id: string; role: string | null },
-        organizationId: string,
-        orgRole: string
+        branchId: string,
+        branchRole: string
     ): Promise<{ accessToken: string; refreshToken: string }> {
         const payload = {
             sub: user.id,
             role: user.role,
-            organizationId,
-            orgRole,
+            branchId,
+            branchRole,
         };
 
         const privilegedRoles = ["owner", "admin", "manager"];
@@ -156,17 +158,17 @@ export class AuthService {
             birthDate: string | null;
             role: string | null;
         },
-        userOrgs: Array<{ organizationId: string; role: string | null }>,
+        userOrgs: Array<{ branchId: string; role: string | null }>,
     ): PendingAccountOnboardingProfile | null {
         const [firstOrg] = userOrgs;
 
         const needsPhone = !user.phone;
         const needsBirthDate = !user.birthDate;
         const needsRole = !user.role;
-        const needsOrganization = userOrgs.length === 0;
-        const needsOrgRole = userOrgs.length === 1 && !firstOrg?.role;
+        const needsBranch = userOrgs.length === 0;
+        const needsBranchRole = userOrgs.length === 1 && !firstOrg?.role;
 
-        if (!needsPhone && !needsBirthDate && !needsRole && !needsOrganization && !needsOrgRole) {
+        if (!needsPhone && !needsBirthDate && !needsRole && !needsBranch && !needsBranchRole) {
             return null;
         }
 
@@ -176,7 +178,7 @@ export class AuthService {
             profileImage: user.profileImage ?? undefined,
             phone: user.phone ?? undefined,
             birthDate: user.birthDate ?? undefined,
-            organizationId: userOrgs.length === 1 ? firstOrg?.organizationId : undefined,
+            branchId: userOrgs.length === 1 ? firstOrg?.branchId : undefined,
             role: firstOrg?.role ?? user.role ?? undefined,
         };
     }
@@ -190,10 +192,10 @@ export class AuthService {
         birthDate: string | null;
         role: string | null;
     }): Promise<UserValidationResult | PendingAccountOnboardingValidationResult> {
-        const userOrgs = await this.prisma.user_organization.findMany({
+        const userOrgs = await this.prisma.user_branch.findMany({
             where: { userId: user.id },
             select: {
-                organizationId: true,
+                branchId: true,
                 role: true,
             },
         });
@@ -233,29 +235,29 @@ export class AuthService {
                 user: user.id,
                 accessToken,
                 refreshToken,
-                requiresOrgSelection: true,
+                requiresBranchSelection: true,
             };
         }
 
-        let organizationId: string | undefined;
-        let orgRole: string | undefined;
-        let requiresOrgSelection = false;
+        let branchId: string | undefined;
+        let branchRole: string | undefined;
+        let requiresBranchSelection = false;
 
         const [firstOrg] = userOrgs;
 
         if (userOrgs.length === 1 && firstOrg) {
-            organizationId = firstOrg.organizationId;
-            orgRole = firstOrg.role ?? undefined;
+            branchId = firstOrg.branchId;
+            branchRole = firstOrg.role ?? undefined;
         } else if (userOrgs.length > 1) {
-            requiresOrgSelection = true;
+            requiresBranchSelection = true;
         } else if (userOrgs.length === 0) {
-            requiresOrgSelection = true;
+            requiresBranchSelection = true;
         }
 
         const payload = {
             sub: user.id,
             role: user.role,
-            ...(organizationId && { organizationId, orgRole }),
+            ...(branchId && { branchId, branchRole }),
         };
 
         const privilegedRoles = ["owner", "admin", "manager"];
@@ -282,7 +284,7 @@ export class AuthService {
             user: user.id,
             accessToken,
             refreshToken,
-            requiresOrgSelection: requiresOrgSelection || undefined,
+            requiresBranchSelection: requiresBranchSelection || undefined,
         };
     }
 
@@ -336,80 +338,80 @@ export class AuthService {
         return this.createLoginResultForUser(user);
     }
 
-    async selectOrganization(userid: string, organizationid: string): Promise<{ accessToken: string; refreshToken: string }> {
+    async selectBranch(userid: string, branchid: string): Promise<{ accessToken: string; refreshToken: string }> {
         const user = await this.prisma.user.findUnique({ where: { id: userid } });
         if (!user) {
             throw new UnauthorizedException("User not found");
         }
 
-        // Owners can access any organization
+        // Owners can access any branch
         if (user.role === 'owner') {
-            const org = await this.prisma.organization.findUnique({
-                where: { id: organizationid },
+            const org = await this.prisma.branch.findUnique({
+                where: { id: branchid },
                 select: { id: true },
             });
             if (!org) {
-                throw new ForbiddenException("Organization not found");
+                throw new ForbiddenException("Branch not found");
             }
-            return this.issueOrganizationTokens(user, organizationid, 'owner');
+            return this.issueBranchTokens(user, branchid, 'owner');
         }
 
-        // Regular users must be linked to the organization
-        const userOrg = await this.prisma.user_organization.findFirst({
-            where: { userId: userid, organizationId: organizationid }
+        // Regular users must be linked to the branch
+        const userOrg = await this.prisma.user_branch.findFirst({
+            where: { userId: userid, branchId: branchid }
         });
         if (!userOrg) {
-            throw new ForbiddenException("User does not belong to this organization");
+            throw new ForbiddenException("User does not belong to this branch");
         }
 
-        return this.issueOrganizationTokens(user, organizationid, userOrg.role ?? 'member');
+        return this.issueBranchTokens(user, branchid, userOrg.role ?? 'member');
     }
 
-    async switchOrganization(
+    async switchBranch(
         userid: string,
-        _currentorgid: string,
-        neworgid: string
+        _currentbranchid: string,
+        newbranchid: string
     ): Promise<{ accessToken: string; refreshToken: string }> {
         const user = await this.prisma.user.findUnique({ where: { id: userid } });
         if (!user) {
             throw new UnauthorizedException("User not found");
         }
 
-        // Owners can switch to any organization
+        // Owners can switch to any branch
         if (user.role === 'owner') {
-            const org = await this.prisma.organization.findUnique({
-                where: { id: neworgid },
+            const org = await this.prisma.branch.findUnique({
+                where: { id: newbranchid },
                 select: { id: true },
             });
             if (!org) {
-                throw new ForbiddenException("Organization not found");
+                throw new ForbiddenException("Branch not found");
             }
-            return this.issueOrganizationTokens(user, neworgid, 'owner');
+            return this.issueBranchTokens(user, newbranchid, 'owner');
         }
 
-        // Regular users must be linked to the organization
-        const userOrg = await this.prisma.user_organization.findFirst({
-            where: { userId: userid, organizationId: neworgid }
+        // Regular users must be linked to the branch
+        const userOrg = await this.prisma.user_branch.findFirst({
+            where: { userId: userid, branchId: newbranchid }
         });
         if (!userOrg) {
-            throw new ForbiddenException("User does not belong to target organization");
+            throw new ForbiddenException("User does not belong to target branch");
         }
 
-        return this.issueOrganizationTokens(user, neworgid, userOrg.role ?? 'member');
+        return this.issueBranchTokens(user, newbranchid, userOrg.role ?? 'member');
     }
 
-    async getUserOrganizations(userid: string): Promise<Array<{ id: string; name: string; slug: string; role: string }>> {
-        // Check if user is owner - owners have access to ALL organizations
+    async getUserBranches(userid: string): Promise<Array<{ id: string; name: string; slug: string; role: string }>> {
+        // Check if user is owner - owners have access to ALL branches
         const user = await this.prisma.user.findUnique({
             where: { id: userid },
             select: { role: true }
         });
 
-        this.logger.log(`[getUserOrganizations] User ${userid} has role: ${user?.role}`);
+        this.logger.log(`[getUserBranches] User ${userid} has role: ${user?.role}`);
 
         if (user?.role === 'owner') {
-            // Owner gets access to all organizations
-            const allOrgs = await this.prisma.organization.findMany({
+            // Owner gets access to all branches
+            const allOrgs = await this.prisma.branch.findMany({
                 where: { isActive: true },
                 select: {
                     id: true,
@@ -419,7 +421,7 @@ export class AuthService {
                 orderBy: { name: 'asc' }
             });
 
-            this.logger.log(`[getUserOrganizations] Owner access - found ${allOrgs.length} active organizations`);
+            this.logger.log(`[getUserBranches] Owner access - found ${allOrgs.length} active branches`);
 
             return allOrgs.map(org => ({
                 id: org.id,
@@ -429,10 +431,10 @@ export class AuthService {
             }));
         }
 
-        // Regular users: only get organizations they're linked to
-        const userOrgs = await this.prisma.user_organization.findMany({
+        // Regular users: only get branches they're linked to
+        const userOrgs = await this.prisma.user_branch.findMany({
             where: { userId: userid },
-            include: { organization: true }
+            include: { branch: true }
         });
 
         if (userOrgs.length === 0) {
@@ -440,9 +442,9 @@ export class AuthService {
         }
 
         return userOrgs.map(userOrg => ({
-            id: userOrg.organization.id,
-            name: userOrg.organization.name,
-            slug: userOrg.organization.slug,
+            id: userOrg.branch.id,
+            name: userOrg.branch.name,
+            slug: userOrg.branch.slug,
             role: userOrg.role ?? 'member',
         }));
     }
@@ -472,7 +474,7 @@ export class AuthService {
         userId?: string;
         accessToken?: string;
         refreshToken?: string;
-        requiresOrgSelection?: boolean;
+        requiresBranchSelection?: boolean;
         kakaoData?: KakaoData;
     }): Promise<void> {
         await this.prisma.auth_flow_state.create({
@@ -482,7 +484,7 @@ export class AuthService {
                 userId: params.userId,
                 accessToken: params.accessToken,
                 refreshToken: params.refreshToken,
-                requiresOrgSelection: params.requiresOrgSelection ?? false,
+                requiresBranchSelection: params.requiresBranchSelection ?? false,
                 kakaoId: params.kakaoData?.kakaoId,
                 email: params.kakaoData?.email,
                 name: params.kakaoData?.name,
@@ -584,7 +586,7 @@ export class AuthService {
         return this.getAuthFlowStateOrThrow(token, ["pending_account_onboarding"]);
     }
 
-    async createAuthCode(tokens: { accessToken: string; refreshToken: string; requiresOrgSelection?: boolean }): Promise<string> {
+    async createAuthCode(tokens: { accessToken: string; refreshToken: string; requiresBranchSelection?: boolean }): Promise<string> {
         await this.pruneAuthFlowStates();
 
         const code = this.generateToken();
@@ -593,7 +595,7 @@ export class AuthService {
             token: code,
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
-            requiresOrgSelection: tokens.requiresOrgSelection,
+            requiresBranchSelection: tokens.requiresBranchSelection,
             expiresAt: new Date(Date.now() + 30 * 1000),
         });
 
@@ -648,7 +650,7 @@ export class AuthService {
             return {
                 accessToken: stored.accessToken,
                 refreshToken: stored.refreshToken,
-                requiresOrgSelection: stored.requiresOrgSelection || undefined,
+                requiresBranchSelection: stored.requiresBranchSelection || undefined,
             };
         }
 
@@ -724,10 +726,10 @@ export class AuthService {
             throw new UnauthorizedException("Pending account onboarding user not found");
         }
 
-        const userOrgs = await this.prisma.user_organization.findMany({
+        const userOrgs = await this.prisma.user_branch.findMany({
             where: { userId: user.id },
             select: {
-                organizationId: true,
+                branchId: true,
                 role: true,
             },
         });
@@ -738,7 +740,7 @@ export class AuthService {
             profileImage: user.profileImage ?? undefined,
             phone: user.phone ?? undefined,
             birthDate: user.birthDate ?? undefined,
-            organizationId: userOrgs.length === 1 ? userOrgs[0]?.organizationId : undefined,
+            branchId: userOrgs.length === 1 ? userOrgs[0]?.branchId : undefined,
             role: userOrgs.length === 1 ? userOrgs[0]?.role ?? user.role ?? undefined : user.role ?? undefined,
         };
     }
@@ -747,7 +749,7 @@ export class AuthService {
         token: string,
         phone: string,
         birthDate: string,
-        organizationId: string,
+        branchId: string,
         role: string,
     ): Promise<UserValidationResult> {
         const hashedToken = this.hashToken(token);
@@ -787,11 +789,11 @@ export class AuthService {
                 throw new UnauthorizedException('Pending Kakao signup already used');
             }
 
-            const organization = await tx.organization.findUnique({
-                where: { id: organizationId },
+            const branch = await tx.branch.findUnique({
+                where: { id: branchId },
                 select: { id: true },
             });
-            if (!organization) {
+            if (!branch) {
                 throw new BadRequestException('유효하지 않은 지점입니다.');
             }
 
@@ -841,18 +843,18 @@ export class AuthService {
                 });
             }
 
-            const membership = await tx.user_organization.findFirst({
+            const membership = await tx.user_branch.findFirst({
                 where: {
                     userId: existingUser.id,
-                    organizationId,
+                    branchId,
                 },
             });
 
             if (!membership) {
-                await tx.user_organization.create({
+                await tx.user_branch.create({
                     data: {
                         userId: existingUser.id,
-                        organizationId,
+                        branchId,
                         role,
                     },
                 });
@@ -881,7 +883,7 @@ export class AuthService {
         token: string,
         phone: string,
         birthDate: string,
-        organizationId: string,
+        branchId: string,
         role: string,
     ): Promise<UserValidationResult> {
         const hashedToken = this.hashToken(token);
@@ -929,11 +931,11 @@ export class AuthService {
                 throw new UnauthorizedException("Pending account onboarding user not found");
             }
 
-            const organization = await tx.organization.findUnique({
-                where: { id: organizationId },
+            const branch = await tx.branch.findUnique({
+                where: { id: branchId },
                 select: { id: true },
             });
-            if (!organization) {
+            if (!branch) {
                 throw new BadRequestException("유효하지 않은 지점입니다.");
             }
 
@@ -954,10 +956,10 @@ export class AuthService {
                 },
             });
 
-            const membership = await tx.user_organization.findFirst({
+            const membership = await tx.user_branch.findFirst({
                 where: {
                     userId: user.id,
-                    organizationId,
+                    branchId,
                 },
                 select: {
                     id: true,
@@ -966,15 +968,15 @@ export class AuthService {
             });
 
             if (!membership) {
-                await tx.user_organization.create({
+                await tx.user_branch.create({
                     data: {
                         userId: user.id,
-                        organizationId,
+                        branchId,
                         role,
                     },
                 });
             } else if (membership.role !== role) {
-                await tx.user_organization.update({
+                await tx.user_branch.update({
                     where: { id: membership.id },
                     data: { role },
                 });
@@ -1034,14 +1036,16 @@ export class AuthService {
                 role: user.role,
             };
 
-            if (decoded.organizationId) {
-                const stillMember = await this.prisma.user_organization.findFirst({
-                    where: { userId: decoded.sub, organizationId: decoded.organizationId }
+            const decodedBranchId = decoded.branchId ?? decoded.organizationId;
+
+            if (decodedBranchId) {
+                const stillMember = await this.prisma.user_branch.findFirst({
+                    where: { userId: decoded.sub, branchId: decodedBranchId }
                 });
                 if (stillMember !== null) {
-                    payload.organizationId = decoded.organizationId;
+                    payload.branchId = decodedBranchId;
                     if (stillMember) {
-                        payload.orgRole = stillMember.role ?? undefined;
+                        payload.branchRole = stillMember.role ?? undefined;
                     }
                 }
             }
@@ -1147,7 +1151,7 @@ export class AuthService {
         name: string,
         phone: string,
         birthDate: string,
-        organizationId: string,
+        branchId: string,
         role: string,
     ): Promise<RegistrationResult> {
         // Validate password strength
@@ -1203,8 +1207,8 @@ export class AuthService {
             };
         }
 
-        const org = await this.prisma.organization.findUnique({
-            where: { id: organizationId },
+        const org = await this.prisma.branch.findUnique({
+            where: { id: branchId },
             select: { id: true },
         });
         if (!org) {
@@ -1226,10 +1230,10 @@ export class AuthService {
             },
         });
 
-        await this.prisma.user_organization.create({
+        await this.prisma.user_branch.create({
             data: {
                 userId: user.id,
-                organizationId: organizationId,
+                branchId: branchId,
                 role,
             },
         });

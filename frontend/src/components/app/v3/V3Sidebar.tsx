@@ -9,11 +9,13 @@ import {
   Users,
   UserCheck,
   UserKey,
+  Globe,
   FileText,
   FolderOpen,
   Settings,
   LucideIcon,
   Calculator,
+  Headset,
   MessageCircle,
 } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
@@ -49,6 +51,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
     title: "지점 관리",
     items: [
       { label: "고객", href: "/clients", icon: Users },
+      { label: "상담", href: "/consultations", icon: Headset },
       { label: "직원", href: "/employees", icon: UserCheck },
       // { label: "통계", href: "/analytics", icon: BarChart3 },
     ],
@@ -104,7 +107,11 @@ export const V3Sidebar = () => {
       return {
         ...section,
         items: isOwner
-          ? [{ label: "관리자", href: "/system-admin", icon: UserKey }, ...section.items]
+          ? [
+              { label: "관리자", href: "/system-admin", icon: UserKey },
+              { label: "홈페이지 관리", href: "/website-admin", icon: Globe },
+              ...section.items,
+            ]
           : section.items,
       };
     }),
@@ -154,9 +161,9 @@ export const V3Sidebar = () => {
             <span className="block truncate text-xl font-bold text-v3-primary tracking-tight">
               아가잼잼
             </span>
-            {user?.organizationName && (
+            {user?.branchName && (
               <span className="mt-0.5 block truncate text-[0.72rem] font-medium leading-none text-v3-text-muted">
-                {user.organizationName}
+                {user.branchName}
               </span>
             )}
           </div>

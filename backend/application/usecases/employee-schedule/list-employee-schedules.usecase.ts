@@ -9,7 +9,7 @@ export class ListEmployeeSchedulesUsecase {
         private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
     ) {}
 
-    execute(organizationid: string): Promise<EmployeeScheduleEntity[]> {
-        return this.employeeScheduleRepository.findAll(organizationid);
+    execute(branchid: string): Promise<EmployeeScheduleEntity[]> {
+        return this.employeeScheduleRepository.findAll(branchid);
     }
 }

@@ -13,7 +13,7 @@ interface PendingAccountOnboardingProfile {
     profileImage?: string;
     phone?: string;
     birthDate?: string;
-    organizationId?: string;
+    branchId?: string;
     role?: "admin" | "manager" | "user";
 }
 
@@ -53,7 +53,7 @@ export default async function AccountOnboardingPage() {
             profileImage={response.data.profileImage}
             phone={response.data.phone}
             birthDate={response.data.birthDate}
-            organizationId={response.data.organizationId}
+            branchId={response.data.branchId}
             role={response.data.role}
             mode="account"
             title="계정 정보 추가"

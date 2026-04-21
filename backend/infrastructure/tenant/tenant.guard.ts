@@ -18,46 +18,46 @@ export class TenantGuard implements CanActivate {
         const request = context.switchToHttp().getRequest();
         const user = request.user;
 
-        if (!user?.organizationId) {
-            throw new ForbiddenException('Organization selection required');
+        if (!user?.branchId) {
+            throw new ForbiddenException('Branch selection required');
         }
 
-        // Owners have access to all organizations without membership check
+        // Owners have access to all branches without membership check
         if (user.role === 'owner') {
-            // Verify the organization exists
-            const org = await this.prisma.organization.findUnique({
-                where: { id: user.organizationId },
+            // Verify the branch exists
+            const org = await this.prisma.branch.findUnique({
+                where: { id: user.branchId },
                 select: { id: true },
             });
 
             if (!org) {
-                throw new ForbiddenException('Organization not found');
+                throw new ForbiddenException('Branch not found');
             }
 
             this.tenantContext.userId = user.userId;
-            this.tenantContext.organizationId = user.organizationId;
+            this.tenantContext.branchId = user.branchId;
             this.tenantContext.role = user.role;
-            this.tenantContext.orgRole = 'owner';
+            this.tenantContext.branchRole = 'owner';
 
             return true;
         }
 
         // Regular users must have membership
-        const membership = await this.prisma.user_organization.findFirst({
+        const membership = await this.prisma.user_branch.findFirst({
             where: {
                 userId: user.userId,
-                organizationId: user.organizationId,
+                branchId: user.branchId,
             },
         });
 
         if (!membership) {
-            throw new ForbiddenException('Access denied to this organization');
+            throw new ForbiddenException('Access denied to this branch');
         }
 
         this.tenantContext.userId = user.userId;
-        this.tenantContext.organizationId = user.organizationId;
+        this.tenantContext.branchId = user.branchId;
         this.tenantContext.role = user.role;
-        this.tenantContext.orgRole = membership.role ?? 'member';
+        this.tenantContext.branchRole = membership.role ?? 'member';
 
         return true;
     }

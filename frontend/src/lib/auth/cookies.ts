@@ -7,8 +7,9 @@ import axios from "axios";
 interface TokenPayload {
   sub: string;
   role: string | null;
+  branchId?: string;
+  branchRole?: string;
   organizationId?: string;
-  orgRole?: string;
   type: "access" | "refresh";
 }
 
@@ -56,10 +57,10 @@ export const getCurrentUser = cache(async () => {
 });
 
 /**
- * Check if user has selected an organization
- * Returns true if organizationId exists in JWT token
+ * Check if user has selected an branch
+ * Returns true if branchId exists in JWT token
  */
-export const hasSelectedOrganization = cache(async (): Promise<boolean> => {
+export const hasSelectedBranch = cache(async (): Promise<boolean> => {
   try {
     const cookieStore = await cookies();
     const authToken = cookieStore.get('auth_token');
@@ -69,7 +70,7 @@ export const hasSelectedOrganization = cache(async (): Promise<boolean> => {
     }
 
     const decoded = jwtDecode<TokenPayload>(authToken.value);
-    return !!decoded.organizationId;
+    return !!(decoded.branchId ?? decoded.organizationId);
   } catch {
     return false;
   }

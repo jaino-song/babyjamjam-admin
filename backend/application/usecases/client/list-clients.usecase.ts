@@ -9,7 +9,7 @@ export class ListClientsUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    execute(organizationid: string): Promise<ClientEntity[]> {
-        return this.clientRepository.findAll(organizationid);
+    execute(branchid: string): Promise<ClientEntity[]> {
+        return this.clientRepository.findAll(branchid);
     }
 }

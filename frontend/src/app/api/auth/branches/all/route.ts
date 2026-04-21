@@ -4,7 +4,7 @@ import { AxiosError } from "axios";
 
 export async function GET() {
     try {
-        const { data, status } = await serverAPIClient.get("/auth/organizations/all");
+        const { data, status } = await serverAPIClient.get("/auth/branches/all");
 
         return NextResponse.json(data, { status });
     } catch (error) {
@@ -17,7 +17,7 @@ export async function GET() {
             }
 
             return NextResponse.json(
-                { error: error.message || "Failed to fetch organizations" },
+                { error: error.message || "Failed to fetch branches" },
                 { status },
             );
         }

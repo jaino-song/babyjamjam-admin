@@ -1,6 +1,6 @@
 import { api } from "@/lib/api/client";
 
-export interface SystemAdminUserOrganization {
+export interface SystemAdminUserBranch {
   id: string;
   name: string;
   role: string | null;
@@ -18,7 +18,7 @@ export interface SystemAdminUser {
   createdAt: string;
   emailVerified: boolean;
   authProvider: string;
-  organizations: SystemAdminUserOrganization[];
+  branches: SystemAdminUserBranch[];
 }
 
 export async function getSystemAdminUsers(): Promise<SystemAdminUser[]> {

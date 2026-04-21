@@ -167,7 +167,7 @@ export default function DashboardPage() {
     >
       <HeroBanner
         title={user?.name ? `${user?.name} 님` : "다시 로그인 해주세요"}
-        subtitle={user?.organizationName ?? ""}
+        subtitle={user?.branchName ?? ""}
         isLoading={statsLoading}
       />
 

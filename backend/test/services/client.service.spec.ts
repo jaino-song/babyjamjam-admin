@@ -97,7 +97,7 @@ describe("ClientService", () => {
         null,
     );
 
-    const organizationId = "org-1";
+    const branchId = "org-1";
 
     let service: ClientService;
     let createClientUsecase: ReturnType<typeof createMockCreateClientUsecase>;
@@ -163,12 +163,12 @@ describe("ClientService", () => {
                 };
 
                 // Act
-                const result = await service.create(organizationId, params);
+                const result = await service.create(branchId, params);
 
                 // Assert
                 // Client should be created first
                 expect(createClientUsecase.execute).toHaveBeenCalledWith(
-                    organizationId,
+                    branchId,
                     expect.objectContaining({
                         name: "New Client",
                         address: "123 Main St",
@@ -203,11 +203,11 @@ describe("ClientService", () => {
                 };
 
                 // Act
-                const result = await service.create(organizationId, params);
+                const result = await service.create(branchId, params);
 
                 // Assert
                 expect(createClientUsecase.execute).toHaveBeenCalledWith(
-                    organizationId,
+                    branchId,
                     expect.objectContaining({
                         name: "New Client",
                         address: "123 Main St",
@@ -237,7 +237,7 @@ describe("ClientService", () => {
                 };
 
                 // Act
-                await service.create(organizationId, params);
+                await service.create(branchId, params);
 
                 // Assert
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledTimes(1);
@@ -266,13 +266,13 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                const result = await service.update(organizationId, 1, { name: "New Name", address: "New Address" });
+                const result = await service.update(branchId, 1, { name: "New Name", address: "New Address" });
 
                 // Assert
-                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
+                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(branchId, 1);
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, expect.objectContaining({
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, expect.objectContaining({
                     name: "New Name",
                     address: "New Address",
                 }));
@@ -299,7 +299,7 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                await service.update(organizationId, 1, { primaryEmployeeId: 7 });
+                await service.update(branchId, 1, { primaryEmployeeId: 7 });
 
                 // Assert
                 // Should lookup current schedule by clientId
@@ -338,7 +338,7 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                await service.update(organizationId, 1, { primaryEmployeeId: 7 });
+                await service.update(branchId, 1, { primaryEmployeeId: 7 });
 
                 // Assert
                 // Should lookup current schedule
@@ -355,7 +355,7 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.update(organizationId, 999, { name: "New Name" }))
+                await expect(service.update(branchId, 999, { name: "New Name" }))
                     .rejects
                     .toThrow("Client with id 999 not found");
             });
@@ -374,7 +374,7 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                await service.update(organizationId, 1, { primaryEmployeeId: 5, secondaryEmployeeId: 8 });
+                await service.update(branchId, 1, { primaryEmployeeId: 5, secondaryEmployeeId: 8 });
 
                 // Assert
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
@@ -407,7 +407,7 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(updatedClient);
 
                 // Act
-                await service.update(organizationId, 1, { secondaryEmployeeId: null });
+                await service.update(branchId, 1, { secondaryEmployeeId: null });
 
                 // Assert
                 expect(prismaService.employee_schedule.update).toHaveBeenCalledWith({
@@ -435,10 +435,10 @@ describe("ClientService", () => {
             listClientsUsecase.execute.mockResolvedValue(mockClients);
 
             // Act
-            const result = await service.findAll(organizationId);
+            const result = await service.findAll(branchId);
 
             // Assert
-            expect(listClientsUsecase.execute).toHaveBeenCalledWith(organizationId);
+            expect(listClientsUsecase.execute).toHaveBeenCalledWith(branchId);
             expect(result).toHaveLength(1);
             expect(result[0]).toMatchObject({
                 id: 1,
@@ -460,10 +460,10 @@ describe("ClientService", () => {
             findClientByIdUsecase.execute.mockResolvedValue(mockClient);
 
             // Act
-            const result = await service.findById(organizationId, 1);
+            const result = await service.findById(branchId, 1);
 
             // Assert
-            expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
+            expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(branchId, 1);
             expect(result).toMatchObject({
                 id: 1,
                 name: "Test Client",
@@ -483,10 +483,10 @@ describe("ClientService", () => {
             deleteClientUsecase.execute.mockResolvedValue(undefined);
 
             // Act
-            await service.delete(organizationId, 1);
+            await service.delete(branchId, 1);
 
             // Assert
-            expect(deleteClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
+            expect(deleteClientUsecase.execute).toHaveBeenCalledWith(branchId, 1);
         });
     });
 
@@ -508,11 +508,11 @@ describe("ClientService", () => {
                 prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
 
                 // Act
-                const result = await service.terminateService(organizationId, 1, "Client requested");
+                const result = await service.terminateService(branchId, 1, "Client requested");
 
                 // Assert
-                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, {
+                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(branchId, 1);
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, {
                     serviceStatus: "terminated",
                     endDate: expect.any(Date),
                 });
@@ -536,10 +536,10 @@ describe("ClientService", () => {
                 prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
 
                 // Act
-                await service.terminateService(organizationId, 1);
+                await service.terminateService(branchId, 1);
 
                 // Assert
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, expect.objectContaining({
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, expect.objectContaining({
                     serviceStatus: "terminated",
                 }));
             });
@@ -551,7 +551,7 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.terminateService(organizationId, 999))
+                await expect(service.terminateService(branchId, 999))
                     .rejects
                     .toThrow("Client with id 999 not found");
             });
@@ -583,11 +583,11 @@ describe("ClientService", () => {
                 prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
 
                 // Act
-                const result = await service.requestReplacement(organizationId, 1, 7, 8);
+                const result = await service.requestReplacement(branchId, 1, 7, 8);
 
                 // Assert
                 // Should update status
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, {
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, {
                     serviceStatus: "replacement_requested",
                 });
                 // Should mark old schedule as replaced
@@ -621,7 +621,7 @@ describe("ClientService", () => {
                 prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
 
                 // Act
-                await service.requestReplacement(organizationId, 1, 7);
+                await service.requestReplacement(branchId, 1, 7);
 
                 // Assert
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
@@ -641,7 +641,7 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.requestReplacement(organizationId, 999, 7))
+                await expect(service.requestReplacement(branchId, 999, 7))
                     .rejects
                     .toThrow("Client with id 999 not found");
             });
@@ -672,12 +672,12 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(completedClient);
 
                 // Act
-                await service.completeReplacement(organizationId, 1);
+                await service.completeReplacement(branchId, 1);
 
                 // Assert
-                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(organizationId, 1);
+                expect(findClientByIdUsecase.execute).toHaveBeenCalledWith(branchId, 1);
                 // Should compute status (active since we're between start and end dates)
-                expect(updateClientUsecase.execute).toHaveBeenCalledWith(organizationId, 1, {
+                expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, {
                     serviceStatus: expect.stringMatching(/active|waiting|completed/),
                 });
             });
@@ -696,7 +696,7 @@ describe("ClientService", () => {
                 updateClientUsecase.execute.mockResolvedValue(mockClient);
 
                 // Act
-                await service.completeReplacement(organizationId, 1);
+                await service.completeReplacement(branchId, 1);
 
                 // Assert
                 // Should still update status
@@ -710,7 +710,7 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.completeReplacement(organizationId, 999))
+                await expect(service.completeReplacement(branchId, 999))
                     .rejects
                     .toThrow("Client with id 999 not found");
             });
@@ -734,10 +734,10 @@ describe("ClientService", () => {
             listClientsPaginatedUsecase.execute.mockResolvedValue(paginatedResult);
 
             // Act
-            const result = await service.findAllPaginated(organizationId, 1, 10, "Test");
+            const result = await service.findAllPaginated(branchId, 1, 10, "Test");
 
             // Assert
-            expect(listClientsPaginatedUsecase.execute).toHaveBeenCalledWith(organizationId, 1, 10, "Test");
+            expect(listClientsPaginatedUsecase.execute).toHaveBeenCalledWith(branchId, 1, 10, "Test");
             expect(result.data).toHaveLength(1);
             expect(result.total).toBe(1);
             expect(result.page).toBe(1);
@@ -756,7 +756,7 @@ describe("ClientService", () => {
             listClientsPaginatedUsecase.execute.mockResolvedValue(paginatedResult);
 
             // Act
-            const result = await service.findAllPaginated(organizationId, 1, 10, "NonExistent");
+            const result = await service.findAllPaginated(branchId, 1, 10, "NonExistent");
 
             // Assert
             expect(result.data).toHaveLength(0);
@@ -788,7 +788,7 @@ describe("ClientService", () => {
             prismaService.client = { update: jest.fn().mockResolvedValue({}) } as unknown as typeof prismaService.client;
 
             // Act
-            const result = await service.findAll(organizationId);
+            const result = await service.findAll(branchId);
 
             // Assert
             // Should return computed status, not stored status

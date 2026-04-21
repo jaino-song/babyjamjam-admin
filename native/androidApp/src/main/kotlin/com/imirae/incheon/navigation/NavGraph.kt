@@ -25,7 +25,7 @@ object Routes {
     const val FORGOT_PASSWORD = "forgot-password"
     const val RESET_PASSWORD = "reset-password/{token}"
     const val VERIFY_EMAIL = "verify-email"
-    const val SELECT_ORG = "select-org"
+    const val SELECT_BRANCH = "select-branch"
     const val DASHBOARD = "dashboard"
     const val CLIENT_LIST = "clients"
     const val CLIENT_DETAIL = "clients/{clientId}"
@@ -72,7 +72,7 @@ fun AppNavGraph(
                 onNavigateToForgotPassword = { navController.navigate(Routes.FORGOT_PASSWORD) },
                 onNavigateToVerifyEmail = { navController.navigate(Routes.VERIFY_EMAIL) },
                 onNavigateToDashboard = { navController.navigate(Routes.DASHBOARD) { popUpTo(Routes.LOGIN) { inclusive = true } } },
-                onNavigateToSelectOrg = { navController.navigate(Routes.SELECT_ORG) }
+                onNavigateToSelectBranch = { navController.navigate(Routes.SELECT_BRANCH) }
             )
         }
         composable(Routes.REGISTER) {
@@ -92,8 +92,8 @@ fun AppNavGraph(
         composable(Routes.VERIFY_EMAIL) {
             VerifyEmailScreen(onNavigateToLogin = { navController.navigate(Routes.LOGIN) { popUpTo(0) } }, onResendVerification = { /* TODO */ })
         }
-        composable(Routes.SELECT_ORG) {
-            SelectOrgScreen(
+        composable(Routes.SELECT_BRANCH) {
+            SelectBranchScreen(
                 viewModel = authViewModel,
                 onNavigateToDashboard = { navController.navigate(Routes.DASHBOARD) { popUpTo(0) } },
                 onNavigateToLogin = {

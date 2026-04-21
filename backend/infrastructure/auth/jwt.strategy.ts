@@ -7,6 +7,8 @@ interface JwtPayload {
     sub: string;
     role: string;
     type: 'access' | 'refresh';
+    branchId?: string;
+    branchRole?: string;
     organizationId?: string;
     orgRole?: string;
 }
@@ -37,8 +39,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         return {
             userId: payload.sub,
             role: payload.role,
-            organizationId: payload.organizationId,
-            orgRole: payload.orgRole,
+            branchId: payload.branchId ?? payload.organizationId,
+            branchRole: payload.branchRole ?? payload.orgRole,
         };
     }
 }

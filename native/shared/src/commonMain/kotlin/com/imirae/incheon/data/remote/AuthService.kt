@@ -11,8 +11,8 @@ interface AuthService {
     suspend fun refreshToken(refreshToken: String): ApiResult<TokenRefreshResponse>
     suspend fun verifyEmail(token: String): ApiResult<VerifyEmailResponse>
     suspend fun getProfile(): ApiResult<UserProfile>
-    suspend fun getOrganizations(): ApiResult<OrganizationsResponse>
-    suspend fun selectOrganization(organizationId: String): ApiResult<SelectOrganizationResponse>
+    suspend fun getBranches(): ApiResult<BranchesResponse>
+    suspend fun selectBranch(branchId: String): ApiResult<SelectBranchResponse>
 }
 
 class AuthServiceImpl(private val client: ApiClient) : AuthService {
@@ -23,6 +23,6 @@ class AuthServiceImpl(private val client: ApiClient) : AuthService {
     override suspend fun refreshToken(refreshToken: String) = client.post<TokenRefreshResponse>("/auth/refresh") { setBody(TokenRefreshRequest(refreshToken)) }
     override suspend fun verifyEmail(token: String) = client.post<VerifyEmailResponse>("/auth/verify-email?token=$token")
     override suspend fun getProfile() = client.get<UserProfile>("/auth/me")
-    override suspend fun getOrganizations() = client.get<OrganizationsResponse>("/auth/organizations")
-    override suspend fun selectOrganization(organizationId: String) = client.post<SelectOrganizationResponse>("/auth/select-organization") { setBody(SelectOrganizationRequest(organizationId)) }
+    override suspend fun getBranches() = client.get<BranchesResponse>("/auth/branches")
+    override suspend fun selectBranch(branchId: String) = client.post<SelectBranchResponse>("/auth/select-branch") { setBody(SelectBranchRequest(branchId)) }
 }

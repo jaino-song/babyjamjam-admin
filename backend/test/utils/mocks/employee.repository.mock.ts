@@ -37,15 +37,15 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         return Array.from(this.employees.values());
     }
 
-    async findById(_organizationid: string, id: number): Promise<EmployeeEntity | null> {
+    async findById(_branchid: string, id: number): Promise<EmployeeEntity | null> {
         return this.employees.get(id) ?? null;
     }
 
-    async findAll(_organizationid: string): Promise<EmployeeEntity[]> {
+    async findAll(_branchid: string): Promise<EmployeeEntity[]> {
         return Array.from(this.employees.values());
     }
 
-    async create(_organizationid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {
+    async create(_branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {
         const id = employee.id > 0 ? employee.id : this.nextId++;
         const newEmployee = EmployeeEntity.reconstitute(
             id,
@@ -60,7 +60,7 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         return newEmployee;
     }
 
-    async update(_organizationid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {
+    async update(_branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {
         if (!this.employees.has(employee.id)) {
             throw new Error(`Employee with id ${employee.id} not found`);
         }
@@ -68,27 +68,27 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         return employee;
     }
 
-    async delete(_organizationid: string, id: number): Promise<void> {
+    async delete(_branchid: string, id: number): Promise<void> {
         if (!this.employees.has(id)) {
             throw new Error(`Employee with id ${id} not found`);
         }
         this.employees.delete(id);
     }
 
-    async findByWorkArea(_organizationid: string, workArea: string): Promise<EmployeeEntity[]> {
+    async findByWorkArea(_branchid: string, workArea: string): Promise<EmployeeEntity[]> {
         return Array.from(this.employees.values()).filter(employee =>
             employee.workArea.includes(workArea),
         );
     }
 
-    async findByGrade(_organizationid: string, grade: string): Promise<EmployeeEntity[]> {
+    async findByGrade(_branchid: string, grade: string): Promise<EmployeeEntity[]> {
         return Array.from(this.employees.values()).filter(
             employee => employee.grade === grade,
         );
     }
 
     async findByOpenToNextWork(
-        _organizationid: string,
+        _branchid: string,
         openToNextWork: boolean
     ): Promise<EmployeeEntity[]> {
         return Array.from(this.employees.values()).filter(
@@ -96,7 +96,7 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         );
     }
 
-    async findByRegisteredDate(_organizationid: string, registeredDate: Date): Promise<EmployeeEntity[]> {
+    async findByRegisteredDate(_branchid: string, registeredDate: Date): Promise<EmployeeEntity[]> {
         return Array.from(this.employees.values()).filter(
             employee =>
                 employee.registeredDate.toDateString() === registeredDate.toDateString(),
@@ -104,7 +104,7 @@ export class MockEmployeeRepository implements IEmployeeRepository {
     }
 
     async findByRegisteredDateRange(
-        _organizationid: string,
+        _branchid: string,
         startDate: Date,
         endDate: Date,
     ): Promise<EmployeeEntity[]> {
@@ -116,7 +116,7 @@ export class MockEmployeeRepository implements IEmployeeRepository {
     }
 
     async changeOpenToNextWork(
-        _organizationid: string,
+        _branchid: string,
         id: number,
         openToNextWork: boolean
     ): Promise<void> {
@@ -136,7 +136,7 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         this.employees.set(id, updated);
     }
 
-    async findAllOpenToNextWork(_organizationid: string): Promise<EmployeeEntity[]> {
+    async findAllOpenToNextWork(_branchid: string): Promise<EmployeeEntity[]> {
         return Array.from(this.employees.values()).filter(
             employee => employee.openToNextWork === true,
         );

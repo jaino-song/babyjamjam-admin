@@ -8,7 +8,7 @@ export class DeleteEmployeeUsecase {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    async execute(organizationid: string, id: number): Promise<void> {
-        await this.employeeRepository.delete(organizationid, id);
+    async execute(branchid: string, id: number): Promise<void> {
+        await this.employeeRepository.delete(branchid, id);
     }
 }

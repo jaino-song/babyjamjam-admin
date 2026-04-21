@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Cron } from "@nestjs/schedule";
 import { AlimtalkService } from "./alimtalk.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
-import { ORGANIZATION_REPOSITORY, IOrganizationRepository } from "domain/repositories/organization.repository.interface";
+import { BRANCH_REPOSITORY, IBranchRepository } from "domain/repositories/branch.repository.interface";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
@@ -18,8 +18,8 @@ export class AlimtalkSchedulerService {
         private readonly configService: ConfigService,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
-        @Inject(ORGANIZATION_REPOSITORY)
-        private readonly organizationRepository: IOrganizationRepository,
+        @Inject(BRANCH_REPOSITORY)
+        private readonly branchRepository: IBranchRepository,
         @Inject(EMPLOYEE_SCHEDULE_REPOSITORY)
         private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
         @Inject(EMPLOYEE_REPOSITORY)
@@ -32,9 +32,9 @@ export class AlimtalkSchedulerService {
         this.logger.log("[Scheduler] Starting contract reminder check...");
 
         try {
-            const organizations = await this.organizationRepository.findAllActive();
+            const branches = await this.branchRepository.findAllActive();
 
-            for (const org of organizations) {
+            for (const org of branches) {
                 if (
                     this.triggerService &&
                     (await this.triggerService.hasActiveRulesForEvents(org.id, [
@@ -104,9 +104,9 @@ export class AlimtalkSchedulerService {
         this.logger.log("[Scheduler] Starting survey request check...");
 
         try {
-            const organizations = await this.organizationRepository.findAllActive();
+            const branches = await this.branchRepository.findAllActive();
 
-            for (const org of organizations) {
+            for (const org of branches) {
                 if (
                     this.triggerService &&
                     (await this.triggerService.hasActiveRulesForEvents(org.id, [
@@ -159,9 +159,9 @@ export class AlimtalkSchedulerService {
         this.logger.log("[Scheduler] Starting payment reminder check...");
 
         try {
-            const organizations = await this.organizationRepository.findAllActive();
+            const branches = await this.branchRepository.findAllActive();
 
-            for (const org of organizations) {
+            for (const org of branches) {
                 this.logger.log(`[Scheduler] Processing payment reminders for org: ${org.name} (${org.id})`);
                 const reminderIntervals = [3, 7];
 
@@ -205,13 +205,13 @@ export class AlimtalkSchedulerService {
     }
 
     // 클라이언트에 배정된 담당 직원 이름을 조회
-    private async getEmployeeNameForClient(organizationId: string, clientId: number): Promise<string> {
+    private async getEmployeeNameForClient(branchId: string, clientId: number): Promise<string> {
         try {
-            const schedules = await this.employeeScheduleRepository.findByClientId(organizationId, clientId);
+            const schedules = await this.employeeScheduleRepository.findByClientId(branchId, clientId);
             const activeSchedule = schedules.find(s => !s.replaced);
             if (!activeSchedule) return "담당자";
 
-            const employee = await this.employeeRepository.findById(organizationId, activeSchedule.primaryEmployeeId);
+            const employee = await this.employeeRepository.findById(branchId, activeSchedule.primaryEmployeeId);
             return employee?.name ?? "담당자";
         } catch {
             return "담당자";

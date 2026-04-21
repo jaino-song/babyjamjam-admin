@@ -31,7 +31,7 @@ export const mobileScreenshotRoutes: ScreenshotRoute[] = [
   { slug: "messages-system-templates", path: "/messages/system-templates", auth: "authenticated" },
   { slug: "messages-templates", path: "/messages/templates", auth: "authenticated" },
   { slug: "messages-templates-new", path: "/messages/templates/new", auth: "authenticated" },
-  { slug: "select-organization", path: "/select-organization", auth: "authenticated" },
+  { slug: "select-branch", path: "/select-branch", auth: "authenticated" },
   { slug: "settings", path: "/settings", auth: "authenticated" },
   { slug: "test", path: "/test", auth: "authenticated" },
 ];

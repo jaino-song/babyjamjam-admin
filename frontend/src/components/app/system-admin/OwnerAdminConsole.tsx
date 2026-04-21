@@ -926,25 +926,25 @@ function getAccountAuthProviderLabel(authProvider: string) {
   }
 }
 
-function getAccountOrganizationLabel(user: SystemAdminUser) {
-  if (user.organizations.length === 0) {
+function getAccountBranchLabel(user: SystemAdminUser) {
+  if (user.branches.length === 0) {
     return user.role === "owner" ? "오너 전용" : "소속 없음";
   }
 
-  const [firstOrganization, ...restOrganizations] = user.organizations;
-  return restOrganizations.length > 0
-    ? `${firstOrganization.name} 외 ${restOrganizations.length}곳`
-    : firstOrganization.name;
+  const [firstBranch, ...restBranches] = user.branches;
+  return restBranches.length > 0
+    ? `${firstBranch.name} 외 ${restBranches.length}곳`
+    : firstBranch.name;
 }
 
-function getAccountOrganizationSummary(user: SystemAdminUser) {
-  if (user.organizations.length === 0) {
+function getAccountBranchSummary(user: SystemAdminUser) {
+  if (user.branches.length === 0) {
     return user.role === "owner" ? "오너 계정" : "소속 없음";
   }
 
-  return user.organizations
-    .map((organization) =>
-      organization.role ? `${organization.name} (${getAccountRoleLabel(organization.role)})` : organization.name
+  return user.branches
+    .map((branch) =>
+      branch.role ? `${branch.name} (${getAccountRoleLabel(branch.role)})` : branch.name
     )
     .join(", ");
 }
@@ -988,7 +988,7 @@ function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
       title: `${roleLabel} 계정`,
       subtitle: `${authProviderLabel} 로그인`,
       listTitle: user.name ?? user.email ?? "이름 미등록",
-      listSubtitle: getAccountOrganizationLabel(user),
+      listSubtitle: getAccountBranchLabel(user),
       listStatusLabel: roleLabel,
       category: getAccountCategory(user.role),
       statusLabel: accountStatus.label,
@@ -1014,7 +1014,7 @@ function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
               : "해당 없음",
         },
         { label: "가입일", value: formatAccountDate(user.createdAt) },
-        { label: "소속", value: getAccountOrganizationSummary(user) },
+        { label: "소속", value: getAccountBranchSummary(user) },
       ],
     };
   });

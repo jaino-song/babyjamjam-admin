@@ -20,11 +20,11 @@ export class UpdateEformsignDocStatusUsecase {
     ) {}
 
     async execute(
-        organizationid: string,
+        branchid: string,
         params: UpdateEformsignDocStatusParams
     ): Promise<EformsignDocEntity> {
         const existing = await this.eformsignDocRepository.findByDocumentId(
-            organizationid,
+            branchid,
             params.documentId
         );
         if (!existing) {
@@ -50,6 +50,6 @@ export class UpdateEformsignDocStatusUsecase {
             clientId: existing.clientId,
         });
 
-        return this.eformsignDocRepository.update(organizationid, updated);
+        return this.eformsignDocRepository.update(branchid, updated);
     }
 }

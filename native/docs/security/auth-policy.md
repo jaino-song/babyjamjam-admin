@@ -22,7 +22,7 @@ This policy defines authentication, session, and authorization requirements for 
 
 - Access token: bearer JWT used on every API request.
 - Refresh token: one-time-use rotation token for renewing sessions.
-- Required claims: `sub`, `role`, `organizationId`, `orgRole`, `sid` (session id), `deviceId`, `exp`, `iat`, `jti`.
+- Required claims: `sub`, `role`, `branchId`, `branchRole`, `sid` (session id), `deviceId`, `exp`, `iat`, `jti`.
 
 ### Transport and storage
 
@@ -34,7 +34,7 @@ This policy defines authentication, session, and authorization requirements for 
 ## 4. Session lifecycle policy
 
 1. **Login**: issue access and refresh tokens, bind session to `deviceId`.
-2. **Organization selection**: session context must include selected organization before protected business APIs are allowed.
+2. **Branch selection**: session context must include selected branch before protected business APIs are allowed.
 3. **Refresh rotation**: every refresh request issues a new refresh token and invalidates the previous one.
 4. **Idle timeout**: session expires after 30 minutes of inactivity.
 5. **Absolute lifetime**: refresh sessions expire at backend-defined hard limit (recommended 7 days max for privileged roles).
@@ -57,7 +57,7 @@ Step-up session window should be short-lived (recommended <= 10 minutes).
 - Required decision inputs for protected resources:
   - principal identity
   - role
-  - organization scope
+  - branch scope
   - resource ownership/assignment
 - All authorization failures return `403` and are audit-logged.
 - UI guards may hide blocked actions, but backend must independently enforce.
@@ -84,7 +84,7 @@ The following events are mandatory:
 - login success/failure
 - token refresh success/failure (include replay detection)
 - logout and logout-all-devices
-- role/organization context changes
+- role/branch context changes
 - step-up success/failure
 - access denied (`403`) for privileged routes
 

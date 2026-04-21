@@ -23,7 +23,7 @@ export class DocumentMapper {
         );
     }
 
-    static toPrismaCreate(entity: DocumentEntity): Omit<Prisma.documentUncheckedCreateInput, 'organizationId'> {
+    static toPrismaCreate(entity: DocumentEntity): Omit<Prisma.documentUncheckedCreateInput, 'branchId'> {
         const now = new Date();
         return {
             name: entity.name,

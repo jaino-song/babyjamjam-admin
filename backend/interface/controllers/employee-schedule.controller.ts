@@ -10,8 +10,8 @@ export class EmployeeScheduleController {
     constructor(private readonly employeeScheduleService: EmployeeScheduleService) {}
 
     @Post()
-    create(@CurrentTenant() tenant: { organizationId?: string }, @Body() dto: CreateEmployeeScheduleDto) {
-        return this.employeeScheduleService.create(tenant.organizationId ?? "", {
+    create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateEmployeeScheduleDto) {
+        return this.employeeScheduleService.create(tenant.branchId ?? "", {
             clientId: dto.clientId,
             primaryEmployeeId: dto.primaryEmployeeId,
             secondaryEmployeeId: dto.secondaryEmployeeId ?? null,
@@ -23,44 +23,44 @@ export class EmployeeScheduleController {
     }
 
     @Get()
-    findAll(@CurrentTenant() tenant: { organizationId?: string }) {
-        return this.employeeScheduleService.findAll(tenant.organizationId ?? "");
+    findAll(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.employeeScheduleService.findAll(tenant.branchId ?? "");
     }
 
     @Get("primary-employee")
     findByPrimaryEmployee(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("primaryEmployeeId") primaryEmployeeId: string
     ) {
         return this.employeeScheduleService.findByPrimaryEmployeeId(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             Number(primaryEmployeeId)
         );
     }
 
     @Get("secondary-employee")
     findBySecondaryEmployee(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("secondaryEmployeeId") secondaryEmployeeId: string
     ) {
         return this.employeeScheduleService.findBySecondaryEmployeeId(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             Number(secondaryEmployeeId)
         );
     }
 
     @Get("id")
-    findById(@CurrentTenant() tenant: { organizationId?: string }, @Query("id") id: string) {
-        return this.employeeScheduleService.findById(tenant.organizationId ?? "", Number(id));
+    findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
+        return this.employeeScheduleService.findById(tenant.branchId ?? "", Number(id));
     }
 
     @Patch()
     update(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("id") id: string,
         @Body() dto: UpdateEmployeeScheduleDto
     ) {
-        return this.employeeScheduleService.update(tenant.organizationId ?? "", Number(id), {
+        return this.employeeScheduleService.update(tenant.branchId ?? "", Number(id), {
             workAddress: dto.workAddress,
             startDate: dto.startDate,
             endDate: dto.endDate,
@@ -69,7 +69,7 @@ export class EmployeeScheduleController {
     }
 
     @Delete()
-    delete(@CurrentTenant() tenant: { organizationId?: string }, @Query("id") id: string) {
-        return this.employeeScheduleService.delete(tenant.organizationId ?? "", Number(id));
+    delete(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
+        return this.employeeScheduleService.delete(tenant.branchId ?? "", Number(id));
     }
 }

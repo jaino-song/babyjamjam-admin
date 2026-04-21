@@ -58,7 +58,7 @@ export const registerSchema = z.object({
     name: nameSchema,
     phone: phoneSchema,
     birthDate: birthDateSchema,
-    organizationId: z.string().min(1, '지점을 선택해주세요.'),
+    branchId: z.string().min(1, '지점을 선택해주세요.'),
     role: z.enum(['admin', 'manager', 'user'], { message: '역할을 선택해주세요.' }),
 }).refine((data) => data.password === data.confirmPassword, {
     message: '비밀번호가 일치하지 않습니다.',
@@ -68,7 +68,7 @@ export const registerSchema = z.object({
 export const kakaoOnboardingSchema = z.object({
     phone: phoneSchema,
     birthDate: birthDateSchema,
-    organizationId: z.string().min(1, '지점을 선택해주세요.'),
+    branchId: z.string().min(1, '지점을 선택해주세요.'),
     role: z.enum(['admin', 'manager', 'user'], { message: '역할을 선택해주세요.' }),
 });
 

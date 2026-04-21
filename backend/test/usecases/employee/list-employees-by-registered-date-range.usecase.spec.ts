@@ -4,7 +4,7 @@ import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
     let usecase: ListEmployeesByRegisteredDateRangeUsecase;
     let mockRepository: MockEmployeeRepository;
-    const organizationId = "org-1";
+    const branchId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -32,7 +32,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-12"),
                     new Date("2024-01-22"),
                 );
@@ -53,7 +53,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-02-01"),
                     new Date("2024-02-28"),
                 );
@@ -67,7 +67,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-01"),
                     new Date("2024-01-31"),
                 );
@@ -91,7 +91,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-15"), // start = same as registeredDate
                     new Date("2024-01-20"),
                 );
@@ -111,7 +111,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-15"),
                     new Date("2024-01-20"), // end = same as registeredDate
                 );
@@ -131,7 +131,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-15"),
                     new Date("2024-01-15"), // single day range
                 );
@@ -157,7 +157,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-01"),
                     new Date("2024-03-31"),
                 );
@@ -176,7 +176,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2023-12-01"),
                     new Date("2024-01-31"),
                 );
@@ -201,7 +201,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-08"),
                     new Date("2024-01-14"), // One week
                 );
@@ -224,7 +224,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-01"),
                     new Date("2024-01-31"),
                 );
@@ -244,7 +244,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-01"),
                     new Date("2024-12-31"),
                 );
@@ -273,7 +273,7 @@ describe("ListEmployeesByRegisteredDateRangeUsecase", () => {
 
                 // Act
                 const result = await usecase.execute(
-                    organizationId,
+                    branchId,
                     new Date("2024-01-01"),
                     new Date("2024-01-31"),
                 );

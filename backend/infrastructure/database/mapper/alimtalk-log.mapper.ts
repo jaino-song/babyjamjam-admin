@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 
 type AlimtalkLogRow = {
     id: number;
-    organizationId: string | null;
+    branchId: string | null;
     provider: string;
     templateKey: string;
     triggerJobId: string | null;
@@ -25,7 +25,7 @@ export class AlimtalkLogMapper {
     static toDomain(row: AlimtalkLogRow): AlimtalkLogEntity {
         return AlimtalkLogEntity.reconstitute(
             row.id,
-            row.organizationId,
+            row.branchId,
             row.provider,
             row.templateKey,
             row.triggerJobId,
@@ -46,7 +46,7 @@ export class AlimtalkLogMapper {
 
     static toPrismaCreate(entity: AlimtalkLogEntity) {
         return {
-            organizationId: entity.organizationId,
+            branchId: entity.branchId,
             provider: entity.provider,
             templateKey: entity.templateKey,
             triggerJobId: entity.triggerJobId,

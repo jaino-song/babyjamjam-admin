@@ -2,7 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { AlimtalkSchedulerService } from "application/services/alimtalk-scheduler.service";
 import { AlimtalkService } from "application/services/alimtalk.service";
 import { IClientRepository } from "domain/repositories/client.repository.interface";
-import { IOrganizationRepository } from "domain/repositories/organization.repository.interface";
+import { IBranchRepository } from "domain/repositories/branch.repository.interface";
 import { IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import { ClientEntity } from "domain/entities/client.entity";
@@ -25,7 +25,7 @@ describe("AlimtalkSchedulerService", () => {
         findByCreatedDate: jest.fn(),
     });
 
-    const createMockOrganizationRepository = () => ({
+    const createMockBranchRepository = () => ({
         findAllActive: jest.fn().mockResolvedValue([
             { id: "org-1", name: "Test Org" },
         ]),
@@ -63,18 +63,18 @@ describe("AlimtalkSchedulerService", () => {
     let scheduler: AlimtalkSchedulerService;
     let alimtalkService: ReturnType<typeof createMockAlimtalkService>;
     let clientRepository: ReturnType<typeof createMockClientRepository>;
-    let organizationRepository: ReturnType<typeof createMockOrganizationRepository>;
+    let branchRepository: ReturnType<typeof createMockBranchRepository>;
 
     beforeEach(() => {
         alimtalkService = createMockAlimtalkService();
         clientRepository = createMockClientRepository();
-        organizationRepository = createMockOrganizationRepository();
+        branchRepository = createMockBranchRepository();
 
         scheduler = new AlimtalkSchedulerService(
             alimtalkService as unknown as AlimtalkService,
             createMockConfigService() as unknown as ConfigService,
             clientRepository as unknown as IClientRepository,
-            organizationRepository as unknown as IOrganizationRepository,
+            branchRepository as unknown as IBranchRepository,
             createMockEmployeeScheduleRepository() as unknown as IEmployeeScheduleRepository,
             createMockEmployeeRepository() as unknown as IEmployeeRepository,
         );
@@ -213,7 +213,7 @@ describe("AlimtalkSchedulerService", () => {
 
         describe("given repository throws an error", () => {
             it("should not throw and log error", async () => {
-                organizationRepository.findAllActive.mockRejectedValue(new Error("DB Error"));
+                branchRepository.findAllActive.mockRejectedValue(new Error("DB Error"));
 
                 await expect(scheduler.checkPaymentReminders()).resolves.not.toThrow();
             });

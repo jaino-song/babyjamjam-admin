@@ -18,7 +18,7 @@ export type TriggerTemplateKey =
 
 export interface AlimtalkTriggerRule {
     id: string;
-    organizationId: string | null;
+    branchId: string | null;
     name: string;
     isActive: boolean;
     eventType: TriggerEventType;

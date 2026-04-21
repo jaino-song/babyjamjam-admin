@@ -19,7 +19,7 @@ export class CreateEmployeeScheduleUsecase {
         private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
     ) {}
 
-    execute(organizationid: string, params: CreateEmployeeScheduleParams): Promise<EmployeeScheduleEntity> {
+    execute(branchid: string, params: CreateEmployeeScheduleParams): Promise<EmployeeScheduleEntity> {
         const schedule = EmployeeScheduleEntity.create(
             params.clientId,
             params.primaryEmployeeId,
@@ -29,6 +29,6 @@ export class CreateEmployeeScheduleUsecase {
             params.endDate,
             params.replaced ?? false,
         );
-        return this.employeeScheduleRepository.create(organizationid, schedule);
+        return this.employeeScheduleRepository.create(branchid, schedule);
     }
 }
