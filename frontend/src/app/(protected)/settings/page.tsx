@@ -161,7 +161,7 @@ export default function SettingsPage() {
                     </Avatar>
                     <div data-component="settings-profile-summary-text">
                       {isProfileSummaryLoading ? (
-                        <div className="space-y-2 pt-1">
+                        <div data-component="settings-profile-summary-loading" className="space-y-2 pt-1">
                           <Skeleton className="h-4 w-20 bg-[hsl(var(--v3-border))]/70" />
                           <Skeleton className="h-3 w-12 bg-[hsl(var(--v3-border))]/55" />
                         </div>

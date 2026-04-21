@@ -136,7 +136,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 prismaService.branch.findUnique.mockResolvedValue(mockBranch);
 
                 // #when
-                await service.validateKakaoUser(kakaoData);
+                const result = await service.validateKakaoUser(kakaoData);
 
                 // #then
                 expect(jwtService.signAsync).toHaveBeenCalledTimes(2);
@@ -212,6 +212,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 expect(result).toHaveProperty("onboardingRequired", true);
+                expect(result).toHaveProperty("onboardingKind", "account_completion");
                 expect(jwtService.signAsync).not.toHaveBeenCalled();
             });
         });
@@ -296,6 +297,38 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 );
                 expect(accessCall?.[0]).toHaveProperty("branchRole", "member");
             });
+        });
+
+        it.each([
+            { role: "owner", expectedExpiresIn: "30d" },
+            { role: "admin", expectedExpiresIn: "7d" },
+            { role: "manager", expectedExpiresIn: "7d" },
+            { role: "user", expectedExpiresIn: "3d" },
+        ])("should issue $expectedExpiresIn tokens for $role role", async ({ role, expectedExpiresIn }) => {
+            // #given
+            const userId = mockUser.id;
+            const branchId = mockBranch.id;
+            const user = { ...mockUser, role };
+
+            prismaService.user.findUnique.mockResolvedValue(user);
+            if (role === "owner") {
+                prismaService.branch.findUnique.mockResolvedValue(mockBranch);
+            } else {
+                prismaService.user_branch.findFirst.mockResolvedValue(mockUserBranch);
+            }
+
+            // #when
+            await service.selectBranch(userId, branchId);
+
+            // #then
+            const accessCall = jwtService.signAsync.mock.calls.find(
+                (call: any[]) => call[0]?.type === "access"
+            );
+            const refreshCall = jwtService.signAsync.mock.calls.find(
+                (call: any[]) => call[0]?.type === "refresh"
+            );
+            expect(accessCall?.[1]).toEqual({ expiresIn: expectedExpiresIn });
+            expect(refreshCall?.[1]).toEqual({ expiresIn: expectedExpiresIn });
         });
     });
 

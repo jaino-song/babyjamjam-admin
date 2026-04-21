@@ -71,6 +71,9 @@ describe("ClientController (Integration)", () => {
             findAll: jest.fn(),
             findAllPaginated: jest.fn(),
             findById: jest.fn(),
+            getActionRequiredAlerts: jest.fn(),
+            getDashboardOverview: jest.fn(),
+            getStats: jest.fn(),
             update: jest.fn(),
             delete: jest.fn(),
         };
@@ -246,6 +249,62 @@ describe("ClientController (Integration)", () => {
                     "Kim",
                 );
             });
+        });
+
+        it("should return dashboard overview", async () => {
+            // Arrange
+            const overview = {
+                stats: {
+                    activeClients: 1,
+                    contractsNotSent: 2,
+                    contractsPendingSignature: 3,
+                    upcomingThisMonth: 4,
+                    upcomingNextMonth: 5,
+                },
+                clients: {
+                    data: [createClientWithEmployeeInfo(createMockClient({ id: 1 }))],
+                    total: 1,
+                    page: 1,
+                    limit: 50,
+                    totalPages: 1,
+                },
+            };
+            clientService.getDashboardOverview.mockResolvedValue(overview);
+
+            // Act
+            const response = await request(app.getHttpServer())
+                .get("/clients/dashboard-overview")
+                .query({ limit: "25" });
+
+            // Assert
+            expect(response.status).toBe(200);
+            expect(response.body.stats.activeClients).toBe(1);
+            expect(clientService.getDashboardOverview).toHaveBeenCalledWith(expect.any(String), 25);
+        });
+
+        it("should return action-required alerts", async () => {
+            // Arrange
+            const alerts = [
+                {
+                    id: 1,
+                    name: "Client A",
+                    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+                    reason: "서명 필요" as const,
+                    priority: 2 as const,
+                },
+            ];
+            clientService.getActionRequiredAlerts.mockResolvedValue(alerts);
+
+            // Act
+            const response = await request(app.getHttpServer())
+                .get("/clients/alerts")
+                .query({ limit: "3" });
+
+            // Assert
+            expect(response.status).toBe(200);
+            expect(response.body).toHaveLength(1);
+            expect(response.body[0].reason).toBe("서명 필요");
+            expect(clientService.getActionRequiredAlerts).toHaveBeenCalledWith(expect.any(String), 3);
         });
 
         describe("given no clients exist", () => {

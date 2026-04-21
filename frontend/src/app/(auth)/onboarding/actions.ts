@@ -3,13 +3,7 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
-import { jwtDecode } from "jwt-decode";
-
-interface TokenPayload {
-    sub: string;
-    role: string | null;
-    type: "access" | "refresh";
-}
+import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 interface CompleteAccountOnboardingInput {
     phone: string;
@@ -66,30 +60,9 @@ export async function completeAccountOnboarding(
             };
         }
 
-        let role = "user";
-        try {
-            const decoded = jwtDecode<TokenPayload>(response.data.accessToken);
-            role = decoded.role || "user";
-        } catch {
-            console.error("[Account Onboarding] Failed to decode token");
-        }
-
-        const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
-
-        cookieStore.set("auth_token", response.data.accessToken, {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-            maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-        });
-
-        cookieStore.set("refresh_token", response.data.refreshToken, {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-            maxAge: 7 * 24 * 60 * 60,
+        setAuthSessionCookies(cookieStore, {
+            accessToken: response.data.accessToken,
+            refreshToken: response.data.refreshToken,
         });
 
         cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);

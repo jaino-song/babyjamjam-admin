@@ -4,31 +4,25 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { Bell, Clock3, X } from "lucide-react";
 
-import { useInfiniteClients } from "@/hooks/useClients";
-import { getActionRequiredStatus } from "@/lib/client/action-required";
+import { useClientAlerts } from "@/hooks/useClientAlerts";
 import { PanelTitleGroup } from "@/components/app/v3/PanelTitleGroup";
 import { useScrollActivity } from "@/components/app/v3/useScrollActivity";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import type { Client } from "@/lib/client/types";
 
 interface SidebarNotificationItem {
   id: string;
-  client: Pick<Client, "id" | "name" | "createdAt">;
+  client: {
+    id: number;
+    name: string;
+    createdAt: string | null;
+  };
   message: string;
   timeLabel: string;
   unread: boolean;
   tone: "default" | "warning";
 }
-
-const formatDate = (dateStr: string | null) => {
-  if (!dateStr) {
-    return "-";
-  }
-
-  return new Date(dateStr).toLocaleDateString("ko-KR");
-};
 
 const SIDEBAR_NOTIFICATIONS_MODAL_WIDTH = 352;
 
@@ -105,99 +99,30 @@ export function SidebarNotifications() {
   const [modalPosition, setModalPosition] = React.useState<{ top: number; left: number } | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const { isScrollActive, handleScroll } = useScrollActivity();
-  const { data } = useInfiniteClients(50);
-
-  const clients = React.useMemo(
-    () => data?.pages.flatMap((page) => page.data) ?? [],
-    [data?.pages]
-  );
+  const { data: alerts = [] } = useClientAlerts(3);
 
   const notifications = React.useMemo<SidebarNotificationItem[]>(() => {
-    const actionRequired = clients
-      .flatMap<SidebarNotificationItem>((client) => {
-        const status = getActionRequiredStatus(client);
-        if (!status) {
-          return [];
-        }
+    return alerts.map((alert) => {
+      const message = alert.reason === "교체 요청"
+        ? "교체 요청이 접수되었습니다."
+        : alert.reason === "서명 필요"
+          ? "서비스 시작 전 서명이 필요합니다."
+          : "서비스 시작 전 문서 발송이 필요합니다.";
 
-        if (status.reason === "교체 요청") {
-          return [{
-            id: `action-${client.id}`,
-            client: {
-              id: client.id,
-              name: client.name,
-              createdAt: client.createdAt ?? null,
-            },
-            message: "교체 요청이 접수되었습니다.",
-            timeLabel: formatNotificationTime(client.createdAt),
-            unread: true,
-            tone: "warning" as const,
-          }];
-        }
-
-        if (status.reason === "서명 필요") {
-          return [{
-            id: `action-${client.id}`,
-            client: {
-              id: client.id,
-              name: client.name,
-              createdAt: client.createdAt ?? null,
-            },
-            message: "서비스 시작 전 서명이 필요합니다.",
-            timeLabel: formatNotificationTime(client.createdAt),
-            unread: true,
-            tone: "default" as const,
-          }];
-        }
-
-        return [{
-          id: `action-${client.id}`,
-          client: {
-            id: client.id,
-            name: client.name,
-            createdAt: client.createdAt ?? null,
-          },
-          message: "서비스 시작 전 문서 발송이 필요합니다.",
-          timeLabel: formatNotificationTime(client.createdAt),
-          unread: true,
-          tone: "default" as const,
-        }];
-      })
-      .slice(0, 3);
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const weekFromNow = new Date(today);
-    weekFromNow.setDate(today.getDate() + 7);
-    weekFromNow.setHours(23, 59, 59, 999);
-
-    const upcoming = clients
-      .filter((client) => {
-        if (!client.startDate) {
-          return false;
-        }
-
-        const start = new Date(client.startDate);
-        start.setHours(0, 0, 0, 0);
-        return start >= today && start <= weekFromNow;
-      })
-      .sort((a, b) => new Date(a.startDate!).getTime() - new Date(b.startDate!).getTime())
-      .slice(0, 2)
-      .map((client) => ({
-        id: `upcoming-${client.id}`,
+      return {
+        id: `action-${alert.id}`,
         client: {
-          id: client.id,
-          name: client.name,
-          createdAt: client.createdAt ?? null,
+          id: alert.id,
+          name: alert.name,
+          createdAt: alert.createdAt,
         },
-        message: `${formatDate(client.startDate)} 서비스 시작 예정입니다.`,
-        timeLabel: formatNotificationTime(client.createdAt),
-        unread: false,
-        tone: "default" as const,
-      }));
-
-    return [...actionRequired, ...upcoming].slice(0, 5);
-  }, [clients]);
+        message,
+        timeLabel: formatNotificationTime(alert.createdAt),
+        unread: true,
+        tone: alert.priority === 1 ? "warning" : "default",
+      };
+    });
+  }, [alerts]);
 
   const unreadCount = notifications.filter((item) => item.unread).length;
 

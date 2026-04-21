@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useCallback, useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
+import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
 
 const INITIAL_VISIBLE_COUNT = 6; // First load: teaser view (4 full + 2 fading)
 const PAGE_SIZE = 6; // How many more to show each time
-const FETCHING_SKELETON_DURATION_MS = 220;
+const EMPTY_DOCUMENTS: EformsignDocument[] = [];
+const EMPTY_EXCLUDED_NAMES: readonly string[] = [];
 
 // Filter documents by actual status code
 function filterByActualStatus(
@@ -39,14 +41,16 @@ function getCustomerName(doc: EformsignDocument): string | null {
 
 export const infiniteContractsQueryKeys = {
   documents: (status: DocumentFilterType) =>
-    ["eformsign-documents", "client-paginated", status ?? "all"] as const,
+    status === null
+      ? eformsignQueryKeys.allDocuments()
+      : eformsignQueryKeys.documentsByType(status),
 };
 
 interface UseInfiniteContractsOptions {
   enabled?: boolean;
   filterType?: DocumentFilterType;
   /** Names to exclude from the results */
-  excludedNames?: string[];
+  excludedNames?: readonly string[];
 }
 
 /**
@@ -56,43 +60,27 @@ interface UseInfiniteContractsOptions {
 export function useInfiniteContracts({
   enabled = true,
   filterType = null,
-  excludedNames = [],
+  excludedNames = EMPTY_EXCLUDED_NAMES,
 }: UseInfiniteContractsOptions = {}) {
   // Track how many items are visible (starts at 6, increases by 20 each load)
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
-  const [isFetchingNextPage, setIsFetchingNextPage] = useState(false);
-  const fetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset visible count when filter changes
   useEffect(() => {
-    const nextFilterType = filterType;
-
-    if (fetchTimerRef.current) {
-      clearTimeout(fetchTimerRef.current);
-      fetchTimerRef.current = null;
-    }
-
     queueMicrotask(() => {
-      void nextFilterType;
       setVisibleCount(INITIAL_VISIBLE_COUNT);
-      setIsFetchingNextPage(false);
     });
   }, [filterType]);
-
-  useEffect(() => {
-    return () => {
-      if (fetchTimerRef.current) {
-        clearTimeout(fetchTimerRef.current);
-      }
-    };
-  }, []);
 
   // Fetch all documents once
   const query = useQuery<EformsignDocumentsResponse>({
     queryKey: infiniteContractsQueryKeys.documents(filterType),
     queryFn: async () => {
-      // Fetch all documents (backend doesn't support pagination)
-      const response = await eformsignApi.getAllDocuments();
+      const response = await eformsignApi.getAllDocuments({
+        limit: 100,
+        skip: 0,
+        type: filterType,
+      });
       return response;
     },
     enabled,
@@ -104,23 +92,25 @@ export function useInfiniteContracts({
   // Process and filter all documents
   const queryDocuments = query.data?.documents;
 
-  const allFilteredDocuments = (() => {
-    if (!queryDocuments) return [];
+  const excludedNameSet = useMemo(() => new Set(excludedNames), [excludedNames]);
+
+  const allFilteredDocuments = useMemo(() => {
+    if (!queryDocuments) return EMPTY_DOCUMENTS;
 
     // Filter by status type
     let docs = filterByActualStatus(queryDocuments, filterType);
 
     // Filter out excluded names
-    if (excludedNames.length > 0) {
+    if (excludedNameSet.size > 0) {
       docs = docs.filter((doc) => {
         const name = getCustomerName(doc);
-        return name && !excludedNames.includes(name);
+        return name && !excludedNameSet.has(name);
       });
     }
 
     // Sort by created_date
     return sortByCreatedDate(docs);
-  })();
+  }, [excludedNameSet, filterType, queryDocuments]);
 
   // Slice to visible count
   const documents = useMemo(() => {
@@ -128,29 +118,18 @@ export function useInfiniteContracts({
   }, [allFilteredDocuments, visibleCount]);
 
   // Check if there are more items to show
-  const hasNextPage = visibleCount < allFilteredDocuments.length;
+  const totalFilteredCount = allFilteredDocuments.length;
+  const hasNextPage = visibleCount < totalFilteredCount;
 
-  // Load more function - just increases visible count
-  const fetchNextPage = () => {
-    if (isFetchingNextPage || !hasNextPage) return;
-
-    setIsFetchingNextPage(true);
-
-    if (fetchTimerRef.current) {
-      clearTimeout(fetchTimerRef.current);
-    }
-
-    fetchTimerRef.current = setTimeout(() => {
-      setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, allFilteredDocuments.length));
-      setIsFetchingNextPage(false);
-      fetchTimerRef.current = null;
-    }, FETCHING_SKELETON_DURATION_MS);
-  };
+  const fetchNextPage = useCallback(() => {
+    setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, totalFilteredCount));
+  }, [setVisibleCount, totalFilteredCount]);
 
   return {
     documents,
+    allDocuments: allFilteredDocuments,
     isLoading: query.isLoading,
-    isFetchingNextPage,
+    isFetchingNextPage: false,
     hasNextPage,
     fetchNextPage,
     totalCount: allFilteredDocuments.length,

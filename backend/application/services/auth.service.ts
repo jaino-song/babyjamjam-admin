@@ -6,6 +6,7 @@ import * as bcrypt from "bcrypt";
 import { EMAIL_PORT, EmailPort } from "../../domain/ports/email.port";
 import { AUTH_TOKEN_REPOSITORY, IAuthTokenRepository } from "../../domain/repositories/auth-token.repository.interface";
 import { AuthTokenEntity } from "../../domain/entities/auth-token.entity";
+import { getAuthTokenExpiresIn } from "./auth-token-policy";
 
 export interface KakaoData {
     kakaoId: string;
@@ -131,10 +132,9 @@ export class AuthService {
             branchRole,
         };
 
-        const privilegedRoles = ["owner", "admin", "manager"];
-        const isPrivileged = user.role !== null && privilegedRoles.includes(user.role);
-        const signOptions = isPrivileged ? { expiresIn: "30d" } : { expiresIn: "3d" };
-        const refreshSignOptions = isPrivileged ? { expiresIn: "7d" } : { expiresIn: "1d" };
+        const tokenExpiresIn = getAuthTokenExpiresIn(user.role);
+        const signOptions = { expiresIn: tokenExpiresIn };
+        const refreshSignOptions = { expiresIn: tokenExpiresIn };
 
         const accessToken = await this.jwt.signAsync(
             { ...payload, type: 'access' },
@@ -219,8 +219,9 @@ export class AuthService {
                 role: user.role,
             };
 
-            const signOptions = { expiresIn: "30d" };
-            const refreshSignOptions = { expiresIn: "7d" };
+            const tokenExpiresIn = getAuthTokenExpiresIn(user.role);
+            const signOptions = { expiresIn: tokenExpiresIn };
+            const refreshSignOptions = { expiresIn: tokenExpiresIn };
 
             const refreshToken = await this.jwt.signAsync(
                 { ...payload, type: 'refresh' },
@@ -260,16 +261,9 @@ export class AuthService {
             ...(branchId && { branchId, branchRole }),
         };
 
-        const privilegedRoles = ["owner", "admin", "manager"];
-        const isPrivileged = user.role !== null && privilegedRoles.includes(user.role);
-
-        const signOptions = isPrivileged
-            ? { expiresIn: "30d" }
-            : { expiresIn: "3d" };
-
-        const refreshSignOptions = isPrivileged
-            ? { expiresIn: "7d" }
-            : { expiresIn: "1d" };
+        const tokenExpiresIn = getAuthTokenExpiresIn(user.role);
+        const signOptions = { expiresIn: tokenExpiresIn };
+        const refreshSignOptions = { expiresIn: tokenExpiresIn };
 
         const refreshToken = await this.jwt.signAsync(
             { ...payload, type: 'refresh' },
@@ -1050,16 +1044,9 @@ export class AuthService {
                 }
             }
 
-            const privilegedRoles = ["owner", "admin", "manager"];
-            const isPrivileged = user.role !== null && privilegedRoles.includes(user.role);
-
-            const signOptions = isPrivileged
-                ? { expiresIn: "30d" }
-                : { expiresIn: "3d" };
-
-            const refreshSignOptions = isPrivileged
-                ? { expiresIn: "7d" }
-                : { expiresIn: "1d" };
+            const tokenExpiresIn = getAuthTokenExpiresIn(user.role);
+            const signOptions = { expiresIn: tokenExpiresIn };
+            const refreshSignOptions = { expiresIn: tokenExpiresIn };
 
             const newRefreshToken = await this.jwt.signAsync(
                 { ...payload, type: 'refresh' },

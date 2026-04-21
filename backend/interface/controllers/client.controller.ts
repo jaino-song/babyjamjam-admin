@@ -62,6 +62,28 @@ export class ClientController {
         return this.clientService.getStats(tenant.branchId ?? "");
     }
 
+    @Get("dashboard-overview")
+    getDashboardOverview(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("limit") limit?: string,
+    ) {
+        return this.clientService.getDashboardOverview(
+            tenant.branchId ?? "",
+            limit ? Number(limit) : 50,
+        );
+    }
+
+    @Get("alerts")
+    getActionRequiredAlerts(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("limit") limit?: string,
+    ) {
+        return this.clientService.getActionRequiredAlerts(
+            tenant.branchId ?? "",
+            limit ? Number(limit) : 3,
+        );
+    }
+
     @Get(":id")
     findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
         return this.clientService.findById(tenant.branchId ?? "", Number(id));

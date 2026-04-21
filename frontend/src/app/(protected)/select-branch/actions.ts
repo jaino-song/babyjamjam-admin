@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 interface Branch {
   id: string;
@@ -74,24 +75,12 @@ export async function setCurrentBranch(branchId: string): Promise<{
       headers: getAuthHeaders(token),
     });
 
-    // Update auth token with new branch context
-    const authCookieBaseOptions = {
-      httpOnly: true,
-      secure: isSecureCookie,
-      sameSite: "lax",
-      path: "/",
-    } as const;
+    setAuthSessionCookies(cookieStore, {
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      autoLogin,
+    });
 
-    if (autoLogin) {
-      cookieStore.set("auth_token", data.accessToken, {
-        ...authCookieBaseOptions,
-        maxAge: data.role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-      });
-    } else {
-      cookieStore.set("auth_token", data.accessToken, authCookieBaseOptions);
-    }
-
-    // Store selected branch ID in a separate cookie for client-side access
     cookieStore.set("selected_branch_id", branchId, {
       httpOnly: false,
       secure: isSecureCookie,

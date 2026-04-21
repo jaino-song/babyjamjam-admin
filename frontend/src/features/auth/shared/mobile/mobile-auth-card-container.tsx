@@ -45,7 +45,7 @@ export function MobileAuthCardContainer({
   return (
     <div
       data-component={componentSlots.container}
-      className="flex w-full flex-1 items-center justify-center"
+      className="flex min-h-[100dvh] w-full items-center justify-center py-4"
     >
       <Card
         data-component={componentSlots.card}
