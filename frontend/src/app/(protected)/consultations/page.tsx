@@ -128,7 +128,6 @@ export default function ConsultationsPage() {
             <SplitLayout hasSelection={!!activeInquiry} onBack={() => setSelectedInquiry(null)}>
                 <ListPanel
                     title="상담 문의"
-                    subtitle="babyjamjam.com 상담 신청 내역"
                     tabs={STATUS_TABS}
                     activeTab={activeStatus}
                     onTabChange={(value) => {
