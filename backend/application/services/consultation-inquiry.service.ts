@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 
 import {
     ConsultationInquiryEntity,
@@ -12,6 +12,7 @@ import {
     ConsultationInquiryListQueryDto,
     CreatePublicConsultationInquiryDto,
 } from "interface/dto/consultation-inquiry.dto";
+import { NotificationService } from "application/services/notification.service";
 
 export interface PaginatedConsultationInquiries {
     data: ConsultationInquiryEntity[];
@@ -23,9 +24,12 @@ export interface PaginatedConsultationInquiries {
 
 @Injectable()
 export class ConsultationInquiryService {
+    private readonly logger = new Logger(ConsultationInquiryService.name);
+
     constructor(
         @Inject(CONSULTATION_INQUIRY_REPOSITORY)
         private readonly repository: IConsultationInquiryRepository,
+        private readonly notificationService: NotificationService,
     ) {}
 
     async createPublicInquiry(dto: CreatePublicConsultationInquiryDto): Promise<ConsultationInquiryEntity> {
@@ -54,7 +58,15 @@ export class ConsultationInquiryService {
             status: "new",
         };
 
-        return this.repository.create(params);
+        const inquiry = await this.repository.create(params);
+        this.notifyBranchUsers(inquiry).catch((error) => {
+            this.logger.error(
+                `Failed to create consultation notification for inquiry ${inquiry.id}`,
+                error instanceof Error ? error.stack : String(error),
+            );
+        });
+
+        return inquiry;
     }
 
     async listForBranch(
@@ -81,5 +93,31 @@ export class ConsultationInquiryService {
             limit,
             totalPages: Math.max(1, Math.ceil(result.total / limit)),
         };
+    }
+
+    async markRead(branchId: string, id: string): Promise<ConsultationInquiryEntity> {
+        return this.repository.markRead(branchId, id);
+    }
+
+    private async notifyBranchUsers(inquiry: ConsultationInquiryEntity): Promise<void> {
+        const userIds = await this.repository.findNotificationRecipientUserIds(inquiry.branchId);
+        if (userIds.length === 0) {
+            return;
+        }
+
+        await Promise.all(userIds.map((userId) =>
+            this.notificationService.sendNotification(
+                inquiry.branchId,
+                userId,
+                "새 상담 문의",
+                `${inquiry.motherName}님 상담 문의가 접수되었습니다.`,
+                {
+                    url: "/consultations",
+                    type: "consultation-inquiry",
+                    inquiryId: inquiry.id,
+                    branchSlug: inquiry.publicBranchSlug,
+                },
+            )
+        ));
     }
 }
