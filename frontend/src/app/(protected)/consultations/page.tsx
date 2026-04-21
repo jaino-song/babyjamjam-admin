@@ -206,26 +206,30 @@ export default function ConsultationsPage() {
                         }
                     >
                         <div data-component="consultations-detail" className="space-y-4">
-                            <InfoCard title="상담 정보">
-                                <InfoRow label="연락처" value={activeInquiry.phone} />
-                                <InfoRow label="주소" value={activeInquiry.address} />
-                                <InfoRow label="출산 예정일" value={formatDate(activeInquiry.dueDate)} />
-                                <InfoRow label="출산 경험" value={activeInquiry.birthExperience} />
-                                <InfoRow label="유입 경로" value={activeInquiry.referralSource} />
-                            </InfoCard>
+                            <div data-component="consultations-detail-basic-grid" className="grid grid-cols-2 gap-4">
+                                <InfoCard title="상담자 정보" className="col-start-1 row-start-1 row-end-3">
+                                    <InfoRow label="이름" value={activeInquiry.motherName} />
+                                    <InfoRow label="연락처" value={activeInquiry.phone} />
+                                    <InfoRow label="주소" value={activeInquiry.address} />
+                                    <InfoRow label="출산 예정일" value={formatDate(activeInquiry.dueDate)} />
+                                    <InfoRow label="출산 경험" value={activeInquiry.birthExperience} />
+                                </InfoCard>
 
-                            <InfoCard title="희망 사항">
-                                <InfoRow label="바우처 유형" value={activeInquiry.voucherType || "-"} />
-                                <InfoRow label="희망 관리사" value={activeInquiry.preferredCaregiverName || "-"} />
-                                <InfoRow label="신청 경로" value={activeInquiry.source} />
-                                <InfoRow label="개인정보 동의" value={formatDateTime(activeInquiry.privacyAcceptedAt)} />
-                                <InfoRow label="읽음 상태" value={getReadLabel(activeInquiry.readAt)} />
-                            </InfoCard>
+                                <InfoCard title="처리 정보" className="col-start-1 row-start-3 row-end-5">
+                                    <InfoRow label="읽음 상태" value={getReadLabel(activeInquiry.readAt)} />
+                                    <InfoRow label="상담 접수" value={formatDateTime(activeInquiry.createdAt)} />
+                                    <InfoRow label="개인정보 동의" value={formatDateTime(activeInquiry.privacyAcceptedAt)} />
+                                </InfoCard>
 
-                            <InfoCard title="지점">
-                                <InfoRow label="담당 지점" value={activeInquiry.branchName ?? "-"} />
-                                <InfoRow label="공개 지점 ID" value={activeInquiry.publicBranchSlug} />
-                            </InfoCard>
+                                <InfoCard title="신청 정보" className="col-start-2 row-start-1 row-end-5">
+                                    <InfoRow label="바우처 유형" value={activeInquiry.voucherType || "-"} />
+                                    <InfoRow label="희망 관리사" value={activeInquiry.preferredCaregiverName || "-"} />
+                                    <InfoRow label="유입 경로" value={activeInquiry.referralSource} />
+                                    <InfoRow label="신청 경로" value={activeInquiry.source} />
+                                    <InfoRow label="담당 지점" value={activeInquiry.branchName ?? "-"} />
+                                    <InfoRow label="공개 지점 ID" value={activeInquiry.publicBranchSlug} />
+                                </InfoCard>
+                            </div>
                         </div>
                     </DetailPanel>
                 ) : (
