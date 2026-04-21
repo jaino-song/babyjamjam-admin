@@ -21,11 +21,10 @@ import { useConsultationInquiries, useMarkConsultationInquiryRead } from "@/hook
 import { cn } from "@/lib/utils";
 import type { ConsultationInquiry } from "@/services/api";
 
-const STATUS_TABS = [
+const READ_TABS = [
     { label: "전체", value: "all" },
-    { label: "신규", value: "new" },
-    { label: "연락 완료", value: "contacted" },
-    { label: "종료", value: "closed" },
+    { label: "읽음", value: "read" },
+    { label: "읽지 않음", value: "unread" },
 ];
 
 function formatDate(value: string): string {
@@ -61,7 +60,7 @@ function getReadVariant(readAt: string | null): "neutral" | "warning" {
 }
 
 export default function ConsultationsPage() {
-    const [activeStatus, setActiveStatus] = useState("all");
+    const [activeReadState, setActiveReadState] = useState("all");
     const [search, setSearch] = useState("");
     const [selectedInquiry, setSelectedInquiry] = useState<ConsultationInquiry | null>(null);
 
@@ -69,10 +68,10 @@ export default function ConsultationsPage() {
         () => ({
             page: 1,
             limit: 50,
-            status: activeStatus,
+            readState: activeReadState,
             search: search.trim() || undefined,
         }),
-        [activeStatus, search],
+        [activeReadState, search],
     );
 
     const { data, isLoading } = useConsultationInquiries(queryParams);
@@ -108,10 +107,10 @@ export default function ConsultationsPage() {
             <SplitLayout hasSelection={!!activeInquiry} onBack={() => setSelectedInquiry(null)}>
                 <ListPanel
                     title="상담 문의"
-                    tabs={STATUS_TABS}
-                    activeTab={activeStatus}
+                    tabs={READ_TABS}
+                    activeTab={activeReadState}
                     onTabChange={(value) => {
-                        setActiveStatus(value);
+                        setActiveReadState(value);
                         setSelectedInquiry(null);
                     }}
                     searchValue={search}

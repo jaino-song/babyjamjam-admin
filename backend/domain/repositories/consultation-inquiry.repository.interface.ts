@@ -9,6 +9,7 @@ export interface ConsultationInquiryListParams {
     limit: number;
     search?: string;
     status?: string;
+    readState?: string;
 }
 
 export interface ConsultationInquiryListResult {

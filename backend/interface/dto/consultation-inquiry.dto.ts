@@ -89,4 +89,9 @@ export class ConsultationInquiryListQueryDto {
     @IsOptional()
     @IsIn(["all", ...CONSULTATION_INQUIRY_STATUSES])
     status?: string;
+
+    @IsString()
+    @IsOptional()
+    @IsIn(["all", "read", "unread"])
+    readState?: string;
 }
