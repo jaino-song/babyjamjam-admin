@@ -28,18 +28,6 @@ const STATUS_TABS = [
     { label: "종료", value: "closed" },
 ];
 
-const STATUS_LABEL: Record<string, string> = {
-    new: "신규",
-    contacted: "연락 완료",
-    closed: "종료",
-};
-
-const STATUS_VARIANT: Record<string, "warning" | "success" | "neutral"> = {
-    new: "warning",
-    contacted: "success",
-    closed: "neutral",
-};
-
 function formatDate(value: string): string {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "-";
@@ -62,14 +50,6 @@ function formatDateTime(value: string): string {
         hour: "2-digit",
         minute: "2-digit",
     });
-}
-
-function getStatusLabel(status: string): string {
-    return STATUS_LABEL[status] ?? status;
-}
-
-function getStatusVariant(status: string): "warning" | "success" | "neutral" {
-    return STATUS_VARIANT[status] ?? "neutral";
 }
 
 function getReadLabel(readAt: string | null): string {
@@ -194,9 +174,6 @@ export default function ConsultationsPage() {
                                                 <span className="truncate text-[0.86rem] font-bold text-v3-dark">
                                                     {item.motherName}
                                                 </span>
-                                                <StatusPill variant={getStatusVariant(item.status)} size="sm">
-                                                    {getStatusLabel(item.status)}
-                                                </StatusPill>
                                                 <StatusPill variant={getReadVariant(item.readAt)} size="sm">
                                                     {getReadLabel(item.readAt)}
                                                 </StatusPill>
@@ -224,14 +201,9 @@ export default function ConsultationsPage() {
                         title={activeInquiry.motherName}
                         subtitle={`${activeInquiry.branchName ?? "현재 지점"} · ${formatDateTime(activeInquiry.createdAt)}`}
                         badges={
-                            <>
-                                <StatusPill variant={getStatusVariant(activeInquiry.status)} size="sm">
-                                    {getStatusLabel(activeInquiry.status)}
-                                </StatusPill>
-                                <StatusPill variant={getReadVariant(activeInquiry.readAt)} size="sm">
-                                    {getReadLabel(activeInquiry.readAt)}
-                                </StatusPill>
-                            </>
+                            <StatusPill variant={getReadVariant(activeInquiry.readAt)} size="sm">
+                                {getReadLabel(activeInquiry.readAt)}
+                            </StatusPill>
                         }
                     >
                         <div data-component="consultations-detail" className="space-y-4">
