@@ -31,7 +31,7 @@ export function SurfaceFrame({
     <div
       data-component={componentSlots.container}
       className={cn(
-        "relative flex !h-auto min-h-full w-full items-start justify-center py-4 md:py-8 lg:items-center",
+        "relative flex !h-auto min-h-[100dvh] w-full items-center justify-center py-4 md:py-8",
         className,
       )}
     >
@@ -43,7 +43,7 @@ export function SurfaceFrame({
 
       <div
         data-component={componentSlots.inner}
-        className={cn("relative flex h-full w-[85%] max-w-[460px] flex-col", innerClassName)}
+        className={cn("relative flex min-h-0 w-[85%] max-w-[460px] flex-col", innerClassName)}
       >
         {children}
       </div>

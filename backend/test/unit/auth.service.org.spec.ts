@@ -51,6 +51,9 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         kakaoId: "kakao-12345",
         email: "test@example.com",
         name: "Test User",
+        profileImage: null,
+        phone: "010-1234-5678",
+        birthDate: "1990-01-01",
         role: "user",
     };
 
@@ -133,7 +136,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 prismaService.organization.findUnique.mockResolvedValue(mockOrganization);
 
                 // #when
-                await service.validateKakaoUser(kakaoData);
+                const result = await service.validateKakaoUser(kakaoData);
 
                 // #then
                 expect(jwtService.signAsync).toHaveBeenCalledTimes(2);
@@ -193,7 +196,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         });
 
         describe("given user with no organizations", () => {
-            it("should NOT include organizationId in JWT", async () => {
+            it("should require account onboarding", async () => {
                 // #given
                 const kakaoData = {
                     kakaoId: "kakao-12345",
@@ -205,13 +208,15 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 prismaService.user_organization.findMany.mockResolvedValue([]);
 
                 // #when
-                await service.validateKakaoUser(kakaoData);
+                const result = await service.validateKakaoUser(kakaoData);
 
                 // #then
                 const accessCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "access"
                 );
-                expect(accessCall?.[0]).not.toHaveProperty("organizationId");
+                expect(accessCall).toBeUndefined();
+                expect(result).toHaveProperty("onboardingRequired", true);
+                expect(result).toHaveProperty("onboardingKind", "account_completion");
             });
         });
     });
@@ -295,6 +300,38 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 );
                 expect(accessCall?.[0]).toHaveProperty("orgRole", "member");
             });
+        });
+
+        it.each([
+            { role: "owner", expectedExpiresIn: "30d" },
+            { role: "admin", expectedExpiresIn: "7d" },
+            { role: "manager", expectedExpiresIn: "7d" },
+            { role: "user", expectedExpiresIn: "3d" },
+        ])("should issue $expectedExpiresIn tokens for $role role", async ({ role, expectedExpiresIn }) => {
+            // #given
+            const userId = mockUser.id;
+            const organizationId = mockOrganization.id;
+            const user = { ...mockUser, role };
+
+            prismaService.user.findUnique.mockResolvedValue(user);
+            if (role === "owner") {
+                prismaService.organization.findUnique.mockResolvedValue(mockOrganization);
+            } else {
+                prismaService.user_organization.findFirst.mockResolvedValue(mockUserOrganization);
+            }
+
+            // #when
+            await service.selectOrganization(userId, organizationId);
+
+            // #then
+            const accessCall = jwtService.signAsync.mock.calls.find(
+                (call: any[]) => call[0]?.type === "access"
+            );
+            const refreshCall = jwtService.signAsync.mock.calls.find(
+                (call: any[]) => call[0]?.type === "refresh"
+            );
+            expect(accessCall?.[1]).toEqual({ expiresIn: expectedExpiresIn });
+            expect(refreshCall?.[1]).toEqual({ expiresIn: expectedExpiresIn });
         });
     });
 

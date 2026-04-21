@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 interface Organization {
   id: string;
@@ -74,22 +75,11 @@ export async function setCurrentOrganization(organizationId: string): Promise<{
       headers: getAuthHeaders(token),
     });
 
-    // Update auth token with new organization context
-    const authCookieBaseOptions = {
-      httpOnly: true,
-      secure: isSecureCookie,
-      sameSite: "lax",
-      path: "/",
-    } as const;
-
-    if (autoLogin) {
-      cookieStore.set("auth_token", data.accessToken, {
-        ...authCookieBaseOptions,
-        maxAge: data.role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-      });
-    } else {
-      cookieStore.set("auth_token", data.accessToken, authCookieBaseOptions);
-    }
+    setAuthSessionCookies(cookieStore, {
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      autoLogin,
+    });
 
     // Store selected organization ID in a separate cookie for client-side access
     cookieStore.set("selected_organization_id", organizationId, {

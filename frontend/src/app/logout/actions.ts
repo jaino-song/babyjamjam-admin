@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
+import { clearAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 export async function logout(): Promise<{ success: boolean; error?: string }> {
   try {
@@ -20,9 +21,7 @@ export async function logout(): Promise<{ success: boolean; error?: string }> {
     }
 
     // Clear all auth-related cookies
-    cookieStore.delete("auth_token");
-    cookieStore.delete("refresh_token");
-    cookieStore.delete("auto_login");
+    clearAuthSessionCookies(cookieStore);
     cookieStore.delete("selected_organization_id");
 
     return { success: true };

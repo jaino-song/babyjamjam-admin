@@ -206,7 +206,7 @@ export class EformsignService {
      * Get in-progress documents (진행 중)
      * type: "01"
      */
-    async getInProgressDocuments(accessToken: string): Promise<any> {
+    async getInProgressDocuments(accessToken: string, limit = 100, skip = 0): Promise<any> {
         this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
@@ -219,8 +219,8 @@ export class EformsignService {
                 title_and_content: "",
                 title: "",
                 content: "",
-                limit: "100",
-                skip: "0"
+                limit: String(limit),
+                skip: String(skip)
             }),
         });
 
@@ -236,7 +236,7 @@ export class EformsignService {
      * Get completed documents (완료)
      * type: "03"
      */
-    async getCompletedDocuments(accessToken: string): Promise<any> {
+    async getCompletedDocuments(accessToken: string, limit = 100, skip = 0): Promise<any> {
         this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
@@ -249,8 +249,8 @@ export class EformsignService {
                 title_and_content: "",
                 title: "",
                 content: "",
-                limit: "100",
-                skip: "0"
+                limit: String(limit),
+                skip: String(skip)
             }),
         });
 
@@ -266,7 +266,7 @@ export class EformsignService {
      * Get rejected documents (반려/거부)
      * type: "04"
      */
-    async getRejectedDocuments(accessToken: string): Promise<any> {
+    async getRejectedDocuments(accessToken: string, limit = 100, skip = 0): Promise<any> {
         this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
@@ -279,8 +279,8 @@ export class EformsignService {
                 title_and_content: "",
                 title: "",
                 content: "",
-                limit: "100",
-                skip: "0"
+                limit: String(limit),
+                skip: String(skip)
             }),
         });
 
@@ -364,7 +364,7 @@ export class EformsignService {
      * Get all documents (combines in-progress, completed, and rejected)
      * Makes parallel requests for performance
      */
-    async getAllDocuments(accessToken: string): Promise<{
+    async getAllDocuments(accessToken: string, limit = 100, skip = 0): Promise<{
         documents: any[];
         total_rows: number;
         limit: number;
@@ -372,9 +372,9 @@ export class EformsignService {
     }> {
         this.assertConfigured();
         const [inProgress, completed, rejected] = await Promise.all([
-            this.getInProgressDocuments(accessToken),
-            this.getCompletedDocuments(accessToken),
-            this.getRejectedDocuments(accessToken),
+            this.getInProgressDocuments(accessToken, limit, skip),
+            this.getCompletedDocuments(accessToken, limit, skip),
+            this.getRejectedDocuments(accessToken, limit, skip),
         ]);
 
         // Combine all documents
@@ -400,8 +400,8 @@ export class EformsignService {
         return {
             documents: uniqueDocuments,
             total_rows: uniqueDocuments.length,
-            limit: 100,
-            skip: 0,
+            limit,
+            skip,
         };
     }
 

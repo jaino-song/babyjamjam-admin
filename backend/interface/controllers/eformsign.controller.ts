@@ -110,7 +110,11 @@ export class EformsignController {
      * More efficient than making 3 separate requests from frontend
      */
     @Get("documents")
-    async getAllDocuments(@Query("accessToken") accessToken: string) {
+    async getAllDocuments(
+        @Query("accessToken") accessToken: string,
+        @Query("limit") limit?: string,
+        @Query("skip") skip?: string,
+    ) {
         try {
             if (!accessToken) {
                 throw new HttpException(
@@ -118,7 +122,11 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getAllDocuments(accessToken);
+            const documents = await this.eformsignService.getAllDocuments(
+                accessToken,
+                limit ? Number(limit) : 100,
+                skip ? Number(skip) : 0,
+            );
             return documents;
         } catch (error) {
             const message = error instanceof Error ? error.message : "Unknown error";
@@ -133,7 +141,11 @@ export class EformsignController {
      * Get in-progress documents (진행 중 - type: 01)
      */
     @Get("documents/in-progress")
-    async getInProgressDocuments(@Query("accessToken") accessToken: string) {
+    async getInProgressDocuments(
+        @Query("accessToken") accessToken: string,
+        @Query("limit") limit?: string,
+        @Query("skip") skip?: string,
+    ) {
         try {
             if (!accessToken) {
                 throw new HttpException(
@@ -141,7 +153,11 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getInProgressDocuments(accessToken);
+            const documents = await this.eformsignService.getInProgressDocuments(
+                accessToken,
+                limit ? Number(limit) : 100,
+                skip ? Number(skip) : 0,
+            );
             return documents;
         } catch (error) {
             const message = error instanceof Error ? error.message : "Unknown error";
@@ -156,7 +172,11 @@ export class EformsignController {
      * Get completed documents (완료 - type: 03)
      */
     @Get("documents/completed")
-    async getCompletedDocuments(@Query("accessToken") accessToken: string) {
+    async getCompletedDocuments(
+        @Query("accessToken") accessToken: string,
+        @Query("limit") limit?: string,
+        @Query("skip") skip?: string,
+    ) {
         try {
             if (!accessToken) {
                 throw new HttpException(
@@ -164,7 +184,11 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getCompletedDocuments(accessToken);
+            const documents = await this.eformsignService.getCompletedDocuments(
+                accessToken,
+                limit ? Number(limit) : 100,
+                skip ? Number(skip) : 0,
+            );
             return documents;
         } catch (error) {
             const message = error instanceof Error ? error.message : "Unknown error";
@@ -179,7 +203,11 @@ export class EformsignController {
      * Get rejected documents (거부/반려 - type: 04)
      */
     @Get("documents/rejected")
-    async getRejectedDocuments(@Query("accessToken") accessToken: string) {
+    async getRejectedDocuments(
+        @Query("accessToken") accessToken: string,
+        @Query("limit") limit?: string,
+        @Query("skip") skip?: string,
+    ) {
         try {
             if (!accessToken) {
                 throw new HttpException(
@@ -187,7 +215,11 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getRejectedDocuments(accessToken);
+            const documents = await this.eformsignService.getRejectedDocuments(
+                accessToken,
+                limit ? Number(limit) : 100,
+                skip ? Number(skip) : 0,
+            );
             return documents;
         } catch (error) {
             const message = error instanceof Error ? error.message : "Unknown error";

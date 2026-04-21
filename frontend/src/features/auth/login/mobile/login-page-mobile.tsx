@@ -122,6 +122,12 @@ export function LoginPageMobile() {
               "aria-invalid": !!errors.password,
               "aria-describedby": errors.password ? "login-password-error" : undefined,
             }}
+            renderInput={(resolvedInputProps) => (
+              <MobileInput
+                {...resolvedInputProps}
+                data-component="auth-login-password-field"
+              />
+            )}
           />
 
           <div data-component="login-form-checkboxes" className="flex items-center gap-6">

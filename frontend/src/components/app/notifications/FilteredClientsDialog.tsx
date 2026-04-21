@@ -130,7 +130,7 @@ export function FilteredClientsDialog({
                         <DialogDescription className="sr-only">
                             {title}에 해당하는 클라이언트 목록
                         </DialogDescription>
-                        <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
+                        <Button aria-label="Close" variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
                             <X className="h-5 w-5" />
                         </Button>
                     </DialogHeader>
