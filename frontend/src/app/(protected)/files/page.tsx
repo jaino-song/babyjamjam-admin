@@ -16,6 +16,7 @@ import DocumentPreviewModal from "@/components/app/documents/document-preview-mo
 import { DocumentEditModal } from "@/components/app/documents/document-edit-modal";
 import { AddCategoryModal } from "@/components/app/documents/add-category-modal";
 import { formatDate } from "@/components/app/documents/document-list";
+import { isHangulDocument } from "@/components/app/documents/document-preview-utils";
 import { toast } from "@/hooks/use-toast";
 
 const RECENT_WINDOW_START = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -73,9 +74,10 @@ export default function FilesPage() {
     return filteredDocs.find(d => d.id === selectedDocId) ?? null;
   }, [selectedDocId, filteredDocs]);
 
-  function getFileIcon(mimeType: string) {
-    if (mimeType.includes("pdf")) return <FileText className="w-4 h-4 text-v3-burgundy" />;
-    if (mimeType.includes("image")) return <ImageIcon className="w-4 h-4 text-v3-primary" />;
+  function getFileIcon(doc: Document) {
+    if (doc.mimeType.includes("pdf")) return <FileText className="w-4 h-4 text-v3-burgundy" />;
+    if (isHangulDocument(doc)) return <FileText className="w-4 h-4 text-v3-primary" />;
+    if (doc.mimeType.includes("image")) return <ImageIcon className="w-4 h-4 text-v3-primary" />;
     return <File className="w-4 h-4 text-v3-text-muted" />;
   }
 
@@ -204,7 +206,7 @@ export default function FilesPage() {
                 return (
                   <>
                     <div data-component="files-list-item-icon" className="w-9 h-9 rounded-[10px] bg-v3-primary-light flex items-center justify-center shrink-0">
-                      {getFileIcon(doc.mimeType)}
+                      {getFileIcon(doc)}
                     </div>
                     <div data-component="files-list-item-content" className="flex-1 min-w-0">
                       <p className="text-[0.8rem] font-semibold text-v3-dark truncate">{doc.name}</p>
@@ -256,7 +258,7 @@ export default function FilesPage() {
                 파일 업로드
               </DialogTitle>
               <DialogDescription className="mt-2 pt-0 text-[0.82rem] leading-6 text-v3-text-muted">
-                PNG, JPG, PDF 문서를 업로드하고 카테고리와 태그까지 한 번에 정리합니다.
+                PNG, JPG, PDF, HWP/HWPX 문서를 업로드하고 카테고리와 태그까지 한 번에 정리합니다.
               </DialogDescription>
             </div>
           </DialogHeader>
