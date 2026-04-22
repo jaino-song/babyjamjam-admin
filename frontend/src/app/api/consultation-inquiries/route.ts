@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
         const searchParams = request.nextUrl.searchParams;
         const params: Record<string, string> = {};
 
-        for (const key of ["page", "limit", "search", "status"]) {
+        for (const key of ["page", "limit", "search", "phone", "status", "readState"]) {
             const value = searchParams.get(key);
             if (value) params[key] = value;
         }

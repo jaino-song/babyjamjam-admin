@@ -8,8 +8,6 @@ import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 import { loginWithEmail } from "@/app/(auth)/login/actions";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
-
 export function useLoginPageController() {
   const router = useRouter();
   const [autoLogin, setAutoLogin] = useState(false);
@@ -141,8 +139,8 @@ export function useLoginPageController() {
     }
   };
 
-  const kakaoLoginUrl = useMemo(() => `${API_BASE_URL}/auth/kakao`, []);
-  const googleLoginUrl = useMemo(() => `${API_BASE_URL}/auth/google`, []);
+  const kakaoLoginUrl = useMemo(() => "/api/auth/kakao", []);
+  const googleLoginUrl = useMemo(() => "/api/auth/google", []);
 
   return {
     autoLogin,

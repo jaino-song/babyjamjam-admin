@@ -15,6 +15,7 @@ interface TokenExchangeSuccessResponse {
     accessToken: string;
     refreshToken: string;
     requiresBranchSelection?: boolean;
+    requiresOrgSelection?: boolean;
 }
 
 interface TokenExchangePendingSignupResponse {
@@ -115,7 +116,10 @@ export async function exchangeToken(
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
         cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
 
-        return { success: true, requiresBranchSelection: data.requiresBranchSelection || false };
+        return {
+            success: true,
+            requiresBranchSelection: Boolean(data.requiresBranchSelection || data.requiresOrgSelection),
+        };
     } catch (error) {
         console.error("[Server Action] Token Exchange Error:", error);
 

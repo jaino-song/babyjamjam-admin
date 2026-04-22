@@ -40,6 +40,29 @@ function toEntity(row: InquiryWithBranch): ConsultationInquiryEntity {
     };
 }
 
+export function getConsultationPhoneSearchVariants(phone: string): string[] {
+    const trimmed = phone.trim();
+    if (!trimmed) {
+        return [];
+    }
+
+    const digits = trimmed.replace(/\D/g, "");
+    const variants = new Set([trimmed]);
+
+    if (digits.length >= 10 && digits.length <= 11 && digits.startsWith("01")) {
+        const prefix = digits.slice(0, 3);
+        const middle = digits.slice(3, -4);
+        const last = digits.slice(-4);
+
+        variants.add(digits);
+        variants.add(`${prefix}-${middle}-${last}`);
+        variants.add(`${prefix}-${middle}${last}`);
+        variants.add(`${prefix}${middle}-${last}`);
+    }
+
+    return Array.from(variants);
+}
+
 @Injectable()
 export class SbConsultationInquiryRepository implements IConsultationInquiryRepository {
     constructor(private readonly prisma: PrismaService) {}
@@ -121,7 +144,10 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
         }
 
         if (params.phone) {
-            where.phone = params.phone;
+            const phoneSearchVariants = getConsultationPhoneSearchVariants(params.phone);
+            if (phoneSearchVariants.length > 0) {
+                where.phone = { in: phoneSearchVariants };
+            }
         }
 
         if (params.search) {
