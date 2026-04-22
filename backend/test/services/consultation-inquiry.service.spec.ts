@@ -137,6 +137,7 @@ describe("ConsultationInquiryService", () => {
             search: undefined,
             status: "all",
             readState: "all",
+            phone: undefined,
         });
         expect(result).toEqual({
             data: [inquiry],

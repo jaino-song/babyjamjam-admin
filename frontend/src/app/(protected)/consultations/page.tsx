@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarClock, Headset, MapPin, Phone, Search, UserRound } from "lucide-react";
+import { CalendarClock, ChevronDown, Headset, MapPin, Phone, Search, UserRound } from "lucide-react";
 
 import {
     AnimatedSlotList,
@@ -38,6 +38,16 @@ function formatDate(value: string): string {
     });
 }
 
+function formatCompactDate(value: string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "-";
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}.${month}.${day}`;
+}
+
 function formatDateTime(value: string): string {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "-";
@@ -63,6 +73,7 @@ export default function ConsultationsPage() {
     const [activeReadState, setActiveReadState] = useState("all");
     const [search, setSearch] = useState("");
     const [selectedInquiry, setSelectedInquiry] = useState<ConsultationInquiry | null>(null);
+    const [phoneHistoryOpen, setPhoneHistoryOpen] = useState(false);
 
     const queryParams = useMemo(
         () => ({
@@ -80,6 +91,21 @@ export default function ConsultationsPage() {
     const activeInquiry = selectedInquiry
         ? inquiries.find((item) => item.id === selectedInquiry.id) ?? selectedInquiry
         : null;
+    const phoneHistoryParams = useMemo(
+        () => ({
+            page: 1,
+            limit: 20,
+            phone: activeInquiry?.phone ?? "",
+            readState: "all",
+        }),
+        [activeInquiry?.phone],
+    );
+    const { data: phoneHistoryData, isLoading: isPhoneHistoryLoading } =
+        useConsultationInquiries(phoneHistoryParams, Boolean(activeInquiry?.phone));
+    const phoneHistoryItems = useMemo(
+        () => (phoneHistoryData?.data ?? []).filter((item) => item.id !== activeInquiry?.id),
+        [activeInquiry?.id, phoneHistoryData?.data],
+    );
 
     const stats = useMemo(() => {
         return {
@@ -104,7 +130,13 @@ export default function ConsultationsPage() {
                 ]}
             />
 
-            <SplitLayout hasSelection={!!activeInquiry} onBack={() => setSelectedInquiry(null)}>
+            <SplitLayout
+                hasSelection={!!activeInquiry}
+                onBack={() => {
+                    setSelectedInquiry(null);
+                    setPhoneHistoryOpen(false);
+                }}
+            >
                 <ListPanel
                     title="상담 문의"
                     tabs={READ_TABS}
@@ -112,9 +144,13 @@ export default function ConsultationsPage() {
                     onTabChange={(value) => {
                         setActiveReadState(value);
                         setSelectedInquiry(null);
+                        setPhoneHistoryOpen(false);
                     }}
                     searchValue={search}
-                    onSearchChange={setSearch}
+                    onSearchChange={(value) => {
+                        setSearch(value);
+                        setPhoneHistoryOpen(false);
+                    }}
                     searchPlaceholder="이름, 연락처, 주소 검색..."
                     isLoading={isLoading}
                 >
@@ -143,6 +179,7 @@ export default function ConsultationsPage() {
                             }}
                             onSlotClick={(inquiry) => {
                                 setSelectedInquiry(inquiry);
+                                setPhoneHistoryOpen(false);
                                 if (!inquiry.readAt) {
                                     markRead.mutate(inquiry.id);
                                 }
@@ -210,6 +247,64 @@ export default function ConsultationsPage() {
                                 <InfoCard title="상담자 정보" className="col-start-1 row-start-1 row-end-3">
                                     <InfoRow label="이름" value={activeInquiry.motherName} />
                                     <InfoRow label="연락처" value={activeInquiry.phone} />
+                                    <div data-component="consultations-phone-history" className="relative flex items-start gap-4 py-2.5 border-b border-v3-border">
+                                        <span className="shrink-0 text-[0.8rem] text-v3-text-muted">이전 상담</span>
+                                        <div className="ml-auto min-w-0 flex-1 text-right">
+                                            <button
+                                                type="button"
+                                                className="inline-flex items-center gap-1.5 text-[0.8rem] font-semibold text-v3-dark px-3 py-1.5 rounded-[10px] border border-v3-border hover:bg-v3-dim-white transition-colors"
+                                                onClick={() => setPhoneHistoryOpen((current) => !current)}
+                                            >
+                                                전체
+                                                <ChevronDown
+                                                    className={cn(
+                                                        "w-3.5 h-3.5 text-v3-text-muted transition-transform",
+                                                        phoneHistoryOpen && "rotate-180",
+                                                    )}
+                                                />
+                                            </button>
+                                            {phoneHistoryOpen ? (
+                                                <div className="absolute right-0 top-[calc(100%-4px)] z-20 mt-1 w-[260px] rounded-[14px] border border-v3-border bg-white py-1 text-left shadow-v3">
+                                                    {isPhoneHistoryLoading ? (
+                                                        <div className="px-4 py-3 text-[0.76rem] font-medium text-v3-text-muted">
+                                                            불러오는 중...
+                                                        </div>
+                                                    ) : phoneHistoryItems.length === 0 ? (
+                                                        <div className="px-4 py-3 text-[0.76rem] font-medium text-v3-text-muted">
+                                                            같은 번호의 이전 상담이 없습니다.
+                                                        </div>
+                                                    ) : (
+                                                        phoneHistoryItems.map((item) => (
+                                                            <button
+                                                                type="button"
+                                                                key={item.id}
+                                                                className="flex w-full items-start justify-between gap-3 px-4 py-2 text-left transition-colors hover:bg-v3-dim-white"
+                                                                onClick={() => {
+                                                                    setSelectedInquiry(item);
+                                                                    setPhoneHistoryOpen(false);
+                                                                    if (!item.readAt) {
+                                                                        markRead.mutate(item.id);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <span className="min-w-0">
+                                                                    <span className="block truncate text-[0.8rem] font-semibold text-v3-dark">
+                                                                        {item.motherName}
+                                                                    </span>
+                                                                    <span className="mt-0.5 block truncate text-[0.72rem] text-v3-text-muted">
+                                                                        {item.branchName ?? "현재 지점"}
+                                                                    </span>
+                                                                </span>
+                                                                <span className="shrink-0 text-[0.72rem] font-semibold text-v3-text-muted">
+                                                                    {formatCompactDate(item.createdAt)}
+                                                                </span>
+                                                            </button>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    </div>
                                     <InfoRow label="주소" value={activeInquiry.address} />
                                     <InfoRow label="출산 예정일" value={formatDate(activeInquiry.dueDate)} />
                                     <InfoRow label="출산 경험" value={activeInquiry.birthExperience} />

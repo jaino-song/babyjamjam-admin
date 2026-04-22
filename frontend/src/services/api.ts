@@ -294,6 +294,7 @@ export interface ConsultationInquiryListParams {
     page?: number;
     limit?: number;
     search?: string;
+    phone?: string;
     status?: string;
     readState?: string;
 }
