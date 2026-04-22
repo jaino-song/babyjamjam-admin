@@ -22,6 +22,7 @@ const PUBLIC_ROUTES = [
   "/auth",
   "/api",
   "/_next",
+  "/vendor",
   "/favicon.ico",
   "/manifest.json",
   "/sw.js",

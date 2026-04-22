@@ -228,14 +228,26 @@ export class DocumentController {
                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
                  "application/vnd.ms-excel": ".xls",
                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+                 "application/hwp": ".hwp",
+                 "application/haansofthwp": ".hwp",
+                 "application/vnd.hancom.hwp": ".hwp",
+                 "application/vnd.hancom.hwpx": ".hwpx",
+                 "application/x-hwp": ".hwp",
+                 "application/x-hwpx": ".hwpx",
              };
              return mimeToExt[mimetype] || "";
+         };
+
+         const getStorageExtension = (storagePath: string): string => {
+             const cleanPath = storagePath.split(/[?#]/)[0] ?? "";
+             const extensionMatch = cleanPath.match(/\.([a-z0-9]+)$/i);
+             return extensionMatch?.[1] ? `.${extensionMatch[1].toLowerCase()}` : "";
          };
          
          // Ensure filename has extension
          let filename = doc.name;
          if (!filename.includes(".")) {
-             filename += getExtension(doc.mimetype);
+             filename += getExtension(doc.mimetype) || getStorageExtension(doc.storagepath);
          }
          
          const disposition = attachment === "true" 
