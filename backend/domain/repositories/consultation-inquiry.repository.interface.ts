@@ -10,6 +10,7 @@ export interface ConsultationInquiryListParams {
     search?: string;
     status?: string;
     readState?: string;
+    phone?: string;
 }
 
 export interface ConsultationInquiryListResult {

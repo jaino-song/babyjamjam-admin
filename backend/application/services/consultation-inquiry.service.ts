@@ -78,6 +78,7 @@ export class ConsultationInquiryService {
         const search = query.search?.trim() || undefined;
         const status = query.status || "all";
         const readState = query.readState || "all";
+        const phone = query.phone?.trim() || undefined;
 
         const result = await this.repository.findManyByBranch({
             branchId,
@@ -86,6 +87,7 @@ export class ConsultationInquiryService {
             search,
             status,
             readState,
+            phone,
         });
 
         return {

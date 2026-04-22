@@ -14,10 +14,11 @@ export const consultationInquiryQueryKeys = {
         [...consultationInquiryQueryKeys.all, "list", params] as const,
 };
 
-export function useConsultationInquiries(params: ConsultationInquiryListParams) {
+export function useConsultationInquiries(params: ConsultationInquiryListParams, enabled = true) {
     return useQuery<ConsultationInquiryListResponse>({
         queryKey: consultationInquiryQueryKeys.list(params),
         queryFn: () => consultationInquiriesApi.list(params),
+        enabled,
         staleTime: 1000 * 60,
     });
 }

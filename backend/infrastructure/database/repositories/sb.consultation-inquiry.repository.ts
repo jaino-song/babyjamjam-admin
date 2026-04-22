@@ -120,6 +120,10 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
             where.readAt = null;
         }
 
+        if (params.phone) {
+            where.phone = params.phone;
+        }
+
         if (params.search) {
             where.OR = [
                 { motherName: { contains: params.search } },
