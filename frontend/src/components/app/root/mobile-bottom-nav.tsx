@@ -50,6 +50,7 @@ export function MobileBottomNav() {
           <Link
             key={item.href}
             href={item.href}
+            prefetch={false}
             data-component={
               item.kind === "chat"
                 ? "mobile-bottom-nav-chat"

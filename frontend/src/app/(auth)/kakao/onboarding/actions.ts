@@ -16,6 +16,7 @@ interface CompleteKakaoOnboardingSuccessResponse {
     accessToken: string;
     refreshToken: string;
     requiresBranchSelection?: boolean;
+    requiresOrgSelection?: boolean;
 }
 
 const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
@@ -37,7 +38,10 @@ export async function completeKakaoOnboarding(
     try {
         const response = await serverAPIClient.post<CompleteKakaoOnboardingSuccessResponse>(
             "/auth/kakao/complete-signup",
-            input,
+            {
+                ...input,
+                organizationId: input.branchId,
+            },
             {
                 headers: {
                     [PENDING_KAKAO_SIGNUP_TOKEN_HEADER]: pendingSignupToken,
@@ -69,7 +73,7 @@ export async function completeKakaoOnboarding(
 
         return {
             success: true,
-            requiresBranchSelection: response.data.requiresBranchSelection || false,
+            requiresBranchSelection: Boolean(response.data.requiresBranchSelection || response.data.requiresOrgSelection),
         };
     } catch (error) {
         if (error instanceof AxiosError) {

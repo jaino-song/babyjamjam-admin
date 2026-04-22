@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarClock, ChevronDown, Headset, MapPin, Phone, Search, UserRound } from "lucide-react";
+import { CalendarClock, Headset, MapPin, Phone, Search, UserRound } from "lucide-react";
 
 import {
     AnimatedSlotList,
@@ -22,9 +22,8 @@ import { cn } from "@/lib/utils";
 import type { ConsultationInquiry } from "@/services/api";
 
 const READ_TABS = [
-    { label: "전체", value: "all" },
-    { label: "읽음", value: "read" },
     { label: "읽지 않음", value: "unread" },
+    { label: "읽음", value: "read" },
 ];
 
 function formatDate(value: string): string {
@@ -36,16 +35,6 @@ function formatDate(value: string): string {
         month: "2-digit",
         day: "2-digit",
     });
-}
-
-function formatCompactDate(value: string): string {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "-";
-
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}.${month}.${day}`;
 }
 
 function formatDateTime(value: string): string {
@@ -61,6 +50,30 @@ function formatDateTime(value: string): string {
     });
 }
 
+function getInquirySourceLabel(source: string): string {
+    if (source === "website") return "홈페이지";
+    return source || "-";
+}
+
+function getConsultationIdentityKey(inquiry: ConsultationInquiry): string {
+    return `${inquiry.motherName.trim().toLowerCase()}::${inquiry.phone.replace(/\D/g, "")}`;
+}
+
+function getLatestUniqueConsultationInquiries(inquiries: ConsultationInquiry[]): ConsultationInquiry[] {
+    return Array.from(
+        inquiries.reduce((uniqueMap, inquiry) => {
+            const key = getConsultationIdentityKey(inquiry);
+            const current = uniqueMap.get(key);
+
+            if (!current || new Date(inquiry.createdAt).getTime() > new Date(current.createdAt).getTime()) {
+                uniqueMap.set(key, inquiry);
+            }
+
+            return uniqueMap;
+        }, new Map<string, ConsultationInquiry>()).values(),
+    );
+}
+
 function getReadLabel(readAt: string | null): string {
     return readAt ? "읽음" : "읽지 않음";
 }
@@ -70,10 +83,9 @@ function getReadVariant(readAt: string | null): "neutral" | "warning" {
 }
 
 export default function ConsultationsPage() {
-    const [activeReadState, setActiveReadState] = useState("all");
+    const [activeReadState, setActiveReadState] = useState("unread");
     const [search, setSearch] = useState("");
     const [selectedInquiry, setSelectedInquiry] = useState<ConsultationInquiry | null>(null);
-    const [phoneHistoryOpen, setPhoneHistoryOpen] = useState(false);
 
     const queryParams = useMemo(
         () => ({
@@ -85,9 +97,21 @@ export default function ConsultationsPage() {
         [activeReadState, search],
     );
 
+    const statsQueryParams = useMemo(
+        () => ({
+            page: 1,
+            limit: 100,
+            readState: "all",
+        }),
+        [],
+    );
+
     const { data, isLoading } = useConsultationInquiries(queryParams);
+    const { data: statsData, isLoading: isStatsLoading } = useConsultationInquiries(statsQueryParams);
     const markRead = useMarkConsultationInquiryRead();
     const inquiries = useMemo(() => data?.data ?? [], [data?.data]);
+    const statsInquiries = useMemo(() => statsData?.data ?? [], [statsData?.data]);
+    const visibleInquiries = useMemo(() => getLatestUniqueConsultationInquiries(inquiries), [inquiries]);
     const activeInquiry = selectedInquiry
         ? inquiries.find((item) => item.id === selectedInquiry.id) ?? selectedInquiry
         : null;
@@ -103,27 +127,45 @@ export default function ConsultationsPage() {
     const { data: phoneHistoryData, isLoading: isPhoneHistoryLoading } =
         useConsultationInquiries(phoneHistoryParams, Boolean(activeInquiry?.phone));
     const phoneHistoryItems = useMemo(
-        () => (phoneHistoryData?.data ?? []).filter((item) => item.id !== activeInquiry?.id),
-        [activeInquiry?.id, phoneHistoryData?.data],
+        () => (phoneHistoryData?.data ?? []).filter((item) => {
+            if (!activeInquiry) return false;
+            const activeInquiryIdentityKey = getConsultationIdentityKey(activeInquiry);
+            if (!activeInquiryIdentityKey) return false;
+            return item.id !== activeInquiry?.id && getConsultationIdentityKey(item) === activeInquiryIdentityKey;
+        }),
+        [activeInquiry, phoneHistoryData?.data],
     );
+    const previousConsultationDates = useMemo(() => {
+        if (isPhoneHistoryLoading) return [];
+        return phoneHistoryItems.map((item) => formatDateTime(item.createdAt));
+    }, [isPhoneHistoryLoading, phoneHistoryItems]);
 
     const stats = useMemo(() => {
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth();
+
         return {
-            total: data?.total ?? 0,
-            unreadCount: inquiries.filter((item) => !item.readAt).length,
-            newCount: inquiries.filter((item) => item.status === "new").length,
-            contactedCount: inquiries.filter((item) => item.status === "contacted").length,
-            closedCount: inquiries.filter((item) => item.status === "closed").length,
+            currentMonthTotal: statsInquiries.filter((item) => {
+                const createdAt = new Date(item.createdAt);
+                if (Number.isNaN(createdAt.getTime())) return false;
+
+                return createdAt.getFullYear() === currentYear && createdAt.getMonth() === currentMonth;
+            }).length,
+            unreadCount: statsInquiries.filter((item) => !item.readAt).length,
+            newCount: statsInquiries.filter((item) => item.status === "new").length,
+            contactedCount: statsInquiries.filter((item) => item.status === "contacted").length,
+            closedCount: statsInquiries.filter((item) => item.status === "closed").length,
         };
-    }, [data?.total, inquiries]);
+    }, [statsInquiries]);
 
     return (
         <PageSection name="consultations">
             <StatsBar
                 name="consultations"
-                isLoading={isLoading}
+                isLoading={isLoading || isStatsLoading}
                 items={[
-                    { icon: Headset, value: stats.total, label: "전체 상담", counter: "건" },
+                    { icon: Headset, value: stats.currentMonthTotal, label: "이번달 전체 상담", counter: "건" },
                     { icon: CalendarClock, value: stats.unreadCount, label: "읽지 않음", counter: "건", colorIndex: 1 },
                     { icon: Phone, value: stats.contactedCount, label: "연락 완료", counter: "건", colorIndex: 2 },
                     { icon: Search, value: stats.closedCount, label: "종료", counter: "건", colorIndex: 3 },
@@ -134,7 +176,6 @@ export default function ConsultationsPage() {
                 hasSelection={!!activeInquiry}
                 onBack={() => {
                     setSelectedInquiry(null);
-                    setPhoneHistoryOpen(false);
                 }}
             >
                 <ListPanel
@@ -144,24 +185,20 @@ export default function ConsultationsPage() {
                     onTabChange={(value) => {
                         setActiveReadState(value);
                         setSelectedInquiry(null);
-                        setPhoneHistoryOpen(false);
                     }}
                     searchValue={search}
-                    onSearchChange={(value) => {
-                        setSearch(value);
-                        setPhoneHistoryOpen(false);
-                    }}
+                    onSearchChange={setSearch}
                     searchPlaceholder="이름, 연락처, 주소 검색..."
                     isLoading={isLoading}
                 >
-                    {!isLoading && inquiries.length === 0 ? (
+                    {!isLoading && visibleInquiries.length === 0 ? (
                         <ListEmptyState
                             name="consultations-empty"
                             message={search ? "검색 결과가 없습니다" : "상담 문의가 없습니다"}
                         />
                     ) : (
                         <AnimatedSlotList<ConsultationInquiry>
-                            items={inquiries}
+                            items={visibleInquiries}
                             isLoading={isLoading}
                             loadingCount={6}
                             className="space-y-2"
@@ -179,7 +216,6 @@ export default function ConsultationsPage() {
                             }}
                             onSlotClick={(inquiry) => {
                                 setSelectedInquiry(inquiry);
-                                setPhoneHistoryOpen(false);
                                 if (!inquiry.readAt) {
                                     markRead.mutate(inquiry.id);
                                 }
@@ -189,7 +225,7 @@ export default function ConsultationsPage() {
                                     return (
                                         <>
                                             <Skeleton className="h-11 w-11 shrink-0 rounded-[14px] bg-v3-dim-white" />
-                                            <div className="min-w-0 flex-1">
+                                            <div data-component="consultations-list-item-skeleton-content" className="min-w-0 flex-1">
                                                 <Skeleton className="mb-2 h-4 w-28 bg-v3-dim-white" />
                                                 <Skeleton className="h-3 w-44 bg-v3-dim-white" />
                                             </div>
@@ -202,11 +238,11 @@ export default function ConsultationsPage() {
 
                                 return (
                                     <>
-                                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-primary text-white shadow-md">
+                                        <div data-component="consultations-list-item-icon" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-primary text-white shadow-md">
                                             <Headset className="h-5 w-5" />
                                         </div>
-                                        <div className="min-w-0 flex-1">
-                                            <div className="mb-1 flex items-center gap-2">
+                                        <div data-component="consultations-list-item-content" className="min-w-0 flex-1">
+                                            <div data-component="consultations-list-item-title-row" className="mb-1 flex items-center gap-2">
                                                 <span className="truncate text-[0.86rem] font-bold text-v3-dark">
                                                     {item.motherName}
                                                 </span>
@@ -214,7 +250,7 @@ export default function ConsultationsPage() {
                                                     {getReadLabel(item.readAt)}
                                                 </StatusPill>
                                             </div>
-                                            <div className="flex min-w-0 items-center gap-2 text-[0.72rem] text-v3-text-muted">
+                                            <div data-component="consultations-list-item-meta-row" className="flex min-w-0 items-center gap-2 text-[0.72rem] text-v3-text-muted">
                                                 <Phone className="h-3.5 w-3.5 shrink-0" />
                                                 <span className="shrink-0">{item.phone}</span>
                                                 <span className="truncate">{item.address}</span>
@@ -230,7 +266,7 @@ export default function ConsultationsPage() {
                 {activeInquiry ? (
                     <DetailPanel
                         avatar={
-                            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px] bg-v3-primary text-white shadow-lg">
+                            <div data-component="consultations-detail-avatar" className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px] bg-v3-primary text-white shadow-lg">
                                 <UserRound className="h-7 w-7" />
                             </div>
                         }
@@ -244,85 +280,32 @@ export default function ConsultationsPage() {
                     >
                         <div data-component="consultations-detail" className="space-y-4">
                             <div data-component="consultations-detail-basic-grid" className="grid grid-cols-2 gap-4">
-                                <InfoCard title="상담자 정보" className="col-start-1 row-start-1 row-end-3">
+                                <InfoCard title="상담자 정보" className="col-start-1 row-start-1">
                                     <InfoRow label="이름" value={activeInquiry.motherName} />
                                     <InfoRow label="연락처" value={activeInquiry.phone} />
-                                    <div data-component="consultations-phone-history" className="relative flex items-start gap-4 py-2.5 border-b border-v3-border">
-                                        <span className="shrink-0 text-[0.8rem] text-v3-text-muted">이전 상담</span>
-                                        <div className="ml-auto min-w-0 flex-1 text-right">
-                                            <button
-                                                type="button"
-                                                className="inline-flex items-center gap-1.5 text-[0.8rem] font-semibold text-v3-dark px-3 py-1.5 rounded-[10px] border border-v3-border hover:bg-v3-dim-white transition-colors"
-                                                onClick={() => setPhoneHistoryOpen((current) => !current)}
-                                            >
-                                                전체
-                                                <ChevronDown
-                                                    className={cn(
-                                                        "w-3.5 h-3.5 text-v3-text-muted transition-transform",
-                                                        phoneHistoryOpen && "rotate-180",
-                                                    )}
-                                                />
-                                            </button>
-                                            {phoneHistoryOpen ? (
-                                                <div className="absolute right-0 top-[calc(100%-4px)] z-20 mt-1 w-[260px] rounded-[14px] border border-v3-border bg-white py-1 text-left shadow-v3">
-                                                    {isPhoneHistoryLoading ? (
-                                                        <div className="px-4 py-3 text-[0.76rem] font-medium text-v3-text-muted">
-                                                            불러오는 중...
-                                                        </div>
-                                                    ) : phoneHistoryItems.length === 0 ? (
-                                                        <div className="px-4 py-3 text-[0.76rem] font-medium text-v3-text-muted">
-                                                            같은 번호의 이전 상담이 없습니다.
-                                                        </div>
-                                                    ) : (
-                                                        phoneHistoryItems.map((item) => (
-                                                            <button
-                                                                type="button"
-                                                                key={item.id}
-                                                                className="flex w-full items-start justify-between gap-3 px-4 py-2 text-left transition-colors hover:bg-v3-dim-white"
-                                                                onClick={() => {
-                                                                    setSelectedInquiry(item);
-                                                                    setPhoneHistoryOpen(false);
-                                                                    if (!item.readAt) {
-                                                                        markRead.mutate(item.id);
-                                                                    }
-                                                                }}
-                                                            >
-                                                                <span className="min-w-0">
-                                                                    <span className="block truncate text-[0.8rem] font-semibold text-v3-dark">
-                                                                        {item.motherName}
-                                                                    </span>
-                                                                    <span className="mt-0.5 block truncate text-[0.72rem] text-v3-text-muted">
-                                                                        {item.branchName ?? "현재 지점"}
-                                                                    </span>
-                                                                </span>
-                                                                <span className="shrink-0 text-[0.72rem] font-semibold text-v3-text-muted">
-                                                                    {formatCompactDate(item.createdAt)}
-                                                                </span>
-                                                            </button>
-                                                        ))
-                                                    )}
-                                                </div>
-                                            ) : null}
-                                        </div>
-                                    </div>
                                     <InfoRow label="주소" value={activeInquiry.address} />
                                     <InfoRow label="출산 예정일" value={formatDate(activeInquiry.dueDate)} />
                                     <InfoRow label="출산 경험" value={activeInquiry.birthExperience} />
                                 </InfoCard>
 
-                                <InfoCard title="처리 정보" className="col-start-1 row-start-3 row-end-5">
-                                    <InfoRow label="읽음 상태" value={getReadLabel(activeInquiry.readAt)} />
-                                    <InfoRow label="상담 접수" value={formatDateTime(activeInquiry.createdAt)} />
-                                    <InfoRow label="개인정보 동의" value={formatDateTime(activeInquiry.privacyAcceptedAt)} />
-                                </InfoCard>
-
-                                <InfoCard title="신청 정보" className="col-start-2 row-start-1 row-end-5">
+                                <InfoCard title="신청 정보" className="col-start-2 row-start-1">
                                     <InfoRow label="바우처 유형" value={activeInquiry.voucherType || "-"} />
                                     <InfoRow label="희망 관리사" value={activeInquiry.preferredCaregiverName || "-"} />
                                     <InfoRow label="유입 경로" value={activeInquiry.referralSource} />
-                                    <InfoRow label="신청 경로" value={activeInquiry.source} />
+                                    <InfoRow label="신청 경로" value={getInquirySourceLabel(activeInquiry.source)} />
                                     <InfoRow label="담당 지점" value={activeInquiry.branchName ?? "-"} />
-                                    <InfoRow label="공개 지점 ID" value={activeInquiry.publicBranchSlug} />
+                                    {previousConsultationDates.length > 0 ? (
+                                        <div data-component="consultations-phone-history" className="flex items-start gap-4 py-2.5 border-b border-v3-border last:border-b-0">
+                                            <span className="shrink-0 text-[0.8rem] text-v3-text-muted">이전 상담</span>
+                                            <span data-component="consultations-phone-history-values" className="ml-auto min-w-0 flex-1 text-[0.8rem] font-semibold text-v3-dark text-right">
+                                                {previousConsultationDates.map((date) => (
+                                                    <span key={date} className="block">
+                                                        {date}
+                                                    </span>
+                                                ))}
+                                            </span>
+                                        </div>
+                                    ) : null}
                                 </InfoCard>
                             </div>
                         </div>

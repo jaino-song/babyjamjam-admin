@@ -4,8 +4,6 @@ import { Button } from "@/components/ui/button";
 import { RiKakaoTalkFill } from "react-icons/ri";
 import { cn } from "@/lib/utils";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
-
 // Google Icon Component (since MUI icons won't be used)
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -29,11 +27,11 @@ interface OAuthButtonsProps {
 
 export function OAuthButtons({ disabled, className }: OAuthButtonsProps) {
   const handleKakaoLogin = () => {
-    window.location.href = `${API_BASE_URL}/auth/kakao`;
+    window.location.href = "/api/auth/kakao";
   };
 
   const handleGoogleLogin = () => {
-    window.location.href = `${API_BASE_URL}/auth/google`;
+    window.location.href = "/api/auth/google";
   };
 
   return (

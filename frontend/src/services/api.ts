@@ -27,8 +27,7 @@ export interface EformsignAuthStatusResponse {
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
-        const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
-        window.location.href = `${API_BASE_URL}/auth/kakao`;
+        window.location.href = "/api/auth/kakao";
     },
 
     // Email authentication

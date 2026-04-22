@@ -16,6 +16,7 @@ interface CompleteAccountOnboardingSuccessResponse {
     accessToken: string;
     refreshToken: string;
     requiresBranchSelection?: boolean;
+    requiresOrgSelection?: boolean;
 }
 
 const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
@@ -37,7 +38,10 @@ export async function completeAccountOnboarding(
     try {
         const response = await serverAPIClient.post<CompleteAccountOnboardingSuccessResponse>(
             "/auth/onboarding/complete",
-            input,
+            {
+                ...input,
+                organizationId: input.branchId,
+            },
             {
                 headers: {
                     [PENDING_ONBOARDING_TOKEN_HEADER]: pendingOnboardingToken,
@@ -69,7 +73,7 @@ export async function completeAccountOnboarding(
 
         return {
             success: true,
-            requiresBranchSelection: response.data.requiresBranchSelection || false,
+            requiresBranchSelection: Boolean(response.data.requiresBranchSelection || response.data.requiresOrgSelection),
         };
     } catch (error) {
         if (error instanceof AxiosError) {
