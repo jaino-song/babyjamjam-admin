@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 
 import {
     ConsultationInquiryEntity,
+    ConsultationSelectedServices,
     CreateConsultationInquiryParams,
 } from "domain/entities/consultation-inquiry.entity";
 import {
@@ -31,6 +32,7 @@ function toEntity(row: InquiryWithBranch): ConsultationInquiryEntity {
         preferredCaregiverName: row.preferredCaregiverName,
         referralSource: row.referralSource,
         privacyAcceptedAt: row.privacyAcceptedAt,
+        selectedServices: row.selectedServices as ConsultationSelectedServices | null,
         source: row.source,
         status: row.status,
         createdAt: row.createdAt,
@@ -71,6 +73,9 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
                 preferredCaregiverName: params.preferredCaregiverName,
                 referralSource: params.referralSource,
                 privacyAcceptedAt: params.privacyAcceptedAt,
+                ...(params.selectedServices
+                    ? { selectedServices: params.selectedServices as unknown as Prisma.InputJsonValue }
+                    : {}),
                 source: params.source,
                 status: params.status,
             },

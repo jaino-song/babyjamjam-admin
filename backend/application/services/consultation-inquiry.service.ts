@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from "@nes
 
 import {
     ConsultationInquiryEntity,
+    ConsultationSelectedServices,
     CreateConsultationInquiryParams,
 } from "domain/entities/consultation-inquiry.entity";
 import {
@@ -19,6 +20,32 @@ export interface PaginatedConsultationInquiries {
     page: number;
     limit: number;
     totalPages: number;
+}
+
+function normalizeSelectedServices(
+    selectedServices: CreatePublicConsultationInquiryDto["selectedServices"],
+): ConsultationSelectedServices | null {
+    if (!selectedServices) {
+        return null;
+    }
+
+    return {
+        plan: selectedServices.plan
+            ? {
+                  id: selectedServices.plan.id,
+                  name: selectedServices.plan.name,
+                  priceLabel: selectedServices.plan.priceLabel,
+                  durationDays: selectedServices.plan.durationDays ?? null,
+              }
+            : null,
+        addons: selectedServices.addons.map((addon) => ({
+            id: addon.id,
+            name: addon.name,
+            priceLabel: addon.priceLabel,
+            quantity: addon.quantity,
+            group: addon.group ?? null,
+        })),
+    };
 }
 
 @Injectable()
@@ -50,6 +77,7 @@ export class ConsultationInquiryService {
             preferredCaregiverName: dto.preferredCaregiverName?.trim() || null,
             referralSource: dto.referralSource,
             privacyAcceptedAt: new Date(),
+            selectedServices: normalizeSelectedServices(dto.selectedServices),
             source: "website",
             status: "new",
         };

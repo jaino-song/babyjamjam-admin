@@ -24,6 +24,7 @@ describe("ConsultationInquiryService", () => {
         preferredCaregiverName: null,
         referralSource: "검색",
         privacyAcceptedAt: new Date("2026-04-21T00:00:00.000Z"),
+        selectedServices: null,
         source: "website",
         status: "new",
         createdAt: new Date("2026-04-21T00:00:00.000Z"),
@@ -66,6 +67,50 @@ describe("ConsultationInquiryService", () => {
             motherName: "김지은",
             status: "new",
             source: "website",
+            selectedServices: null,
+        }));
+    });
+
+    it("should pass selected service snapshot when provided", async () => {
+        const inquiry = createInquiry();
+        const selectedServices = {
+            plan: {
+                id: "unsub-10",
+                name: "10일",
+                priceLabel: "조회 후 안내",
+                durationDays: 10,
+            },
+            addons: [
+                {
+                    id: "school-age",
+                    name: "취학 자녀 케어 서비스",
+                    priceLabel: "5,000원",
+                    quantity: 10,
+                    group: "care",
+                },
+            ],
+        };
+        repository.findActiveBranchBySlug.mockResolvedValue({
+            id: "branch-1",
+            name: "인천 연수구점",
+            slug: "incheon-yeonsu",
+        });
+        repository.create.mockResolvedValue({ ...inquiry, selectedServices });
+
+        await service.createPublicInquiry({
+            branchSlug: "incheon-yeonsu",
+            motherName: "김지은",
+            phone: "010-1234-5678",
+            address: "인천 연수구",
+            dueDate: "2026-05-01",
+            birthExperience: "초산",
+            referralSource: "검색",
+            privacyAccepted: true,
+            selectedServices,
+        });
+
+        expect(repository.create).toHaveBeenCalledWith(expect.objectContaining({
+            selectedServices,
         }));
     });
 

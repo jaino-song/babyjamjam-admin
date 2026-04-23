@@ -72,6 +72,38 @@ function getStatusVariant(status: string): "warning" | "success" | "neutral" {
     return STATUS_VARIANT[status] ?? "neutral";
 }
 
+function SelectedServicesCard({ inquiry }: { inquiry: ConsultationInquiry }) {
+    const selectedServices = inquiry.selectedServices;
+    const hasPlan = Boolean(selectedServices?.plan);
+    const addons = selectedServices?.addons ?? [];
+
+    if (!hasPlan && addons.length === 0) {
+        return (
+            <InfoCard title="선택 서비스">
+                <InfoRow label="서비스" value="선택 서비스 없음" />
+            </InfoCard>
+        );
+    }
+
+    return (
+        <InfoCard title="선택 서비스">
+            {selectedServices?.plan && (
+                <InfoRow
+                    label="플랜"
+                    value={`${selectedServices.plan.name} · ${selectedServices.plan.priceLabel}`}
+                />
+            )}
+            {addons.map((addon) => (
+                <InfoRow
+                    key={addon.id}
+                    label={addon.name}
+                    value={`${addon.priceLabel} · 수량 ${addon.quantity}`}
+                />
+            ))}
+        </InfoCard>
+    );
+}
+
 export default function ConsultationsPage() {
     const [activeStatus, setActiveStatus] = useState("all");
     const [search, setSearch] = useState("");
@@ -227,6 +259,8 @@ export default function ConsultationsPage() {
                                 <InfoRow label="신청 경로" value={activeInquiry.source} />
                                 <InfoRow label="개인정보 동의" value={formatDateTime(activeInquiry.privacyAcceptedAt)} />
                             </InfoCard>
+
+                            <SelectedServicesCard inquiry={activeInquiry} />
 
                             <InfoCard title="지점">
                                 <InfoRow label="담당 지점" value={activeInquiry.branchName ?? "-"} />

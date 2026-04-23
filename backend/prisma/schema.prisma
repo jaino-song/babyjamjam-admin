@@ -385,6 +385,7 @@ model consultation_inquiry {
   preferredCaregiverName String?  @map("preferred_caregiver_name")
   referralSource         String   @map("referral_source")
   privacyAcceptedAt      DateTime @map("privacy_accepted_at") @db.Timestamptz(6)
+  selectedServices       Json?    @map("selected_services")
   source                 String   @default("website")
   status                 String   @default("new")
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
