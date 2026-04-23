@@ -9,8 +9,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
+import { HwpDocumentPreview } from "./hwp-document-preview";
 
-export type PreviewKind = "pdf" | "image" | "unsupported";
+export type PreviewKind = "pdf" | "image" | "hwp" | "unsupported";
 
 export interface PreviewMetaItem {
   label: string;
@@ -68,13 +69,14 @@ export function SharedDocumentPreviewDialog({
   const [previewWidth, setPreviewWidth] = useState(0);
   const isPdf = previewKind === "pdf";
   const isImage = previewKind === "image";
-  const isZoomablePreview = isPdf || isImage;
+  const isHwp = previewKind === "hwp";
+  const isZoomablePreview = isPdf || isImage || isHwp;
   const zoomScale = zoomPercent / 100;
   const pageWidth = Math.max(previewWidth, 320) * zoomScale;
 
   useEffect(() => {
     const node = previewViewportRef.current;
-    if (!open || !isPdf || !node || typeof ResizeObserver === "undefined") {
+    if (!open || (!isPdf && !isHwp) || !node || typeof ResizeObserver === "undefined") {
       return;
     }
 
@@ -92,7 +94,7 @@ export function SharedDocumentPreviewDialog({
       window.cancelAnimationFrame(frameId);
       observer.disconnect();
     };
-  }, [isPdf, open]);
+  }, [isHwp, isPdf, open]);
 
   const handleClose = () => {
     setZoomPercent(DEFAULT_ZOOM_PERCENT);
@@ -241,7 +243,19 @@ export function SharedDocumentPreviewDialog({
               </div>
             )}
 
-            {!isPdf && !isImage && (
+            {isHwp && (
+              <div ref={previewViewportRef} className="h-full overflow-auto px-6 py-6">
+                <HwpDocumentPreview
+                  key={previewKey}
+                  previewUrl={previewUrl}
+                  previewKey={previewKey}
+                  title={title}
+                  pageWidth={pageWidth}
+                />
+              </div>
+            )}
+
+            {!isPdf && !isImage && !isHwp && (
               <div className="flex h-full items-center justify-center">
                 <div className="text-muted-foreground">{unsupportedMessage}</div>
               </div>
@@ -267,7 +281,7 @@ export function SharedDocumentPreviewDialog({
                   value={zoomPercent}
                   onChange={(event) => setZoomPercent(Number(event.target.value))}
                   className="h-2 w-32 cursor-pointer accent-[hsl(214,100%,34%)]"
-                  aria-label={`${isPdf ? "PDF" : "이미지"} 미리보기 확대/축소`}
+                  aria-label={`${isPdf ? "PDF" : isHwp ? "한글 문서" : "이미지"} 미리보기 확대/축소`}
                 />
                 <div className="min-w-[3.5rem] rounded-full bg-v3-dim-white px-2.5 py-1 text-center text-xs font-semibold text-v3-dark">
                   {zoomPercent}%
@@ -281,10 +295,12 @@ export function SharedDocumentPreviewDialog({
           data-component="contracts-document-preview-footer"
           className="justify-end border-t border-border px-6 py-4"
         >
-          <Button variant="ghost" onClick={handlePrint}>
-            <Printer className="mr-2 h-4 w-4" />
-            인쇄
-          </Button>
+          {!isHwp && (
+            <Button variant="ghost" onClick={handlePrint}>
+              <Printer className="mr-2 h-4 w-4" />
+              인쇄
+            </Button>
+          )}
           {downloadUrl && (
             <Button onClick={handleDownload}>
               <Download className="mr-2 h-4 w-4" />

@@ -380,7 +380,7 @@ export default function ContractsPage() {
   const [statsDocuments, setStatsDocuments] = useState<EformsignDocument[]>([]);
 
   useEffect(() => {
-    if (filterType === null && allDocuments.length > 0) {
+    if (filterType === null) {
       setStatsDocuments(allDocuments);
     }
   }, [allDocuments, filterType]);

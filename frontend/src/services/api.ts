@@ -27,8 +27,7 @@ export interface EformsignAuthStatusResponse {
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
-        const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
-        window.location.href = `${API_BASE_URL}/auth/kakao`;
+        window.location.href = "/api/auth/kakao";
     },
 
     // Email authentication
@@ -277,6 +276,7 @@ export interface ConsultationInquiry {
     selectedServices: ConsultationSelectedServices | null;
     source: string;
     status: string;
+    readAt: string | null;
     createdAt: string;
     updatedAt: string;
     branchName?: string;
@@ -310,7 +310,9 @@ export interface ConsultationInquiryListParams {
     page?: number;
     limit?: number;
     search?: string;
+    phone?: string;
     status?: string;
+    readState?: string;
 }
 
 export const settingsApi = {
@@ -343,6 +345,10 @@ export const settingsApi = {
 export const consultationInquiriesApi = {
     list: async (params: ConsultationInquiryListParams = {}): Promise<ConsultationInquiryListResponse> => {
         const { data } = await api.get("/consultation-inquiries", { params });
+        return data;
+    },
+    markRead: async (id: string): Promise<ConsultationInquiry> => {
+        const { data } = await api.patch(`/consultation-inquiries/${id}/read`);
         return data;
     },
 };

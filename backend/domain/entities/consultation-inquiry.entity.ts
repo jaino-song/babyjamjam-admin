@@ -33,6 +33,7 @@ export interface CreateConsultationInquiryParams {
     selectedServices: ConsultationSelectedServices | null;
     source: string;
     status: ConsultationInquiryStatus;
+    readAt?: Date | null;
 }
 
 export interface ConsultationInquiryEntity {
@@ -51,6 +52,7 @@ export interface ConsultationInquiryEntity {
     selectedServices: ConsultationSelectedServices | null;
     source: string;
     status: string;
+    readAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
     branchName?: string;

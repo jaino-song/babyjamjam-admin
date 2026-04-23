@@ -9,9 +9,10 @@ import {
     ConsultationInquiryController,
     PublicConsultationInquiryController,
 } from "interface/controllers/consultation-inquiry.controller";
+import { NotificationModule } from "module/notification.module";
 
 @Module({
-    imports: [DatabaseModule],
+    imports: [DatabaseModule, NotificationModule],
     controllers: [PublicConsultationInquiryController, ConsultationInquiryController],
     providers: [
         { provide: CONSULTATION_INQUIRY_REPOSITORY, useClass: SbConsultationInquiryRepository },

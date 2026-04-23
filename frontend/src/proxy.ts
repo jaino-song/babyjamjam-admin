@@ -7,6 +7,8 @@ interface TokenPayload {
   role: string | null;
   branchId?: string;
   branchRole?: string;
+  organizationId?: string;
+  orgRole?: string;
   type: "access" | "refresh";
 }
 
@@ -22,6 +24,7 @@ const PUBLIC_ROUTES = [
   "/auth",
   "/api",
   "/_next",
+  "/vendor",
   "/favicon.ico",
   "/manifest.json",
   "/sw.js",
@@ -59,7 +62,7 @@ export function proxy(request: NextRequest) {
     const decoded = jwtDecode<TokenPayload>(authToken);
 
     // No branch selected - redirect to select-branch
-    if (!decoded.branchId) {
+    if (!decoded.branchId && !decoded.organizationId) {
       const selectBranchUrl = new URL("/select-branch", request.url);
       return NextResponse.redirect(selectBranchUrl);
     }

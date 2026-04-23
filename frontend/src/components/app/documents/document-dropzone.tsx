@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const HANGUL_DOCUMENT_EXTENSIONS = new Set(["hwp", "hwpx"]);
 const LABEL_CLASS_NAME =
   "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted";
 const V3_TEXTAREA_CLASS_NAME =
@@ -195,7 +196,16 @@ export function DocumentDropzone({
     return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   };
 
+  const isSelectedHangulFile = () => {
+    const extension = selectedFile?.name.split(".").pop()?.toLowerCase();
+    return extension ? HANGUL_DOCUMENT_EXTENSIONS.has(extension) : false;
+  };
+
   const getSelectedFileLabel = () => {
+    if (isSelectedHangulFile()) {
+      return "한글 문서";
+    }
+
     if (selectedFile?.type === "application/pdf") {
       return "PDF 문서";
     }
@@ -208,6 +218,13 @@ export function DocumentDropzone({
   };
 
   const getSelectedFileTone = () => {
+    if (isSelectedHangulFile()) {
+      return {
+        icon: "bg-v3-primary-light text-v3-primary",
+        badge: "border-v3-primary/20 bg-v3-primary-light text-v3-primary",
+      };
+    }
+
     if (selectedFile?.type === "application/pdf") {
       return {
         icon: "bg-v3-burgundy-light text-v3-burgundy",
@@ -229,6 +246,10 @@ export function DocumentDropzone({
   };
 
   const getFileIcon = () => {
+    if (isSelectedHangulFile()) {
+      return <FileText className="h-10 w-10" />;
+    }
+
     if (selectedFile?.type === "application/pdf") {
       return <FileText className="h-10 w-10" />;
     }
@@ -285,7 +306,7 @@ export function DocumentDropzone({
               파일을 끌어다 놓거나 클릭해 선택하세요
             </p>
             <p className="mt-2 text-[0.8rem] leading-6 text-v3-text-muted">
-              문서, 이미지, 압축 파일 등 다양한 형식을 바로 업로드할 수 있습니다.
+              PDF, HWP/HWPX, 이미지, 압축 파일 등 다양한 형식을 바로 업로드할 수 있습니다.
             </p>
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2">

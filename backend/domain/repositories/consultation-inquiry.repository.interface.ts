@@ -9,6 +9,8 @@ export interface ConsultationInquiryListParams {
     limit: number;
     search?: string;
     status?: string;
+    readState?: string;
+    phone?: string;
 }
 
 export interface ConsultationInquiryListResult {
@@ -24,8 +26,10 @@ export interface ConsultationInquiryBranchLookup {
 
 export interface IConsultationInquiryRepository {
     findActiveBranchBySlug(slug: string): Promise<ConsultationInquiryBranchLookup | null>;
+    findNotificationRecipientUserIds(branchId: string): Promise<string[]>;
     create(params: CreateConsultationInquiryParams): Promise<ConsultationInquiryEntity>;
     findManyByBranch(params: ConsultationInquiryListParams): Promise<ConsultationInquiryListResult>;
+    markRead(branchId: string, id: string): Promise<ConsultationInquiryEntity>;
 }
 
 export const CONSULTATION_INQUIRY_REPOSITORY = "CONSULTATION_INQUIRY_REPOSITORY";
