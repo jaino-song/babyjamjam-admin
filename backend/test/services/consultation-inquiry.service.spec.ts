@@ -110,6 +110,7 @@ describe("ConsultationInquiryService", () => {
             slug: "incheon-yeonsu",
         });
         repository.create.mockResolvedValue({ ...inquiry, selectedServices });
+        repository.findNotificationRecipientUserIds.mockResolvedValue(["user-1", "user-2"]);
 
         await service.createPublicInquiry({
             branchSlug: "incheon-yeonsu",
