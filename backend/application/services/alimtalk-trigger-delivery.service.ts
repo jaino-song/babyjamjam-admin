@@ -21,11 +21,11 @@ export class AlimtalkTriggerDeliveryService {
     ) {}
 
     async sendJob(job: AlimtalkTriggerJobEntity): Promise<boolean> {
-        if (!job.organizationId) {
+        if (!job.branchId) {
             return false;
         }
 
-        await this.messageSenderApprovalService.ensureApproved(job.organizationId);
+        await this.messageSenderApprovalService.ensureApproved(job.branchId);
 
         const provider = await this.systemSettingService.getAlimtalkProvider();
         if (provider === "none") {
@@ -46,7 +46,7 @@ export class AlimtalkTriggerDeliveryService {
                 receiver: payload.recipientPhone,
                 variables: this.toAligoVariables(job.templateKey, payload.templateVariables),
                 buttonUrl: payload.buttonUrl ?? undefined,
-                organizationId: job.organizationId ?? undefined,
+                branchId: job.branchId ?? undefined,
                 clientId: job.clientId ?? undefined,
                 triggerJobId: job.id,
             });

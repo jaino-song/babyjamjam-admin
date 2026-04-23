@@ -64,27 +64,27 @@ export class EformsignWebhookService {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    async processWebhook(organizationid: string, payload: EformsignWebhookPayloadDto): Promise<void> {
+    async processWebhook(branchid: string, payload: EformsignWebhookPayloadDto): Promise<void> {
         const { event_type, webhook_id, document, ready_document_pdf, document_action } = payload;
 
         this.logger.log(`Processing webhook ${webhook_id}: event_type=${event_type}`);
 
         // Handle document events (status changes)
         if (event_type === EVENT_TYPES.DOCUMENT && document) {
-            await this.handleDocumentEvent(organizationid, document);
+            await this.handleDocumentEvent(branchid, document);
             return;
         }
 
         // Handle document_action events (open, view actions)
         // Note: eformsign sends action data inside the `document` object (document.action field)
         if (event_type === EVENT_TYPES.DOCUMENT_ACTION && document) {
-            await this.handleDocumentActionEvent(organizationid, document);
+            await this.handleDocumentActionEvent(branchid, document);
             return;
         }
 
         // Handle PDF ready events - also update status since it contains document_status
         if (event_type === EVENT_TYPES.READY_DOCUMENT_PDF && ready_document_pdf) {
-            await this.handleReadyDocumentPdfEvent(organizationid, ready_document_pdf);
+            await this.handleReadyDocumentPdfEvent(branchid, ready_document_pdf);
             return;
         }
 
@@ -96,7 +96,7 @@ export class EformsignWebhookService {
      * This event contains document_status which we should use to update our DB
      */
     private async handleReadyDocumentPdfEvent(
-        organizationid: string,
+        branchid: string,
         pdfEvent: NonNullable<EformsignWebhookPayloadDto["ready_document_pdf"]>
     ): Promise<void> {
         const { document_id: documentId, document_status: status, workflow_seq, workflow_name } = pdfEvent;
@@ -108,7 +108,7 @@ export class EformsignWebhookService {
 
         // Update document status in DB
         try {
-            await this.updateStatusUsecase.execute(organizationid, {
+            await this.updateStatusUsecase.execute(branchid, {
                 documentId,
                 statusType,
                 statusDetail,
@@ -131,11 +131,11 @@ export class EformsignWebhookService {
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
             this.logger.log(`Document ${documentId} completed (from PDF event), linking to client`);
             try {
-                await this.linkDocumentUsecase.execute(organizationid, documentId);
+                await this.linkDocumentUsecase.execute(branchid, documentId);
                 this.logger.log(`Document ${documentId} successfully linked to client`);
 
                 await this.sendContractSignedAlimtalkByDocumentId(
-                    organizationid,
+                    branchid,
                     documentId,
                     workflow_name
                 );
@@ -151,7 +151,7 @@ export class EformsignWebhookService {
      * Note: eformsign sends action in document.action field (e.g., "doc_open_participant")
      */
     private async handleDocumentActionEvent(
-        organizationid: string,
+        branchid: string,
         document: NonNullable<EformsignWebhookPayloadDto["document"]>
     ): Promise<void> {
         const { id: documentId, action, workflow_seq, workflow_name } = document;
@@ -163,7 +163,7 @@ export class EformsignWebhookService {
         const statusDetail = isOpenAction ? "서명 페이지 열림" : `액션: ${action}`;
 
         try {
-            await this.updateStatusUsecase.execute(organizationid, {
+            await this.updateStatusUsecase.execute(branchid, {
                 documentId,
                 statusType: "020", // In-progress/opened
                 statusDetail,
@@ -183,7 +183,7 @@ export class EformsignWebhookService {
     }
 
     private async handleDocumentEvent(
-        organizationid: string,
+        branchid: string,
         document: NonNullable<EformsignWebhookPayloadDto["document"]>
     ): Promise<void> {
         const { id: documentId, status, document_title, workflow_seq, workflow_name } = document;
@@ -195,7 +195,7 @@ export class EformsignWebhookService {
 
         // Update document status in DB
         try {
-            await this.updateStatusUsecase.execute(organizationid, {
+            await this.updateStatusUsecase.execute(branchid, {
                 documentId,
                 statusType,
                 statusDetail,
@@ -218,11 +218,11 @@ export class EformsignWebhookService {
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
             this.logger.log(`Document ${documentId} completed, linking to client`);
             try {
-                await this.linkDocumentUsecase.execute(organizationid, documentId);
+                await this.linkDocumentUsecase.execute(branchid, documentId);
                 this.logger.log(`Document ${documentId} successfully linked to client`);
 
                 await this.sendContractSignedAlimtalkByDocumentId(
-                    organizationid,
+                    branchid,
                     documentId,
                     workflow_name
                 );
@@ -233,18 +233,18 @@ export class EformsignWebhookService {
     }
 
     private async sendContractSignedAlimtalkByDocumentId(
-        organizationid: string,
+        branchid: string,
         documentId: string,
         workflowName: string
     ): Promise<void> {
         try {
-            const doc = await this.eformsignDocRepository.findByDocumentId(organizationid, documentId);
+            const doc = await this.eformsignDocRepository.findByDocumentId(branchid, documentId);
             if (!doc) {
                 this.logger.warn(`Cannot send alimtalk: document ${documentId} not found`);
                 return;
             }
 
-            const client = await this.clientRepository.findById(organizationid, doc.clientId);
+            const client = await this.clientRepository.findById(branchid, doc.clientId);
             if (!client) {
                 this.logger.warn(`Cannot send alimtalk: client ${doc.clientId} not found`);
                 return;
@@ -255,7 +255,7 @@ export class EformsignWebhookService {
                 contractType: workflowName || "방문요양 계약서",
                 signedDate: this.formatDate(today),
                 serviceStartDate: client.startDate ? this.formatDate(client.startDate) : this.formatDate(today),
-                employeeName: await this.getEmployeeNameForClient(organizationid, doc.clientId),
+                employeeName: await this.getEmployeeNameForClient(branchid, doc.clientId),
             };
 
             await this.alimtalkService.sendContractSignedAlimtalk(client, contractInfo);
@@ -266,13 +266,13 @@ export class EformsignWebhookService {
     }
 
     // 클라이언트에 배정된 담당 직원 이름을 조회
-    private async getEmployeeNameForClient(organizationId: string, clientId: number): Promise<string> {
+    private async getEmployeeNameForClient(branchId: string, clientId: number): Promise<string> {
         try {
-            const schedules = await this.employeeScheduleRepository.findByClientId(organizationId, clientId);
+            const schedules = await this.employeeScheduleRepository.findByClientId(branchId, clientId);
             const activeSchedule = schedules.find(s => !s.replaced);
             if (!activeSchedule) return "담당자";
 
-            const employee = await this.employeeRepository.findById(organizationId, activeSchedule.primaryEmployeeId);
+            const employee = await this.employeeRepository.findById(branchId, activeSchedule.primaryEmployeeId);
             return employee?.name ?? "담당자";
         } catch {
             return "담당자";

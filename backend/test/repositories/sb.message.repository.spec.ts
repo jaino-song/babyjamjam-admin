@@ -24,7 +24,7 @@ describe("SbMessageRepository", () => {
         ...overrides,
     });
 
-    const organizationId = "org-1";
+    const branchId = "org-1";
 
     let messageModel: ReturnType<typeof createMockPrismaMessage>;
     let prisma: PrismaService;
@@ -52,11 +52,11 @@ describe("SbMessageRepository", () => {
                 messageModel.findFirst.mockResolvedValue(row);
 
                 // Act
-                const result = await repository.findById(organizationId, 1);
+                const result = await repository.findById(branchId, 1);
 
                 // Assert
                 expect(messageModel.findFirst).toHaveBeenCalledWith({
-                    where: { id: 1, organizationId: organizationId },
+                    where: { id: 1, branchId: branchId },
                 });
                 expect(result).toBeInstanceOf(MessageEntity);
                 expect(result).toMatchObject({
@@ -78,11 +78,11 @@ describe("SbMessageRepository", () => {
                 messageModel.findFirst.mockResolvedValue(row);
 
                 // Act
-                const result = await repository.findById(organizationId, 1);
+                const result = await repository.findById(branchId, 1);
 
                 // Assert
                 expect(messageModel.findFirst).toHaveBeenCalledWith({
-                    where: { id: 1, organizationId: organizationId },
+                    where: { id: 1, branchId: branchId },
                 });
                 expect(result?.editedAt).toEqual(editedAt);
             });
@@ -94,11 +94,11 @@ describe("SbMessageRepository", () => {
                 messageModel.findFirst.mockResolvedValue(null);
 
                 // Act
-                const result = await repository.findById(organizationId, 999);
+                const result = await repository.findById(branchId, 999);
 
                 // Assert
                 expect(messageModel.findFirst).toHaveBeenCalledWith({
-                    where: { id: 999, organizationId: organizationId },
+                    where: { id: 999, branchId: branchId },
                 });
                 expect(result).toBeNull();
             });
@@ -121,14 +121,14 @@ describe("SbMessageRepository", () => {
                 messageModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(organizationId, entity);
+                const result = await repository.create(branchId, entity);
 
                 // Assert
                 expect(messageModel.create).toHaveBeenCalledWith({
                     data: {
                         title: "Title",
                         text: "Text",
-                        organizationId: organizationId,
+                        branchId: branchId,
                     },
                 });
                 expect(result).toMatchObject({ id: 2, title: "Title" });
@@ -148,14 +148,14 @@ describe("SbMessageRepository", () => {
                 messageModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(organizationId, entity);
+                const result = await repository.create(branchId, entity);
 
                 // Assert
                 expect(messageModel.create).toHaveBeenCalledWith({
                     data: {
                         title: "Long Message",
                         text: longText,
-                        organizationId: organizationId,
+                        branchId: branchId,
                     },
                 });
                 expect(result.text).toBe(longText);
@@ -183,11 +183,11 @@ describe("SbMessageRepository", () => {
                 messageModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(organizationId, entity);
+                const result = await repository.update(branchId, entity);
 
                 // Assert
                 expect(messageModel.update).toHaveBeenCalledWith({
-                    where: { id: 3, organizationId: organizationId },
+                    where: { id: 3, branchId: branchId },
                     data: {
                         title: "Updated",
                         text: "Message updated",
@@ -213,7 +213,7 @@ describe("SbMessageRepository", () => {
                 messageModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(organizationId, entity);
+                const result = await repository.update(branchId, entity);
 
                 // Assert
                 expect(result.title).toBe("New Title");
@@ -236,7 +236,7 @@ describe("SbMessageRepository", () => {
                 messageModel.update.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(organizationId, entity);
+                const result = await repository.update(branchId, entity);
 
                 // Assert
                 expect(result.title).toBe("Original Title");
@@ -255,11 +255,11 @@ describe("SbMessageRepository", () => {
                 messageModel.delete.mockResolvedValue(undefined);
 
                 // Act
-                await repository.delete(organizationId, 4);
+                await repository.delete(branchId, 4);
 
                 // Assert
                 expect(messageModel.delete).toHaveBeenCalledWith({
-                    where: { id: 4, organizationId: organizationId },
+                    where: { id: 4, branchId: branchId },
                 });
             });
         });
@@ -270,11 +270,11 @@ describe("SbMessageRepository", () => {
                 messageModel.delete.mockResolvedValue(undefined);
 
                 // Act
-                await repository.delete(organizationId, id);
+                await repository.delete(branchId, id);
 
                 // Assert
                 expect(messageModel.delete).toHaveBeenCalledWith({
-                    where: { id, organizationId: organizationId },
+                    where: { id, branchId: branchId },
                 });
             });
         });

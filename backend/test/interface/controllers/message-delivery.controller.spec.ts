@@ -30,7 +30,7 @@ describe("MessageDeliveryController", () => {
 
         await expect(
             controller.sendSms(
-                { organizationId: "org-1" },
+                { branchId: "org-1" },
                 {
                     receiver: "01012345678",
                     message: "테스트",
@@ -66,7 +66,7 @@ describe("MessageDeliveryController", () => {
         });
 
         const result = await controller.sendSms(
-            { organizationId: "org-1" },
+            { branchId: "org-1" },
             {
                 receiver: "010-1234-5678",
                 message: "장문 테스트 메시지",

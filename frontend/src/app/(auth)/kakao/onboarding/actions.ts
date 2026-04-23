@@ -3,24 +3,19 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
-import { jwtDecode } from "jwt-decode";
-
-interface TokenPayload {
-    sub: string;
-    role: string | null;
-    type: "access" | "refresh";
-}
+import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 interface CompleteKakaoOnboardingInput {
     phone: string;
     birthDate: string;
-    organizationId: string;
+    branchId: string;
     role: string;
 }
 
 interface CompleteKakaoOnboardingSuccessResponse {
     accessToken: string;
     refreshToken: string;
+    requiresBranchSelection?: boolean;
     requiresOrgSelection?: boolean;
 }
 
@@ -29,7 +24,7 @@ const PENDING_KAKAO_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
 
 export async function completeKakaoOnboarding(
     input: CompleteKakaoOnboardingInput,
-): Promise<{ success: boolean; error?: string; requiresOrgSelection?: boolean }> {
+): Promise<{ success: boolean; error?: string; requiresBranchSelection?: boolean }> {
     const cookieStore = await cookies();
     const pendingSignupToken = cookieStore.get(PENDING_KAKAO_SIGNUP_COOKIE)?.value;
 
@@ -43,7 +38,10 @@ export async function completeKakaoOnboarding(
     try {
         const response = await serverAPIClient.post<CompleteKakaoOnboardingSuccessResponse>(
             "/auth/kakao/complete-signup",
-            input,
+            {
+                ...input,
+                organizationId: input.branchId,
+            },
             {
                 headers: {
                     [PENDING_KAKAO_SIGNUP_TOKEN_HEADER]: pendingSignupToken,
@@ -66,37 +64,16 @@ export async function completeKakaoOnboarding(
             };
         }
 
-        let role = "user";
-        try {
-            const decoded = jwtDecode<TokenPayload>(response.data.accessToken);
-            role = decoded.role || "user";
-        } catch {
-            console.error("[Kakao Onboarding] Failed to decode token");
-        }
-
-        const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
-
-        cookieStore.set("auth_token", response.data.accessToken, {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-            maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-        });
-
-        cookieStore.set("refresh_token", response.data.refreshToken, {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-            maxAge: 7 * 24 * 60 * 60,
+        setAuthSessionCookies(cookieStore, {
+            accessToken: response.data.accessToken,
+            refreshToken: response.data.refreshToken,
         });
 
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
 
         return {
             success: true,
-            requiresOrgSelection: response.data.requiresOrgSelection || false,
+            requiresBranchSelection: Boolean(response.data.requiresBranchSelection || response.data.requiresOrgSelection),
         };
     } catch (error) {
         if (error instanceof AxiosError) {

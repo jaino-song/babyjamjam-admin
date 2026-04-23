@@ -14,7 +14,7 @@ import {
   mockNotifications,
   mockDocuments,
   mockDocumentCategories,
-  mockOrganizations,
+  mockBranches,
   mockUsers,
   mockVoucherPriceInfos,
   mockEformsignDocs,
@@ -40,7 +40,7 @@ import {
 interface BaseQueryParams {
   page?: number;
   limit?: number;
-  organizationId?: string;
+  branchId?: string;
 }
 
 interface ClientQueryParams extends BaseQueryParams {
@@ -76,15 +76,15 @@ export async function simulateDelay(ms: number = 300): Promise<void> {
 }
 
 /**
- * Filters items by organization ID (multi-tenancy support)
+ * Filters items by branch ID (multi-tenancy support)
  */
-function filterByOrganization<T extends { organizationId: string | null }>(
+function filterByBranch<T extends { branchId: string | null }>(
   items: T[],
-  organizationId?: string
+  branchId?: string
 ): T[] {
-  if (!organizationId) return items;
+  if (!branchId) return items;
   return items.filter(
-    (item) => item.organizationId === organizationId || item.organizationId === null
+    (item) => item.branchId === branchId || item.branchId === null
   );
 }
 
@@ -94,9 +94,9 @@ function filterByOrganization<T extends { organizationId: string | null }>(
 
 export const clientHandlers = {
   getAll: (params: ClientQueryParams = {}): PaginatedResponse<Client> => {
-    const { page = 1, limit = 10, organizationId, serviceStatus, voucherClient, careCenter, search } = params;
+    const { page = 1, limit = 10, branchId, serviceStatus, voucherClient, careCenter, search } = params;
 
-    let filtered = filterByOrganization(mockClients, organizationId);
+    let filtered = filterByBranch(mockClients, branchId);
 
     if (serviceStatus) {
       filtered = filtered.filter((c) => c.serviceStatus === serviceStatus);
@@ -127,8 +127,8 @@ export const clientHandlers = {
     return mockClients.find((c) => c.id === id);
   },
 
-  getStats: (organizationId?: string) => {
-    const filtered = filterByOrganization(mockClients, organizationId);
+  getStats: (branchId?: string) => {
+    const filtered = filterByBranch(mockClients, branchId);
     return {
       total: filtered.length,
       active: filtered.filter((c) => c.serviceStatus === 'active').length,
@@ -147,9 +147,9 @@ export const clientHandlers = {
 
 export const employeeHandlers = {
   getAll: (params: EmployeeQueryParams = {}): PaginatedResponse<Employee> => {
-    const { page = 1, limit = 10, organizationId, status, openToNextWork, workArea, search } = params;
+    const { page = 1, limit = 10, branchId, status, openToNextWork, workArea, search } = params;
 
-    let filtered = filterByOrganization(mockEmployees, organizationId);
+    let filtered = filterByBranch(mockEmployees, branchId);
 
     if (status) {
       filtered = filtered.filter((e) => e.status === status);
@@ -179,8 +179,8 @@ export const employeeHandlers = {
     return mockEmployees.find((e) => e.id === id);
   },
 
-  getAvailable: (organizationId?: string): Employee[] => {
-    return filterByOrganization(mockEmployees, organizationId).filter(
+  getAvailable: (branchId?: string): Employee[] => {
+    return filterByBranch(mockEmployees, branchId).filter(
       (e) => e.status === 'available' && e.openToNextWork
     );
   },
@@ -192,9 +192,9 @@ export const employeeHandlers = {
 
 export const scheduleHandlers = {
   getAll: (params: ScheduleQueryParams = {}): PaginatedResponse<EmployeeSchedule> => {
-    const { page = 1, limit = 10, organizationId, clientId, employeeId, startDate, endDate } = params;
+    const { page = 1, limit = 10, branchId, clientId, employeeId, startDate, endDate } = params;
 
-    let filtered = filterByOrganization(mockEmployeeSchedules, organizationId);
+    let filtered = filterByBranch(mockEmployeeSchedules, branchId);
 
     if (clientId) {
       filtered = filtered.filter((s) => s.clientId === clientId);
@@ -234,8 +234,8 @@ export const scheduleHandlers = {
 
 export const messageHandlers = {
   getAll: (params: BaseQueryParams = {}) => {
-    const { page = 1, limit = 10, organizationId } = params;
-    const filtered = filterByOrganization(mockMessages, organizationId);
+    const { page = 1, limit = 10, branchId } = params;
+    const filtered = filterByBranch(mockMessages, branchId);
     return createPaginatedResponse(filtered, page, limit);
   },
 
@@ -250,11 +250,11 @@ export const messageHandlers = {
 
 export const messageTemplateHandlers = {
   getAll: (params: BaseQueryParams = {}) => {
-    const { page = 1, limit = 10, organizationId } = params;
+    const { page = 1, limit = 10, branchId } = params;
     let filtered = mockMessageTemplates;
-    if (organizationId) {
+    if (branchId) {
       filtered = filtered.filter(
-        (t) => t.organizationId === organizationId || t.organizationId === null
+        (t) => t.branchId === branchId || t.branchId === null
       );
     }
     return createPaginatedResponse(filtered, page, limit);
@@ -289,9 +289,9 @@ export const notificationHandlers = {
 
 export const documentHandlers = {
   getAll: (params: BaseQueryParams & { categoryId?: string; search?: string } = {}) => {
-    const { page = 1, limit = 10, organizationId, categoryId, search } = params;
+    const { page = 1, limit = 10, branchId, categoryId, search } = params;
 
-    let filtered = filterByOrganization(mockDocuments, organizationId);
+    let filtered = filterByBranch(mockDocuments, branchId);
 
     if (categoryId) {
       filtered = filtered.filter((d) => d.categoryId === categoryId);
@@ -314,10 +314,10 @@ export const documentHandlers = {
     return mockDocuments.find((d) => d.id === id);
   },
 
-  getCategories: (organizationId?: string) => {
-    if (!organizationId) return mockDocumentCategories;
+  getCategories: (branchId?: string) => {
+    if (!branchId) return mockDocumentCategories;
     return mockDocumentCategories.filter(
-      (c) => c.organizationId === organizationId || c.organizationId === null
+      (c) => c.branchId === branchId || c.branchId === null
     );
   },
 };
@@ -328,9 +328,9 @@ export const documentHandlers = {
 
 export const eformsignHandlers = {
   getAll: (params: BaseQueryParams & { statusType?: string; clientId?: number } = {}) => {
-    const { page = 1, limit = 10, organizationId, statusType, clientId } = params;
+    const { page = 1, limit = 10, branchId, statusType, clientId } = params;
 
-    let filtered = filterByOrganization(mockEformsignDocs, organizationId);
+    let filtered = filterByBranch(mockEformsignDocs, branchId);
 
     if (statusType) {
       filtered = filtered.filter((d) => d.statusType === statusType);
@@ -347,8 +347,8 @@ export const eformsignHandlers = {
     return mockEformsignDocs.find((d) => d.documentId === documentId);
   },
 
-  getPendingCount: (organizationId?: string) => {
-    const filtered = filterByOrganization(mockEformsignDocs, organizationId);
+  getPendingCount: (branchId?: string) => {
+    const filtered = filterByBranch(mockEformsignDocs, branchId);
     return filtered.filter((d) => d.statusType === '060').length;
   },
 };
@@ -373,22 +373,22 @@ export const voucherPriceHandlers = {
 };
 
 // ============================================================================
-// ORGANIZATION HANDLERS
+// BRANCH HANDLERS
 // ============================================================================
 
-export const organizationHandlers = {
-  getAll: () => mockOrganizations,
+export const branchHandlers = {
+  getAll: () => mockBranches,
 
   getById: (id: string) => {
-    return mockOrganizations.find((o) => o.id === id);
+    return mockBranches.find((o) => o.id === id);
   },
 
   getBySlug: (slug: string) => {
-    return mockOrganizations.find((o) => o.slug === slug);
+    return mockBranches.find((o) => o.slug === slug);
   },
 
   getActive: () => {
-    return mockOrganizations.filter((o) => o.isActive);
+    return mockBranches.filter((o) => o.isActive);
   },
 };
 
@@ -411,9 +411,9 @@ export const userHandlers = {
 // ============================================================================
 
 export const areaHandlers = {
-  getAll: (organizationId?: string) => {
-    if (!organizationId) return mockAreas;
-    return mockAreas.filter((a) => a.organizationId === organizationId || a.organizationId === null);
+  getAll: (branchId?: string) => {
+    if (!branchId) return mockAreas;
+    return mockAreas.filter((a) => a.branchId === branchId || a.branchId === null);
   },
 
   getById: (id: string) => {
@@ -477,7 +477,7 @@ export const mockApiHandlers = {
   documents: documentHandlers,
   eformsign: eformsignHandlers,
   voucherPrices: voucherPriceHandlers,
-  organizations: organizationHandlers,
+  branches: branchHandlers,
   users: userHandlers,
   areas: areaHandlers,
   chat: chatHandlers,

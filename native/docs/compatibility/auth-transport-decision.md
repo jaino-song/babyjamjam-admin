@@ -67,7 +67,7 @@ NestJS JwtStrategy validates token
 | `/auth/kakao` | POST | Cookie + Bearer | Bearer | ✓ JwtStrategy | Ready |
 | `/auth/link-password` | POST | Cookie + Bearer | Bearer | ✓ JwtStrategy | Ready |
 | `/auth/resend-verification` | POST | Cookie + Bearer | Bearer | ✓ JwtStrategy | Ready |
-| `/auth/select-organization` | POST | Cookie + Bearer | Bearer | ✓ JwtStrategy | Ready |
+| `/auth/select-branch` | POST | Cookie + Bearer | Bearer | ✓ JwtStrategy | Ready |
 | **Clients** (CRUD + actions) | Multiple | Bearer | Bearer | ✓ JwtGuard + RolesGuard | Ready |
 | **Employees** (List, detail, status) | Multiple | Bearer | Bearer | ✓ JwtGuard + RolesGuard | Ready |
 | **Notifications** (7 endpoints) | Multiple | Bearer | Bearer | ✓ JwtGuard | Ready |

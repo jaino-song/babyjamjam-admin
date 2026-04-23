@@ -60,7 +60,7 @@ export class DocumentEntity {
     get filesize(): number { return this.fileSize; }
     get storagepath(): string { return this.storagePath; }
     get storageurl(): string | null { return this.storageUrl; }
-    get orgid(): string | null { return this.orgId; }
+    get branchid(): string | null { return this.orgId; }
     get uploadedby(): string { return this.uploadedBy; }
     get createdat(): Date { return this.createdAt; }
     get updatedat(): Date { return this.updatedAt; }

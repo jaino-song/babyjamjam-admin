@@ -102,13 +102,13 @@ export class NotificationService {
 
     // Send Notifications
     async sendNotification(
-        organizationid: string,
+        branchid: string,
         userId: string,
         title: string,
         body: string,
         data?: Record<string, unknown>,
     ): Promise<NotificationEntity> {
-        const notification = await this.sendNotificationUsecase.execute(organizationid, { userId, title, body, data });
+        const notification = await this.sendNotificationUsecase.execute(branchid, { userId, title, body, data });
         await this.sendEmailNotificationToUser(userId, title, body);
         return notification;
     }
@@ -126,32 +126,32 @@ export class NotificationService {
 
     // Get Notifications
     getNotifications(
-        organizationid: string,
+        branchid: string,
         userId: string,
         options?: { limit?: number; offset?: number },
     ): Promise<NotificationEntity[]> {
-        return this.getNotificationsUsecase.execute(organizationid, userId, options);
+        return this.getNotificationsUsecase.execute(branchid, userId, options);
     }
 
-    getUnreadNotifications(organizationid: string, userId: string): Promise<NotificationEntity[]> {
-        return this.getNotificationsUsecase.getUnread(organizationid, userId);
+    getUnreadNotifications(branchid: string, userId: string): Promise<NotificationEntity[]> {
+        return this.getNotificationsUsecase.getUnread(branchid, userId);
     }
 
-    countUnreadNotifications(organizationid: string, userId: string): Promise<number> {
-        return this.getNotificationsUsecase.countUnread(organizationid, userId);
+    countUnreadNotifications(branchid: string, userId: string): Promise<number> {
+        return this.getNotificationsUsecase.countUnread(branchid, userId);
     }
 
     // Mark as Read
     markAsRead(
-        organizationid: string,
+        branchid: string,
         notificationId: number,
         userId: string
     ): Promise<NotificationEntity> {
-        return this.markNotificationReadUsecase.execute(organizationid, notificationId, userId);
+        return this.markNotificationReadUsecase.execute(branchid, notificationId, userId);
     }
 
-    markAllAsRead(organizationid: string, userId: string): Promise<void> {
-        return this.markNotificationReadUsecase.markAllAsRead(organizationid, userId);
+    markAllAsRead(branchid: string, userId: string): Promise<void> {
+        return this.markNotificationReadUsecase.markAllAsRead(branchid, userId);
     }
 
     async sendToRoles(

@@ -24,6 +24,7 @@ import { TenantModule } from "./infrastructure/tenant/tenant.module";
 import { NotificationModule } from "module/notification.module";
 import { AIChatModule } from "module/ai-chat.module";
 import { MessageDeliveryModule } from "module/message-delivery.module";
+import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
 
 const ENV_FILE_PATHS = [
@@ -66,6 +67,7 @@ const ENV_FILE_PATHS = [
         NotificationModule,
         AIChatModule,
         MessageDeliveryModule,
+        ConsultationInquiryModule,
     ],
     controllers: [EformsignController],
     providers: [EformsignService, JwtStrategy],

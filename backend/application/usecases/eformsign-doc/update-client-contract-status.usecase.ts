@@ -33,17 +33,17 @@ export class UpdateClientContractStatusUsecase {
      * @param updateEDocId - If true, also updates client.eDocId (for completed documents)
      */
     async execute(
-        organizationid: string,
+        branchid: string,
         documentId: string,
         contractStatus: ContractStatusType,
         updateEDocId: boolean = false,
     ): Promise<void> {
-        const doc = await this.eformsignDocRepository.findByDocumentId(organizationid, documentId);
+        const doc = await this.eformsignDocRepository.findByDocumentId(branchid, documentId);
         if (!doc) {
             throw new NotFoundException(`Document ${documentId} not found`);
         }
 
-        const client = await this.clientRepository.findById(organizationid, doc.clientId);
+        const client = await this.clientRepository.findById(branchid, doc.clientId);
         if (!client) {
             throw new NotFoundException(`Client ${doc.clientId} not found`);
         }
@@ -58,7 +58,7 @@ export class UpdateClientContractStatusUsecase {
         }
 
         client.update(updateData);
-        await this.clientRepository.update(organizationid, client);
+        await this.clientRepository.update(branchid, client);
 
         this.logger.log(
             `Updated client ${doc.clientId} contractStatus to '${contractStatus}'` +

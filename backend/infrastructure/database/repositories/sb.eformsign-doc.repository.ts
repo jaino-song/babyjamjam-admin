@@ -8,57 +8,57 @@ import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc
 export class SbEformsignDocRepository implements IEformsignDocRepository {
     constructor(private readonly prismaService: PrismaService) {}
 
-    async findById(organizationid: string, id: number): Promise<EformsignDocEntity | null> {
+    async findById(branchid: string, id: number): Promise<EformsignDocEntity | null> {
         const doc = await this.prismaService.eformsign_doc.findFirst({
-            where: { id, organizationId: organizationid },
+            where: { id, branchId: branchid },
         });
         return doc ? EformsignDocMapper.toDomain(doc) : null;
     }
 
-    async findByDocumentId(organizationid: string, documentId: string): Promise<EformsignDocEntity | null> {
+    async findByDocumentId(branchid: string, documentId: string): Promise<EformsignDocEntity | null> {
         const doc = await this.prismaService.eformsign_doc.findFirst({
-            where: { documentId: documentId, organizationId: organizationid },
+            where: { documentId: documentId, branchId: branchid },
         });
         return doc ? EformsignDocMapper.toDomain(doc) : null;
     }
 
-    async findByClientId(organizationid: string, clientId: number): Promise<EformsignDocEntity[]> {
+    async findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
-            where: { clientId: clientId, organizationId: organizationid },
+            where: { clientId: clientId, branchId: branchid },
         });
         return docs.map(EformsignDocMapper.toDomain);
     }
 
-    async findAll(organizationid: string): Promise<EformsignDocEntity[]> {
+    async findAll(branchid: string): Promise<EformsignDocEntity[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
-            where: { organizationId: organizationid },
+            where: { branchId: branchid },
         });
         return docs.map(EformsignDocMapper.toDomain);
     }
 
-    async create(organizationid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
+    async create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
         const created = await this.prismaService.eformsign_doc.create({
             data: {
                 ...EformsignDocMapper.toPrismaCreate(doc),
-                organizationId: organizationid,
+                branchId: branchid,
             },
         });
         return EformsignDocMapper.toDomain(created);
     }
 
-    async update(organizationid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
+    async update(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
         if (!doc.id) {
             throw new Error("Cannot update eformsign_doc without id");
         }
         const result = await this.prismaService.eformsign_doc.updateMany({
-            where: { id: doc.id, organizationId: organizationid },
+            where: { id: doc.id, branchId: branchid },
             data: EformsignDocMapper.toPrismaUpdate(doc),
         });
         if (result.count === 0) {
-            throw new Error("Eformsign doc not found for organization");
+            throw new Error("Eformsign doc not found for branch");
         }
         const updated = await this.prismaService.eformsign_doc.findFirst({
-            where: { id: doc.id, organizationId: organizationid },
+            where: { id: doc.id, branchId: branchid },
         });
         if (!updated) {
             throw new Error("Eformsign doc not found after update");
@@ -66,24 +66,24 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return EformsignDocMapper.toDomain(updated);
     }
 
-    async upsertByDocumentId(organizationid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
+    async upsertByDocumentId(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
         const data = {
             ...EformsignDocMapper.toPrismaCreate(doc),
-            organizationId: organizationid,
+            branchId: branchid,
         };
         const existing = await this.prismaService.eformsign_doc.findFirst({
-            where: { documentId: doc.documentId, organizationId: organizationid },
+            where: { documentId: doc.documentId, branchId: branchid },
         });
         if (existing) {
             const result = await this.prismaService.eformsign_doc.updateMany({
-                where: { id: existing.id, organizationId: organizationid },
+                where: { id: existing.id, branchId: branchid },
                 data,
             });
             if (result.count === 0) {
-                throw new Error("Eformsign doc not found for organization");
+                throw new Error("Eformsign doc not found for branch");
             }
             const updated = await this.prismaService.eformsign_doc.findFirst({
-                where: { id: existing.id, organizationId: organizationid },
+                where: { id: existing.id, branchId: branchid },
             });
             if (!updated) {
                 throw new Error("Eformsign doc not found after update");
@@ -96,15 +96,15 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return EformsignDocMapper.toDomain(created);
     }
 
-    async delete(organizationid: string, id: number): Promise<void> {
+    async delete(branchid: string, id: number): Promise<void> {
         await this.prismaService.eformsign_doc.deleteMany({
-            where: { id, organizationId: organizationid },
+            where: { id, branchId: branchid },
         });
     }
 
-    async deleteByDocumentId(organizationid: string, documentId: string): Promise<void> {
+    async deleteByDocumentId(branchid: string, documentId: string): Promise<void> {
         await this.prismaService.eformsign_doc.deleteMany({
-            where: { documentId: documentId, organizationId: organizationid },
+            where: { documentId: documentId, branchId: branchid },
         });
     }
 }

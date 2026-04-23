@@ -9,11 +9,13 @@ import {
   Users,
   UserCheck,
   UserKey,
+  Globe,
   FileText,
   FolderOpen,
   Settings,
   LucideIcon,
   Calculator,
+  Headset,
   MessageCircle,
 } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
@@ -24,6 +26,7 @@ import { t } from "@/lib/i18n/translations";
 import { ROLES } from "@/lib/constants/roles";
 import { SidebarNotifications } from "@/components/app/v3/SidebarNotifications";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useConsultationInquiries } from "@/hooks/useConsultationInquiries";
 
 interface NavItem {
   label: string;
@@ -48,6 +51,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
   {
     title: "지점 관리",
     items: [
+      { label: "상담", href: "/consultations", icon: Headset },
       { label: "고객", href: "/clients", icon: Users },
       { label: "직원", href: "/employees", icon: UserCheck },
       // { label: "통계", href: "/analytics", icon: BarChart3 },
@@ -81,8 +85,20 @@ export const V3Sidebar = () => {
   const user = useInitialUser();
   const locale = useLocale();
   const isOwner = user?.role === ROLES.owner;
+  const isExcluded = isLayoutExcluded(pathname);
   const [isNavScrolling, setIsNavScrolling] = React.useState(false);
   const scrollResetTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const consultationUnreadParams = React.useMemo(
+    () => ({ page: 1, limit: 1, readState: "unread" }),
+    []
+  );
+  const { data: consultationUnreadData } = useConsultationInquiries(
+    consultationUnreadParams,
+    Boolean(user) && !isExcluded
+  );
+  const consultationUnreadCount = consultationUnreadData?.total ?? 0;
+  const consultationUnreadBadge =
+    consultationUnreadCount > 99 ? "99+" : consultationUnreadCount > 0 ? String(consultationUnreadCount) : null;
 
   const getNavItemName = (href: string) => {
     const segment = href.split("/").filter(Boolean).pop() || "";
@@ -104,7 +120,11 @@ export const V3Sidebar = () => {
       return {
         ...section,
         items: isOwner
-          ? [{ label: "관리자", href: "/system-admin", icon: UserKey }, ...section.items]
+          ? [
+              { label: "관리자", href: "/system-admin", icon: UserKey },
+              { label: "홈페이지 관리", href: "/website-admin", icon: Globe },
+              ...section.items,
+            ]
           : section.items,
       };
     }),
@@ -131,7 +151,7 @@ export const V3Sidebar = () => {
     }, 450);
   };
 
-  if (isLayoutExcluded(pathname)) {
+  if (isExcluded) {
     return null;
   }
 
@@ -154,9 +174,9 @@ export const V3Sidebar = () => {
             <span className="block truncate text-xl font-bold text-v3-primary tracking-tight">
               아가잼잼
             </span>
-            {user?.organizationName && (
+            {user?.branchName && (
               <span className="mt-0.5 block truncate text-[0.72rem] font-medium leading-none text-v3-text-muted">
-                {user.organizationName}
+                {user.branchName}
               </span>
             )}
           </div>
@@ -178,10 +198,12 @@ export const V3Sidebar = () => {
             <ul className="space-y-1">
               {section.items.map((item) => {
                 const active = isActive(item.href);
+                const badge = item.href === "/consultations" ? consultationUnreadBadge : item.badge;
                 return (
                   <li key={item.href}>
                     <Link
                       href={item.href}
+                      prefetch={false}
                       data-component={`sidebar-nav-${getNavItemName(item.href)}`}
                       className={`
                         relative group flex items-center gap-3 px-4 py-2.5 rounded-2xl transition-all duration-200 overflow-hidden
@@ -199,9 +221,15 @@ export const V3Sidebar = () => {
                         {item.label}
                       </span>
 
-                      {item.badge && (
-                        <span className="ml-auto text-[0.65rem] px-2 py-0.5 rounded-full bg-v3-primary-light text-v3-primary font-bold">
-                          {item.badge}
+                      {badge && (
+	                        <span
+	                          data-component={`sidebar-nav-${getNavItemName(item.href)}-badge`}
+	                          className={`
+	                            ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full px-2 text-center text-[0.65rem] font-bold leading-none
+	                            bg-v3-burgundy text-white
+	                          `}
+	                        >
+                          {badge}
                         </span>
                       )}
                     </Link>

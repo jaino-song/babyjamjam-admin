@@ -4,6 +4,8 @@ import {
     SystemSettingEntity,
     AlimtalkProvider,
     ALIMTALK_PROVIDERS,
+    RibbonConfig,
+    DEFAULT_RIBBON_CONFIG,
 } from "domain/entities/system-setting.entity";
 
 @Injectable()
@@ -55,6 +57,25 @@ export class SystemSettingService {
         return this.updateSettingUsecase.execute(
             this.getUserEmailNotificationPreferenceKey(userId),
             enabled ? "true" : "false"
+        );
+    }
+
+    async getRibbonConfig(): Promise<RibbonConfig> {
+        const value = await this.getSettingUsecase.execute(
+            SystemSettingEntity.RIBBON_CONFIG_KEY
+        );
+        if (!value) return DEFAULT_RIBBON_CONFIG;
+        try {
+            return { ...DEFAULT_RIBBON_CONFIG, ...JSON.parse(value) };
+        } catch {
+            return DEFAULT_RIBBON_CONFIG;
+        }
+    }
+
+    async setRibbonConfig(config: RibbonConfig): Promise<SystemSettingEntity> {
+        return this.updateSettingUsecase.execute(
+            SystemSettingEntity.RIBBON_CONFIG_KEY,
+            JSON.stringify(config)
         );
     }
 }

@@ -2,15 +2,15 @@ import { AlimtalkTriggerEventType } from "domain/constants/alimtalk-trigger-cata
 import { AlimtalkTriggerRuleEntity } from "domain/entities/alimtalk-trigger-rule.entity";
 
 export interface IAlimtalkTriggerRuleRepository {
-    findAll(organizationId: string): Promise<AlimtalkTriggerRuleEntity[]>;
-    findById(organizationId: string, id: string): Promise<AlimtalkTriggerRuleEntity | null>;
+    findAll(branchId: string): Promise<AlimtalkTriggerRuleEntity[]>;
+    findById(branchId: string, id: string): Promise<AlimtalkTriggerRuleEntity | null>;
     findActiveByEventTypes(
-        organizationId: string,
+        branchId: string,
         eventTypes: AlimtalkTriggerEventType[],
     ): Promise<AlimtalkTriggerRuleEntity[]>;
-    create(organizationId: string, rule: AlimtalkTriggerRuleEntity): Promise<AlimtalkTriggerRuleEntity>;
-    update(organizationId: string, rule: AlimtalkTriggerRuleEntity): Promise<AlimtalkTriggerRuleEntity>;
-    delete(organizationId: string, id: string): Promise<void>;
+    create(branchId: string, rule: AlimtalkTriggerRuleEntity): Promise<AlimtalkTriggerRuleEntity>;
+    update(branchId: string, rule: AlimtalkTriggerRuleEntity): Promise<AlimtalkTriggerRuleEntity>;
+    delete(branchId: string, id: string): Promise<void>;
 }
 
 export const ALIMTALK_TRIGGER_RULE_REPOSITORY = "ALIMTALK_TRIGGER_RULE_REPOSITORY";

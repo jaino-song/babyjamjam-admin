@@ -37,9 +37,9 @@ export default function AuthCallbackPage() {
 
                 console.log("[Auth Callback] Token exchange successful");
 
-                if (result.requiresOrgSelection) {
-                    console.log("[Auth Callback] Multiple organizations detected, redirecting to selection");
-                    router.replace("/select-organization");
+                if (result.requiresBranchSelection) {
+                    console.log("[Auth Callback] Multiple branches detected, redirecting to selection");
+                    router.replace("/select-branch");
                 } else {
                     console.log("[Auth Callback] Redirecting to dashboard");
                     router.replace("/dashboard");

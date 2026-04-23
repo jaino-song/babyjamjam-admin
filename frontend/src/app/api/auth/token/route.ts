@@ -2,13 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
-import { jwtDecode } from "jwt-decode";
-
-interface TokenPayload {
-    sub: string;
-    role: string | null;
-    type: "access" | "refresh";
-}
+import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -19,6 +13,7 @@ interface APIErrorResponse {
 interface TokenExchangeSuccessResponse {
     accessToken: string;
     refreshToken: string;
+    requiresBranchSelection?: boolean;
     requiresOrgSelection?: boolean;
 }
 
@@ -46,9 +41,6 @@ type TokenExchangeResponse =
 
 const isProduction = process.env.NODE_ENV === "production";
 const isSecureCookie = isProduction || process.env.VERCEL_ENV === "preview";
-const EXTENDED_SESSION_ROLES = ["owner", "creator"] as const;
-const EXTENDED_SESSION_MAX_AGE = 30 * 24 * 60 * 60;
-const DEFAULT_SESSION_MAX_AGE = 3 * 24 * 60 * 60;
 const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
 const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
 
@@ -91,8 +83,7 @@ export async function POST(request: NextRequest) {
             });
 
             cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
-            cookieStore.delete("auth_token");
-            cookieStore.delete("refresh_token");
+            clearAuthSessionCookies(cookieStore);
 
             return NextResponse.json({ onboardingRequired: true, onboardingRoute: data.onboardingRoute }, { status: 200 });
         }
@@ -107,43 +98,23 @@ export async function POST(request: NextRequest) {
             });
 
             cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
-            cookieStore.delete("auth_token");
-            cookieStore.delete("refresh_token");
+            clearAuthSessionCookies(cookieStore);
 
             return NextResponse.json({ onboardingRequired: true, onboardingRoute: data.onboardingRoute }, { status: 200 });
         }
 
-        let role = "user";
-        try {
-            const decoded = jwtDecode<TokenPayload>(data.accessToken);
-            role = decoded.role || "user";
-        }
-        catch {
-            console.error("Failed to decode token");
-        }
-
-        cookieStore.set("auth_token", data.accessToken, {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: isSecureCookie ? "none" : "lax",
-            path: "/",
-            maxAge: EXTENDED_SESSION_ROLES.includes(role as (typeof EXTENDED_SESSION_ROLES)[number])
-                ? EXTENDED_SESSION_MAX_AGE
-                : DEFAULT_SESSION_MAX_AGE,
-        });
-
-        cookieStore.set("refresh_token", data.refreshToken, {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: isSecureCookie ? "none" : "lax",
-            path: "/",
-            maxAge: 7 * 24 * 60 * 60,
+        setAuthSessionCookies(cookieStore, {
+            accessToken: data.accessToken,
+            refreshToken: data.refreshToken,
         });
 
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
         cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
 
-        return NextResponse.json({ message: "Success", requiresOrgSelection: data.requiresOrgSelection || false }, { status: 200 });
+        return NextResponse.json({
+            message: "Success",
+            requiresBranchSelection: Boolean(data.requiresBranchSelection || data.requiresOrgSelection),
+        }, { status: 200 });
     } catch (error) {
         console.error("Token Exchange Error:", error);
         console.error("Backend URL:", serverAPIClient.defaults.baseURL);

@@ -25,10 +25,10 @@ export class EformsignDocController {
      * Called by frontend after document is created in eformsign
      */
     @Post()
-    async create(@CurrentTenant() tenant: { organizationId?: string }, @Body() dto: CreateEformsignDocLocalDto) {
+    async create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateEformsignDocLocalDto) {
         this.logger.log(`[POST /eformsign-docs] Received request to create doc record: documentId=${dto.documentId}, clientId=${dto.clientId}`);
         try {
-            const result = await this.eformsignDocService.create(tenant.organizationId ?? "", {
+            const result = await this.eformsignDocService.create(tenant.branchId ?? "", {
                 documentId: dto.documentId,
                 clientId: dto.clientId,
                 statusType: dto.statusType,
@@ -55,8 +55,8 @@ export class EformsignDocController {
      * List all stored eformsign documents from local DB
      */
     @Get()
-    findAll(@CurrentTenant() tenant: { organizationId?: string }) {
-        return this.eformsignDocService.findAll(tenant.organizationId ?? "");
+    findAll(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.eformsignDocService.findAll(tenant.branchId ?? "");
     }
 
     /**
@@ -64,8 +64,8 @@ export class EformsignDocController {
      * Find a stored eformsign document by its DB id
      */
     @Get("id")
-    findById(@CurrentTenant() tenant: { organizationId?: string }, @Query("id") id: string) {
-        return this.eformsignDocService.findById(tenant.organizationId ?? "", Number(id));
+    findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
+        return this.eformsignDocService.findById(tenant.branchId ?? "", Number(id));
     }
 
     /**
@@ -74,10 +74,10 @@ export class EformsignDocController {
      */
     @Get("document-id")
     findByDocumentId(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("documentId") documentId: string
     ) {
-        return this.eformsignDocService.findByDocumentId(tenant.organizationId ?? "", documentId);
+        return this.eformsignDocService.findByDocumentId(tenant.branchId ?? "", documentId);
     }
 
     /**
@@ -86,10 +86,10 @@ export class EformsignDocController {
      */
     @Get("client")
     findByClientId(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("clientId") clientId: string
     ) {
-        return this.eformsignDocService.findByClientId(tenant.organizationId ?? "", Number(clientId));
+        return this.eformsignDocService.findByClientId(tenant.branchId ?? "", Number(clientId));
     }
 
     // ============ External API Endpoints ============

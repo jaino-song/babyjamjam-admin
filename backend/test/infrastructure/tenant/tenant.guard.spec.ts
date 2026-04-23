@@ -16,7 +16,7 @@ describe('TenantGuard', () => {
 
     beforeEach(() => {
         mockPrismaService = {
-            user_organization: {
+            user_branch: {
                 findFirst: jest.fn(),
             },
         };
@@ -28,19 +28,19 @@ describe('TenantGuard', () => {
     });
 
     describe('canActivate', () => {
-        describe('given user with valid organizationid and membership', () => {
+        describe('given user with valid branchid and membership', () => {
             it('should return true and populate tenantcontext', async () => {
                 // #given
                 const user = {
                     userId: 'user-123',
-                    organizationId: 'org-123',
+                    branchId: 'org-123',
                     role: 'user',
-                    orgRole: 'admin',
+                    branchRole: 'admin',
                 };
                 const mockContext = createMockContext(user);
-                mockPrismaService.user_organization.findFirst.mockResolvedValue({
+                mockPrismaService.user_branch.findFirst.mockResolvedValue({
                     user_id: user.userId,
-                    organization_id: user.organizationId,
+                    branch_id: user.branchId,
                     role: 'admin',
                 });
 
@@ -50,11 +50,11 @@ describe('TenantGuard', () => {
                 // #then
                 expect(result).toBe(true);
                 expect(tenantContext.userId).toBe(user.userId);
-                expect(tenantContext.organizationId).toBe(user.organizationId);
+                expect(tenantContext.branchId).toBe(user.branchId);
             });
         });
 
-        describe('given user without organizationid', () => {
+        describe('given user without branchid', () => {
             it('should throw forbiddenexception', async () => {
                 // #given
                 const user = { userId: 'user-123', role: 'user' };
@@ -66,16 +66,16 @@ describe('TenantGuard', () => {
             });
         });
 
-        describe('given user not member of organization', () => {
+        describe('given user not member of branch', () => {
             it('should throw forbiddenexception', async () => {
                 // #given
                 const user = {
                     userId: 'user-123',
-                    organizationId: 'org-123',
+                    branchId: 'org-123',
                     role: 'user',
                 };
                 const mockContext = createMockContext(user);
-                mockPrismaService.user_organization.findFirst.mockResolvedValue(null);
+                mockPrismaService.user_branch.findFirst.mockResolvedValue(null);
 
                 // #when & #then
                 await expect(guard.canActivate(mockContext as any))

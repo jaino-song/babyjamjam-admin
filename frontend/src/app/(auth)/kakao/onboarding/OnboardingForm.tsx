@@ -24,7 +24,7 @@ interface OnboardingFormProps {
     profileImage?: string;
     phone?: string;
     birthDate?: string;
-    organizationId?: string;
+    branchId?: string;
     role?: KakaoOnboardingFormData["role"];
     mode?: "kakao" | "account";
     title?: string;
@@ -80,7 +80,7 @@ export function OnboardingForm({
     name,
     phone,
     birthDate,
-    organizationId,
+    branchId,
     role,
     mode = "kakao",
     title = "카카오 가입 마무리",
@@ -90,22 +90,22 @@ export function OnboardingForm({
     const [formData, setFormData] = useState<Partial<KakaoOnboardingFormData>>({
         phone: phone ?? "",
         birthDate: birthDate ?? "",
-        organizationId: organizationId ?? "",
+        branchId: branchId ?? "",
         role: role ?? undefined,
     });
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [serverError, setServerError] = useState<string | null>(null);
-    const [organizations, setOrganizations] = useState<{ value: string; label: string }[]>([]);
+    const [branches, setBranches] = useState<{ value: string; label: string }[]>([]);
     const [isLoadingOrgs, setIsLoadingOrgs] = useState(true);
     const [isPending, startTransition] = useTransition();
 
     useEffect(() => {
-        authApi.getOrganizations()
+        authApi.getBranches()
             .then((orgs) => {
-                setOrganizations(orgs.map((org) => ({ value: org.id, label: org.name })));
+                setBranches(orgs.map((org) => ({ value: org.id, label: org.name })));
             })
             .catch(() => {
-                setOrganizations([]);
+                setBranches([]);
             })
             .finally(() => setIsLoadingOrgs(false));
     }, []);
@@ -141,8 +141,8 @@ export function OnboardingForm({
                 return;
             }
 
-            if (response.requiresOrgSelection) {
-                router.replace("/select-organization");
+            if (response.requiresBranchSelection) {
+                router.replace("/select-branch");
                 return;
             }
 
@@ -245,13 +245,13 @@ export function OnboardingForm({
                 />
                 <SelectField
                     label="지점명"
-                    value={formData.organizationId}
-                    onValueChange={handleSelectChange("organizationId")}
-                    options={organizations}
+                    value={formData.branchId}
+                    onValueChange={handleSelectChange("branchId")}
+                    options={branches}
                     placeholder={isLoadingOrgs ? "지점 목록 불러오는 중..." : "지점을 선택해주세요"}
-                    error={errors.organizationId}
+                    error={errors.branchId}
                     disabled={isPending || isLoadingOrgs}
-                    data-component="auth-kakao-onboarding-organization-field"
+                    data-component="auth-kakao-onboarding-branch-field"
                 />
                 <SelectField
                     label="역할"

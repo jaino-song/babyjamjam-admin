@@ -9,7 +9,7 @@ export class ListMessagesUsecase {
         private readonly messageRepository: IMessageRepository,
     ) {}
 
-    execute(organizationid: string): Promise<MessageEntity[]> {
-        return this.messageRepository.findAll(organizationid);
+    execute(branchid: string): Promise<MessageEntity[]> {
+        return this.messageRepository.findAll(branchid);
     }
 }

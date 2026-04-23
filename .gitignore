@@ -17,6 +17,7 @@ frontend/playwright-report/
 # next.js
 **/.next/
 out/
+frontend/public/vendor/rhwp/rhwp_bg.wasm
 
 # production
 build/

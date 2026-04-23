@@ -35,12 +35,12 @@ export class SbAlimtalkLogRepository implements IAlimtalkLogRepository {
         return rows.map(AlimtalkLogMapper.toDomain);
     }
 
-    async findRecentByOrganization(
-        organizationId: string,
+    async findRecentByBranch(
+        branchId: string,
         limit = 200,
     ): Promise<AlimtalkLogEntity[]> {
         const rows = await this.prisma.alimtalk_log.findMany({
-            where: { organizationId },
+            where: { branchId },
             orderBy: { createdAt: "desc" },
             take: limit,
         });

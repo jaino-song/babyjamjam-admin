@@ -10,12 +10,12 @@ export class CreateAreaTemplateUsecase {
     ) {}
 
     execute(
-        organizationid: string,
+        branchid: string,
         area: string,
         templateId: string,
         templateName: string | null = null
     ): Promise<AreaTemplateEntity> {
         const entity = AreaTemplateEntity.create(area, templateId, templateName);
-        return this.areaTemplateRepository.create(organizationid, entity);
+        return this.areaTemplateRepository.create(branchid, entity);
     }
 }

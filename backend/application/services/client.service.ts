@@ -15,6 +15,8 @@ import { AlimtalkService } from "./alimtalk.service";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
+const ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS = 2;
+const ACTION_REQUIRED_SEND_THRESHOLD_DAYS = 6;
 
 // Document status type for eformsign documents
 // Maps to eformsign_doc.statusType values:
@@ -62,6 +64,27 @@ export interface PaginatedClientWithEmployees {
     totalPages: number;
 }
 
+export type ActionRequiredReason = "교체 요청" | "서명 필요" | "발송 필요";
+
+export interface ClientActionRequiredAlert {
+    id: number;
+    name: string;
+    createdAt: Date | null;
+    reason: ActionRequiredReason;
+    priority: 1 | 2 | 3;
+}
+
+export interface DashboardOverview {
+    stats: {
+        activeClients: number;
+        contractsNotSent: number;
+        contractsPendingSignature: number;
+        upcomingThisMonth: number;
+        upcomingNextMonth: number;
+    };
+    clients: PaginatedClientWithEmployees;
+}
+
 @Injectable()
 export class ClientService {
     private readonly logger = new Logger(ClientService.name);
@@ -80,7 +103,7 @@ export class ClientService {
         @Optional() private readonly triggerService?: AlimtalkTriggerService,
     ) {}
 
-    async create(organizationid: string, params: {
+    async create(branchid: string, params: {
         name: string;
         primaryEmployeeId?: number | null;
         secondaryEmployeeId?: number | null;
@@ -106,7 +129,7 @@ export class ClientService {
         const dueDate = params.dueDate ? new Date(params.dueDate) : null;
 
         // First create the client
-        const client = await this.createClientUsecase.execute(organizationid, {
+        const client = await this.createClientUsecase.execute(branchid, {
             name: params.name,
             address: params.address ?? null,
             phone: params.phone ?? null,
@@ -132,7 +155,7 @@ export class ClientService {
             const schedule = await this.prismaService.employee_schedule.create({
                 data: {
                     clientId: client.id,
-                    organizationId: organizationid,
+                    branchId: branchid,
                     primaryEmployeeId: params.primaryEmployeeId,
                     secondaryEmployeeId: params.secondaryEmployeeId ?? null,
                     workAddress: params.address ?? "",
@@ -148,13 +171,13 @@ export class ClientService {
             this.logger.error(`Failed to send client created alimtalk: ${error}`);
         });
         if (this.triggerService) {
-            this.triggerService.syncClientRulesForClient(organizationid, client.id, true).catch((error) => {
+            this.triggerService.syncClientRulesForClient(branchid, client.id, true).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
             });
         }
         if (createdScheduleId !== null) {
             this.triggerService
-                ?.syncEmployeeAssignmentRulesForSchedule(organizationid, createdScheduleId, true)
+                ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
                 });
@@ -163,19 +186,19 @@ export class ClientService {
         return client;
     }
 
-    async findAll(organizationid: string): Promise<ClientWithEmployees[]> {
-        const clients = await this.listClientsUsecase.execute(organizationid);
+    async findAll(branchid: string): Promise<ClientWithEmployees[]> {
+        const clients = await this.listClientsUsecase.execute(branchid);
         return this.attachEmployeesToClients(clients);
     }
 
     async findAllPaginated(
-        organizationid: string,
+        branchid: string,
         page: number,
         limit: number,
         search?: string
     ): Promise<PaginatedClientWithEmployees> {
         const result = await this.listClientsPaginatedUsecase.execute(
-            organizationid,
+            branchid,
             page,
             limit,
             search
@@ -190,39 +213,39 @@ export class ClientService {
         };
     }
 
-    async findById(organizationid: string, id: number): Promise<ClientWithEmployees | null> {
-        const client = await this.findClientByIdUsecase.execute(organizationid, id);
+    async findById(branchid: string, id: number): Promise<ClientWithEmployees | null> {
+        const client = await this.findClientByIdUsecase.execute(branchid, id);
         if (!client) return null;
 
         const [withEmployees] = await this.attachEmployeesToClients([client]);
         return withEmployees ?? null;
     }
 
-    async findByFilter(organizationid: string, filter: string): Promise<ClientWithEmployees[]> {
+    async findByFilter(branchid: string, filter: string): Promise<ClientWithEmployees[]> {
         let clients: ClientEntity[];
 
         switch (filter) {
             case 'starting-soon':
                 clients = await this.clientRepository.findStartingWithinDays(
-                    organizationid,
+                    branchid,
                     FILTER_DAYS_THRESHOLD
                 );
                 break;
             case 'ending-soon':
                 clients = await this.clientRepository.findEndingWithinDays(
-                    organizationid,
+                    branchid,
                     FILTER_DAYS_THRESHOLD
                 );
                 break;
             case 'incomplete-contracts':
                 clients = await this.clientRepository.findWithIncompleteContractsStartingWithinDays(
-                    organizationid,
+                    branchid,
                     FILTER_DAYS_THRESHOLD
                 );
                 break;
             case 'no-contract':
                 clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(
-                    organizationid,
+                    branchid,
                     FILTER_DAYS_THRESHOLD
                 );
                 break;
@@ -364,7 +387,7 @@ export class ClientService {
         }
     }
 
-    async update(organizationid: string, id: number, params: {
+    async update(branchid: string, id: number, params: {
         name?: string;
         primaryEmployeeId?: number;
         secondaryEmployeeId?: number | null;
@@ -386,7 +409,7 @@ export class ClientService {
         eDocId?: string | null;
     }): Promise<ClientEntity> {
         // Get existing client
-        const existingClient = await this.findClientByIdUsecase.execute(organizationid, id);
+        const existingClient = await this.findClientByIdUsecase.execute(branchid, id);
         if (!existingClient) {
             throw new Error(`Client with id ${id} not found`);
         }
@@ -401,7 +424,7 @@ export class ClientService {
         if (employeeChanged) {
             // Get current schedule for this client
             const currentSchedule = await this.prismaService.employee_schedule.findFirst({
-                where: { clientId: id, organizationId: organizationid, replaced: false },
+                where: { clientId: id, branchId: branchid, replaced: false },
                 orderBy: { id: 'desc' },
             });
 
@@ -433,7 +456,7 @@ export class ClientService {
                 const newSchedule = await this.prismaService.employee_schedule.create({
                     data: {
                         clientId: id,
-                        organizationId: organizationid,
+                        branchId: branchid,
                         primaryEmployeeId: newPrimaryEmployeeId,
                         secondaryEmployeeId: newSecondaryEmployeeId,
                         workAddress: params.address ?? existingClient.address ?? "",
@@ -446,7 +469,7 @@ export class ClientService {
             }
         }
 
-        const updatedClient = await this.updateClientUsecase.execute(organizationid, id, {
+        const updatedClient = await this.updateClientUsecase.execute(branchid, id, {
             name: params.name,
             address: params.address,
             phone: params.phone,
@@ -466,13 +489,13 @@ export class ClientService {
             eDocId: params.eDocId,
         });
         if (this.triggerService) {
-            this.triggerService.syncClientRulesForClient(organizationid, id, false).catch((error) => {
+            this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
             });
         }
         if (createdScheduleId !== null) {
             this.triggerService
-                ?.syncEmployeeAssignmentRulesForSchedule(organizationid, createdScheduleId, true)
+                ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
                 });
@@ -487,11 +510,11 @@ export class ClientService {
      * @param reason - Optional termination reason for logging
      */
     async terminateService(
-        organizationid: string,
+        branchid: string,
         clientId: number,
         reason?: string
     ): Promise<ClientEntity> {
-        const client = await this.findClientByIdUsecase.execute(organizationid, clientId);
+        const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
             throw new NotFoundException(`Client with id ${clientId} not found`);
         }
@@ -502,7 +525,7 @@ export class ClientService {
         );
 
         // Update client with terminated status and set endDate to today
-        const updatedClient = await this.updateClientUsecase.execute(organizationid, clientId, {
+        const updatedClient = await this.updateClientUsecase.execute(branchid, clientId, {
             serviceStatus: SERVICE_STATUS.TERMINATED,
             endDate: new Date(),
         });
@@ -524,12 +547,12 @@ export class ClientService {
      * @param newSecondaryEmployeeId - Optional new secondary employee
      */
     async requestReplacement(
-        organizationid: string,
+        branchid: string,
         clientId: number,
         newPrimaryEmployeeId: number,
         newSecondaryEmployeeId?: number | null,
     ): Promise<ClientEntity> {
-        const client = await this.findClientByIdUsecase.execute(organizationid, clientId);
+        const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
             throw new NotFoundException(`Client with id ${clientId} not found`);
         }
@@ -540,13 +563,13 @@ export class ClientService {
         );
 
         // Update client status to replacement_requested
-        const updatedClient = await this.updateClientUsecase.execute(organizationid, clientId, {
+        const updatedClient = await this.updateClientUsecase.execute(branchid, clientId, {
             serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED,
         });
 
         // Get current schedule and mark as replaced
         const currentSchedule = await this.prismaService.employee_schedule.findFirst({
-            where: { clientId: clientId, organizationId: organizationid, replaced: false },
+            where: { clientId: clientId, branchId: branchid, replaced: false },
             orderBy: { id: "desc" },
         });
 
@@ -561,7 +584,7 @@ export class ClientService {
         const replacementSchedule = await this.prismaService.employee_schedule.create({
             data: {
                 clientId: clientId,
-                organizationId: organizationid,
+                branchId: branchid,
                 primaryEmployeeId: newPrimaryEmployeeId,
                 secondaryEmployeeId: newSecondaryEmployeeId ?? null,
                 workAddress: client.address ?? "",
@@ -571,7 +594,7 @@ export class ClientService {
             },
         });
         this.triggerService
-            ?.syncEmployeeAssignmentRulesForSchedule(organizationid, replacementSchedule.id, true)
+            ?.syncEmployeeAssignmentRulesForSchedule(branchid, replacementSchedule.id, true)
             ?.catch((error) => {
                 this.logger.error(`Failed to sync replacement assignment triggers: ${error}`);
             });
@@ -584,8 +607,8 @@ export class ClientService {
      * Call this after the replacement has been processed
      * @param clientId - The client ID
      */
-    async completeReplacement(organizationid: string, clientId: number): Promise<ClientEntity> {
-        const client = await this.findClientByIdUsecase.execute(organizationid, clientId);
+    async completeReplacement(branchid: string, clientId: number): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
             throw new NotFoundException(`Client with id ${clientId} not found`);
         }
@@ -606,16 +629,16 @@ export class ClientService {
             client.endDate,
         );
 
-        return this.updateClientUsecase.execute(organizationid, clientId, {
+        return this.updateClientUsecase.execute(branchid, clientId, {
             serviceStatus: computedStatus,
         });
     }
 
-    delete(organizationid: string, id: number): Promise<void> {
-        return this.deleteClientUsecase.execute(organizationid, id);
+    delete(branchid: string, id: number): Promise<void> {
+        return this.deleteClientUsecase.execute(branchid, id);
     }
 
-    async getStats(organizationid: string): Promise<{
+    async getStats(branchid: string): Promise<{
         activeClients: number;
         contractsNotSent: number;
         contractsPendingSignature: number;
@@ -631,38 +654,169 @@ export class ClientService {
         const [activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth] = 
             await Promise.all([
                 this.prismaService.client.count({
-                    where: { serviceStatus: SERVICE_STATUS.ACTIVE, organizationId: organizationid },
+                    where: { serviceStatus: SERVICE_STATUS.ACTIVE, branchId: branchid },
                 }),
                 this.prismaService.client.count({
                     where: {
                         eDocId: null,
                         serviceStatus: SERVICE_STATUS.WAITING,
-                        organizationId: organizationid,
+                        branchId: branchid,
                     },
                 }),
                 this.prismaService.client.count({
                     where: {
                         eDocId: { not: null },
                         eformsignDocByEDocId: { statusType: { not: '050' } },
-                        organizationId: organizationid,
+                        branchId: branchid,
                     },
                 }),
                 this.prismaService.client.count({
                     where: {
                         serviceStatus: SERVICE_STATUS.WAITING,
                         startDate: { gte: thisMonthStart, lte: thisMonthEnd },
-                        organizationId: organizationid,
+                        branchId: branchid,
                     },
                 }),
                 this.prismaService.client.count({
                     where: {
                         serviceStatus: SERVICE_STATUS.WAITING,
                         startDate: { gte: nextMonthStart, lte: nextMonthEnd },
-                        organizationId: organizationid,
+                        branchId: branchid,
                     },
                 }),
             ]);
 
         return { activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth };
+    }
+
+    async getDashboardOverview(
+        branchid: string,
+        limit = 50,
+    ): Promise<DashboardOverview> {
+        const [stats, clients] = await Promise.all([
+            this.getStats(branchid),
+            this.findAllPaginated(branchid, 1, limit),
+        ]);
+
+        return { stats, clients };
+    }
+
+    async getActionRequiredAlerts(
+        branchid: string,
+        limit = 3,
+    ): Promise<ClientActionRequiredAlert[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const sendThresholdDate = new Date(today);
+        sendThresholdDate.setDate(today.getDate() + ACTION_REQUIRED_SEND_THRESHOLD_DAYS);
+        sendThresholdDate.setHours(23, 59, 59, 999);
+
+        const signatureThresholdDate = new Date(today);
+        signatureThresholdDate.setDate(today.getDate() + ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS);
+        signatureThresholdDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                branchId: branchid,
+                OR: [
+                    { serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED },
+                    {
+                        eDocId: null,
+                        OR: [
+                            { serviceStatus: null },
+                            { serviceStatus: { notIn: [SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
+                        ],
+                        startDate: { lte: sendThresholdDate },
+                    },
+                    {
+                        eDocId: { not: null },
+                        OR: [
+                            { serviceStatus: null },
+                            { serviceStatus: { notIn: [SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
+                        ],
+                        startDate: { lte: signatureThresholdDate },
+                        eformsignDocByEDocId: { statusType: { not: "050" } },
+                    },
+                ],
+            },
+            select: {
+                id: true,
+                name: true,
+                createdAt: true,
+                startDate: true,
+                endDate: true,
+                serviceStatus: true,
+                eDocId: true,
+                eformsignDocByEDocId: {
+                    select: {
+                        statusType: true,
+                    },
+                },
+            },
+            orderBy: { createdAt: "desc" },
+            take: Math.max(limit * 4, 12),
+        });
+
+        return clients
+            .map((client): ClientActionRequiredAlert | null => {
+                const eformsignDoc = client.eformsignDocByEDocId as { statusType: string | null } | null | undefined;
+                const serviceStatus = computeServiceStatus(
+                    client.serviceStatus,
+                    client.startDate,
+                    client.endDate,
+                );
+
+                if (serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED) {
+                    return {
+                        id: client.id,
+                        name: client.name,
+                        createdAt: client.createdAt ?? null,
+                        reason: "교체 요청",
+                        priority: 1,
+                    };
+                }
+
+                if (serviceStatus === SERVICE_STATUS.COMPLETED || serviceStatus === SERVICE_STATUS.TERMINATED) {
+                    return null;
+                }
+
+                if (!client.startDate) {
+                    return null;
+                }
+
+                const start = new Date(client.startDate);
+                start.setHours(0, 0, 0, 0);
+                const daysUntilStart = Math.round((start.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+                if (!client.eDocId && daysUntilStart <= ACTION_REQUIRED_SEND_THRESHOLD_DAYS) {
+                    return {
+                        id: client.id,
+                        name: client.name,
+                        createdAt: client.createdAt ?? null,
+                        reason: "발송 필요",
+                        priority: 3,
+                    };
+                }
+
+                if (
+                    client.eDocId &&
+                    eformsignDoc?.statusType !== "050" &&
+                    daysUntilStart <= ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS
+                ) {
+                    return {
+                        id: client.id,
+                        name: client.name,
+                        createdAt: client.createdAt ?? null,
+                        reason: "서명 필요",
+                        priority: 2,
+                    };
+                }
+
+                return null;
+            })
+            .filter((alert): alert is ClientActionRequiredAlert => alert !== null)
+            .sort((a, b) => a.priority - b.priority)
+            .slice(0, limit);
     }
 }

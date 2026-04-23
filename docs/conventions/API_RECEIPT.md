@@ -15,6 +15,7 @@ This document supersedes the old `frontend/API_RECEIPT.md` and `mobile/API_RECEI
 - `Public`: no controller guard
 - `JWT`: `JwtGuard`
 - `JWT + Tenant`: `JwtGuard` + `TenantGuard`
+- `JWT + Owner`: `JwtGuard` + `OwnerGuard` (owner role only)
 - `JWT + Owner/Admin`: `JwtGuard` + owner/admin guard
 - `Webhook`: bearer-token style webhook guard
 
@@ -24,12 +25,12 @@ This document supersedes the old `frontend/API_RECEIPT.md` and `mobile/API_RECEI
 | ------ | ---- | ---- | ----- |
 | `GET` | `/auth/kakao` | `Public` | Start Kakao OAuth redirect flow. |
 | `GET` | `/auth/kakao/callback` | `Public` | Kakao callback; redirects frontend with auth code or onboarding code. |
-| `GET` | `/auth/me` | `JWT` | Current user profile with `organizationName`. |
+| `GET` | `/auth/me` | `JWT` | Current user profile with `branchName`. |
 | `POST` | `/auth/token` | `Public` | Exchange auth code for access/refresh tokens. |
 | `GET` | `/auth/kakao/pending-signup` | `Public` | Get pending Kakao signup payload via header or query token. |
-| `POST` | `/auth/kakao/complete-signup` | `Public` | Complete Kakao signup onboarding (`phone`, `birthDate`, `organizationId`, `role`). |
+| `POST` | `/auth/kakao/complete-signup` | `Public` | Complete Kakao signup onboarding (`phone`, `birthDate`, `branchId`, `role`). |
 | `GET` | `/auth/onboarding/pending` | `Public` | Get pending account-completion onboarding payload. |
-| `POST` | `/auth/onboarding/complete` | `Public` | Complete existing-account onboarding (`phone`, `birthDate`, `organizationId`, `role`). |
+| `POST` | `/auth/onboarding/complete` | `Public` | Complete existing-account onboarding (`phone`, `birthDate`, `branchId`, `role`). |
 | `POST` | `/auth/refresh-token` | `Public` | Refresh JWT pair. |
 | `POST` | `/auth/register` | `Public` | Rate-limited email registration. |
 | `GET` | `/auth/check-email` | `Public` | Rate-limited email existence/linkable check. |
@@ -40,17 +41,17 @@ This document supersedes the old `frontend/API_RECEIPT.md` and `mobile/API_RECEI
 | `POST` | `/auth/resend-verification` | `Public` | Rate-limited resend verification email. |
 | `POST` | `/auth/link-password` | `JWT` | Link password to an OAuth account. |
 | `GET` | `/auth/kakao/link` | `JWT` | Start Kakao account-link flow for logged-in user. |
-| `GET` | `/auth/organizations` | `JWT` | List organizations available to current user. |
-| `GET` | `/auth/organizations/all` | `Public` | List all active organizations for onboarding/registration. |
-| `POST` | `/auth/select-organization` | `JWT` | Select organization and reissue auth cookies/tokens. |
-| `POST` | `/auth/switch-organization` | `JWT` | Switch current organization and reissue auth cookies/tokens. |
+| `GET` | `/auth/branches` | `JWT` | List branches available to current user. |
+| `GET` | `/auth/branches/all` | `Public` | List all active branches for onboarding/registration. |
+| `POST` | `/auth/select-branch` | `JWT` | Select branch and reissue auth cookies/tokens. |
+| `POST` | `/auth/switch-branch` | `JWT` | Switch current branch and reissue auth cookies/tokens. |
 | `POST` | `/auth/logout` | `Public` | Clear auth cookies. |
 
 ## Users (`/users`)
 
 | Method | Path | Auth | Notes |
 | ------ | ---- | ---- | ----- |
-| `GET` | `/users` | `JWT + Owner/Admin` | User directory. `owner` sees all users, `admin` is organization-scoped. |
+| `GET` | `/users` | `JWT + Owner/Admin` | User directory. `owner` sees all users, `admin` is branch-scoped. |
 | `POST` | `/users` | `Public` | Create Kakao-based user. |
 | `GET` | `/users/kakao?kakaoId=...` | `Public` | Find user by Kakao ID. |
 | `GET` | `/users/id?id=...` | `Public` | Find user by internal UUID. |
@@ -104,7 +105,7 @@ This document supersedes the old `frontend/API_RECEIPT.md` and `mobile/API_RECEI
 
 | Method | Path | Auth | Notes |
 | ------ | ---- | ---- | ----- |
-| `GET` | `/messages` | `JWT + Tenant` | List organization messages. |
+| `GET` | `/messages` | `JWT + Tenant` | List branch messages. |
 | `POST` | `/messages` | `JWT + Tenant` | Create message. |
 | `GET` | `/messages/id?id=...` | `JWT + Tenant` | Get message by ID. |
 | `PATCH` | `/messages?id=...` | `JWT + Tenant` | Update title/text. |
@@ -203,7 +204,7 @@ This document supersedes the old `frontend/API_RECEIPT.md` and `mobile/API_RECEI
 | `POST` | `/documents` | `JWT + Tenant` | Create document metadata directly. |
 | `GET` | `/documents` | `JWT + Tenant` | List documents; optional `categoryId`. |
 | `GET` | `/documents/:id` | `JWT + Tenant` | Get document by ID. |
-| `GET` | `/documents/org/:orgid` | `JWT + Tenant` | List by org ID field. |
+| `GET` | `/documents/org/:branchid` | `JWT + Tenant` | List by org ID field. |
 | `GET` | `/documents/category/:categoryId` | `JWT + Tenant` | List by category. |
 | `PUT` | `/documents/:id` | `JWT + Tenant` | Update metadata. |
 | `DELETE` | `/documents/:id` | `JWT + Tenant` | Delete metadata and file storage object. |
@@ -283,8 +284,10 @@ This document supersedes the old `frontend/API_RECEIPT.md` and `mobile/API_RECEI
 | `PUT` | `/settings/alimtalk-provider` | `JWT` | Update alimtalk provider. |
 | `GET` | `/settings/notification-preferences` | `JWT` | Current user's notification preferences. |
 | `PUT` | `/settings/notification-preferences` | `JWT` | Update current user's notification preferences. |
-| `GET` | `/settings/message-sender-approval` | `JWT + Tenant` | Sender approval state for current organization. |
-| `POST` | `/settings/message-sender-approval/request` | `JWT + Tenant` | Request sender-phone approval for current organization. |
+| `GET` | `/settings/ribbon-config` | `Public` | Homepage ribbon banner configuration (read by main site). |
+| `PUT` | `/settings/ribbon-config` | `JWT + Owner` | Update ribbon banner configuration. Body: `{ enabled, message, backgroundColor, textColor, linkText, linkHref, linkColor }`. |
+| `GET` | `/settings/message-sender-approval` | `JWT + Tenant` | Sender approval state for current branch. |
+| `POST` | `/settings/message-sender-approval/request` | `JWT + Tenant` | Request sender-phone approval for current branch. |
 
 ## System Templates (`/system-templates`)
 

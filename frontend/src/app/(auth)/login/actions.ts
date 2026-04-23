@@ -2,14 +2,8 @@
 
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
-import { AxiosError } from "axios";
-import { jwtDecode } from "jwt-decode";
-
-interface TokenPayload {
-    sub: string;
-    role: string | null;
-    type: "access" | "refresh";
-}
+import axios, { AxiosError } from "axios";
+import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -20,7 +14,7 @@ interface APIErrorResponse {
 interface LoginResult {
     success: boolean;
     error?: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
     emailVerificationRequired?: boolean;
     onboardingRequired?: boolean;
     onboardingRoute?: "/onboarding";
@@ -30,6 +24,7 @@ interface LoginSuccessResponse {
     success: true;
     accessToken: string;
     refreshToken: string;
+    requiresBranchSelection?: boolean;
     requiresOrgSelection?: boolean;
 }
 
@@ -47,9 +42,26 @@ type LoginResponsePayload = LoginSuccessResponse | LoginOnboardingResponse | {
 
 const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
 const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
+const NETWORK_ERROR_CODES = new Set([
+    "ECONNABORTED",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "EHOSTUNREACH",
+    "ENOTFOUND",
+    "ETIMEDOUT",
+    "EAI_AGAIN",
+]);
 
 function isLoginOnboardingResponse(data: LoginResponsePayload): data is LoginOnboardingResponse {
     return typeof data === "object" && !!data && "onboardingRequired" in data && data.onboardingRequired === true;
+}
+
+function isBackendConnectionError(error: AxiosError): boolean {
+    return (
+        !error.response ||
+        error.message === "Network Error" ||
+        (typeof error.code === "string" && NETWORK_ERROR_CODES.has(error.code))
+    );
 }
 
 export async function loginWithEmail(email: string, password: string, autoLogin = true): Promise<LoginResult> {
@@ -82,8 +94,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             });
 
             cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
-            cookieStore.delete("auth_token");
-            cookieStore.delete("refresh_token");
+            clearAuthSessionCookies(cookieStore);
 
             return {
                 success: true,
@@ -94,73 +105,34 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
 
         const loginData = data as LoginSuccessResponse;
 
-        let role = "user";
-        try {
-            const decoded = jwtDecode<TokenPayload>(loginData.accessToken);
-            role = decoded.role || "user";
-        } catch {
-            console.error("[Server Action] Failed to decode token");
-        }
-
-        const authCookieBaseOptions = {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-        } as const;
-
-        if (autoLogin) {
-            cookieStore.set("auth_token", loginData.accessToken, {
-                ...authCookieBaseOptions,
-                maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-            });
-        } else {
-            cookieStore.set("auth_token", loginData.accessToken, authCookieBaseOptions);
-        }
-
-        const refreshCookieBaseOptions = {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-        } as const;
-
-        if (autoLogin) {
-            cookieStore.set("refresh_token", loginData.refreshToken, {
-                ...refreshCookieBaseOptions,
-                maxAge: 7 * 24 * 60 * 60,
-            });
-        } else {
-            cookieStore.set("refresh_token", loginData.refreshToken, refreshCookieBaseOptions);
-        }
-
-        if (autoLogin) {
-            cookieStore.set("auto_login", "1", {
-                ...authCookieBaseOptions,
-                maxAge: 30 * 24 * 60 * 60,
-            });
-        } else {
-            cookieStore.set("auto_login", "0", authCookieBaseOptions);
-        }
+        setAuthSessionCookies(cookieStore, {
+            accessToken: loginData.accessToken,
+            refreshToken: loginData.refreshToken,
+            autoLogin,
+        });
 
         cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
 
-        // Use requiresOrgSelection from backend response
-        return { success: true, requiresOrgSelection: loginData.requiresOrgSelection || false };
+        return {
+            success: true,
+            requiresBranchSelection: Boolean(
+                loginData.requiresBranchSelection || loginData.requiresOrgSelection,
+            ),
+        };
     } catch (error) {
         console.error("[Server Action] Email Login Error:", error);
 
-        if (error instanceof AxiosError) {
-            const axiosError = error as AxiosError<APIErrorResponse>;
+        if (axios.isAxiosError<APIErrorResponse>(error)) {
+            const axiosError = error;
             console.error("[Server Action] Axios Error:", {
                 message: axiosError.message,
                 code: axiosError.code,
                 status: axiosError.response?.status,
             });
 
-            if (axiosError.code === 'ECONNABORTED' || axiosError.message === 'Network Error') {
-                return { success: false, error: "서버에 연결할 수 없습니다. 다시 시도해 주세요." };
+            if (isBackendConnectionError(axiosError)) {
+                return { success: false, error: "로그인 서버에 연결할 수 없습니다. 백엔드 서버를 확인해 주세요." };
             }
 
             return {

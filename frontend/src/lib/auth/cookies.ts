@@ -3,14 +3,22 @@ import { cookies } from "next/headers";
 import { cache } from "react";
 import { jwtDecode } from "jwt-decode";
 import axios from "axios";
+import type { AuthUser } from "@/hooks/useGetAuthUser";
 
 interface TokenPayload {
   sub: string;
   role: string | null;
+  branchId?: string;
+  branchRole?: string;
   organizationId?: string;
   orgRole?: string;
   type: "access" | "refresh";
 }
+
+type CurrentUserResponse = AuthUser & {
+  branchName?: string | null;
+  organizationName?: string | null;
+};
 
 // React cache()를 사용하여 같은 request cycle 내에서 중복 호출 방지
 // Next.js의 Request Memoization은 native fetch에만 적용되므로
@@ -36,7 +44,11 @@ export const getCurrentUser = cache(async () => {
       return null;
     }
 
-    return res.data;
+    const user = res.data as CurrentUserResponse;
+    return {
+      ...user,
+      branchName: user.branchName ?? user.organizationName ?? null,
+    };
   } catch (error: unknown) {
     if (axios.isAxiosError(error)) {
       console.error("[getCurrentUser] Failed to fetch user:", error.message);
@@ -56,10 +68,10 @@ export const getCurrentUser = cache(async () => {
 });
 
 /**
- * Check if user has selected an organization
- * Returns true if organizationId exists in JWT token
+ * Check if user has selected an branch
+ * Returns true if branchId exists in JWT token
  */
-export const hasSelectedOrganization = cache(async (): Promise<boolean> => {
+export const hasSelectedBranch = cache(async (): Promise<boolean> => {
   try {
     const cookieStore = await cookies();
     const authToken = cookieStore.get('auth_token');
@@ -69,7 +81,7 @@ export const hasSelectedOrganization = cache(async (): Promise<boolean> => {
     }
 
     const decoded = jwtDecode<TokenPayload>(authToken.value);
-    return !!decoded.organizationId;
+    return !!(decoded.branchId ?? decoded.organizationId);
   } catch {
     return false;
   }

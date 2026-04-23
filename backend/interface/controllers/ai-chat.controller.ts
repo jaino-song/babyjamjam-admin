@@ -50,7 +50,7 @@ export class AIChatController {
         @Body() dto: ChatStreamDto,
         @Req() req: Request,
         @Res() res: Response,
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
     ): Promise<void> {
         const user = req.user as JwtUser;
         const userId = user.userId;
@@ -66,7 +66,7 @@ export class AIChatController {
                 dto.sessionId,
                 userId,
                 dto.message,
-                tenant.organizationId ?? "",
+                tenant.branchId ?? "",
             );
 
             for await (const chunk of stream) {

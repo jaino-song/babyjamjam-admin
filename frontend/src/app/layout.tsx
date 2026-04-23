@@ -4,15 +4,7 @@ import { QueryProvider } from "@/providers/QueryProvider";
 import localFont from "next/font/local";
 import { LocaleProvider } from "@/providers/LocaleProvider";
 import { getLocale } from "./actions/locale";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { UserProvider } from "@/providers/UserProvider";
-import { NotificationPermissionPrompt } from "@/components/app/notification-permission-prompt";
 import { Toaster } from "@/components/ui/toaster";
-import { MobileBottomNav } from "@/components/app/root/mobile-bottom-nav";
-import { V3Sidebar } from "@/components/app/v3/V3Sidebar";
-import { V3MobileHeader } from "@/components/app/v3/V3MobileHeader";
-import { V3MainContent } from "@/components/app/v3/V3MainContent";
-import { FloatingQuickActions } from "@/components/app/v3/FloatingQuickActions";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",
@@ -52,7 +44,6 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const locale = await getLocale();
-  const user = await getCurrentUser();
 
   return (
     <html lang={locale}>
@@ -61,17 +52,8 @@ export default async function RootLayout({
           <div data-component="app-providers">
             <QueryProvider>
               <LocaleProvider locale={locale}>
-                <UserProvider user={user}>
-                  <NotificationPermissionPrompt />
-                  <V3Sidebar />
-                  <V3MobileHeader />
-                  <V3MainContent>
-                    {children}
-                  </V3MainContent>
-                  <FloatingQuickActions />
-                  <Toaster />
-                  <MobileBottomNav />
-                </UserProvider>
+                {children}
+                <Toaster />
               </LocaleProvider>
             </QueryProvider>
           </div>

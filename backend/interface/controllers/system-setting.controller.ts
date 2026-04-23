@@ -1,11 +1,14 @@
 import { Body, Controller, Get, Post, Put, Request, UseGuards } from "@nestjs/common";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerGuard } from "infrastructure/auth/owner.guard";
 import { SystemSettingService } from "application/services/system-setting.service";
 import {
     UpdateAlimtalkProviderDto,
     AlimtalkProviderResponseDto,
     UpdateNotificationPreferencesDto,
     NotificationPreferencesResponseDto,
+    UpdateRibbonConfigDto,
+    RibbonConfigResponseDto,
 } from "interface/dto/system-setting.dto";
 import {
     MessageSenderApprovalResponseDto,
@@ -71,34 +74,52 @@ export class SystemSettingController {
     @Get("message-sender-approval")
     @UseGuards(TenantGuard)
     async getMessageSenderApproval(
-        @CurrentTenant() tenant: { organizationId?: string; orgRole?: string },
+        @CurrentTenant() tenant: { branchId?: string; branchRole?: string },
     ): Promise<MessageSenderApprovalResponseDto> {
         const state = await this.messageSenderApprovalService.getState(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
         );
         return MessageSenderApprovalResponseDto.from({
             ...state,
-            canRequest: this.messageSenderApprovalService.canRequest(tenant.orgRole),
+            canRequest: this.messageSenderApprovalService.canRequest(tenant.branchRole),
         });
+    }
+
+    @Put("ribbon-config")
+    @UseGuards(OwnerGuard)
+    async updateRibbonConfig(
+        @Body() dto: UpdateRibbonConfigDto
+    ): Promise<RibbonConfigResponseDto> {
+        const entity = await this.systemSettingService.setRibbonConfig({
+            enabled: dto.enabled,
+            message: dto.message,
+            backgroundColor: dto.backgroundColor,
+            textColor: dto.textColor,
+            linkText: dto.linkText ?? "",
+            linkHref: dto.linkHref ?? "",
+            linkColor: dto.linkColor,
+        });
+        const config = JSON.parse(entity.value);
+        return RibbonConfigResponseDto.from(config, entity.updatedAt);
     }
 
     @Post("message-sender-approval/request")
     @UseGuards(TenantGuard)
     async requestMessageSenderApproval(
-        @CurrentTenant() tenant: { organizationId?: string; orgRole?: string },
+        @CurrentTenant() tenant: { branchId?: string; branchRole?: string },
         @Request() request: { user: { userId: string } },
         @Body() dto: RequestMessageSenderApprovalDto,
     ): Promise<MessageSenderApprovalResponseDto> {
         const state = await this.messageSenderApprovalService.requestApproval({
-            organizationId: tenant.organizationId ?? "",
-            orgRole: tenant.orgRole,
+            branchId: tenant.branchId ?? "",
+            branchRole: tenant.branchRole,
             userId: request.user.userId,
             senderPhone: dto.senderPhone,
         });
 
         return MessageSenderApprovalResponseDto.from({
             ...state,
-            canRequest: this.messageSenderApprovalService.canRequest(tenant.orgRole),
+            canRequest: this.messageSenderApprovalService.canRequest(tenant.branchRole),
         });
     }
 }

@@ -8,12 +8,12 @@ export class DeleteEmployeeScheduleUsecase {
         private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
     ) {}
 
-    async execute(organizationid: string, id: number): Promise<void> {
-        const schedule = await this.employeeScheduleRepository.findById(organizationid, id);
+    async execute(branchid: string, id: number): Promise<void> {
+        const schedule = await this.employeeScheduleRepository.findById(branchid, id);
         if (!schedule) {
             throw new NotFoundException(`Employee schedule with id ${id} not found`);
         }
 
-        await this.employeeScheduleRepository.delete(organizationid, id);
+        await this.employeeScheduleRepository.delete(branchid, id);
     }
 }

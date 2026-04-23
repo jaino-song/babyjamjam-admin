@@ -3,13 +3,7 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
-import { jwtDecode } from "jwt-decode";
-
-interface TokenPayload {
-    sub: string;
-    role: string | null;
-    type: "access" | "refresh";
-}
+import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -20,6 +14,7 @@ interface APIErrorResponse {
 interface TokenExchangeSuccessResponse {
     accessToken: string;
     refreshToken: string;
+    requiresBranchSelection?: boolean;
     requiresOrgSelection?: boolean;
 }
 
@@ -61,7 +56,7 @@ export async function exchangeToken(
 ): Promise<{
     success: boolean;
     error?: string;
-    requiresOrgSelection?: boolean;
+    requiresBranchSelection?: boolean;
     onboardingRequired?: boolean;
     onboardingRoute?: "/kakao/onboarding" | "/onboarding";
 }> {
@@ -93,8 +88,7 @@ export async function exchangeToken(
             });
 
             cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
-            cookieStore.delete("auth_token");
-            cookieStore.delete("refresh_token");
+            clearAuthSessionCookies(cookieStore);
 
             return { success: true, onboardingRequired: true, onboardingRoute: data.onboardingRoute };
         }
@@ -109,40 +103,23 @@ export async function exchangeToken(
             });
 
             cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
-            cookieStore.delete("auth_token");
-            cookieStore.delete("refresh_token");
+            clearAuthSessionCookies(cookieStore);
 
             return { success: true, onboardingRequired: true, onboardingRoute: data.onboardingRoute };
         }
 
-        let role = "user";
-        try {
-            const decoded = jwtDecode<TokenPayload>(data.accessToken);
-            role = decoded.role || "user";
-        } catch {
-            console.error("[Server Action] Failed to decode token");
-        }
-
-        cookieStore.set("auth_token", data.accessToken, {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-            maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
-        });
-
-        cookieStore.set("refresh_token", data.refreshToken, {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-            maxAge: 7 * 24 * 60 * 60,
+        setAuthSessionCookies(cookieStore, {
+            accessToken: data.accessToken,
+            refreshToken: data.refreshToken,
         });
 
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
         cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
 
-        return { success: true, requiresOrgSelection: data.requiresOrgSelection || false };
+        return {
+            success: true,
+            requiresBranchSelection: Boolean(data.requiresBranchSelection || data.requiresOrgSelection),
+        };
     } catch (error) {
         console.error("[Server Action] Token Exchange Error:", error);
 

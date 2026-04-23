@@ -12,7 +12,7 @@ ON "alimtalk_log" ("trigger_job_id");
 
 CREATE TABLE IF NOT EXISTS "alimtalk_trigger_rule" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  "organization_id" UUID,
+  "branch_id" UUID,
   "name" TEXT NOT NULL,
   "is_active" BOOLEAN NOT NULL DEFAULT TRUE,
   "event_type" TEXT NOT NULL,
@@ -24,18 +24,18 @@ CREATE TABLE IF NOT EXISTS "alimtalk_trigger_rule" (
   "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_rule_organization"
-ON "alimtalk_trigger_rule" ("organization_id");
+CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_rule_branch"
+ON "alimtalk_trigger_rule" ("branch_id");
 
 CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_rule_active"
-ON "alimtalk_trigger_rule" ("organization_id", "is_active");
+ON "alimtalk_trigger_rule" ("branch_id", "is_active");
 
 CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_rule_event_type"
 ON "alimtalk_trigger_rule" ("event_type");
 
 CREATE TABLE IF NOT EXISTS "alimtalk_trigger_job" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  "organization_id" UUID,
+  "branch_id" UUID,
   "rule_id" TEXT NOT NULL,
   "status" TEXT NOT NULL DEFAULT 'pending',
   "scheduled_for" TIMESTAMPTZ(6) NOT NULL,
@@ -53,8 +53,8 @@ CREATE TABLE IF NOT EXISTS "alimtalk_trigger_job" (
   "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_job_organization"
-ON "alimtalk_trigger_job" ("organization_id");
+CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_job_branch"
+ON "alimtalk_trigger_job" ("branch_id");
 
 CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_job_rule_id"
 ON "alimtalk_trigger_job" ("rule_id");

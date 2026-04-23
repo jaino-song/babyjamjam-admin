@@ -5,7 +5,7 @@ import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 describe("ChangeEmployeeOpenStatusUsecase", () => {
     let usecase: ChangeEmployeeOpenStatusUsecase;
     let mockRepository: MockEmployeeRepository;
-    const organizationId = "org-1";
+    const branchId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockEmployeeRepository();
@@ -23,7 +23,7 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
             mockRepository.setData([employee]);
 
             // Act
-            const result = await usecase.execute(organizationId, 1, false);
+            const result = await usecase.execute(branchId, 1, false);
 
             // Assert
             expect(result.openToNextWork).toBe(false);
@@ -35,7 +35,7 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
             mockRepository.setData([employee]);
 
             // Act
-            const result = await usecase.execute(organizationId, 1, true);
+            const result = await usecase.execute(branchId, 1, true);
 
             // Assert
             expect(result.openToNextWork).toBe(true);
@@ -47,10 +47,10 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
             mockRepository.setData([employee]);
 
             // Act
-            await usecase.execute(organizationId, 1, false);
+            await usecase.execute(branchId, 1, false);
 
             // Assert - verify persistence
-            const persisted = await mockRepository.findById(organizationId, 1);
+            const persisted = await mockRepository.findById(branchId, 1);
             expect(persisted?.openToNextWork).toBe(false);
         });
 
@@ -58,7 +58,7 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
             // Arrange - empty repository
 
             // Act & Assert
-            await expect(usecase.execute(organizationId, 999, true)).rejects.toThrow(
+            await expect(usecase.execute(branchId, 999, true)).rejects.toThrow(
                 NotFoundException,
             );
         });
@@ -67,7 +67,7 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
             // Arrange - empty repository
 
             // Act & Assert
-            await expect(usecase.execute(organizationId, 42, false)).rejects.toThrow(
+            await expect(usecase.execute(branchId, 42, false)).rejects.toThrow(
                 "Employee with id 42 not found",
             );
         });
@@ -83,7 +83,7 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
             mockRepository.setData([employee]);
 
             // Act
-            const result = await usecase.execute(organizationId, 1, false);
+            const result = await usecase.execute(branchId, 1, false);
 
             // Assert
             expect(result.name).toBe("원본 이름");
@@ -97,13 +97,13 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
             mockRepository.setData([employee]);
 
             // Act & Assert
-            let result = await usecase.execute(organizationId, 1, false);
+            let result = await usecase.execute(branchId, 1, false);
             expect(result.openToNextWork).toBe(false);
 
-            result = await usecase.execute(organizationId, 1, true);
+            result = await usecase.execute(branchId, 1, true);
             expect(result.openToNextWork).toBe(true);
 
-            result = await usecase.execute(organizationId, 1, false);
+            result = await usecase.execute(branchId, 1, false);
             expect(result.openToNextWork).toBe(false);
         });
     });

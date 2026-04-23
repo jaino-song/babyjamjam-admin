@@ -48,13 +48,13 @@ export class SbAlimtalkTriggerJobRepository implements IAlimtalkTriggerJobReposi
         return rows.map((row) => this.toDomain(row));
     }
 
-    async findUpcomingPendingByOrganization(
-        organizationId: string,
+    async findUpcomingPendingByBranch(
+        branchId: string,
         limit = 200,
     ): Promise<AlimtalkTriggerJobEntity[]> {
         const rows = await this.prisma.alimtalk_trigger_job.findMany({
             where: {
-                organizationId,
+                branchId,
                 status: "pending",
                 scheduledFor: { gte: new Date() },
             },
@@ -122,7 +122,7 @@ export class SbAlimtalkTriggerJobRepository implements IAlimtalkTriggerJobReposi
 
     private toCreate(job: AlimtalkTriggerJobEntity) {
         return {
-            organizationId: job.organizationId,
+            branchId: job.branchId,
             ruleId: job.ruleId,
             status: job.status,
             scheduledFor: job.scheduledFor,
@@ -155,7 +155,7 @@ export class SbAlimtalkTriggerJobRepository implements IAlimtalkTriggerJobReposi
 
     private toDomain(row: {
         id: string;
-        organizationId: string | null;
+        branchId: string | null;
         ruleId: string;
         status: string;
         scheduledFor: Date;
@@ -174,7 +174,7 @@ export class SbAlimtalkTriggerJobRepository implements IAlimtalkTriggerJobReposi
     }): AlimtalkTriggerJobEntity {
         return AlimtalkTriggerJobEntity.reconstitute(
             row.id,
-            row.organizationId,
+            row.branchId,
             row.ruleId,
             row.status as AlimtalkTriggerJobStatus,
             row.scheduledFor,

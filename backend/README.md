@@ -546,7 +546,7 @@ Create `backend/.env` from `backend/env.example` before running `npm run start:d
 
 ## Conventions
 
-### Code Organization
+### Code Branch
 
 - **Domain logic** stays in entities/value objects – controllers remain thin
 - **One use case = one file** – single responsibility

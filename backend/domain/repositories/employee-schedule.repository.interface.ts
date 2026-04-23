@@ -1,20 +1,20 @@
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
 
 export interface IEmployeeScheduleRepository {
-    findById(organizationid: string, id: number): Promise<EmployeeScheduleEntity | null>;
-    findByClientId(organizationid: string, clientId: number): Promise<EmployeeScheduleEntity[]>;
+    findById(branchid: string, id: number): Promise<EmployeeScheduleEntity | null>;
+    findByClientId(branchid: string, clientId: number): Promise<EmployeeScheduleEntity[]>;
     findByPrimaryEmployeeId(
-        organizationid: string,
+        branchid: string,
         primaryEmployeeId: number
     ): Promise<EmployeeScheduleEntity[]>;
     findBySecondaryEmployeeId(
-        organizationid: string,
+        branchid: string,
         secondaryEmployeeId: number
     ): Promise<EmployeeScheduleEntity[]>;
-    findAll(organizationid: string): Promise<EmployeeScheduleEntity[]>;
-    create(organizationid: string, schedule: EmployeeScheduleEntity): Promise<EmployeeScheduleEntity>;
-    update(organizationid: string, schedule: EmployeeScheduleEntity): Promise<EmployeeScheduleEntity>;
-    delete(organizationid: string, id: number): Promise<void>;
+    findAll(branchid: string): Promise<EmployeeScheduleEntity[]>;
+    create(branchid: string, schedule: EmployeeScheduleEntity): Promise<EmployeeScheduleEntity>;
+    update(branchid: string, schedule: EmployeeScheduleEntity): Promise<EmployeeScheduleEntity>;
+    delete(branchid: string, id: number): Promise<void>;
 }
 
 export const EMPLOYEE_SCHEDULE_REPOSITORY = "EMPLOYEE_SCHEDULE_REPOSITORY";

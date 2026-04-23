@@ -174,7 +174,7 @@ cd native/
 4. Fill in:
    - **Product Name**: `iosApp`
    - **Team**: Your Apple Developer team (or "None" for simulator-only)
-   - **Organization Identifier**: `com.imirae`
+   - **Branch Identifier**: `com.imirae`
    - **Bundle Identifier**: `com.imirae.incheon` (auto-filled)
    - **Interface**: **SwiftUI**
    - **Language**: **Swift**

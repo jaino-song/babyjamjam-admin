@@ -175,7 +175,7 @@ function RegisterStepFields({
   isLoading,
   isLoadingOrgs,
   passwordStrength,
-  organizations,
+  branches,
   roleOptions,
   handleChange,
   handleEmailBlur,
@@ -191,7 +191,7 @@ function RegisterStepFields({
   | "isLoading"
   | "isLoadingOrgs"
   | "passwordStrength"
-  | "organizations"
+  | "branches"
   | "roleOptions"
   | "handleChange"
   | "handleEmailBlur"
@@ -309,14 +309,14 @@ function RegisterStepFields({
         <>
           <SelectField
             label="지점명"
-            value={formData.organizationId}
-            onValueChange={handleSelectChange("organizationId")}
-            options={organizations}
+            value={formData.branchId}
+            onValueChange={handleSelectChange("branchId")}
+            options={branches}
             placeholder={isLoadingOrgs ? "지점 목록 불러오는 중..." : "지점을 선택해주세요"}
-            error={errors.organizationId}
+            error={errors.branchId}
             errorDisplay="inline"
             disabled={isLoading || isLoadingOrgs}
-            data-component="auth-register-organization-field"
+            data-component="auth-register-branch-field"
           />
 
           <SelectField

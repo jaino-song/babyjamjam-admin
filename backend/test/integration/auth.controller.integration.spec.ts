@@ -22,7 +22,7 @@ describe("AuthController (Integration)", () => {
         email: "test@example.com",
         profileImage: "https://example.com/profile.jpg",
         role: "user",
-        organizationName: null,
+        branchName: null,
     };
 
     const mockTokens = {
@@ -333,7 +333,7 @@ describe("AuthController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(response.body).toEqual({ organizationName: null });
+                expect(response.body).toEqual({ branchName: null });
             });
         });
 
@@ -497,7 +497,7 @@ describe("AuthController (Integration)", () => {
                 name: mockUser.name,
                 phone: "010-1234-5678",
                 birthDate: "1990-01-01",
-                organizationId: "550e8400-e29b-41d4-a716-446655440000",
+                branchId: "550e8400-e29b-41d4-a716-446655440000",
                 role: "manager",
             });
 
@@ -530,7 +530,7 @@ describe("AuthController (Integration)", () => {
                 .send({
                     phone: "010-1234-5678",
                     birthDate: "1990-01-01",
-                    organizationId: "550e8400-e29b-41d4-a716-446655440000",
+                    branchId: "550e8400-e29b-41d4-a716-446655440000",
                     role: "user",
                 });
 
@@ -550,7 +550,7 @@ describe("AuthController (Integration)", () => {
                 .send({
                     phone: "010-1234-5678",
                     birthDate: "1990-01-01",
-                    organizationId: "550e8400-e29b-41d4-a716-446655440000",
+                    branchId: "550e8400-e29b-41d4-a716-446655440000",
                     role: "user",
                 });
 
@@ -571,7 +571,7 @@ describe("AuthController (Integration)", () => {
                 .send({
                     phone: "010-1234-5678",
                     birthDate: "1990-01-01",
-                    organizationId: "550e8400-e29b-41d4-a716-446655440000",
+                    branchId: "550e8400-e29b-41d4-a716-446655440000",
                     role: "manager",
                 });
 
@@ -591,7 +591,7 @@ describe("AuthController (Integration)", () => {
                 .send({
                     phone: "010-1234-5678",
                     birthDate: "1990-01-01",
-                    organizationId: "550e8400-e29b-41d4-a716-446655440000",
+                    branchId: "550e8400-e29b-41d4-a716-446655440000",
                     role: "manager",
                 });
 

@@ -23,12 +23,12 @@ export class MessageDeliveryController {
 
     @Post("sms")
     async sendSms(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: SendSmsMessageDto,
     ) {
         const triggerType = dto.triggerType ?? "immediate";
         const senderPhone = await this.messageSenderApprovalService.ensureApproved(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
         );
 
         if (triggerType === "scheduled") {

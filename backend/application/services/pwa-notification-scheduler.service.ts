@@ -2,7 +2,7 @@ import { Injectable, Inject, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { NotificationService } from "./notification.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
-import { ORGANIZATION_REPOSITORY, IOrganizationRepository } from "domain/repositories/organization.repository.interface";
+import { BRANCH_REPOSITORY, IBranchRepository } from "domain/repositories/branch.repository.interface";
 
 const TARGET_ROLES = ['admin', 'manager', 'user'];
 const DAYS_THRESHOLD = 7;
@@ -15,17 +15,17 @@ export class PwaNotificationSchedulerService {
         private readonly notificationService: NotificationService,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
-        @Inject(ORGANIZATION_REPOSITORY)
-        private readonly organizationRepository: IOrganizationRepository,
+        @Inject(BRANCH_REPOSITORY)
+        private readonly branchRepository: IBranchRepository,
     ) {}
 
     @Cron("0 9 * * *", { timeZone: "Asia/Seoul" })
     async sendDailySummaryNotifications(): Promise<void> {
         this.logger.log("[PWA Scheduler] Starting daily summary notifications...");
 
-        const organizations = await this.organizationRepository.findAllActive();
+        const branches = await this.branchRepository.findAllActive();
 
-        for (const org of organizations) {
+        for (const org of branches) {
             this.logger.log(`[PWA Scheduler] Processing org: ${org.name} (${org.id})`);
             await Promise.allSettled([
                 this.notifyUpcomingServices(org.id),
@@ -38,10 +38,10 @@ export class PwaNotificationSchedulerService {
         this.logger.log("[PWA Scheduler] Daily summary notifications completed");
     }
 
-    private async notifyUpcomingServices(organizationId: string): Promise<void> {
+    private async notifyUpcomingServices(branchId: string): Promise<void> {
         try {
             const clients = await this.clientRepository.findStartingWithinDays(
-                organizationId,
+                branchId,
                 DAYS_THRESHOLD
             );
 
@@ -63,10 +63,10 @@ export class PwaNotificationSchedulerService {
         }
     }
 
-    private async notifyEndingServices(organizationId: string): Promise<void> {
+    private async notifyEndingServices(branchId: string): Promise<void> {
         try {
             const clients = await this.clientRepository.findEndingWithinDays(
-                organizationId,
+                branchId,
                 DAYS_THRESHOLD
             );
 
@@ -88,10 +88,10 @@ export class PwaNotificationSchedulerService {
         }
     }
 
-    private async notifyIncompleteContracts(organizationId: string): Promise<void> {
+    private async notifyIncompleteContracts(branchId: string): Promise<void> {
         try {
             const clients = await this.clientRepository.findWithIncompleteContractsStartingWithinDays(
-                organizationId,
+                branchId,
                 DAYS_THRESHOLD
             );
 
@@ -113,10 +113,10 @@ export class PwaNotificationSchedulerService {
         }
     }
 
-    private async notifyContractsNotSent(organizationId: string): Promise<void> {
+    private async notifyContractsNotSent(branchId: string): Promise<void> {
         try {
             const clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(
-                organizationId,
+                branchId,
                 DAYS_THRESHOLD
             );
 

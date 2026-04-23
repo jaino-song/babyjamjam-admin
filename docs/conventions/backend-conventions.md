@@ -1,6 +1,6 @@
 # Backend Conventions - NestJS Clean Architecture + DDD
 
-This document defines the architectural patterns, code organization, and conventions for the NestJS backend following Clean Architecture and Domain-Driven Design (DDD) principles.
+This document defines the architectural patterns, code branch, and conventions for the NestJS backend following Clean Architecture and Domain-Driven Design (DDD) principles.
 
 ---
 
@@ -1404,7 +1404,7 @@ export class ClientModule {}
 - **Provider Binding**: Use `{ provide: TOKEN, useClass: Implementation }` pattern
 - **Exports**: Export services that other modules need
 - **Imports**: Import other modules (e.g., `AlimtalkModule`)
-- **Organization**: Group providers by type (use cases, services, infrastructure)
+- **Branch**: Group providers by type (use cases, services, infrastructure)
 
 ---
 

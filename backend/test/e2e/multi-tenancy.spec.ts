@@ -13,10 +13,10 @@ import { ClientEntity } from 'domain/entities/client.entity';
  * Multi-Tenancy E2E Tests
  *
  * These tests verify the multi-tenant architecture:
- * 1. Tenant Isolation - Users cannot access other organizations' data
- * 2. Organization Switching - Multi-org users can switch between orgs
- * 3. TenantGuard Rejection - Requests without organizationId are rejected
- * 4. Membership Validation - Invalid organization access is denied
+ * 1. Tenant Isolation - Users cannot access other branches' data
+ * 2. Branch Switching - Multi-org users can switch between orgs
+ * 3. TenantGuard Rejection - Requests without branchId are rejected
+ * 4. Membership Validation - Invalid branch access is denied
  */
 describe('Multi-Tenancy E2E Tests', () => {
     // ============================================
@@ -74,9 +74,9 @@ describe('Multi-Tenancy E2E Tests', () => {
                         // Simulate JWT extraction - user belongs to Org A
                         req.user = {
                             userId: USER_A_ID,
-                            organizationId: ORG_A_ID,
+                            branchId: ORG_A_ID,
                             role: 'user',
-                            orgRole: 'member',
+                            branchRole: 'member',
                         };
                         return true;
                     },
@@ -87,9 +87,9 @@ describe('Multi-Tenancy E2E Tests', () => {
                         const req = context.switchToHttp().getRequest();
                         // Populate tenant context from user
                         tenantContext.userId = req.user.userId;
-                        tenantContext.organizationId = req.user.organizationId;
+                        tenantContext.branchId = req.user.branchId;
                         tenantContext.role = req.user.role;
-                        tenantContext.orgRole = req.user.orgRole;
+                        tenantContext.branchRole = req.user.branchRole;
                         return true;
                     },
                 })
@@ -154,7 +154,7 @@ describe('Multi-Tenancy E2E Tests', () => {
     });
 
     // ============================================
-    // Test 2: TenantGuard Rejection (No Organization)
+    // Test 2: TenantGuard Rejection (No Branch)
     // ============================================
     describe('TenantGuard Rejection', () => {
         let tenantContext: TenantContext;
@@ -164,15 +164,15 @@ describe('Multi-Tenancy E2E Tests', () => {
         beforeEach(() => {
             tenantContext = new TenantContext();
             mockPrismaService = {
-                user_organization: {
+                user_branch: {
                     findFirst: jest.fn(),
                 },
             };
             tenantGuard = new TenantGuard(mockPrismaService as unknown as PrismaService, tenantContext);
         });
 
-        describe('given request without organizationId in JWT', () => {
-            it('should throw ForbiddenException with "Organization selection required"', async () => {
+        describe('given request without branchId in JWT', () => {
+            it('should throw ForbiddenException with "Branch selection required"', async () => {
                 // Arrange
                 const mockContext = {
                     switchToHttp: () => ({
@@ -180,7 +180,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                             user: {
                                 userId: MULTI_ORG_USER_ID,
                                 role: 'user',
-                                // NO organizationId!
+                                // NO branchId!
                             },
                         }),
                     }),
@@ -188,7 +188,7 @@ describe('Multi-Tenancy E2E Tests', () => {
 
                 // Act & Assert
                 await expect(tenantGuard.canActivate(mockContext as any))
-                    .rejects.toThrow('Organization selection required');
+                    .rejects.toThrow('Branch selection required');
             });
         });
     });
@@ -204,24 +204,24 @@ describe('Multi-Tenancy E2E Tests', () => {
         beforeEach(() => {
             tenantContext = new TenantContext();
             mockPrismaService = {
-                user_organization: {
+                user_branch: {
                     findFirst: jest.fn(),
                 },
             };
             tenantGuard = new TenantGuard(mockPrismaService as unknown as PrismaService, tenantContext);
         });
 
-        describe('given user tries to access organization they are not member of', () => {
-            it('should throw ForbiddenException with "Access denied to this organization"', async () => {
+        describe('given user tries to access branch they are not member of', () => {
+            it('should throw ForbiddenException with "Access denied to this branch"', async () => {
                 // Arrange - User A is not a member of Org B
-                mockPrismaService.user_organization.findFirst.mockResolvedValue(null);
+                mockPrismaService.user_branch.findFirst.mockResolvedValue(null);
 
                 const mockContext = {
                     switchToHttp: () => ({
                         getRequest: () => ({
                             user: {
                                 userId: USER_B_ID,
-                                organizationId: ORG_B_ID, // Trying to access Org B
+                                branchId: ORG_B_ID, // Trying to access Org B
                                 role: 'user',
                             },
                         }),
@@ -230,23 +230,23 @@ describe('Multi-Tenancy E2E Tests', () => {
 
                 // Act & Assert
                 await expect(tenantGuard.canActivate(mockContext as any))
-                    .rejects.toThrow('Access denied to this organization');
+                    .rejects.toThrow('Access denied to this branch');
 
-                expect(mockPrismaService.user_organization.findFirst).toHaveBeenCalledWith({
+                expect(mockPrismaService.user_branch.findFirst).toHaveBeenCalledWith({
                     where: {
                         userId: USER_B_ID,
-                        organizationId: ORG_B_ID,
+                        branchId: ORG_B_ID,
                     },
                 });
             });
         });
 
-        describe('given user is a valid member of the organization', () => {
+        describe('given user is a valid member of the branch', () => {
             it('should allow access and populate TenantContext', async () => {
                 // Arrange - User is a member
-                mockPrismaService.user_organization.findFirst.mockResolvedValue({
+                mockPrismaService.user_branch.findFirst.mockResolvedValue({
                     user_id: USER_A_ID,
-                    organization_id: ORG_B_ID,
+                    branch_id: ORG_B_ID,
                     role: 'member',
                 });
 
@@ -255,7 +255,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                         getRequest: () => ({
                             user: {
                                 userId: USER_A_ID,
-                                organizationId: ORG_B_ID,
+                                branchId: ORG_B_ID,
                                 role: 'user',
                             },
                         }),
@@ -268,8 +268,8 @@ describe('Multi-Tenancy E2E Tests', () => {
                 // Assert
                 expect(result).toBe(true);
                 expect(tenantContext.userId).toBe(USER_A_ID);
-                expect(tenantContext.organizationId).toBe(ORG_B_ID);
-                expect(tenantContext.orgRole).toBe('member');
+                expect(tenantContext.branchId).toBe(ORG_B_ID);
+                expect(tenantContext.branchRole).toBe('member');
             });
         });
     });
@@ -285,7 +285,7 @@ describe('Multi-Tenancy E2E Tests', () => {
         beforeEach(() => {
             tenantContext = new TenantContext();
             mockPrismaService = {
-                user_organization: {
+                user_branch: {
                     findFirst: jest.fn(),
                 },
             };
@@ -295,9 +295,9 @@ describe('Multi-Tenancy E2E Tests', () => {
         describe('given TenantGuard processes request successfully', () => {
             it('should populate TenantContext with all user and org information', async () => {
                 // Arrange
-                mockPrismaService.user_organization.findFirst.mockResolvedValue({
+                mockPrismaService.user_branch.findFirst.mockResolvedValue({
                     user_id: USER_A_ID,
-                    organization_id: ORG_A_ID,
+                    branch_id: ORG_A_ID,
                     role: 'admin',
                 });
 
@@ -306,9 +306,9 @@ describe('Multi-Tenancy E2E Tests', () => {
                         getRequest: () => ({
                             user: {
                                 userId: USER_A_ID,
-                                organizationId: ORG_A_ID,
+                                branchId: ORG_A_ID,
                                 role: 'user',
-                                orgRole: 'admin',
+                                branchRole: 'admin',
                             },
                         }),
                     }),
@@ -320,17 +320,17 @@ describe('Multi-Tenancy E2E Tests', () => {
                 // Assert - TenantContext should have all values
                 expect(result).toBe(true);
                 expect(tenantContext.userId).toBe(USER_A_ID);
-                expect(tenantContext.organizationId).toBe(ORG_A_ID);
+                expect(tenantContext.branchId).toBe(ORG_A_ID);
                 expect(tenantContext.role).toBe('user');
-                expect(tenantContext.orgRole).toBe('admin');
+                expect(tenantContext.branchRole).toBe('admin');
             });
         });
     });
 
     // ============================================
-    // Test 5: Organization Role Differentiation
+    // Test 5: Branch Role Differentiation
     // ============================================
-    describe('Organization Role Differentiation', () => {
+    describe('Branch Role Differentiation', () => {
         let tenantContext: TenantContext;
         let mockPrismaService: any;
         let tenantGuard: TenantGuard;
@@ -338,19 +338,19 @@ describe('Multi-Tenancy E2E Tests', () => {
         beforeEach(() => {
             tenantContext = new TenantContext();
             mockPrismaService = {
-                user_organization: {
+                user_branch: {
                     findFirst: jest.fn(),
                 },
             };
             tenantGuard = new TenantGuard(mockPrismaService as unknown as PrismaService, tenantContext);
         });
 
-        describe('given user with member role in organization', () => {
-            it('should set orgRole to member in TenantContext', async () => {
+        describe('given user with member role in branch', () => {
+            it('should set branchRole to member in TenantContext', async () => {
                 // Arrange
-                mockPrismaService.user_organization.findFirst.mockResolvedValue({
+                mockPrismaService.user_branch.findFirst.mockResolvedValue({
                     user_id: USER_A_ID,
-                    organization_id: ORG_A_ID,
+                    branch_id: ORG_A_ID,
                     role: 'member',
                 });
 
@@ -359,7 +359,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                         getRequest: () => ({
                             user: {
                                 userId: USER_A_ID,
-                                organizationId: ORG_A_ID,
+                                branchId: ORG_A_ID,
                                 role: 'user',
                             },
                         }),
@@ -370,17 +370,17 @@ describe('Multi-Tenancy E2E Tests', () => {
                 await tenantGuard.canActivate(mockContext as any);
 
                 // Assert
-                expect(tenantContext.orgRole).toBe('member');
-                expect(tenantContext.organizationId).toBe(ORG_A_ID);
+                expect(tenantContext.branchRole).toBe('member');
+                expect(tenantContext.branchId).toBe(ORG_A_ID);
             });
         });
 
-        describe('given user with admin role in organization', () => {
-            it('should set orgRole to admin in TenantContext', async () => {
+        describe('given user with admin role in branch', () => {
+            it('should set branchRole to admin in TenantContext', async () => {
                 // Arrange
-                mockPrismaService.user_organization.findFirst.mockResolvedValue({
+                mockPrismaService.user_branch.findFirst.mockResolvedValue({
                     user_id: USER_A_ID,
-                    organization_id: ORG_A_ID,
+                    branch_id: ORG_A_ID,
                     role: 'admin',
                 });
 
@@ -389,7 +389,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                         getRequest: () => ({
                             user: {
                                 userId: USER_A_ID,
-                                organizationId: ORG_A_ID,
+                                branchId: ORG_A_ID,
                                 role: 'user',
                             },
                         }),
@@ -400,7 +400,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                 await tenantGuard.canActivate(mockContext as any);
 
                 // Assert
-                expect(tenantContext.orgRole).toBe('admin');
+                expect(tenantContext.branchRole).toBe('admin');
             });
         });
     });

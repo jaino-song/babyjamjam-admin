@@ -18,11 +18,11 @@ export class MarkNotificationReadUsecase {
     ) {}
 
     async execute(
-        organizationid: string,
+        branchid: string,
         notificationId: number,
         userId: string
     ): Promise<NotificationEntity> {
-        const notification = await this.notificationRepository.findById(organizationid, notificationId);
+        const notification = await this.notificationRepository.findById(branchid, notificationId);
 
         if (!notification) {
             throw new NotFoundException(`Notification not found: ${notificationId}`);
@@ -34,10 +34,10 @@ export class MarkNotificationReadUsecase {
         }
 
         notification.markAsRead();
-        return this.notificationRepository.update(organizationid, notification);
+        return this.notificationRepository.update(branchid, notification);
     }
 
-    async markAllAsRead(organizationid: string, userId: string): Promise<void> {
-        await this.notificationRepository.markAllAsReadByUserId(organizationid, userId);
+    async markAllAsRead(branchid: string, userId: string): Promise<void> {
+        await this.notificationRepository.markAllAsReadByUserId(branchid, userId);
     }
 }

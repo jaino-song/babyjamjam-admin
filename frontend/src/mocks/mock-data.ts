@@ -8,10 +8,10 @@
  */
 
 // ============================================================================
-// ORGANIZATION (Multi-Tenancy)
+// BRANCH (Multi-Tenancy)
 // ============================================================================
 
-export interface Organization {
+export interface Branch {
   id: string;
   name: string;
   slug: string;
@@ -25,7 +25,7 @@ export interface Organization {
   updatedAt: string;
 }
 
-export const mockOrganizations: Organization[] = [
+export const mockBranches: Branch[] = [
   {
     id: 'org_01HWXYZ1234567890ABCDEF',
     name: '인천 동구 센터',
@@ -81,10 +81,10 @@ export interface User {
   createdAt: string;
 }
 
-export interface UserOrganization {
+export interface UserBranch {
   id: string;
   userId: string;
-  organizationId: string;
+  branchId: string;
   role: 'admin' | 'member' | 'viewer';
   joinedAt: string;
 }
@@ -128,25 +128,25 @@ export const mockUsers: User[] = [
   },
 ];
 
-export const mockUserOrganizations: UserOrganization[] = [
+export const mockUserBranches: UserBranch[] = [
   {
     id: 'uo_01HWXYZ0001',
     userId: 'user_01HWXYZ1234567890ADMIN1',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     role: 'admin',
     joinedAt: '2024-01-15T09:00:00.000Z',
   },
   {
     id: 'uo_01HWXYZ0002',
     userId: 'user_01HWXYZ1234567890MNGR01',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     role: 'member',
     joinedAt: '2024-02-20T09:00:00.000Z',
   },
   {
     id: 'uo_01HWXYZ0003',
     userId: 'user_01HWXYZ1234567890USER01',
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
     role: 'member',
     joinedAt: '2024-03-05T09:00:00.000Z',
   },
@@ -166,7 +166,7 @@ export type ServiceStatus =
 
 export interface Client {
   id: number;
-  organizationId: string | null;
+  branchId: string | null;
   name: string;
   address: string | null;
   phone: string | null;
@@ -189,7 +189,7 @@ export interface Client {
 export const mockClients: Client[] = [
   {
     id: 1,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '홍길동',
     address: '인천광역시 동구 송림동 123-45',
     phone: '010-1234-5678',
@@ -210,7 +210,7 @@ export const mockClients: Client[] = [
   },
   {
     id: 2,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '김영희',
     address: '인천광역시 동구 화수동 67-89',
     phone: '010-2345-6789',
@@ -231,7 +231,7 @@ export const mockClients: Client[] = [
   },
   {
     id: 3,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '이철수',
     address: '인천광역시 동구 금곡동 111-22',
     phone: '010-3456-7890',
@@ -252,7 +252,7 @@ export const mockClients: Client[] = [
   },
   {
     id: 4,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '박미영',
     address: '인천광역시 동구 송현동 45-67',
     phone: '010-4567-8901',
@@ -273,7 +273,7 @@ export const mockClients: Client[] = [
   },
   {
     id: 5,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '정수진',
     address: '인천광역시 동구 만석동 88-99',
     phone: '010-5678-9012',
@@ -294,7 +294,7 @@ export const mockClients: Client[] = [
   },
   {
     id: 6,
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
     name: '최동훈',
     address: '인천광역시 남동구 구월동 123-45',
     phone: '010-6789-0123',
@@ -315,7 +315,7 @@ export const mockClients: Client[] = [
   },
   {
     id: 7,
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
     name: '윤서연',
     address: '인천광역시 남동구 간석동 67-89',
     phone: '010-7890-1234',
@@ -344,7 +344,7 @@ export type EmployeeStatus = 'available' | 'working' | 'unavailable';
 
 export interface Employee {
   id: number;
-  organizationId: string | null;
+  branchId: string | null;
   name: string;
   workArea: string[];
   phone: string;
@@ -358,7 +358,7 @@ export interface Employee {
 export const mockEmployees: Employee[] = [
   {
     id: 1,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '강서희',
     workArea: ['동구', '중구', '미추홀구'],
     phone: '010-1111-2222',
@@ -369,7 +369,7 @@ export const mockEmployees: Employee[] = [
   },
   {
     id: 2,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '임재현',
     workArea: ['동구', '연수구'],
     phone: '010-2222-3333',
@@ -380,7 +380,7 @@ export const mockEmployees: Employee[] = [
   },
   {
     id: 3,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '송미라',
     workArea: ['동구'],
     phone: '010-3333-4444',
@@ -391,7 +391,7 @@ export const mockEmployees: Employee[] = [
   },
   {
     id: 4,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '조현우',
     workArea: ['동구', '남동구', '부평구'],
     phone: '010-4444-5555',
@@ -402,7 +402,7 @@ export const mockEmployees: Employee[] = [
   },
   {
     id: 5,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '한지민',
     workArea: ['동구', '중구'],
     phone: '010-5555-6666',
@@ -413,7 +413,7 @@ export const mockEmployees: Employee[] = [
   },
   {
     id: 6,
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
     name: '백승호',
     workArea: ['남동구', '연수구'],
     phone: '010-6666-7777',
@@ -424,7 +424,7 @@ export const mockEmployees: Employee[] = [
   },
   {
     id: 7,
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
     name: '오은영',
     workArea: ['남동구'],
     phone: '010-7777-8888',
@@ -441,7 +441,7 @@ export const mockEmployees: Employee[] = [
 
 export interface EmployeeSchedule {
   id: number;
-  organizationId: string | null;
+  branchId: string | null;
   clientId: number;
   primaryEmployeeId: number;
   secondaryEmployeeId: number | null;
@@ -458,7 +458,7 @@ export interface EmployeeSchedule {
 export const mockEmployeeSchedules: EmployeeSchedule[] = [
   {
     id: 1,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     clientId: 1,
     primaryEmployeeId: 1,
     secondaryEmployeeId: 2,
@@ -472,7 +472,7 @@ export const mockEmployeeSchedules: EmployeeSchedule[] = [
   },
   {
     id: 2,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     clientId: 2,
     primaryEmployeeId: 3,
     secondaryEmployeeId: null,
@@ -486,7 +486,7 @@ export const mockEmployeeSchedules: EmployeeSchedule[] = [
   },
   {
     id: 3,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     clientId: 5,
     primaryEmployeeId: 1,
     secondaryEmployeeId: 4,
@@ -500,7 +500,7 @@ export const mockEmployeeSchedules: EmployeeSchedule[] = [
   },
   {
     id: 4,
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
     clientId: 6,
     primaryEmployeeId: 6,
     secondaryEmployeeId: 7,
@@ -522,7 +522,7 @@ export interface Area {
   id: string;
   name: string;
   koreanName: string;
-  organizationId: string | null;
+  branchId: string | null;
 }
 
 export const mockAreas: Area[] = [
@@ -530,37 +530,37 @@ export const mockAreas: Area[] = [
     id: 'area_dong',
     name: 'dong',
     koreanName: '동구',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
   },
   {
     id: 'area_jung',
     name: 'jung',
     koreanName: '중구',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
   },
   {
     id: 'area_namdong',
     name: 'namdong',
     koreanName: '남동구',
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
   },
   {
     id: 'area_yeonsu',
     name: 'yeonsu',
     koreanName: '연수구',
-    organizationId: 'org_01HWXYZ1234567890CDEFGH',
+    branchId: 'org_01HWXYZ1234567890CDEFGH',
   },
   {
     id: 'area_bupyeong',
     name: 'bupyeong',
     koreanName: '부평구',
-    organizationId: null,
+    branchId: null,
   },
   {
     id: 'area_michuhol',
     name: 'michuhol',
     koreanName: '미추홀구',
-    organizationId: null,
+    branchId: null,
   },
 ];
 
@@ -603,7 +603,7 @@ export const mockBankAccountInfos: BankAccountInfo[] = [
 
 export interface Message {
   id: number;
-  organizationId: string | null;
+  branchId: string | null;
   title: string;
   text: string | null;
   createdAt: string;
@@ -613,7 +613,7 @@ export interface Message {
 export const mockMessages: Message[] = [
   {
     id: 1,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     title: '8월 급여 지급 안내',
     text: '8월 급여가 정상적으로 지급되었습니다. 확인 부탁드립니다.',
     createdAt: '2024-08-25T09:00:00.000Z',
@@ -621,7 +621,7 @@ export const mockMessages: Message[] = [
   },
   {
     id: 2,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     title: '추석 연휴 일정 안내',
     text: '추석 연휴 기간(9월 14일~18일) 동안 비상 연락망을 확인해주세요. 긴급 상황 시 대표번호로 연락 바랍니다.',
     createdAt: '2024-09-01T10:30:00.000Z',
@@ -629,7 +629,7 @@ export const mockMessages: Message[] = [
   },
   {
     id: 3,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     title: '신규 매뉴얼 배포',
     text: '새로운 서비스 매뉴얼이 배포되었습니다. 첨부된 파일을 다운로드하여 확인해주세요.',
     createdAt: '2024-08-15T14:00:00.000Z',
@@ -637,7 +637,7 @@ export const mockMessages: Message[] = [
   },
   {
     id: 4,
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
     title: '남동구 센터 직원 교육 일정',
     text: '9월 10일(화) 오후 2시에 직원 교육이 진행됩니다. 참석 부탁드립니다.',
     createdAt: '2024-09-03T11:00:00.000Z',
@@ -672,7 +672,7 @@ export interface TemplateVariable {
 
 export interface MessageTemplate {
   id: string;
-  organizationId: string | null;
+  branchId: string | null;
   name: string;
   content: string;
   variables: TemplateVariable[];
@@ -684,7 +684,7 @@ export interface MessageTemplate {
 export const mockMessageTemplates: MessageTemplate[] = [
   {
     id: 'tmpl_01HWXYZ001',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '서비스 시작 안내',
     content:
       '안녕하세요, {{clientName}}님. {{startDate}}부터 {{employeeName}} 선생님이 돌봄 서비스를 제공해 드릴 예정입니다. 문의사항이 있으시면 {{contactPhone}}으로 연락 부탁드립니다.',
@@ -725,7 +725,7 @@ export const mockMessageTemplates: MessageTemplate[] = [
   },
   {
     id: 'tmpl_01HWXYZ002',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '서비스 종료 안내',
     content:
       '{{clientName}}님, {{endDate}}자로 돌봄 서비스가 종료되었습니다. 그동안 이용해 주셔서 감사합니다. {{additionalMessage}}',
@@ -756,7 +756,7 @@ export const mockMessageTemplates: MessageTemplate[] = [
   },
   {
     id: 'tmpl_01HWXYZ003',
-    organizationId: null,
+    branchId: null,
     name: '제공인력 교체 안내',
     content:
       '안녕하세요, {{clientName}}님. {{changeReason}}으로 인해 제공인력이 {{previousEmployee}}에서 {{newEmployee}}로 변경되었습니다. {{changeDate}}부터 새로운 선생님이 방문 예정입니다.',
@@ -800,7 +800,7 @@ export const mockMessageTemplates: MessageTemplate[] = [
   },
   {
     id: 'tmpl_01HWXYZ004',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     name: '급여 지급 안내',
     content:
       '{{employeeName}}님, {{paymentMonth}} 급여 {{amount}}원이 {{paymentDate}}에 지급되었습니다. 확인 부탁드립니다.',
@@ -931,7 +931,7 @@ export const mockSystemTemplates: SystemTemplate[] = [
 export interface Notification {
   id: number;
   userId: string;
-  organizationId: string | null;
+  branchId: string | null;
   title: string;
   body: string;
   data: Record<string, unknown> | null;
@@ -943,7 +943,7 @@ export const mockNotifications: Notification[] = [
   {
     id: 1,
     userId: 'user_01HWXYZ1234567890ADMIN1',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     title: '새로운 수급자 등록',
     body: '이철수님이 새로운 수급자로 등록되었습니다.',
     data: { clientId: 3, type: 'CLIENT_REGISTERED' },
@@ -953,7 +953,7 @@ export const mockNotifications: Notification[] = [
   {
     id: 2,
     userId: 'user_01HWXYZ1234567890ADMIN1',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     title: '서비스 종료 알림',
     body: '정수진님의 서비스가 오늘 종료되었습니다.',
     data: { clientId: 5, type: 'SERVICE_ENDED' },
@@ -963,7 +963,7 @@ export const mockNotifications: Notification[] = [
   {
     id: 3,
     userId: 'user_01HWXYZ1234567890MNGR01',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     title: '제공인력 교체 요청',
     body: '최동훈님이 제공인력 교체를 요청하였습니다.',
     data: { clientId: 6, type: 'REPLACEMENT_REQUESTED' },
@@ -973,7 +973,7 @@ export const mockNotifications: Notification[] = [
   {
     id: 4,
     userId: 'user_01HWXYZ1234567890ADMIN1',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     title: '전자문서 서명 완료',
     body: '홍길동님의 계약서 서명이 완료되었습니다.',
     data: { clientId: 1, eDocId: 'edoc_12345678', type: 'EDOC_SIGNED' },
@@ -983,7 +983,7 @@ export const mockNotifications: Notification[] = [
   {
     id: 5,
     userId: 'user_01HWXYZ1234567890USER01',
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
     title: '시스템 공지',
     body: '9월 정기 점검이 예정되어 있습니다.',
     data: { type: 'SYSTEM_NOTICE' },
@@ -998,7 +998,7 @@ export const mockNotifications: Notification[] = [
 
 export interface DocumentCategory {
   id: string;
-  organizationId: string | null;
+  branchId: string | null;
   value: string;
   label: string;
   color: string;
@@ -1009,7 +1009,7 @@ export interface DocumentCategory {
 export const mockDocumentCategories: DocumentCategory[] = [
   {
     id: 'cat_contract',
-    organizationId: null,
+    branchId: null,
     value: 'contract',
     label: '계약서',
     color: 'primary',
@@ -1018,7 +1018,7 @@ export const mockDocumentCategories: DocumentCategory[] = [
   },
   {
     id: 'cat_invoice',
-    organizationId: null,
+    branchId: null,
     value: 'invoice',
     label: '청구서',
     color: 'secondary',
@@ -1027,7 +1027,7 @@ export const mockDocumentCategories: DocumentCategory[] = [
   },
   {
     id: 'cat_receipt',
-    organizationId: null,
+    branchId: null,
     value: 'receipt',
     label: '영수증',
     color: 'success',
@@ -1036,7 +1036,7 @@ export const mockDocumentCategories: DocumentCategory[] = [
   },
   {
     id: 'cat_report',
-    organizationId: null,
+    branchId: null,
     value: 'report',
     label: '보고서',
     color: 'info',
@@ -1045,7 +1045,7 @@ export const mockDocumentCategories: DocumentCategory[] = [
   },
   {
     id: 'cat_certificate',
-    organizationId: null,
+    branchId: null,
     value: 'certificate',
     label: '증명서',
     color: 'warning',
@@ -1054,7 +1054,7 @@ export const mockDocumentCategories: DocumentCategory[] = [
   },
   {
     id: 'cat_form',
-    organizationId: null,
+    branchId: null,
     value: 'form',
     label: '양식',
     color: 'default',
@@ -1063,7 +1063,7 @@ export const mockDocumentCategories: DocumentCategory[] = [
   },
   {
     id: 'cat_notice',
-    organizationId: null,
+    branchId: null,
     value: 'notice',
     label: '안내문',
     color: 'error',
@@ -1072,7 +1072,7 @@ export const mockDocumentCategories: DocumentCategory[] = [
   },
   {
     id: 'cat_employee_contract',
-    organizationId: null,
+    branchId: null,
     value: 'employee-contract',
     label: '제공인력 계약서',
     color: 'primary',
@@ -1081,7 +1081,7 @@ export const mockDocumentCategories: DocumentCategory[] = [
   },
   {
     id: 'cat_custom_001',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     value: 'training-material',
     label: '교육자료',
     color: 'info',
@@ -1092,7 +1092,7 @@ export const mockDocumentCategories: DocumentCategory[] = [
 
 export interface Document {
   id: string;
-  organizationId: string | null;
+  branchId: string | null;
   categoryId: string;
   name: string;
   description: string | null;
@@ -1111,7 +1111,7 @@ export interface Document {
 export const mockDocuments: Document[] = [
   {
     id: 'doc_01HWXYZ001',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     categoryId: 'cat_contract',
     name: '홍길동_서비스계약서_202408.pdf',
     description: '2024년 8월 서비스 계약서',
@@ -1127,7 +1127,7 @@ export const mockDocuments: Document[] = [
   },
   {
     id: 'doc_01HWXYZ002',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     categoryId: 'cat_employee_contract',
     name: '강서희_근로계약서_2022.pdf',
     description: '2022년 입사 근로계약서',
@@ -1143,7 +1143,7 @@ export const mockDocuments: Document[] = [
   },
   {
     id: 'doc_01HWXYZ003',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     categoryId: 'cat_certificate',
     name: '임재현_자격증_2급.jpg',
     description: '돌봄서비스 2급 자격증',
@@ -1159,7 +1159,7 @@ export const mockDocuments: Document[] = [
   },
   {
     id: 'doc_01HWXYZ004',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     categoryId: 'cat_report',
     name: '2024년_8월_월간보고서.pdf',
     description: '동구 센터 2024년 8월 월간 보고서',
@@ -1175,7 +1175,7 @@ export const mockDocuments: Document[] = [
   },
   {
     id: 'doc_01HWXYZ005',
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     categoryId: 'cat_custom_001',
     name: '신입직원_교육자료_v2.pdf',
     description: '신입 제공인력 교육용 자료',
@@ -1302,7 +1302,7 @@ export type EformsignStepType = '05' | '06'; // participant, reviewer
 
 export interface EformsignDoc {
   id: number;
-  organizationId: string | null;
+  branchId: string | null;
   documentId: string;
   clientId: number;
   createdDate: string;
@@ -1322,7 +1322,7 @@ export interface EformsignDoc {
 export const mockEformsignDocs: EformsignDoc[] = [
   {
     id: 1,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     documentId: 'edoc_12345678',
     clientId: 1,
     createdDate: '2024-07-25T09:00:00.000Z',
@@ -1340,7 +1340,7 @@ export const mockEformsignDocs: EformsignDoc[] = [
   },
   {
     id: 2,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     documentId: 'edoc_23456789',
     clientId: 2,
     createdDate: '2024-07-10T14:00:00.000Z',
@@ -1358,7 +1358,7 @@ export const mockEformsignDocs: EformsignDoc[] = [
   },
   {
     id: 3,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     documentId: 'edoc_34567890',
     clientId: 4,
     createdDate: '2024-04-25T11:00:00.000Z',
@@ -1376,7 +1376,7 @@ export const mockEformsignDocs: EformsignDoc[] = [
   },
   {
     id: 4,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     documentId: 'edoc_45678901',
     clientId: 5,
     createdDate: '2024-05-28T10:00:00.000Z',
@@ -1394,7 +1394,7 @@ export const mockEformsignDocs: EformsignDoc[] = [
   },
   {
     id: 5,
-    organizationId: 'org_01HWXYZ1234567890BCDEFG',
+    branchId: 'org_01HWXYZ1234567890BCDEFG',
     documentId: 'edoc_56789012',
     clientId: 6,
     createdDate: '2024-08-10T09:00:00.000Z',
@@ -1412,7 +1412,7 @@ export const mockEformsignDocs: EformsignDoc[] = [
   },
   {
     id: 6,
-    organizationId: 'org_01HWXYZ1234567890ABCDEF',
+    branchId: 'org_01HWXYZ1234567890ABCDEF',
     documentId: 'edoc_67890123',
     clientId: 3,
     createdDate: '2024-08-20T15:00:00.000Z',
@@ -1736,9 +1736,9 @@ export const mockDashboardStats: DashboardStats = {
 // ============================================================================
 
 export const mockData = {
-  organizations: mockOrganizations,
+  branches: mockBranches,
   users: mockUsers,
-  userOrganizations: mockUserOrganizations,
+  userBranches: mockUserBranches,
   clients: mockClients,
   employees: mockEmployees,
   employeeSchedules: mockEmployeeSchedules,

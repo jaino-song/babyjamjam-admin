@@ -12,9 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { Document, getDownloadUrl } from "@/hooks/use-documents";
 import { DocumentCategory } from "@/hooks/use-document-categories";
 import { formatFileSize, formatDate } from "./document-list";
+import { getDownloadFileName, getFileFormatLabel, getPreviewKind } from "./document-preview-utils";
 import {
   SharedDocumentPreviewDialog,
-  type PreviewKind,
   type PreviewMetaItem,
 } from "./shared-document-preview-dialog";
 
@@ -32,42 +32,6 @@ function getCategoryLabel(categoryId: string, categories: DocumentCategory[]): s
   return category?.label || categoryId;
 }
 
-function getExtensionFromMimeType(mimeType: string): string {
-  const mimeToExt: Record<string, string> = {
-    "application/pdf": ".pdf",
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-    "application/msword": ".doc",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-    "application/vnd.ms-excel": ".xls",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-  };
-
-  return mimeToExt[mimeType] || "";
-}
-
-function getDownloadFileName(doc: Document): string {
-  if (doc.name.includes(".")) {
-    return doc.name;
-  }
-
-  return `${doc.name}${getExtensionFromMimeType(doc.mimeType)}`;
-}
-
-function getPreviewKind(mimeType: string): PreviewKind {
-  if (mimeType === "application/pdf") {
-    return "pdf";
-  }
-
-  if (mimeType.startsWith("image/")) {
-    return "image";
-  }
-
-  return "unsupported";
-}
-
 export default function DocumentPreviewModal({
   open,
   onClose,
@@ -80,7 +44,12 @@ export default function DocumentPreviewModal({
     return null;
   }
 
-  const previewKind = getPreviewKind(doc.mimeType);
+  const previewKind = getPreviewKind(doc);
+  const srDescription =
+    previewKind === "hwp"
+      ? "문서 메타데이터와 한글 미리보기를 확인하고 확대, 다운로드를 할 수 있습니다."
+      : "문서 메타데이터와 미리보기를 확인하고 확대, 인쇄, 다운로드를 할 수 있습니다.";
+
   const metaItems: PreviewMetaItem[] = [
     {
       label: "파일 크기",
@@ -94,7 +63,7 @@ export default function DocumentPreviewModal({
       label: "파일 포맷",
       value: (
         <span className="uppercase">
-          {doc.mimeType.split("/")[1]?.replace("jpeg", "jpg").replace("plain", "txt") || "Unknown"}
+          {getFileFormatLabel(doc)}
         </span>
       ),
     },
@@ -157,7 +126,7 @@ export default function DocumentPreviewModal({
           {getCategoryLabel(doc.categoryId, categories)}
         </Badge>,
       ]}
-      srDescription="문서 메타데이터와 미리보기를 확인하고 확대, 인쇄, 다운로드를 할 수 있습니다."
+      srDescription={srDescription}
       metaItems={metaItems}
       metaAction={metaAction}
       metaExtra={metaExtra}

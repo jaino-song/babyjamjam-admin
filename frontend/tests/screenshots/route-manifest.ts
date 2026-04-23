@@ -33,7 +33,7 @@ export const frontendScreenshotRoutes: ScreenshotRoute[] = [
   { slug: "messages-templates", path: "/messages/templates", auth: "authenticated" },
   { slug: "messages-templates-new", path: "/messages/templates/new", auth: "authenticated" },
   { slug: "prices", path: "/prices", auth: "authenticated" },
-  { slug: "select-organization", path: "/select-organization", auth: "authenticated" },
+  { slug: "select-branch", path: "/select-branch", auth: "authenticated" },
   { slug: "settings", path: "/settings", auth: "authenticated" },
   { slug: "settings-general", path: "/settings/general", auth: "authenticated" },
   { slug: "settings-voucher-price", path: "/settings/voucher-price", auth: "authenticated" },

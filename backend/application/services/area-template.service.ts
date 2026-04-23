@@ -19,34 +19,34 @@ export class AreaTemplateService {
     ) {}
 
     create(
-        organizationid: string,
+        branchid: string,
         params: { area: string; templateId: string; templateName?: string | null }
     ): Promise<AreaTemplateEntity> {
         return this.createAreaTemplateUsecase.execute(
-            organizationid,
+            branchid,
             params.area,
             params.templateId,
             params.templateName ?? null
         );
     }
 
-    findAll(organizationid: string): Promise<AreaTemplateEntity[]> {
-        return this.listAreaTemplatesUsecase.execute(organizationid);
+    findAll(branchid: string): Promise<AreaTemplateEntity[]> {
+        return this.listAreaTemplatesUsecase.execute(branchid);
     }
 
-    findByArea(organizationid: string, area: string): Promise<AreaTemplateEntity | null> {
-        return this.findAreaTemplateByAreaUsecase.execute(organizationid, area);
+    findByArea(branchid: string, area: string): Promise<AreaTemplateEntity | null> {
+        return this.findAreaTemplateByAreaUsecase.execute(branchid, area);
     }
 
     update(
-        organizationid: string,
+        branchid: string,
         area: string,
         params: { templateId?: string; templateName?: string | null }
     ): Promise<AreaTemplateEntity> {
-        return this.updateAreaTemplateUsecase.execute(organizationid, area, params);
+        return this.updateAreaTemplateUsecase.execute(branchid, area, params);
     }
 
-    delete(organizationid: string, area: string) {
-        return this.deleteAreaTemplateUsecase.execute(organizationid, area);
+    delete(branchid: string, area: string) {
+        return this.deleteAreaTemplateUsecase.execute(branchid, area);
     }
 }

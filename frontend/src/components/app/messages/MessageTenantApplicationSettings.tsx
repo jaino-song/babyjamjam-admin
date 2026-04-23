@@ -70,7 +70,7 @@ export function MessageTenantApplicationSettings() {
   );
   const [requestedAt, setRequestedAt] = useState<string | null>(null);
 
-  const tenantName = authUser?.organizationName?.trim() || "현재 선택된 지점";
+  const tenantName = authUser?.branchName?.trim() || "현재 선택된 지점";
   const normalizedPhone = useMemo(() => normalizePhoneDigits(senderPhone), [senderPhone]);
   const formattedPhone = useMemo(() => formatKoreanPhoneNumber(normalizedPhone), [normalizedPhone]);
   const phoneError =

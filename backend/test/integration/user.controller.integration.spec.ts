@@ -107,7 +107,7 @@ describe("UserController (Integration)", () => {
                     createdAt: new Date("2025-01-01"),
                     emailVerified: true,
                     authProvider: "both",
-                    organizations: [{ id: "org-1", name: "본사", role: "owner" }],
+                    branches: [{ id: "org-1", name: "본사", role: "owner" }],
                 },
             ];
             userService.findDirectory.mockResolvedValue(users);
@@ -115,14 +115,14 @@ describe("UserController (Integration)", () => {
             const response = await request(app.getHttpServer()).get("/users");
 
             expect(response.status).toBe(200);
-            expect(userService.findDirectory).toHaveBeenCalledWith({ organizationId: undefined });
+            expect(userService.findDirectory).toHaveBeenCalledWith({ branchId: undefined });
             expect(response.body).toHaveLength(1);
         });
 
-        it("should scope directory by organization for admin users", async () => {
+        it("should scope directory by branch for admin users", async () => {
             mockJwtGuard.canActivate.mockImplementationOnce((context) => {
                 const req = context.switchToHttp().getRequest();
-                req.user = { userId: "admin-user-id", role: "admin", organizationId: "org-admin-1" };
+                req.user = { userId: "admin-user-id", role: "admin", branchId: "org-admin-1" };
                 return true;
             });
             userService.findDirectory.mockResolvedValue([]);
@@ -130,10 +130,10 @@ describe("UserController (Integration)", () => {
             const response = await request(app.getHttpServer()).get("/users");
 
             expect(response.status).toBe(200);
-            expect(userService.findDirectory).toHaveBeenCalledWith({ organizationId: "org-admin-1" });
+            expect(userService.findDirectory).toHaveBeenCalledWith({ branchId: "org-admin-1" });
         });
 
-        it("should reject admin directory requests without organization context", async () => {
+        it("should reject admin directory requests without branch context", async () => {
             mockJwtGuard.canActivate.mockImplementationOnce((context) => {
                 const req = context.switchToHttp().getRequest();
                 req.user = { userId: "admin-user-id", role: "admin" };

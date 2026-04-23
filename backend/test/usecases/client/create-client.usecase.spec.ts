@@ -4,7 +4,7 @@ import { MockClientRepository } from "../../utils/mocks";
 describe("CreateClientUsecase", () => {
     let usecase: CreateClientUsecase;
     let mockRepository: MockClientRepository;
-    const organizationId = "org-1";
+    const branchId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockClientRepository();
@@ -39,7 +39,7 @@ describe("CreateClientUsecase", () => {
             };
 
             // Act
-            const result = await usecase.execute(organizationId, params);
+            const result = await usecase.execute(branchId, params);
 
             // Assert
             expect(result).toBeDefined();
@@ -72,7 +72,7 @@ describe("CreateClientUsecase", () => {
             };
 
             // Act
-            const result = await usecase.execute(organizationId, params);
+            const result = await usecase.execute(branchId, params);
 
             // Assert
             expect(result).toBeDefined();
@@ -103,8 +103,8 @@ describe("CreateClientUsecase", () => {
             const params2 = { ...params1, name: "고객2" };
 
             // Act
-            const client1 = await usecase.execute(organizationId, params1);
-            const client2 = await usecase.execute(organizationId, params2);
+            const client1 = await usecase.execute(branchId, params1);
+            const client2 = await usecase.execute(branchId, params2);
 
             // Assert
             expect(client1.id).toBe(1);

@@ -38,7 +38,7 @@ function toResponse(entity: DocumentEntity) {
         fileSize: entity.filesize,
         storagePath: entity.storagepath,
         storageUrl: entity.storageurl,
-        orgId: entity.orgid,
+        orgId: entity.branchid,
         uploadedBy: entity.uploadedby,
         createdAt: entity.createdat,
         updatedAt: entity.updatedat,
@@ -67,7 +67,7 @@ export class DocumentController {
         }),
     )
     async upload(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @UploadedFile() file: Express.Multer.File,
         @Body() dto: UploadDocumentDto,
     ) {
@@ -101,7 +101,7 @@ export class DocumentController {
         // parse tags from string if needed (form-data sends arrays as strings)
         const tags = typeof dto.tags === "string" ? JSON.parse(dto.tags) : dto.tags || [];
 
-        const entity = await this.documentService.create(tenant.organizationId ?? "", {
+        const entity = await this.documentService.create(tenant.branchId ?? "", {
             name: dto.name || file.originalname,
             description: dto.description,
             categoryId: dto.categoryId,
@@ -110,15 +110,15 @@ export class DocumentController {
             filesize: file.size,
             storagepath: storagePath,
             storageurl: storageUrl,
-            orgid: dto.orgid,
+            branchid: dto.branchid,
             uploadedby: dto.uploadedby || "system",
         });
         return toResponse(entity);
     }
 
     @Post()
-    async create(@CurrentTenant() tenant: { organizationId?: string }, @Body() dto: CreateDocumentDto) {
-        const entity = await this.documentService.create(tenant.organizationId ?? "", {
+    async create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateDocumentDto) {
+        const entity = await this.documentService.create(tenant.branchId ?? "", {
             name: dto.name,
             description: dto.description,
             categoryId: dto.categoryId,
@@ -127,7 +127,7 @@ export class DocumentController {
             filesize: dto.filesize,
             storagepath: dto.storagepath,
             storageurl: dto.storageurl,
-            orgid: dto.orgid,
+            branchid: dto.branchid,
             uploadedby: dto.uploadedby,
         });
         return toResponse(entity);
@@ -135,41 +135,41 @@ export class DocumentController {
 
     @Get()
     async findAll(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("categoryId") categoryId?: string
     ) {
         const entities = categoryId 
-            ? await this.documentService.findByCategoryId(tenant.organizationId ?? "", categoryId) 
-            : await this.documentService.findAll(tenant.organizationId ?? "");
+            ? await this.documentService.findByCategoryId(tenant.branchId ?? "", categoryId) 
+            : await this.documentService.findAll(tenant.branchId ?? "");
         return entities.map(toResponse);
     }
 
     @Get(":id")
-    async findById(@CurrentTenant() tenant: { organizationId?: string }, @Param("id") id: string) {
-        const entity = await this.documentService.findById(tenant.organizationId ?? "", id);
+    async findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
+        const entity = await this.documentService.findById(tenant.branchId ?? "", id);
         return toResponse(entity);
     }
 
     /**
-     * GET /documents/org/:orgid
-     * Find documents by organization ID
+     * GET /documents/org/:branchid
+     * Find documents by branch ID
      */
-    @Get("org/:orgid")
+    @Get("org/:branchid")
     async findByOrgId(
-        @CurrentTenant() tenant: { organizationId?: string },
-        @Param("orgid") orgid: string
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("branchid") branchid: string
     ) {
-        const entities = await this.documentService.findByOrgId(tenant.organizationId ?? "", orgid);
+        const entities = await this.documentService.findByOrgId(tenant.branchId ?? "", branchid);
         return entities.map(toResponse);
     }
 
     @Get("category/:categoryId")
     async findByCategoryId(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("categoryId") categoryId: string
     ) {
         const entities = await this.documentService.findByCategoryId(
-            tenant.organizationId ?? "",
+            tenant.branchId ?? "",
             categoryId
         );
         return entities.map(toResponse);
@@ -177,11 +177,11 @@ export class DocumentController {
 
     @Put(":id")
     async update(
-        @CurrentTenant() tenant: { organizationId?: string },
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
         @Body() dto: UpdateDocumentDto
     ) {
-        const entity = await this.documentService.update(tenant.organizationId ?? "", id, {
+        const entity = await this.documentService.update(tenant.branchId ?? "", id, {
             name: dto.name,
             description: dto.description,
             categoryId: dto.categoryId,
@@ -195,10 +195,10 @@ export class DocumentController {
      * Delete a document (also deletes from storage)
      */
     @Delete(":id")
-    async delete(@CurrentTenant() tenant: { organizationId?: string }, @Param("id") id: string) {
-        const doc = await this.documentService.findById(tenant.organizationId ?? "", id);
+    async delete(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
+        const doc = await this.documentService.findById(tenant.branchId ?? "", id);
         await this.fileStorage.delete(doc.storagepath);
-        await this.documentService.delete(tenant.organizationId ?? "", id);
+        await this.documentService.delete(tenant.branchId ?? "", id);
         return { message: "Document deleted successfully" };
     }
 
@@ -208,12 +208,12 @@ export class DocumentController {
       */
      @Get(":id/download")
      async download(
-         @CurrentTenant() tenant: { organizationId?: string },
+         @CurrentTenant() tenant: { branchId?: string },
          @Param("id") id: string,
          @Res() res: Response,
          @Query("attachment") attachment?: string,
      ) {
-         const doc = await this.documentService.findById(tenant.organizationId ?? "", id);
+         const doc = await this.documentService.findById(tenant.branchId ?? "", id);
          const fileBuffer = await this.fileStorage.download(doc.storagepath);
          
          // Helper to get extension from mimetype
@@ -228,14 +228,26 @@ export class DocumentController {
                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
                  "application/vnd.ms-excel": ".xls",
                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+                 "application/hwp": ".hwp",
+                 "application/haansofthwp": ".hwp",
+                 "application/vnd.hancom.hwp": ".hwp",
+                 "application/vnd.hancom.hwpx": ".hwpx",
+                 "application/x-hwp": ".hwp",
+                 "application/x-hwpx": ".hwpx",
              };
              return mimeToExt[mimetype] || "";
+         };
+
+         const getStorageExtension = (storagePath: string): string => {
+             const cleanPath = storagePath.split(/[?#]/)[0] ?? "";
+             const extensionMatch = cleanPath.match(/\.([a-z0-9]+)$/i);
+             return extensionMatch?.[1] ? `.${extensionMatch[1].toLowerCase()}` : "";
          };
          
          // Ensure filename has extension
          let filename = doc.name;
          if (!filename.includes(".")) {
-             filename += getExtension(doc.mimetype);
+             filename += getExtension(doc.mimetype) || getStorageExtension(doc.storagepath);
          }
          
          const disposition = attachment === "true" 

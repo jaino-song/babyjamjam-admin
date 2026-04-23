@@ -20,7 +20,7 @@ export interface AlimtalkTriggerJobPayload {
 export class AlimtalkTriggerJobEntity {
     constructor(
         public readonly id: string,
-        public organizationId: string | null,
+        public branchId: string | null,
         public ruleId: string,
         public status: AlimtalkTriggerJobStatus,
         public scheduledFor: Date,
@@ -39,7 +39,7 @@ export class AlimtalkTriggerJobEntity {
     ) {}
 
     static create(params: {
-        organizationId?: string;
+        branchId?: string;
         ruleId: string;
         scheduledFor: Date;
         clientId?: number | null;
@@ -53,7 +53,7 @@ export class AlimtalkTriggerJobEntity {
         const now = new Date();
         return new AlimtalkTriggerJobEntity(
             "",
-            params.organizationId ?? null,
+            params.branchId ?? null,
             params.ruleId,
             "pending",
             params.scheduledFor,
@@ -74,7 +74,7 @@ export class AlimtalkTriggerJobEntity {
 
     static reconstitute(
         id: string,
-        organizationId: string | null,
+        branchId: string | null,
         ruleId: string,
         status: AlimtalkTriggerJobStatus,
         scheduledFor: Date,
@@ -93,7 +93,7 @@ export class AlimtalkTriggerJobEntity {
     ): AlimtalkTriggerJobEntity {
         return new AlimtalkTriggerJobEntity(
             id,
-            organizationId,
+            branchId,
             ruleId,
             status,
             scheduledFor,

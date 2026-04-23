@@ -8,20 +8,20 @@ import { NotificationMapper } from "../mapper/notification.mapper";
 export class SbNotificationRepository implements INotificationRepository {
     constructor(private prismaService: PrismaService) {}
 
-    async findById(organizationid: string, id: number): Promise<NotificationEntity | null> {
+    async findById(branchid: string, id: number): Promise<NotificationEntity | null> {
         const row = await this.prismaService.notification.findFirst({
-            where: { id, organizationId: organizationid },
+            where: { id, branchId: branchid },
         });
         return row ? NotificationMapper.toDomain(row) : null;
     }
 
     async findByUserId(
-        organizationid: string,
+        branchid: string,
         userId: string,
         options?: { limit?: number; offset?: number },
     ): Promise<NotificationEntity[]> {
         const rows = await this.prismaService.notification.findMany({
-            where: { userId: userId, organizationId: organizationid },
+            where: { userId: userId, branchId: branchid },
             orderBy: { sentAt: 'desc' },
             take: options?.limit ?? 50,
             skip: options?.offset ?? 0,
@@ -29,48 +29,48 @@ export class SbNotificationRepository implements INotificationRepository {
         return rows.map(NotificationMapper.toDomain);
     }
 
-    async findUnreadByUserId(organizationid: string, userId: string): Promise<NotificationEntity[]> {
+    async findUnreadByUserId(branchid: string, userId: string): Promise<NotificationEntity[]> {
         const rows = await this.prismaService.notification.findMany({
             where: {
                 userId: userId,
                 readAt: null,
-                organizationId: organizationid,
+                branchId: branchid,
             },
             orderBy: { sentAt: 'desc' },
         });
         return rows.map(NotificationMapper.toDomain);
     }
 
-    async countUnreadByUserId(organizationid: string, userId: string): Promise<number> {
+    async countUnreadByUserId(branchid: string, userId: string): Promise<number> {
         return this.prismaService.notification.count({
             where: {
                 userId: userId,
                 readAt: null,
-                organizationId: organizationid,
+                branchId: branchid,
             },
         });
     }
 
-    async create(organizationid: string, notification: NotificationEntity): Promise<NotificationEntity> {
+    async create(branchid: string, notification: NotificationEntity): Promise<NotificationEntity> {
         const created = await this.prismaService.notification.create({
             data: {
                 ...NotificationMapper.toPrismaCreate(notification),
-                organizationId: organizationid,
+                branchId: branchid,
             },
         });
         return NotificationMapper.toDomain(created);
     }
 
-    async update(organizationid: string, notification: NotificationEntity): Promise<NotificationEntity> {
+    async update(branchid: string, notification: NotificationEntity): Promise<NotificationEntity> {
         const result = await this.prismaService.notification.updateMany({
-            where: { id: notification.id, organizationId: organizationid },
+            where: { id: notification.id, branchId: branchid },
             data: NotificationMapper.toPrismaUpdate(notification),
         });
         if (result.count === 0) {
-            throw new Error("Notification not found for organization");
+            throw new Error("Notification not found for branch");
         }
         const updated = await this.prismaService.notification.findFirst({
-            where: { id: notification.id, organizationId: organizationid },
+            where: { id: notification.id, branchId: branchid },
         });
         if (!updated) {
             throw new Error("Notification not found after update");
@@ -78,12 +78,12 @@ export class SbNotificationRepository implements INotificationRepository {
         return NotificationMapper.toDomain(updated);
     }
 
-    async markAllAsReadByUserId(organizationid: string, userId: string): Promise<void> {
+    async markAllAsReadByUserId(branchid: string, userId: string): Promise<void> {
         await this.prismaService.notification.updateMany({
             where: {
                 userId: userId,
                 readAt: null,
-                organizationId: organizationid,
+                branchId: branchid,
             },
             data: {
                 readAt: new Date(),
@@ -91,11 +91,11 @@ export class SbNotificationRepository implements INotificationRepository {
         });
     }
 
-    async deleteOlderThan(organizationid: string, date: Date): Promise<number> {
+    async deleteOlderThan(branchid: string, date: Date): Promise<number> {
         const result = await this.prismaService.notification.deleteMany({
             where: {
                 sentAt: { lt: date },
-                organizationId: organizationid,
+                branchId: branchid,
             },
         });
         return result.count;

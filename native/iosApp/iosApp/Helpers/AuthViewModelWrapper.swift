@@ -49,15 +49,15 @@ class AuthViewModelWrapper: ObservableObject {
         viewModel.resetPassword(token: token, password: password)
     }
 
-    func selectOrganization(orgId: String) {
-        viewModel.selectOrganization(orgId: orgId)
+    func selectBranch(branchId: String) {
+        viewModel.selectBranch(branchId: branchId)
     }
 
     var isAuthenticated: Bool {
         authState is AuthState.Authenticated
     }
 
-    var requiresOrgSelection: Bool {
-        authState is AuthState.RequiresOrgSelection
+    var requiresBranchSelection: Bool {
+        authState is AuthState.RequiresBranchSelection
     }
 }

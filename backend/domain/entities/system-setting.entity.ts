@@ -1,9 +1,30 @@
 export const ALIMTALK_PROVIDERS = ["channeltalk", "aligo", "none"] as const;
 export type AlimtalkProvider = (typeof ALIMTALK_PROVIDERS)[number];
 
+export interface RibbonConfig {
+    enabled: boolean;
+    message: string;
+    backgroundColor: string;
+    textColor: string;
+    linkText: string;
+    linkHref: string;
+    linkColor: string;
+}
+
+export const DEFAULT_RIBBON_CONFIG: RibbonConfig = {
+    enabled: false,
+    message: "",
+    backgroundColor: "#004AAD",
+    textColor: "#FFFFFF",
+    linkText: "",
+    linkHref: "",
+    linkColor: "#FFB27B",
+};
+
 export class SystemSettingEntity {
     static readonly ALIMTALK_PROVIDER_KEY = "alimtalk_provider";
     static readonly DEFAULT_ALIMTALK_PROVIDER: AlimtalkProvider = "aligo";
+    static readonly RIBBON_CONFIG_KEY = "ribbon_config";
 
     constructor(
         public readonly key: string,

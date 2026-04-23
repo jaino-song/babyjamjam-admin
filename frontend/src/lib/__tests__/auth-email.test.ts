@@ -24,7 +24,7 @@ describe("auth email handling", () => {
       name: "홍길동",
       phone: "010-1234-5678",
       birthDate: "1990-01-01",
-      organizationId: "org-1",
+      branchId: "org-1",
       role: "user",
     });
 

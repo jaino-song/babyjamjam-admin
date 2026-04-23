@@ -14,7 +14,7 @@ describe("SendAligoAlimtalkUsecase", () => {
             // Return a real entity instance so methods like markSent/markFailed work
             return Promise.resolve(AlimtalkLogEntity.reconstitute(
                 1,
-                log.organizationId,
+                log.branchId,
                 log.provider,
                 log.templateKey,
                 log.triggerJobId,
@@ -34,7 +34,7 @@ describe("SendAligoAlimtalkUsecase", () => {
         }),
         update: jest.fn().mockResolvedValue(undefined),
         findPendingRetries: jest.fn().mockResolvedValue([]),
-        findRecentByOrganization: jest.fn().mockResolvedValue([]),
+        findRecentByBranch: jest.fn().mockResolvedValue([]),
     });
 
     let usecase: SendAligoAlimtalkUsecase;

@@ -31,7 +31,7 @@ export class RegisterDto {
 
     @IsUUID('4', { message: '유효한 지점을 선택해주세요.' })
     @IsNotEmpty({ message: '지점을 선택해주세요.' })
-    organizationId!: string;
+    branchId!: string;
 
     @IsString()
     @IsNotEmpty({ message: '역할을 선택해주세요.' })

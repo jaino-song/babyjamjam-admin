@@ -70,6 +70,8 @@ export function LoginPageDesktop() {
 
       <form data-component="login-form" onSubmit={handleSubmit} className="space-y-4">
         <FormField
+          id="login-email"
+          data-component="auth-login-email-field"
           label="이메일"
           type="email"
           value={formData.email}
@@ -80,6 +82,8 @@ export function LoginPageDesktop() {
         />
 
         <FormField
+          id="login-password"
+          data-component="auth-login-password-field"
           label="비밀번호"
           type="password"
           value={formData.password}
@@ -116,6 +120,7 @@ export function LoginPageDesktop() {
         </div>
 
         <Button
+          data-component="login-submit-button"
           type="submit"
           variant="positive"
           size="lg"

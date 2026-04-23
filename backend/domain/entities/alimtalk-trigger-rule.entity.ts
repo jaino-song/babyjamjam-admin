@@ -8,7 +8,7 @@ import {
 export class AlimtalkTriggerRuleEntity {
     constructor(
         public readonly id: string,
-        public organizationId: string | null,
+        public branchId: string | null,
         public name: string,
         public isActive: boolean,
         public eventType: AlimtalkTriggerEventType,
@@ -21,7 +21,7 @@ export class AlimtalkTriggerRuleEntity {
     ) {}
 
     static create(params: {
-        organizationId?: string;
+        branchId?: string;
         name: string;
         isActive?: boolean;
         eventType: AlimtalkTriggerEventType;
@@ -33,7 +33,7 @@ export class AlimtalkTriggerRuleEntity {
         const now = new Date();
         return new AlimtalkTriggerRuleEntity(
             "",
-            params.organizationId ?? null,
+            params.branchId ?? null,
             params.name,
             params.isActive ?? true,
             params.eventType,
@@ -48,7 +48,7 @@ export class AlimtalkTriggerRuleEntity {
 
     static reconstitute(
         id: string,
-        organizationId: string | null,
+        branchId: string | null,
         name: string,
         isActive: boolean,
         eventType: AlimtalkTriggerEventType,
@@ -61,7 +61,7 @@ export class AlimtalkTriggerRuleEntity {
     ): AlimtalkTriggerRuleEntity {
         return new AlimtalkTriggerRuleEntity(
             id,
-            organizationId,
+            branchId,
             name,
             isActive,
             eventType,

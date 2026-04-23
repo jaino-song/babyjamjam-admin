@@ -50,8 +50,8 @@ export function useCallbackPageController() {
           return;
         }
 
-        if (result.requiresOrgSelection) {
-          router.replace("/select-organization");
+        if (result.requiresBranchSelection) {
+          router.replace("/select-branch");
         } else {
           router.replace("/dashboard");
         }

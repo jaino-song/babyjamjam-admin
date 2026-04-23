@@ -456,7 +456,7 @@ When generating a message:
 
 ## Future Enhancements (Post-MVP)
 
-- [ ] Template categories for organization
+- [ ] Template categories for branch
 - [ ] Template sharing between users
 - [ ] Template versioning/history
 - [ ] Import/export templates

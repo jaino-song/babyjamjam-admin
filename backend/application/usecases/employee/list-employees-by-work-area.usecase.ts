@@ -9,7 +9,7 @@ export class ListEmployeesByWorkAreaUsecase {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    execute(organizationid: string, workArea: string): Promise<EmployeeEntity[]> {
-        return this.employeeRepository.findByWorkArea(organizationid, workArea);
+    execute(branchid: string, workArea: string): Promise<EmployeeEntity[]> {
+        return this.employeeRepository.findByWorkArea(branchid, workArea);
     }
 }
