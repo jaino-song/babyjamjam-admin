@@ -5,6 +5,7 @@ import {
     ConsultationSelectedServices,
     CreateConsultationInquiryParams,
 } from "domain/entities/consultation-inquiry.entity";
+import { getStaffBranchSlugForPublicInquiry } from "domain/constants/branch-routing.constants";
 import {
     CONSULTATION_INQUIRY_REPOSITORY,
     IConsultationInquiryRepository,
@@ -64,14 +65,16 @@ export class ConsultationInquiryService {
             throw new BadRequestException("개인정보 수집 및 이용 동의가 필요합니다.");
         }
 
-        const branch = await this.repository.findActiveBranchBySlug(dto.branchSlug);
+        const publicBranchSlug = dto.branchSlug.trim();
+        const staffBranchSlug = getStaffBranchSlugForPublicInquiry(publicBranchSlug);
+        const branch = await this.repository.findActiveBranchBySlug(staffBranchSlug);
         if (!branch) {
             throw new NotFoundException("상담 가능한 지점을 찾을 수 없습니다.");
         }
 
         const params: CreateConsultationInquiryParams = {
             branchId: branch.id,
-            publicBranchSlug: branch.slug,
+            publicBranchSlug,
             motherName: dto.motherName,
             phone: dto.phone,
             address: dto.address,

@@ -7,6 +7,7 @@ import { EMAIL_PORT, EmailPort } from "../../domain/ports/email.port";
 import { AUTH_TOKEN_REPOSITORY, IAuthTokenRepository } from "../../domain/repositories/auth-token.repository.interface";
 import { AuthTokenEntity } from "../../domain/entities/auth-token.entity";
 import { getAuthTokenExpiresIn } from "./auth-token-policy";
+import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
 
 export interface KakaoData {
     kakaoId: string;
@@ -91,6 +92,15 @@ export interface PasswordValidationResult {
     errors: string[];
 }
 
+type UserBranchSelection = {
+    branchId: string;
+    role: string | null;
+    branch?: {
+        slug: string | null;
+        isActive: boolean | null;
+    };
+};
+
 export interface RegistrationResult {
     success: boolean;
     message: string;
@@ -158,7 +168,7 @@ export class AuthService {
             birthDate: string | null;
             role: string | null;
         },
-        userOrgs: Array<{ branchId: string; role: string | null }>,
+        userOrgs: UserBranchSelection[],
     ): PendingAccountOnboardingProfile | null {
         const [firstOrg] = userOrgs;
 
@@ -183,6 +193,19 @@ export class AuthService {
         };
     }
 
+    private filterSelectableUserBranches<TUserBranch extends UserBranchSelection>(
+        userBranches: TUserBranch[],
+    ): TUserBranch[] {
+        return userBranches.filter((userBranch) => {
+            if (!userBranch.branch) {
+                return true;
+            }
+
+            return userBranch.branch.isActive === true
+                && isVisibleStaffBranchSlug(userBranch.branch.slug ?? "");
+        });
+    }
+
     private async createLoginResultForUser(user: {
         id: string;
         email: string | null;
@@ -192,13 +215,19 @@ export class AuthService {
         birthDate: string | null;
         role: string | null;
     }): Promise<UserValidationResult | PendingAccountOnboardingValidationResult> {
-        const userOrgs = await this.prisma.user_branch.findMany({
+        const userOrgs = this.filterSelectableUserBranches(await this.prisma.user_branch.findMany({
             where: { userId: user.id },
             select: {
                 branchId: true,
                 role: true,
+                branch: {
+                    select: {
+                        slug: true,
+                        isActive: true,
+                    },
+                },
             },
-        });
+        }));
 
         const pendingAccountOnboardingProfile = user.role === "owner"
             ? null
@@ -332,6 +361,14 @@ export class AuthService {
         return this.createLoginResultForUser(user);
     }
 
+    private isSelectableBranch(branch: { slug?: string | null; isActive?: boolean | null } | null | undefined): boolean {
+        if (!branch) {
+            return true;
+        }
+
+        return branch.isActive === true && isVisibleStaffBranchSlug(branch.slug ?? "");
+    }
+
     async selectBranch(userid: string, branchid: string): Promise<{ accessToken: string; refreshToken: string }> {
         const user = await this.prisma.user.findUnique({ where: { id: userid } });
         if (!user) {
@@ -342,9 +379,9 @@ export class AuthService {
         if (user.role === 'owner') {
             const org = await this.prisma.branch.findUnique({
                 where: { id: branchid },
-                select: { id: true },
+                select: { id: true, slug: true, isActive: true },
             });
-            if (!org) {
+            if (!org || !this.isSelectableBranch(org)) {
                 throw new ForbiddenException("Branch not found");
             }
             return this.issueBranchTokens(user, branchid, 'owner');
@@ -352,9 +389,17 @@ export class AuthService {
 
         // Regular users must be linked to the branch
         const userOrg = await this.prisma.user_branch.findFirst({
-            where: { userId: userid, branchId: branchid }
+            where: { userId: userid, branchId: branchid },
+            include: {
+                branch: {
+                    select: {
+                        slug: true,
+                        isActive: true,
+                    },
+                },
+            },
         });
-        if (!userOrg) {
+        if (!userOrg || !this.isSelectableBranch(userOrg.branch)) {
             throw new ForbiddenException("User does not belong to this branch");
         }
 
@@ -375,9 +420,9 @@ export class AuthService {
         if (user.role === 'owner') {
             const org = await this.prisma.branch.findUnique({
                 where: { id: newbranchid },
-                select: { id: true },
+                select: { id: true, slug: true, isActive: true },
             });
-            if (!org) {
+            if (!org || !this.isSelectableBranch(org)) {
                 throw new ForbiddenException("Branch not found");
             }
             return this.issueBranchTokens(user, newbranchid, 'owner');
@@ -385,9 +430,17 @@ export class AuthService {
 
         // Regular users must be linked to the branch
         const userOrg = await this.prisma.user_branch.findFirst({
-            where: { userId: userid, branchId: newbranchid }
+            where: { userId: userid, branchId: newbranchid },
+            include: {
+                branch: {
+                    select: {
+                        slug: true,
+                        isActive: true,
+                    },
+                },
+            },
         });
-        if (!userOrg) {
+        if (!userOrg || !this.isSelectableBranch(userOrg.branch)) {
             throw new ForbiddenException("User does not belong to target branch");
         }
 
@@ -417,7 +470,7 @@ export class AuthService {
 
             this.logger.log(`[getUserBranches] Owner access - found ${allOrgs.length} active branches`);
 
-            return allOrgs.map(org => ({
+            return allOrgs.filter((org) => isVisibleStaffBranchSlug(org.slug)).map(org => ({
                 id: org.id,
                 name: org.name,
                 slug: org.slug,
@@ -435,7 +488,7 @@ export class AuthService {
             return [];
         }
 
-        return userOrgs.map(userOrg => ({
+        return userOrgs.filter((userOrg) => isVisibleStaffBranchSlug(userOrg.branch.slug)).map(userOrg => ({
             id: userOrg.branch.id,
             name: userOrg.branch.name,
             slug: userOrg.branch.slug,
@@ -720,13 +773,19 @@ export class AuthService {
             throw new UnauthorizedException("Pending account onboarding user not found");
         }
 
-        const userOrgs = await this.prisma.user_branch.findMany({
+        const userOrgs = this.filterSelectableUserBranches(await this.prisma.user_branch.findMany({
             where: { userId: user.id },
             select: {
                 branchId: true,
                 role: true,
+                branch: {
+                    select: {
+                        slug: true,
+                        isActive: true,
+                    },
+                },
             },
-        });
+        }));
 
         return this.getPendingAccountOnboardingProfile(user, userOrgs) ?? {
             email: user.email ?? undefined,
