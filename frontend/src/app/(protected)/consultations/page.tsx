@@ -82,6 +82,38 @@ function getReadVariant(readAt: string | null): "neutral" | "warning" {
     return readAt ? "neutral" : "warning";
 }
 
+function SelectedServicesCard({ inquiry }: { inquiry: ConsultationInquiry }) {
+    const selectedServices = inquiry.selectedServices;
+    const hasPlan = Boolean(selectedServices?.plan);
+    const addons = selectedServices?.addons ?? [];
+
+    if (!hasPlan && addons.length === 0) {
+        return (
+            <InfoCard title="선택 서비스">
+                <InfoRow label="서비스" value="선택 서비스 없음" />
+            </InfoCard>
+        );
+    }
+
+    return (
+        <InfoCard title="선택 서비스">
+            {selectedServices?.plan && (
+                <InfoRow
+                    label="플랜"
+                    value={`${selectedServices.plan.name} · ${selectedServices.plan.priceLabel}`}
+                />
+            )}
+            {addons.map((addon) => (
+                <InfoRow
+                    key={addon.id}
+                    label={addon.name}
+                    value={`${addon.priceLabel} · 수량 ${addon.quantity}`}
+                />
+            ))}
+        </InfoCard>
+    );
+}
+
 export default function ConsultationsPage() {
     const [activeReadState, setActiveReadState] = useState("unread");
     const [search, setSearch] = useState("");
@@ -308,6 +340,8 @@ export default function ConsultationsPage() {
                                     ) : null}
                                 </InfoCard>
                             </div>
+
+                            <SelectedServicesCard inquiry={activeInquiry} />
                         </div>
                     </DetailPanel>
                 ) : (

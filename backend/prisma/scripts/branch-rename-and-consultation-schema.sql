@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS "consultation_inquiry" (
   "preferred_caregiver_name" TEXT,
   "referral_source" TEXT NOT NULL,
   "privacy_accepted_at" TIMESTAMPTZ(6) NOT NULL,
+  "selected_services" JSONB,
   "source" TEXT NOT NULL DEFAULT 'website',
   "status" TEXT NOT NULL DEFAULT 'new',
   "read_at" TIMESTAMPTZ(6),
@@ -102,6 +103,7 @@ CREATE TABLE IF NOT EXISTS "consultation_inquiry" (
 );
 
 ALTER TABLE "consultation_inquiry"
+  ADD COLUMN IF NOT EXISTS "selected_services" JSONB,
   ADD COLUMN IF NOT EXISTS "read_at" TIMESTAMPTZ(6);
 
 CREATE INDEX IF NOT EXISTS "idx_branch_region"

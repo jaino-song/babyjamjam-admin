@@ -273,12 +273,29 @@ export interface ConsultationInquiry {
     preferredCaregiverName: string | null;
     referralSource: string;
     privacyAcceptedAt: string;
+    selectedServices: ConsultationSelectedServices | null;
     source: string;
     status: string;
     readAt: string | null;
     createdAt: string;
     updatedAt: string;
     branchName?: string;
+}
+
+export interface ConsultationSelectedServices {
+    plan: {
+        id: string;
+        name: string;
+        priceLabel: string;
+        durationDays: number | null;
+    } | null;
+    addons: Array<{
+        id: string;
+        name: string;
+        priceLabel: string;
+        quantity: number;
+        group: string | null;
+    }>;
 }
 
 export interface ConsultationInquiryListResponse {
