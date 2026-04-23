@@ -1,95 +1,20 @@
 import { PrismaClient } from "@prisma/client";
 
+import { INCHEON_STAFF_BRANCH_SLUG } from "../../domain/constants/branch-routing.constants";
+
 const prisma = new PrismaClient();
 
 const PUBLIC_BRANCHES = [
     {
-        slug: "incheon-junggu",
-        name: "인천 중구점",
+        slug: INCHEON_STAFF_BRANCH_SLUG,
+        name: "인천지점",
         region: "인천",
-        district: "중구",
+        district: "인천",
         branchType: "direct",
-        address: "인천광역시 중구 신포로 27, 4층",
+        address: "",
         phone: "1661-2386",
         businessHours: "평일 09:00 – 18:00",
-        description: "인천 중구·영종 지역 전담. 신포역 인근.",
-    },
-    {
-        slug: "incheon-donggu",
-        name: "인천 동구점",
-        region: "인천",
-        district: "동구",
-        branchType: "direct",
-        address: "인천광역시 동구 솔빛로 105, 3층",
-        phone: "1661-2386",
-        businessHours: "평일 09:00 – 18:00",
-        description: "인천 동구 전담. 동인천역 도보 3분.",
-    },
-    {
-        slug: "incheon-michuhol",
-        name: "인천 미추홀구점",
-        region: "인천",
-        district: "미추홀구",
-        branchType: "direct",
-        address: "인천광역시 미추홀구 경인로 229, 5층",
-        phone: "1661-2386",
-        businessHours: "평일 09:00 – 18:00",
-        description: "미추홀구 전담. 주안역 인근.",
-    },
-    {
-        slug: "incheon-yeonsu",
-        name: "인천 연수구점",
-        region: "인천",
-        district: "연수구",
-        branchType: "direct",
-        address: "인천광역시 연수구 컨벤시아대로 165, 6층",
-        phone: "1661-2386",
-        businessHours: "평일 09:00 – 18:00",
-        description: "연수·송도 지역 전담. 센트럴파크역 인근.",
-    },
-    {
-        slug: "incheon-namdong",
-        name: "인천 남동구점",
-        region: "인천",
-        district: "남동구",
-        branchType: "direct",
-        address: "인천광역시 남동구 인주대로 552, 3층",
-        phone: "1661-2386",
-        businessHours: "평일 09:00 – 18:00",
-        description: "남동구 전담. 남동인더스파크역 인근.",
-    },
-    {
-        slug: "incheon-bupyeong",
-        name: "인천 부평구점",
-        region: "인천",
-        district: "부평구",
-        branchType: "direct",
-        address: "인천광역시 부평구 부평대로 283, 4층",
-        phone: "1661-2386",
-        businessHours: "평일 09:00 – 18:00",
-        description: "부평구 전담. 부평역 도보 5분.",
-    },
-    {
-        slug: "incheon-gyeyang",
-        name: "인천 계양구점",
-        region: "인천",
-        district: "계양구",
-        branchType: "direct",
-        address: "인천광역시 계양구 계양대로 145, 3층",
-        phone: "1661-2386",
-        businessHours: "평일 09:00 – 18:00",
-        description: "계양구 전담. 계양역 인근.",
-    },
-    {
-        slug: "incheon-seogu",
-        name: "인천 서구점",
-        region: "인천",
-        district: "서구",
-        branchType: "direct",
-        address: "인천광역시 서구 청라대로 229, 5층",
-        phone: "1661-2386",
-        businessHours: "평일 09:00 – 18:00",
-        description: "서구·청라 지역 전담. 검암역 인근.",
+        description: "인천 전 지역 상담 접수 지점.",
     },
     {
         slug: "gyeongsan",
@@ -176,7 +101,23 @@ async function main(): Promise<void> {
         });
     }
 
-    console.log(`Seeded ${PUBLIC_BRANCHES.length} public branches for ${owner.email}.`);
+    const deactivatedIncheonDistrictBranches = await prisma.branch.updateMany({
+        where: {
+            slug: { not: INCHEON_STAFF_BRANCH_SLUG },
+            OR: [
+                { region: "인천" },
+                { slug: { startsWith: `${INCHEON_STAFF_BRANCH_SLUG}-` } },
+            ],
+        },
+        data: {
+            isActive: false,
+        },
+    });
+
+    console.log(
+        `Seeded ${PUBLIC_BRANCHES.length} public branches for ${owner.email}; ` +
+        `deactivated ${deactivatedIncheonDistrictBranches.count} Incheon district branches.`,
+    );
 }
 
 main()
