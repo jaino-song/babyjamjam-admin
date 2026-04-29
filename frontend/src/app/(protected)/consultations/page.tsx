@@ -15,6 +15,11 @@ import {
     SplitLayout,
     StatsBar,
 } from "@/components/app/v3";
+import { SelectedServicesCard } from "@/components/app/consultations/SelectedServicesCard";
+import {
+    getDisplayedConsultationInquiries,
+    getConsultationIdentityKey,
+} from "./list-state";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useConsultationInquiries, useMarkConsultationInquiryRead } from "@/hooks/useConsultationInquiries";
@@ -55,63 +60,12 @@ function getInquirySourceLabel(source: string): string {
     return source || "-";
 }
 
-function getConsultationIdentityKey(inquiry: ConsultationInquiry): string {
-    return `${inquiry.motherName.trim().toLowerCase()}::${inquiry.phone.replace(/\D/g, "")}`;
-}
-
-function getLatestUniqueConsultationInquiries(inquiries: ConsultationInquiry[]): ConsultationInquiry[] {
-    return Array.from(
-        inquiries.reduce((uniqueMap, inquiry) => {
-            const key = getConsultationIdentityKey(inquiry);
-            const current = uniqueMap.get(key);
-
-            if (!current || new Date(inquiry.createdAt).getTime() > new Date(current.createdAt).getTime()) {
-                uniqueMap.set(key, inquiry);
-            }
-
-            return uniqueMap;
-        }, new Map<string, ConsultationInquiry>()).values(),
-    );
-}
-
 function getReadLabel(readAt: string | null): string {
     return readAt ? "읽음" : "읽지 않음";
 }
 
 function getReadVariant(readAt: string | null): "neutral" | "warning" {
     return readAt ? "neutral" : "warning";
-}
-
-function SelectedServicesCard({ inquiry }: { inquiry: ConsultationInquiry }) {
-    const selectedServices = inquiry.selectedServices;
-    const hasPlan = Boolean(selectedServices?.plan);
-    const addons = selectedServices?.addons ?? [];
-
-    if (!hasPlan && addons.length === 0) {
-        return (
-            <InfoCard title="선택 서비스">
-                <InfoRow label="서비스" value="선택 서비스 없음" />
-            </InfoCard>
-        );
-    }
-
-    return (
-        <InfoCard title="선택 서비스">
-            {selectedServices?.plan && (
-                <InfoRow
-                    label="플랜"
-                    value={`${selectedServices.plan.name} · ${selectedServices.plan.priceLabel}`}
-                />
-            )}
-            {addons.map((addon) => (
-                <InfoRow
-                    key={addon.id}
-                    label={addon.name}
-                    value={`${addon.priceLabel} · 수량 ${addon.quantity}`}
-                />
-            ))}
-        </InfoCard>
-    );
 }
 
 export default function ConsultationsPage() {
@@ -143,7 +97,14 @@ export default function ConsultationsPage() {
     const markRead = useMarkConsultationInquiryRead();
     const inquiries = useMemo(() => data?.data ?? [], [data?.data]);
     const statsInquiries = useMemo(() => statsData?.data ?? [], [statsData?.data]);
-    const visibleInquiries = useMemo(() => getLatestUniqueConsultationInquiries(inquiries), [inquiries]);
+    const visibleInquiries = useMemo(
+        () => getDisplayedConsultationInquiries({
+            inquiries,
+            selectedInquiry,
+            activeReadState,
+        }),
+        [activeReadState, inquiries, selectedInquiry],
+    );
     const activeInquiry = selectedInquiry
         ? inquiries.find((item) => item.id === selectedInquiry.id) ?? selectedInquiry
         : null;
@@ -249,7 +210,11 @@ export default function ConsultationsPage() {
                             onSlotClick={(inquiry) => {
                                 setSelectedInquiry(inquiry);
                                 if (!inquiry.readAt) {
-                                    markRead.mutate(inquiry.id);
+                                    markRead.mutate(inquiry.id, {
+                                        onSuccess: (updatedInquiry) => {
+                                            setSelectedInquiry(updatedInquiry);
+                                        },
+                                    });
                                 }
                             }}
                             render={({ item, isLoading: slotLoading }) => {
@@ -339,9 +304,9 @@ export default function ConsultationsPage() {
                                         </div>
                                     ) : null}
                                 </InfoCard>
-                            </div>
 
-                            <SelectedServicesCard inquiry={activeInquiry} />
+                                <SelectedServicesCard inquiry={activeInquiry} className="col-span-2" />
+                            </div>
                         </div>
                     </DetailPanel>
                 ) : (

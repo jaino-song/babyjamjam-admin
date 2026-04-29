@@ -1,0 +1,48 @@
+"use client";
+
+import { InfoCard, InfoRow } from "@/components/app/v3";
+import type { ConsultationInquiry } from "@/services/api";
+
+interface SelectedServicesCardProps {
+  inquiry: ConsultationInquiry;
+  className?: string;
+}
+
+export function SelectedServicesCard({
+  inquiry,
+  className,
+}: SelectedServicesCardProps) {
+  const selectedServices = inquiry.selectedServices;
+  const hasPlan = Boolean(selectedServices?.plan);
+  const addons = selectedServices?.addons ?? [];
+  const hasAddons = addons.length > 0;
+
+  if (!hasPlan && !hasAddons) {
+    return (
+      <InfoCard title="서비스 정보" className={className}>
+        <InfoRow label="서비스" value="선택 서비스 없음" />
+      </InfoCard>
+    );
+  }
+
+  return (
+    <InfoCard title="서비스 정보" className={className}>
+      {selectedServices?.plan && (
+        <InfoRow
+          label="산후도우미서비스 플랜"
+          value={`${selectedServices.plan.name} · ${selectedServices.plan.priceLabel}`}
+        />
+      )}
+      {hasAddons && (
+        <InfoRow
+          label="추가 서비스"
+          value={addons.map((addon) => (
+            <span key={addon.id} className="block">
+              {`${addon.name} · ${addon.priceLabel} · 수량 ${addon.quantity}`}
+            </span>
+          ))}
+        />
+      )}
+    </InfoCard>
+  );
+}
