@@ -22,6 +22,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         },
         branch: {
             findUnique: jest.fn(),
+            findMany: jest.fn(),
         },
     });
 
@@ -216,6 +217,42 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 expect(jwtService.signAsync).not.toHaveBeenCalled();
             });
         });
+
+        describe("given user only has a hidden Incheon district branch", () => {
+            it("should not auto-select the hidden branch", async () => {
+                const kakaoData = {
+                    kakaoId: "kakao-12345",
+                    email: "test@example.com",
+                    name: "Test User",
+                };
+                const hiddenIncheonDistrictBranch = {
+                    id: "incheon-bupyeong-id",
+                    name: "인천 부평구점",
+                    slug: "incheon-bupyeong",
+                    isActive: true,
+                };
+
+                prismaService.user.findFirst.mockResolvedValue(mockUser);
+                prismaService.user_branch.findMany.mockResolvedValue([
+                    {
+                        ...mockUserBranch,
+                        branchId: hiddenIncheonDistrictBranch.id,
+                        branch: hiddenIncheonDistrictBranch,
+                    },
+                ]);
+
+                const result = await service.validateKakaoUser(kakaoData);
+
+                expect(result).toMatchObject({
+                    onboardingRequired: true,
+                    onboardingKind: "account_completion",
+                    prefill: expect.objectContaining({
+                        branchId: undefined,
+                    }),
+                });
+                expect(jwtService.signAsync).not.toHaveBeenCalled();
+            });
+        });
     });
 
     // ============================================
@@ -256,6 +293,30 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const action = () => service.selectBranch(userId, invalidOrgId);
 
                 // #then
+                await expect(action).rejects.toThrow(ForbiddenException);
+                await expect(action).rejects.toThrow("User does not belong to this branch");
+            });
+        });
+
+        describe("given user belongs to a hidden Incheon district branch", () => {
+            it("should throw ForbiddenException", async () => {
+                const hiddenIncheonDistrictBranch = {
+                    id: "incheon-bupyeong-id",
+                    name: "인천 부평구점",
+                    slug: "incheon-bupyeong",
+                    isActive: true,
+                };
+                const hiddenMembership = {
+                    ...mockUserBranch,
+                    branchId: hiddenIncheonDistrictBranch.id,
+                    branch: hiddenIncheonDistrictBranch,
+                };
+
+                prismaService.user.findUnique.mockResolvedValue(mockUser);
+                prismaService.user_branch.findFirst.mockResolvedValue(hiddenMembership);
+
+                const action = () => service.selectBranch(mockUser.id, hiddenIncheonDistrictBranch.id);
+
                 await expect(action).rejects.toThrow(ForbiddenException);
                 await expect(action).rejects.toThrow("User does not belong to this branch");
             });
@@ -545,6 +606,81 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                     slug: mockBranch2.slug,
                     role: "member",
                 });
+            });
+
+            it("should hide Incheon district branches from regular user branch list", async () => {
+                const userId = mockUser.id;
+                const hiddenIncheonDistrictBranch = {
+                    id: "incheon-bupyeong-id",
+                    name: "인천 부평구점",
+                    slug: "incheon-bupyeong",
+                    isActive: true,
+                };
+                const canonicalIncheonBranch = {
+                    id: "incheon-id",
+                    name: "인천지점",
+                    slug: "incheon",
+                    isActive: true,
+                };
+
+                prismaService.user.findUnique.mockResolvedValue({ role: "user" });
+                prismaService.user_branch.findMany.mockResolvedValue([
+                    { ...mockUserBranch, branch: hiddenIncheonDistrictBranch },
+                    { ...mockUserBranch2, branch: canonicalIncheonBranch },
+                ]);
+
+                const result = await service.getUserBranches(userId);
+
+                expect(result).toEqual([
+                    {
+                        id: canonicalIncheonBranch.id,
+                        name: canonicalIncheonBranch.name,
+                        slug: canonicalIncheonBranch.slug,
+                        role: "member",
+                    },
+                ]);
+            });
+        });
+
+        describe("given owner user", () => {
+            it("should hide Incheon district branches from owner branch list", async () => {
+                const userId = mockUser.id;
+                const hiddenIncheonDistrictBranch = {
+                    id: "incheon-yeonsu-id",
+                    name: "인천 연수구점",
+                    slug: "incheon-yeonsu",
+                    isActive: true,
+                };
+                const canonicalIncheonBranch = {
+                    id: "incheon-id",
+                    name: "인천지점",
+                    slug: "incheon",
+                    isActive: true,
+                };
+
+                prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
+                prismaService.branch.findMany.mockResolvedValue([
+                    hiddenIncheonDistrictBranch,
+                    canonicalIncheonBranch,
+                    mockBranch,
+                ]);
+
+                const result = await service.getUserBranches(userId);
+
+                expect(result).toEqual([
+                    {
+                        id: canonicalIncheonBranch.id,
+                        name: canonicalIncheonBranch.name,
+                        slug: canonicalIncheonBranch.slug,
+                        role: "owner",
+                    },
+                    {
+                        id: mockBranch.id,
+                        name: mockBranch.name,
+                        slug: mockBranch.slug,
+                        role: "owner",
+                    },
+                ]);
             });
         });
 

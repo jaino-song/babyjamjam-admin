@@ -19,6 +19,7 @@ import {
 } from "interface/dto/email-auth.dto";
 import { SelectBranchDto, SwitchBranchDto } from "interface/dto/branch-auth.dto";
 import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
+import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
 
 @Controller("auth")
 export class AuthController {
@@ -344,10 +345,12 @@ export class AuthController {
     async getAllActiveBranches() {
         const branches = await this.prisma.branch.findMany({
             where: { isActive: true },
-            select: { id: true, name: true },
+            select: { id: true, name: true, slug: true },
             orderBy: { name: 'asc' },
         });
-        return branches;
+        return branches
+            .filter((branch) => isVisibleStaffBranchSlug(branch.slug))
+            .map(({ id, name }) => ({ id, name }));
     }
 
     @Post("select-branch")
