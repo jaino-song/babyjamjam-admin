@@ -618,7 +618,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 };
                 const canonicalIncheonBranch = {
                     id: "incheon-id",
-                    name: "인천지점",
+                    name: "인천점",
                     slug: "incheon",
                     isActive: true,
                 };
@@ -653,7 +653,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 };
                 const canonicalIncheonBranch = {
                     id: "incheon-id",
-                    name: "인천지점",
+                    name: "인천점",
                     slug: "incheon",
                     isActive: true,
                 };

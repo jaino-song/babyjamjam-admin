@@ -57,7 +57,7 @@ describe("ConsultationInquiryService", () => {
         const inquiry = createInquiry();
         repository.findActiveBranchBySlug.mockResolvedValue({
             id: "branch-1",
-            name: "인천지점",
+            name: "인천점",
             slug: "incheon",
         });
         repository.create.mockResolvedValue(inquiry);

@@ -24,7 +24,7 @@ async function migrate() {
       org = await prisma.branch.create({
         data: {
           id: crypto.randomUUID(),
-          name: '인천지점',
+          name: '인천점',
           slug: 'incheon',
           description: '기본 지점',
           email: 'incheon@mirae-incheon.com',

@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 const PUBLIC_BRANCHES = [
     {
         slug: INCHEON_STAFF_BRANCH_SLUG,
-        name: "인천지점",
+        name: "인천점",
         region: "인천",
         district: "인천",
         branchType: "direct",
