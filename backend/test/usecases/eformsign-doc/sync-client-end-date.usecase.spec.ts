@@ -7,6 +7,7 @@ import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.clie
 describe("SyncClientEndDateUsecase", () => {
     const branchId = "test-branch";
     const documentId = "test-doc-id";
+    const accessToken = "access-token";
 
     const createDocumentResponse = (
         fields: Array<{ id: string; value: string; type: string }>
@@ -83,7 +84,6 @@ describe("SyncClientEndDateUsecase", () => {
         );
 
     const eformsignClient = {
-        getAccessToken: jest.fn(),
         getDocument: jest.fn(),
     };
 
@@ -107,12 +107,6 @@ describe("SyncClientEndDateUsecase", () => {
             clientRepository as never,
         );
 
-        eformsignClient.getAccessToken.mockResolvedValue({
-            oauth_token: {
-                access_token: "access-token",
-                refresh_token: "refresh-token",
-            },
-        });
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity());
         clientRepository.findById.mockResolvedValue(createClientEntity());
         clientRepository.update.mockImplementation(async (_branchId: string, client: ClientEntity) => client);
@@ -136,7 +130,7 @@ describe("SyncClientEndDateUsecase", () => {
             ])
         );
 
-        await usecase.execute(branchId, documentId);
+        await usecase.execute(branchId, documentId, accessToken);
 
         expect(clientRepository.update).toHaveBeenCalledTimes(1);
         expect(clientRepository.update).toHaveBeenCalledWith(
@@ -158,7 +152,7 @@ describe("SyncClientEndDateUsecase", () => {
             ])
         );
 
-        await usecase.execute(branchId, documentId);
+        await usecase.execute(branchId, documentId, accessToken);
 
         expect(clientRepository.update).not.toHaveBeenCalled();
         expect(warnSpy).toHaveBeenCalled();
@@ -167,7 +161,7 @@ describe("SyncClientEndDateUsecase", () => {
     it("should swallow getDocument errors and log them", async () => {
         eformsignClient.getDocument.mockRejectedValue(new Error("fetch failed"));
 
-        await expect(usecase.execute(branchId, documentId)).resolves.toBeUndefined();
+        await expect(usecase.execute(branchId, documentId, accessToken)).resolves.toBeUndefined();
 
         expect(clientRepository.update).not.toHaveBeenCalled();
         expect(errorSpy).toHaveBeenCalled();

@@ -23,22 +23,17 @@ export function StaffCompletionDialog({
 }: StaffCompletionDialogProps) {
     const [documentOption, setDocumentOption] = useState<EformsignDocumentOption | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // setFallbackUrl is reserved for future wiring when embedded mode.type "02" proves unsupported (see TODO in onError below).
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
     const { isLoaded, isLoading, error: sdkError, openDocument } = useEformsign();
 
     useEffect(() => {
         if (!open || !documentId) {
-            setDocumentOption(null);
-            setError(null);
-            setFallbackUrl(null);
             return;
         }
 
         let isCancelled = false;
-
-        setDocumentOption(null);
-        setError(null);
-        setFallbackUrl(null);
 
         void (async () => {
             try {
@@ -61,14 +56,6 @@ export function StaffCompletionDialog({
             isCancelled = true;
         };
     }, [documentId, open]);
-
-    useEffect(() => {
-        if (!sdkError) {
-            return;
-        }
-
-        setError(sdkError);
-    }, [sdkError]);
 
     useEffect(() => {
         if (!open || !documentId || !documentOption || !isLoaded || fallbackUrl) {

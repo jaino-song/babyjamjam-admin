@@ -77,6 +77,7 @@ export function PendingStaffCompletionList() {
             </div>
 
             <StaffCompletionDialog
+                key={selectedDocId ?? "none"}
                 documentId={selectedDocId}
                 open={dialogOpen}
                 onOpenChange={(nextOpen) => {
