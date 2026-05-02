@@ -41,7 +41,8 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             where: {
                 branchId: branchid,
                 statusType: "060",
-                statusDetail: "결재 요청됨",
+                statusDetail: "서명 요청됨",
+                stepIndex: "3",
             },
             orderBy: { updatedDate: "desc" },
         });
