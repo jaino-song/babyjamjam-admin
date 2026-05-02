@@ -16,9 +16,10 @@ import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.em
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { AlimtalkModule } from "./alimtalk.module";
+import { EformsignDocModule } from "./eformsign-doc.module";
 
 @Module({
-    imports: [DatabaseModule, AlimtalkModule],
+    imports: [DatabaseModule, AlimtalkModule, EformsignDocModule],
     controllers: [EformsignWebhookController],
     providers: [
         WebhookGuard,

@@ -169,9 +169,6 @@ export class EformsignService {
                     { id: "계약 시작 년도", value: contractData.startYear },
                     { id: "계약 시작 월", value: contractData.startMonth },
                     { id: "계약 시작 일", value: contractData.startDay },
-                    { id: "계약 종료 년도", value: contractData.endYear },
-                    { id: "계약 종료 월", value: contractData.endMonth },
-                    { id: "계약 종료 일", value: contractData.endDay },
                     { id: "서비스 비용", value: contractData.fullPrice },
                     { id: "정부지원금", value: contractData.grant },
                     { id: "본인부담금", value: contractData.actualPrice },
@@ -199,6 +196,35 @@ export class EformsignService {
                 ],
             },
             return_fields: [contractData.customerName],
+        };
+    }
+
+    generateStaffCompletionOptions(documentId: string, accessToken: string, refreshToken: string) {
+        this.assertConfigured();
+        return {
+            company: {
+                id: this.EFORMSIGN_COMPANY_ID,
+                country_code: "kr",
+                user_key: this.USER_EMAIL,
+            },
+            layout: {
+                lang_code: "ko",
+                zoom: "0.75",
+                viewer_toolbar: {
+                    "toolbar.save": "false",
+                    "toolbar.print": "false",
+                },
+            },
+            user: {
+                type: "01",
+                id: this.USER_EMAIL,
+                access_token: accessToken,
+                refresh_token: refreshToken,
+            },
+            mode: {
+                type: "02",
+                documentId,
+            },
         };
     }
 

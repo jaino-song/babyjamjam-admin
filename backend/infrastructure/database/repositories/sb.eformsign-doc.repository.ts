@@ -36,6 +36,18 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return docs.map(EformsignDocMapper.toDomain);
     }
 
+    async findPendingStaffCompletion(branchid: string): Promise<EformsignDocEntity[]> {
+        const docs = await this.prismaService.eformsign_doc.findMany({
+            where: {
+                branchId: branchid,
+                statusType: "060",
+                statusDetail: "결재 요청됨",
+            },
+            orderBy: { updatedDate: "desc" },
+        });
+        return docs.map(EformsignDocMapper.toDomain);
+    }
+
     async create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
         const created = await this.prismaService.eformsign_doc.create({
             data: {

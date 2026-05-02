@@ -223,7 +223,7 @@
     "doc-type-label": "계약서 선택",
     "start-date-label": "계약 시작일",
     "start-date-placeholder": "2025-01-01",
-    "end-date-label": "계약 종료일",
+    "end-date-label": "예상 종료일",
     "end-date-placeholder": "2025-12-31",
     "employee-select-label": "제공인력 1 선택",
     "employee-manual-entry": "새 제공인력 등록",

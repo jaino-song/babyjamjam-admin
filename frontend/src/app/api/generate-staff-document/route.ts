@@ -12,25 +12,32 @@ import {
 export async function POST(request: NextRequest) {
     try {
         const authToken = getAuthToken(request);
-        const body = await request.json();
-        const { contractData, clientId } = body;
-
         if (!authToken) {
             return unauthorizedResponse("Authentication required. Please log in.");
         }
 
-        const accessToken = getAccessToken(request);
-        const refreshToken = getRefreshToken(request);
+        const body = await request.json();
+        const accessToken =
+            typeof body.accessToken === "string" && body.accessToken
+                ? body.accessToken
+                : getAccessToken(request);
+        const refreshToken =
+            typeof body.refreshToken === "string" && body.refreshToken
+                ? body.refreshToken
+                : getRefreshToken(request);
+
+        if (!body.documentId) {
+            return NextResponse.json({ error: "documentId is required" }, { status: 400 });
+        }
 
         if (!accessToken || !refreshToken) {
             return unauthorizedResponse("Authentication required. Please authenticate first.");
         }
 
-        const response = await serverAPIClient.post("/api/generate-document", {
-            contractData,
+        const response = await serverAPIClient.post("/api/generate-staff-document", {
+            documentId: body.documentId,
             accessToken,
             refreshToken,
-            clientId,
         }, {
             headers: getAuthHeaders(authToken),
         });
@@ -42,6 +49,6 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(response.data);
     } catch (error) {
-        return errorResponse(error, "generate document");
+        return errorResponse(error, "generate staff document");
     }
 }

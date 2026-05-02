@@ -10,6 +10,8 @@ import {
     FetchEformsignDocFromApiUsecase,
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
+    ListPendingStaffCompletionUsecase,
+    SyncClientEndDateUsecase,
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_CLIENT_REPOSITORY } from "domain/repositories/eformsign.client.interface";
@@ -31,6 +33,8 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FindEformsignDocsByClientIdUsecase,
         ListEformsignDocsUsecase,
         CreateEformsignDocUsecase,
+        ListPendingStaffCompletionUsecase,
+        SyncClientEndDateUsecase,
         // Use cases - External API
         GetEformsignAccessTokenUsecase,
         RefreshEformsignAccessTokenUsecase,
@@ -54,6 +58,6 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
             useClass: SbClientRepository,
         },
     ],
-    exports: [EformsignDocService],
+    exports: [EformsignDocService, SyncClientEndDateUsecase, EFORMSIGN_CLIENT_REPOSITORY],
 })
 export class EformsignDocModule {}

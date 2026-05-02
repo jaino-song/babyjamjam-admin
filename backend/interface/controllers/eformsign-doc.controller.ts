@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, Query, Logger, UseGuards } from "@nestjs/common";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
+import { ListPendingStaffCompletionUsecase } from "application/usecases/eformsign-doc/list-pending-staff-completion.usecase";
 import {
     GetAccessTokenDto,
     RefreshAccessTokenDto,
@@ -15,7 +16,10 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 export class EformsignDocController {
     private readonly logger = new Logger(EformsignDocController.name);
 
-    constructor(private readonly eformsignDocService: EformsignDocService) {}
+    constructor(
+        private readonly eformsignDocService: EformsignDocService,
+        private readonly listPendingStaffCompletionUsecase: ListPendingStaffCompletionUsecase,
+    ) {}
 
     // ============ Local DB Endpoints ============
 
@@ -78,6 +82,11 @@ export class EformsignDocController {
         @Query("documentId") documentId: string
     ) {
         return this.eformsignDocService.findByDocumentId(tenant.branchId ?? "", documentId);
+    }
+
+    @Get("pending-staff-completion")
+    listPendingStaffCompletion(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.listPendingStaffCompletionUsecase.execute(tenant.branchId ?? "");
     }
 
     /**

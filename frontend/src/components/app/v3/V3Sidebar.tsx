@@ -69,6 +69,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
     title: "문서 관리",
     items: [
       { label: "전자문서", href: "/contracts", icon: FileText },
+      { label: "종료일 확정", href: "/contracts/pending-staff-completion", icon: FileText },
       { label: "파일 저장소", href: "/files", icon: FolderOpen },
     ],
   },
@@ -108,6 +109,7 @@ export const V3Sidebar = () => {
   const isActive = (href: string) => {
     if (href === "/dashboard" && pathname === "/dashboard/analytics") return false;
     if (href === "/employees" && pathname === "/employees/schedule") return false;
+    if (href === "/contracts" && pathname.startsWith("/contracts/pending-staff-completion")) return false;
     return pathname.startsWith(href);
   };
 

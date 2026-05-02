@@ -477,7 +477,7 @@ export const ContractCreationForm = () => {
       return "바우처 유형/기간과 금액 정보를 입력해 주세요.";
     }
     if (step === 3 && !isStep4Valid) {
-      return "계약 시작일, 종료일, 결제일을 입력해 주세요.";
+      return "계약 시작일, 예상 종료일, 결제일을 입력해 주세요.";
     }
     return null;
   };
