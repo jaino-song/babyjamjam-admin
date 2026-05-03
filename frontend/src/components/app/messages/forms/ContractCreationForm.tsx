@@ -1109,15 +1109,17 @@ export const ContractCreationForm = () => {
       <Dialog open={isDialogOpen} onOpenChange={(open: boolean) => !open && handleDialogClose()}>
         <DialogContent
           data-component="messages-contract-form-dialog"
-          className="max-w-full w-screen h-screen p-0 gap-0"
+          // Mobile: full-screen. Desktop (lg+): A4 portrait + eformsign 상하단 툴바 비율(약 0.73 w/h)을 맞춰 800×1102px 고정,
+          // 단 viewport이 작으면 95vh로 캡. flex column으로 헤더 + 남은 공간을 iframe이 차지하도록 한다.
+          className="max-w-full w-screen h-screen p-0 gap-0 flex flex-col lg:w-[800px] lg:max-w-[800px] lg:h-[1102px] lg:max-h-[95vh] lg:rounded-lg"
         >
-          <DialogHeader className="px-4 py-2 flex flex-row items-center justify-between border-b">
+          <DialogHeader className="px-4 py-2 flex flex-row items-center justify-between border-b shrink-0">
             <DialogTitle>계약서 작성</DialogTitle>
             <Button type="button" variant="ghost" size="icon" onClick={handleDialogClose} className="h-8 w-8">
               <X className="h-4 w-4" />
             </Button>
           </DialogHeader>
-          <div className="flex-1 overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
+          <div className="flex-1 min-h-0 overflow-hidden">
             <iframe id="eformsign_iframe" className="w-full h-full border-none" title="eformsign Document" />
           </div>
         </DialogContent>
