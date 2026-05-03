@@ -186,10 +186,6 @@ export class EformsignService {
                     { id: "영수증 월", value: contractData.receiptMonth },
                     { id: "영수증 일", value: contractData.receiptDay },
                     { id: "서비스 기간", value: contractData.contractDuration },
-                    // 회사 도장 자동 적용 시도 (SDK 미문서화). 등록된 company_stamp_file ID를 SignPad 필드의 value로 전달.
-                    // 작동하면 step 1 진입 시 도장이 미리 찍혀 있음. SDK가 무시하면 기존과 동일 (수동 도장 필요).
-                    { id: "회사 도장 1", value: "c9419093e1644553b3063affcc4c197b", enabled: true },
-                    { id: "회사 도장 2", value: "c9419093e1644553b3063affcc4c197b", enabled: true },
                 ],
                 recipients: [
                     {
