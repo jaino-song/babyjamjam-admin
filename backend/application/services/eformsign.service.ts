@@ -158,7 +158,7 @@ export class EformsignService {
             },
             mode: {
                 type: "01",
-                templateId: templateId || this.EFORMSIGN_TEMPLATE_ID,
+                template_id: templateId || this.EFORMSIGN_TEMPLATE_ID,
             },
             prefill: {
                 document_name: "산모신생아건강관리서비스 계약서",
@@ -187,7 +187,7 @@ export class EformsignService {
                 recipients: [
                     {
                         step_idx: "2",
-                        stepType: "05",
+                        step_type: "05",
                         name: contractData.customerName,
                         id: "",
                         sms: contractData.customerContact,
@@ -195,7 +195,7 @@ export class EformsignService {
                     },
                     {
                         step_idx: "3",
-                        stepType: "01",
+                        step_type: "01",
                         name: "제공기관 확인",
                         id: this.USER_EMAIL,
                         use_mail: false,
@@ -231,7 +231,7 @@ export class EformsignService {
             },
             mode: {
                 type: "02",
-                documentId,
+                document_id: documentId,
             },
         };
     }
