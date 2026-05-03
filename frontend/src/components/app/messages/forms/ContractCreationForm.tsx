@@ -29,10 +29,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEformsign } from "@/hooks/useEformsign";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
+
+// YYYY-MM-DD ↔ YYMMDD helpers for the contract-info date inputs.
+// 2000-2099만 대상으로 단순 변환. 6자리 미만 raw는 빈 ISO로 매핑하여 partial input 시 외부 state는 비워둔다.
+function isoToYymmdd(iso: string): string {
+  if (!iso) return "";
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "";
+  return m[1].slice(2) + m[2] + m[3];
+}
+function yymmddToIso(yymmdd: string): string {
+  if (yymmdd.length !== 6) return "";
+  return `20${yymmdd.slice(0, 2)}-${yymmdd.slice(2, 4)}-${yymmdd.slice(4, 6)}`;
+}
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/hooks";
 import voucherOptions from "../templates/json/voucher.json";
@@ -109,6 +122,9 @@ export const ContractCreationForm = () => {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [documentCreated, setDocumentCreated] = useState(false);
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
+  const [startDateInput, setStartDateInput] = useState("");
+  const [endDateInput, setEndDateInput] = useState("");
+  const [paymentDateInput, setPaymentDateInput] = useState("");
 
   const { isLoaded: isEformsignLoaded, isLoading: isEformsignLoading, error: eformsignError, openDocument } =
     useEformsign();
@@ -170,6 +186,11 @@ export const ContractCreationForm = () => {
     setVoucherYear,
     setArea,
   } = useFormStore();
+
+  // Sync YYMMDD raw display when external YYYY-MM-DD state changes (e.g., client autofill).
+  useEffect(() => { setStartDateInput(isoToYymmdd(startDate)); }, [startDate]);
+  useEffect(() => { setEndDateInput(isoToYymmdd(endDate)); }, [endDate]);
+  useEffect(() => { setPaymentDateInput(isoToYymmdd(paymentDate)); }, [paymentDate]);
 
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(
     voucherType,
@@ -911,9 +932,17 @@ export const ContractCreationForm = () => {
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.start-date-label")}</Label>
             <Input
               variant="v3"
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="\d{6}"
+              maxLength={6}
+              placeholder="YYMMDD"
+              value={startDateInput}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
+                setStartDateInput(digits);
+                setStartDate(yymmddToIso(digits));
+              }}
               className={INPUT_CLS}
             />
           </div>
@@ -921,9 +950,17 @@ export const ContractCreationForm = () => {
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.end-date-label")}</Label>
             <Input
               variant="v3"
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="\d{6}"
+              maxLength={6}
+              placeholder="YYMMDD (선택)"
+              value={endDateInput}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
+                setEndDateInput(digits);
+                setEndDate(yymmddToIso(digits));
+              }}
               className={INPUT_CLS}
             />
           </div>
@@ -931,9 +968,17 @@ export const ContractCreationForm = () => {
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.payment-date-label")}</Label>
             <Input
               variant="v3"
-              type="date"
-              value={paymentDate}
-              onChange={(e) => setPaymentDate(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="\d{6}"
+              maxLength={6}
+              placeholder="YYMMDD"
+              value={paymentDateInput}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
+                setPaymentDateInput(digits);
+                setPaymentDate(yymmddToIso(digits));
+              }}
               className={INPUT_CLS}
             />
           </div>
