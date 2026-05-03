@@ -368,7 +368,7 @@ export const ContractCreationForm = () => {
       }
 
       const start = dayjs(startDate);
-      const end = dayjs(endDate);
+      const end = endDate ? dayjs(endDate) : null;
       const payment = dayjs(paymentDate);
       const today = dayjs();
 
@@ -382,14 +382,16 @@ export const ContractCreationForm = () => {
         type: voucherType,
         days: voucherDuration,
         area,
-        contractDuration: `${start.format("YYYY-MM-DD")} ~ ${end.format("YYYY-MM-DD")}`,
+        contractDuration: end
+          ? `${start.format("YYYY-MM-DD")} ~ ${end.format("YYYY-MM-DD")}`
+          : `${start.format("YYYY-MM-DD")} ~`,
         startYear: start.format("YY"),
         startMonth: start.format("MM"),
         startDay: start.format("DD"),
         startDate,
-        endYear: end.format("YY"),
-        endMonth: end.format("MM"),
-        endDay: end.format("DD"),
+        endYear: end ? end.format("YY") : "",
+        endMonth: end ? end.format("MM") : "",
+        endDay: end ? end.format("DD") : "",
         endDate,
         paymentYear: payment.format("YY"),
         paymentMonth: payment.format("MM"),
@@ -462,7 +464,8 @@ export const ContractCreationForm = () => {
   );
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
-  const isStep4Valid = Boolean(startDate && endDate && paymentDate);
+  // endDate는 이용자 서명 후 직원이 Step 3에서 사후 입력하므로 발급 시점에는 옵셔널.
+  const isStep4Valid = Boolean(startDate && paymentDate);
   const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
   const hasVoucherPricingSelection = Boolean(voucherType && voucherDuration);
 
@@ -477,7 +480,7 @@ export const ContractCreationForm = () => {
       return "바우처 유형/기간과 금액 정보를 입력해 주세요.";
     }
     if (step === 3 && !isStep4Valid) {
-      return "계약 시작일, 예상 종료일, 결제일을 입력해 주세요.";
+      return "계약 시작일, 결제일을 입력해 주세요.";
     }
     return null;
   };
@@ -938,10 +941,10 @@ export const ContractCreationForm = () => {
       ),
       summary: (
         <div className="flex gap-3 flex-wrap">
-          {startDate && endDate && (
+          {startDate && (
             <span className={COMPLETED_PILL}>
               <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {startDate} ~ {endDate}
+              {startDate} ~ {endDate || "(직원 입력 예정)"}
             </span>
           )}
           {paymentDate && (
