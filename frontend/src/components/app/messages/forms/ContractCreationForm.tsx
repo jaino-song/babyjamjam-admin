@@ -32,6 +32,7 @@ import {
 import { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEformsign } from "@/hooks/useEformsign";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 
 // YYYY-MM-DD ↔ YYMMDD helpers for the contract-info date inputs.
@@ -150,6 +151,7 @@ interface ContractDataDto {
   fullPrice: string;
   grant: string;
   actualPrice: string;
+  issuerPhone?: string;
 }
 
 const formatPrice = (price: number | string): string => {
@@ -179,6 +181,7 @@ export const ContractCreationForm = () => {
   const router = useRouter();
   const locale = useLocale();
   const queryClient = useQueryClient();
+  const { data: authUser } = useGetAuthUser();
   const [activeStep, setActiveStep] = useState(0);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -471,6 +474,8 @@ export const ContractCreationForm = () => {
         customerContact: phone,
         customerDOB: birthday,
         customerAddress: address,
+        // inputOutsiderNumber (이용자 연락처) prefill 용 — 현재 로그인 계정의 phone 사용
+        issuerPhone: authUser?.phone ?? undefined,
         caretaker1Name: employeeName,
         caretaker1Contact: employeePhone,
         type: voucherType,
