@@ -192,18 +192,33 @@ export class EformsignService {
                 ],
                 recipients: [
                     {
+                        // Step 2 — 이용자(외부자). 문서 전송 popup의 수신자 정보 영역을 pre-fill 하려면
+                        // nested member 객체 + sms를 { country_code, phone_number } 로 풀어줘야 함 (kr-service body 형태).
                         step_idx: "2",
                         step_type: "05",
-                        name: contractData.customerName,
-                        id: "",
-                        sms: contractData.customerContact,
+                        member: {
+                            name: contractData.customerName,
+                            id: "",
+                            sms: {
+                                country_code: "+82",
+                                phone_number: (contractData.customerContact || "").replace(/\D/g, ""),
+                            },
+                        },
+                        use_mail: false,
                         use_sms: true,
                     },
                     {
+                        // Step 3 — 직원(내부 멤버). 자기 자신에게 sms/email 발송 안 함.
                         step_idx: "3",
                         step_type: "01",
-                        name: "제공기관 확인",
-                        id: this.USER_EMAIL,
+                        member: {
+                            name: "제공기관 확인",
+                            id: this.USER_EMAIL,
+                            sms: {
+                                country_code: "+82",
+                                phone_number: (contractData.issuerPhone || "").replace(/\D/g, ""),
+                            },
+                        },
                         use_mail: false,
                         use_sms: false,
                     },
