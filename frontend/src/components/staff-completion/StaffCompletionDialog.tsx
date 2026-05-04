@@ -97,7 +97,7 @@ export function StaffCompletionDialog({
                         className="h-full w-full flex-1 rounded-md border"
                     />
                 ) : (
-                    <div id={STAFF_COMPLETION_IFRAME_ID} className="min-h-[480px] flex-1" />
+                    <iframe id={STAFF_COMPLETION_IFRAME_ID} title="서비스 종료일 입력 및 확정" className="min-h-[480px] flex-1 w-full border-none" />
                 )}
             </DialogContent>
         </Dialog>

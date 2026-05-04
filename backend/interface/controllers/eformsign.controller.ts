@@ -109,7 +109,7 @@ export class EformsignController {
     @Post("generate-staff-document")
     async generateStaffDocument(@Body() body: GenerateStaffDocumentRequestDto) {
         try {
-            return this.eformsignService.generateStaffCompletionOptions(
+            return await this.eformsignService.generateStaffCompletionOptions(
                 body.documentId,
                 body.accessToken,
                 body.refreshToken

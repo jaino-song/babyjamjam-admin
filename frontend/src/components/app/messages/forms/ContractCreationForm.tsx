@@ -526,7 +526,7 @@ export const ContractCreationForm = () => {
                   stepRecipientType: "01",
                   stepRecipientName: name,
                   stepRecipientSms: phone,
-                  expiredDate: end.add(30, "day").toISOString(),
+                  expiredDate: (end ?? start.add(60, "day")).add(30, "day").toISOString(),
                   linkToClient: true,
                 });
               } catch (docError) {

@@ -213,8 +213,20 @@ export class EformsignService {
         };
     }
 
-    generateStaffCompletionOptions(documentId: string, accessToken: string, refreshToken: string) {
+    async generateStaffCompletionOptions(documentId: string, accessToken: string, refreshToken: string) {
         this.assertConfigured();
+        const params = new URLSearchParams({ include_detail_template_info: "true" });
+        const docRes = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}?${params}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!docRes.ok) {
+            throw new Error(`Failed to get document ${documentId} for staff completion: ${docRes.status} ${await docRes.text()}`);
+        }
+        const doc = await docRes.json();
+        const templateId = doc?.detail_template_info?.id ?? doc?.template_id;
+        if (!templateId) {
+            throw new Error(`Cannot resolve template_id for document ${documentId}`);
+        }
         return {
             company: {
                 id: this.EFORMSIGN_COMPANY_ID,
@@ -237,6 +249,7 @@ export class EformsignService {
             },
             mode: {
                 type: "02",
+                template_id: templateId,
                 document_id: documentId,
             },
         };
