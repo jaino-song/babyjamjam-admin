@@ -1019,7 +1019,10 @@ export const ContractCreationForm = () => {
               onChange={(e) => {
                 const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
                 setStartDateInput(digits);
-                setStartDate(yymmddToIso(digits));
+                // 6자 완성 또는 완전 비움일 때만 ISO 갱신. 1~5자 partial 입력은 ISO 그대로 유지하여
+                // useEffect→setStartDateInput("") 의 입력 초기화 cascade 방지.
+                if (digits.length === 6) setStartDate(yymmddToIso(digits));
+                else if (digits.length === 0) setStartDate("");
               }}
               className={INPUT_CLS}
             />
@@ -1037,7 +1040,8 @@ export const ContractCreationForm = () => {
               onChange={(e) => {
                 const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
                 setEndDateInput(digits);
-                setEndDate(yymmddToIso(digits));
+                if (digits.length === 6) setEndDate(yymmddToIso(digits));
+                else if (digits.length === 0) setEndDate("");
               }}
               className={INPUT_CLS}
             />
@@ -1055,7 +1059,8 @@ export const ContractCreationForm = () => {
               onChange={(e) => {
                 const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
                 setPaymentDateInput(digits);
-                setPaymentDate(yymmddToIso(digits));
+                if (digits.length === 6) setPaymentDate(yymmddToIso(digits));
+                else if (digits.length === 0) setPaymentDate("");
               }}
               className={INPUT_CLS}
             />
