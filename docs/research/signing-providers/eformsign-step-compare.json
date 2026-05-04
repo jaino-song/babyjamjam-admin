@@ -1,0 +1,146 @@
+{
+  "newNamdong_step0": {
+    "name": "이용자",
+    "type": "participant",
+    "display_name": "",
+    "doc_default_title": "{{이용자 성명}}_{{계약 년도}}_{{계약 월}}_{{계약 일}}_남동구 계약서",
+    "auth_valid_time": 0,
+    "auth_type": "none",
+    "step_id": 2,
+    "step_group": 3,
+    "use_mail": false,
+    "use_sms": true,
+    "use_alimtalk": true,
+    "auth_pwd_field": "",
+    "auth_pwd_hint": "요청자에게 전달받은 암호를 입력하세요.",
+    "use_multi_factor": false,
+    "use_login_auth": false,
+    "use_login_auth_view": false,
+    "use_email_auth": true,
+    "use_email_sms_auth_view": false,
+    "use_mobile_auth": false,
+    "use_mobile_auth_view": false,
+    "use_corporation_cert": false,
+    "corp_cert_infos": {
+      "type": "",
+      "use_corporation_cert_view": false,
+      "use_auto_corp_number": false,
+      "corp_num_field": "",
+      "corp_number_registration": null
+    },
+    "use_before_view_auth": false,
+    "use_before_send_auth": false,
+    "use_before_send_mobile_auth": false,
+    "use_before_send_login_auth": false,
+    "use_before_send_email_auth": true,
+    "use_before_send_corporation_cert": false,
+    "is_outsider_auto_info": false,
+    "hidden_sections": [],
+    "required_sections": [],
+    "selected_sections": [],
+    "receipients": [],
+    "specified_recipient_type": "requiredstep",
+    "specified_recipient_seq": -1,
+    "use_receipient_specified": false,
+    "use_xfreesign": false,
+    "sign_type": "private",
+    "sign_type_value": "",
+    "sign_field_value": "",
+    "is_parallel": false,
+    "is_inperson": false,
+    "is_inperson_monitor": false,
+    "is_internal_only": false,
+    "use_reject_restrict": false,
+    "digital_signature_info": {
+      "module_type": "",
+      "use_sign": false,
+      "sign_type": "private",
+      "sign_type_value": "none",
+      "sign_field_value": ""
+    },
+    "step_alert_option": {
+      "multiNotiLangList": null,
+      "mail": {
+        "use": false,
+        "required_alarm_check": false,
+        "sending_points": "<8 points>"
+      },
+      "sms": {
+        "use": true,
+        "required_alarm_check": false,
+        "sending_points": "<8 points>",
+        "alimtalk": {
+          "use": true
+        },
+        "whatsapp": {
+          "use": true
+        }
+      }
+    },
+    "stepApprovalAgentInfo": {
+      "useApprovalAgent": false,
+      "stepSeq": 0,
+      "option": ""
+    },
+    "revoke_date": 0
+  },
+  "working_step0": {
+    "name": "회원",
+    "type": "participant",
+    "display_name": "",
+    "doc_default_title": "$$template_name$$_$$current_date$$",
+    "auth_valid_time": 168,
+    "auth_type": "none",
+    "step_id": 2,
+    "step_group": 3,
+    "use_mail": true,
+    "use_sms": false,
+    "use_alimtalk": false,
+    "auth_pwd_field": "",
+    "auth_pwd_hint": "",
+    "use_multi_factor": false,
+    "use_login_auth": false,
+    "use_email_auth": false,
+    "use_mobile_auth": false,
+    "use_mobile_auth_view": false,
+    "use_corporation_cert": false,
+    "use_before_view_auth": false,
+    "use_before_send_auth": false,
+    "use_before_send_mobile_auth": false,
+    "use_before_send_login_auth": false,
+    "use_before_send_email_auth": false,
+    "use_before_send_corporation_cert": false,
+    "is_outsider_auto_info": false,
+    "hidden_sections": [],
+    "required_sections": [],
+    "selected_sections": [],
+    "receipients": [],
+    "specified_recipient_type": "",
+    "specified_recipient_seq": -1,
+    "use_receipient_specified": false,
+    "is_parallel": false,
+    "is_inperson": false,
+    "is_inperson_monitor": false,
+    "is_internal_only": false,
+    "step_alert_option": {
+      "multiNotiLangList": null,
+      "mail": {
+        "use": true,
+        "required_alarm_check": false,
+        "sending_points": "<7 points>"
+      },
+      "sms": {
+        "use": false,
+        "required_alarm_check": false,
+        "sending_points": "<7 points>",
+        "alimtalk": {
+          "use": false
+        },
+        "whatsapp": {
+          "use": true
+        }
+      }
+    },
+    "revoke_date": 0
+  }
+}

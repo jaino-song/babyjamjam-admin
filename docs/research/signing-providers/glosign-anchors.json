@@ -1,0 +1,237 @@
+[
+  {
+    "id": "ba0e1377-13fb-4f82-af7c-9c3572ec4d8d",
+    "heading": "User",
+    "snippet": "User | User | 유저에 관련된 API"
+  },
+  {
+    "id": "bfb3a0a9-a565-4924-aade-4d67f9937252",
+    "heading": "GET유저 조회",
+    "snippet": "GET | 유저 조회 | https://api.glosign.com/v1/user | AUTHORIZATIONS | api_key | Response Body(200) | Content-type: application/json | json | { |     \"id\": \"string\", |     \"email\": \"string\", |     \"name\": \"string\", |     \"company_code\": \"string\" | } | View More | Variable\tType\tDescription\tmax_length | id\tString\t유저 ID\t50 | emai"
+  },
+  {
+    "id": "9348ff6b-2767-44de-b274-797ca048e478",
+    "heading": "GET유저 기업 조회",
+    "snippet": "GET | 유저 기업 조회 | https://api.glosign.com/v1/user/company | AUTHORIZATIONS | api_key | Response Body(200) | Content-type: application/json | View More | json | { |     \"name\": \"string\", |     \"country\": \"string\", |     \"address\": \"string\", |     \"industry\": \"string\", |     \"phone\": \"string\", |     \"company_type\": \"string\", | "
+  },
+  {
+    "id": "5823c363-a130-45ed-83d1-4847b32065d1",
+    "heading": "GET서명 조회",
+    "snippet": "GET | 서명 조회 | https://api.glosign.com/v1/user/signature?type=sign | AUTHORIZATIONS | api_key | Request Params | json | \"type\": \"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | type\tString\t타입\t5\tsign\t | Response Body(200) | Content-type: application/json | json | {   | \"id\": \"string\", "
+  },
+  {
+    "id": "4e01b2ea-6697-491f-b8cd-5bf08e5a6566",
+    "heading": "POST서명 등록",
+    "snippet": "POST | 서명 등록 | https://api.glosign.com/v1/user/signature | AUTHORIZATIONS | api_key | Request Body (multipart/form-data) | json | \"file\": \"object\", | \"type\": \"string\", | \"companyFlag \": \"boolean\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | file\tObject\t서명 이미지\t2MB\tsign\ttrue | type\tString\t타입 | "
+  },
+  {
+    "id": "4e01b2ea-6697-491f-b8cd-5bf08e5a6566",
+    "heading": "POST서명 등록",
+    "snippet": "POST | 서명 등록 | https://api.glosign.com/v1/user/signature | AUTHORIZATIONS | api_key | Request Body (multipart/form-data) | json | \"file\": \"object\", | \"type\": \"string\", | \"companyFlag \": \"boolean\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | file\tObject\t서명 이미지\t2MB\tsign\ttrue | type\tString\t타입 | "
+  },
+  {
+    "id": "954ccf51-26dc-4a13-98fd-3ad1b7945138",
+    "heading": "DELETE서명 삭제",
+    "snippet": "DELETE | 서명 삭제 | https://api.glosign.com/v1/user/signature?type&id | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"type\": \"string\", | \"id\": \"sring\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | type\tString\t서명 타입 | stamp - 도장 | sign - 서명\t5\t-\ttrue | id\tstring\t서명 ID\t50\t-\ttrue | Res"
+  },
+  {
+    "id": "819dfa57-d798-4829-8db9-cee6e21445be",
+    "heading": "Contract",
+    "snippet": "Contract"
+  },
+  {
+    "id": "e1128315-118e-43fd-b1d5-9d89e815e816",
+    "heading": "GET전체 계약 조회",
+    "snippet": "GET | 전체 계약 조회 | https://api.glosign.com/v1/contract/list | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"from\": \"string\", | \"to\": \"string\", | \"state\": \"string\", | \"clientid\": \"string\" | state 계약 상태 | send - 계약 전송 | review - 계약 검토 중 | reviewComplete - 계약 검토 완료 | contracting - 계약 진행 중 | complete - 계약 완료 | cancel - 계약 "
+  },
+  {
+    "id": "5bcd929a-5888-460e-bc20-69c2318cf632",
+    "heading": "GET계약 상세 조회",
+    "snippet": "GET | 계약 상세 조회 | https://api.glosign.com/v1/contract | AUTHORIZATIONS | *   api_key | Request Params | Plain Text | \"id\": \"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | id\tstring\t계약 ID\t50\t-\ttrue | Response Body(200) | View More | json | Content-type: application/json | { |   \"contract\": "
+  },
+  {
+    "id": "21e8888c-8a9f-4a5e-ad6f-6b71b7944122",
+    "heading": "POST계약 재전송",
+    "snippet": "POST | 계약 재전송 | https://api.glosign.com/v1/contract/resend | AUTHORIZATIONS | api_key | Request Body (JSON) | json | { |     \"contractId\": \"string\", |     \"emailFlag\": true, |     \"mobileFlag\": false | } | Plain Text | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | contractId\tstring\t계약 ID\t50\t-\ttrue | "
+  },
+  {
+    "id": "ebf37919-8584-4bc2-bffc-65ee621bbb5d",
+    "heading": "POST검토 완료 계약 진행",
+    "snippet": "POST | 검토 완료 계약 진행 | https://api.glosign.com/v1/contract/review | AUTHORIZATIONS | api_key | Request Body(JSON) | Plain Text | { | \"contractId\": \"string\" | } | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | contractId\tstring\t계약 ID\t50\t-\ttrue | Response Body(200) | json | Content-type: applicatio"
+  },
+  {
+    "id": "0f20732f-5b31-468e-9b15-a02c1fe5e3f4",
+    "heading": "PUT계약 취소",
+    "snippet": "PUT | 계약 취소 | https://api.glosign.com/v1/contract/cancel | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"contractId\": \"string\", | \"emailFlag\":boolean, | \"mobileFlag\":boolean, | \"comment\": \"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | contractId\tstring\t계약 ID\t50\t-\ttrue | ema"
+  },
+  {
+    "id": "329a6066-52a7-4a40-8c5d-ea3ffc2a804c",
+    "heading": "GET서명 정보 조회",
+    "snippet": "GET | 서명 정보 조회 | https://api.glosign.com/v1/contract/sign/info | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"id\": \"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | id\tstring\t계약 ID\t50\t-\ttrue | Response Body(200) | View More | json | Content-type: application/json | { |     \"r"
+  },
+  {
+    "id": "95f03e85-ccd9-450c-82f7-58dc93eb2370",
+    "heading": "POST계약 정보 엑셀 다운로드",
+    "snippet": "POST | 계약 정보 엑셀 다운로드 | https://api.glosign.com/v2/contract/info/download | AUTHORIZATIONS | * api_key  | Request Body(JSON) | json | payload:{ |     \"clientId\": \"string\", |     \"contractList\": [\"string\"] | } | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | clientId\tstring\t계약 생성 유저 ID\t50\t-\ttrue | contract"
+  },
+  {
+    "id": "4016e4db-a377-4996-86bb-75fff9fb6f49",
+    "heading": "GET계약 문서 미리보기",
+    "snippet": "GET | 계약 문서 미리보기 | https://api.glosign.com/v1-9/contract/:uniq/preview | AUTHORIZATIONS | api_key  | Request Path Variables Params | Plain Text | \"uniq\": \"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | uniq\tstring\t계약 UNIQ ID\t-\t-\ttrue | Response Body(200) | json | Content-type: application/pd"
+  },
+  {
+    "id": "a4419f70-9830-4b2d-9a37-883618212452",
+    "heading": "GET링크 계약 조회",
+    "snippet": "GET | 링크 계약 조회 | https://api.glosign.com/v1/contract/link/list?from=startDate&to=toDate&clientId=userId | AUTHORIZATIONS | api_key  | Request Params | Plain Text | \"from\": \"string\", | \"to\": \"string\", | \"clientid\": \"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | from\tstring\t시작일\t8\t-\ttrue | to\ts"
+  },
+  {
+    "id": "1baf33f9-c278-4689-a955-f5ea71abae3d",
+    "heading": "GET링크 계약 상세조회",
+    "snippet": "GET | 링크 계약 상세조회 | https://api.glosign.com/v1/contract/link/detail?linkId=linkContractId&clientId=userId | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"linkId\": \"string\", | \"clientId\": \"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | linkId\tstring\t링크 계약 ID\t50\t-\ttrue | clientId\tstr"
+  },
+  {
+    "id": "c29eea8d-98a2-44e5-adf7-66ca527a00ce",
+    "heading": "POST계약 만료일 연장",
+    "snippet": "POST | 계약 만료일 연장 | https://api.glosign.com/v1/contract/extend/expire | AUTHORIZATIONS | * api_key | Request Body(JSON) | Plain Text | { |     \"contractId\": \"string\", |     \"clientId\": \"string\", |     \"extDay\": \"integer\" | } | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | contractId\tstring\t계약 ID\t50\t"
+  },
+  {
+    "id": "a5812ced-1740-40de-ba2d-da82c35ea87e",
+    "heading": "Docs",
+    "snippet": "Docs"
+  },
+  {
+    "id": "a5812ced-1740-40de-ba2d-da82c35ea87e",
+    "heading": "Docs",
+    "snippet": "Docs"
+  },
+  {
+    "id": "b77319ad-5431-40bf-88ee-758757a36568",
+    "heading": "GET계약 사본파일 다운로드",
+    "snippet": "GET | 계약 사본파일 다운로드 | https://api.glosign.com/v1/docs/contract/download | AUTHORIZATIONS | api_key | Request Params | plaintext | \"id\": \"string\", | \"type\": \"string\" | type 종류 | -compDocs : 완료문서 | -attachment : 첨부파일 | -certificate : 감사추적인증서 | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | id\tstring\t계약"
+  },
+  {
+    "id": "0e7395a1-dfba-4210-872d-4e2244fb6dba",
+    "heading": "Template",
+    "snippet": "Template"
+  },
+  {
+    "id": "7b47d416-e7db-4cdb-8779-b38d205582e8",
+    "heading": "GET서식 리스트 조회",
+    "snippet": "GET | 서식 리스트 조회 | https://api.glosign.com/v1/template/list | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"from\": \"string\", | \"to\": \"string\", | \"clientid\": \"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | from\tstring\t시작일\t8\t-\ttrue | to\tstring\t종료일\t8\t-\ttrue | clientid\tstring\t구성"
+  },
+  {
+    "id": "05ffde3b-7a32-4b93-9110-4ac1a92a5fd2",
+    "heading": "GET기업 서식 리스트 조회",
+    "snippet": "GET | 기업 서식 리스트 조회 | https://api.glosign.com/v1/template/list/company | AUTHORIZATIONS | api_key | Request Params | json | \"from\": \"string\", | \"to\": \"string\", | \"companycode\": \"string\", | \"state\": \"string\" | \"foldername\": \"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | from\tstring\t시작일\t8\t"
+  },
+  {
+    "id": "e31a1910-091d-4806-b178-dbd0f8fb3fc9",
+    "heading": "GET서식 상세 조회",
+    "snippet": "GET | 서식 상세 조회 | https://api.glosign.com/v1/template | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"id\": \"string\", | \"clientid\": \"string\", | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | id\tstring\t서식 ID\t50\t-\ttrue | clientid\tstring\t유저 ID\t8\t-\t | Response Body(200) | View More | json | Content-type"
+  },
+  {
+    "id": "6a1a1d5b-4b99-4cc1-ac3e-3ffbbf9d02dd",
+    "heading": "DELETE서식 삭제",
+    "snippet": "DELETE | 서식 삭제 | https://api.glosign.com/v1/template | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"id\": \"string\", | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | id\tstring\t서식 ID\t50\t-\ttrue | Response Body(200) | json | Content-type: application/json | { |     \"message\":\"string\" | } | "
+  },
+  {
+    "id": "c0ec1dfc-1528-4028-b2e6-6dbd8dd69311",
+    "heading": "POST서식으로 계약 생성",
+    "snippet": "POST | 서식으로 계약 생성 | https://api.glosign.com/v1/template/send | AUTHORIZATIONS | api_key | Request Body(JSON) | View More | json | {     |     \"templateId\": \"string\", |     \"contractName\": \"string\", |     \"commonMessage\": \"string\", |     \"commonExp\": \"number\", |     \"lang\": \"string\", |     \"certLang\": \"string\", |     \"mailId\""
+  },
+  {
+    "id": "5ebbd971-5db7-46dd-87fd-551c8df2508e",
+    "heading": "POST서식 데이터로 미리보기",
+    "snippet": "POST | 서식 데이터로 미리보기 | https://api.glosign.com/v1/template/preview | AUTHORIZATIONS | api_key | Request Body(JSON) | View More | json | { |     \"templateId\": \"string\", |     \"preSigner\": { |         \"coord\": { |             \"id\": \"string\", |             \"data\": \"any\" |         }  |     } , |     \"tableData\": [  |         { |       "
+  },
+  {
+    "id": "bc59ff9a-ad5c-41d6-9ce1-80808f439903",
+    "heading": "POST서식으로 링크계약 생성",
+    "snippet": "POST | 서식으로 링크계약 생성 | https://api.glosign.com/v1/template/create/link | AUTHORIZATIONS | api_key | Request Body(JSON) | View More | json | { |     \"templateId\": \"string\", |     \"contractName\": \"string\", |     \"commonMessage\": \"string\", |     \"sendLang\": \"string\", |     \"certLang\": \"string\", |     \"mailId\": \"string\", |     \"c"
+  },
+  {
+    "id": "92db1da8-e1f4-4d45-bfcd-21ea123496f4",
+    "heading": "POST서식복사",
+    "snippet": "POST | 서식복사 | https://api.glosign.com/v1/template/copy | AUTHORIZATIONS | api_key | Request Body(multipart/form-data) | json | Content-type: multipart/form-data | { |   \"templateId\": \"string\", |   \"clientId\": \"string\",   |   \"title\": \"string\",  |   \"templateFiles\": \"File\" | } | View More | Variable\tType\tDescription\tmax_len"
+  },
+  {
+    "id": "71d74694-bdea-477c-8a39-f7b323528a37",
+    "heading": "POST하위기업 간 서식복사",
+    "snippet": "POST | 하위기업 간 서식복사 | https://api.glosign.com/v1/template/company/copy | AUTHORIZATIONS | api_key | Request Body(multipart/form-data) | Plain Text | \"templateId\":\"string\", | \"companyCode\":\"string\", | \"clientId\":\"string\" | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | templateId\tstring\t복사할 서식 I"
+  },
+  {
+    "id": "a962bdfb-97eb-46e1-85bf-89e842010806",
+    "heading": "POST서식 문서 교체",
+    "snippet": "POST | 서식 문서 교체 | https://api.glosign.com/v1/template/change/docs | AUTHORIZATIONS | api_key | StartFragment | Request Body(multipart/form-data) | EndFragment | json | Content-type: multipart/form-data | { |   \"templateId\": \"string\", |   \"templateFiles\": \"File\", |   \"clientId\": \"string\" | } | View More | Variable\tType\tDe"
+  },
+  {
+    "id": "136068df-292d-44b5-a57a-5b1ed7191fae",
+    "heading": "POST서식 문서 업로드",
+    "snippet": "POST | 서식 문서 업로드 | https://api.glosign.com/v1-9/template/temp/create | 서식 문서를 업로드하면 서식ID를 반환한다. | AUTHORIZATIONS | Bearer x-access-key | Request Body(multipart/form-data) | json | Content-type: multipart/form-data | {   |   \"templateFiles\": \"File\", |   \"templateTitle\": \"string\", |   \"clientId\": \"string\" | } | View More | "
+  },
+  {
+    "id": "136068df-292d-44b5-a57a-5b1ed7191fae",
+    "heading": "POST서식 문서 업로드",
+    "snippet": "POST | 서식 문서 업로드 | https://api.glosign.com/v1-9/template/temp/create | 서식 문서를 업로드하면 서식ID를 반환한다. | AUTHORIZATIONS | Bearer x-access-key | Request Body(multipart/form-data) | json | Content-type: multipart/form-data | {   |   \"templateFiles\": \"File\", |   \"templateTitle\": \"string\", |   \"clientId\": \"string\" | } | View More | "
+  },
+  {
+    "id": "23bb2134-a59e-4e27-bdbd-b382aea7890b",
+    "heading": "Company",
+    "snippet": "Company"
+  },
+  {
+    "id": "23bb2134-a59e-4e27-bdbd-b382aea7890b",
+    "heading": "Company",
+    "snippet": "Company"
+  },
+  {
+    "id": "adfb766d-4bcf-4cb6-957a-1ff17f862996",
+    "heading": "POST기업 생성",
+    "snippet": "POST | 기업 생성 | https://api.glosign.com/v1/company | AUTHORIZATIONS | api_key | Request Body(JSON) | json | { |     \"name\": \"string\", |     \"address\": \"string\", |     \"companyNumber\": \"string\", |     \"companyType\": \"string\", |     \"phoneCode\": \"string\", |     \"phone\": \"string\", |     \"nation\": \"string\" | } | 기업 종류 | 01 - 개인사업자 | "
+  },
+  {
+    "id": "adfb766d-4bcf-4cb6-957a-1ff17f862996",
+    "heading": "POST기업 생성",
+    "snippet": "POST | 기업 생성 | https://api.glosign.com/v1/company | AUTHORIZATIONS | api_key | Request Body(JSON) | json | { |     \"name\": \"string\", |     \"address\": \"string\", |     \"companyNumber\": \"string\", |     \"companyType\": \"string\", |     \"phoneCode\": \"string\", |     \"phone\": \"string\", |     \"nation\": \"string\" | } | 기업 종류 | 01 - 개인사업자 | "
+  },
+  {
+    "id": "63f2a6e4-b580-4184-a220-65939b6df8d0",
+    "heading": "DELETE기업 삭제",
+    "snippet": "DELETE | 기업 삭제 | https://api.glosign.com/v1/company | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"companycode\": \"string\", | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | companycode\tstring\t기업 코드\t10\t-\ttrue | Response Body(200) | json | Content-type: application/json | { |     \"mes"
+  },
+  {
+    "id": "63f2a6e4-b580-4184-a220-65939b6df8d0",
+    "heading": "DELETE기업 삭제",
+    "snippet": "DELETE | 기업 삭제 | https://api.glosign.com/v1/company | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"companycode\": \"string\", | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | companycode\tstring\t기업 코드\t10\t-\ttrue | Response Body(200) | json | Content-type: application/json | { |     \"mes"
+  },
+  {
+    "id": "f1e711b6-2df1-49d3-a59a-81fd93f7388f",
+    "heading": "GET기업 구성원 조회",
+    "snippet": "GET | 기업 구성원 조회 | https://api.glosign.com/v1/company/person | AUTHORIZATIONS | api_key | Request Params | json | \"companycode\": \"string\", | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | companycode\tstring\t기업 코드\t10\t-\t | Response Body(200) | View More | json | Content-type: application/json | { | "
+  },
+  {
+    "id": "f1e711b6-2df1-49d3-a59a-81fd93f7388f",
+    "heading": "GET기업 구성원 조회",
+    "snippet": "GET | 기업 구성원 조회 | https://api.glosign.com/v1/company/person | AUTHORIZATIONS | api_key | Request Params | json | \"companycode\": \"string\", | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | companycode\tstring\t기업 코드\t10\t-\t | Response Body(200) | View More | json | Content-type: application/json | { | "
+  },
+  {
+    "id": "640d41eb-91f6-488e-9501-13731536626c",
+    "heading": "POST기업 구성원 추가",
+    "snippet": "POST | 기업 구성원 추가 | https://api.glosign.com/v1/company/person | AUTHORIZATIONS | api_key | Request Body(JSON) | View More | json | { |     \"email\": \"string\", |     \"userName\": \"string\", |     \"companyCode\": \"string\", |     \"roleList\": [  |         { |             \"roleType\": \"string\", |             \"role\": [] |         }  |     ]"
+  },
+  {
+    "id": "3ff29627-05d9-4c6d-a04f-8dcb49b91bae",
+    "heading": "DELETE기업 구성원 삭제",
+    "snippet": "DELETE | 기업 구성원 삭제 | https://api.glosign.com/v1/company/person?id= | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"id\": \"string\", | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | id\tstring\t구성원 ID\t200\t-\ttrue | Response Body(200) | json | Content-type: application/json | { |     \"mess"
+  },
+  {
+    "id": "123f407c-d8a5-419b-9a5c-544788542c14",
+    "heading": "GET기업 메일 조회",
+    "snippet": "GET | 기업 메일 조회 | https://api.glosign.com/v1/company/mail | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"company_code\": \"string\", | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | company_code\tstring\t기업 코드\t200\t-\t | Response Body(200) | json | Content-type: application/json | { |     "
+  },
+  {
+    "id": "2450367a-637f-478d-b823-723d749016f1",
+    "heading": "GET기업 구성원 정보 조회",
+    "snippet": "GET | 기업 구성원 정보 조회 | https://api.glosign.com/v1/company/search/person | AUTHORIZATIONS | api_key | Request Params | Plain Text | \"companycode\": \"string\", | \"email\": \"string\", | View More | Variable\tType\tDescription\tmax_length\tDefault\tRequired | companycode\tstring\t기업 코드\t10\t-\ttrue | email\tstring\t이메일\t200\t-\t | Res"
+  }
+]
