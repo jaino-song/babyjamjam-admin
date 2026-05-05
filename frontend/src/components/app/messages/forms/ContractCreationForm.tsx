@@ -35,17 +35,15 @@ import { useEformsign } from "@/hooks/useEformsign";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 
-// YYYY-MM-DD ↔ YYMMDD helpers for the contract-info date inputs.
-// 2000-2099만 대상으로 단순 변환. 6자리 미만 raw는 빈 ISO로 매핑하여 partial input 시 외부 state는 비워둔다.
-function isoToYymmdd(iso: string): string {
-  if (!iso) return "";
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return "";
-  return m[1].slice(2) + m[2] + m[3];
-}
-function yymmddToIso(yymmdd: string): string {
-  if (yymmdd.length !== 6) return "";
-  return `20${yymmdd.slice(0, 2)}-${yymmdd.slice(2, 4)}-${yymmdd.slice(4, 6)}`;
+// Auto-formats raw user input into the YYYY-MM-DD display shape. Strips
+// non-digits, caps at 8 digits, and inserts hyphens after positions 4 and 6.
+// Partial input (digits.length < 8) returns a partial display string and the
+// caller keeps external ISO state empty until the full 10-char form is typed.
+function formatIsoDateInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
 }
 
 // 한국 공휴일 (대체공휴일 포함). 발급 가능 연도 기준 2026~2027 hardcode — 매년 갱신 필요.
@@ -175,7 +173,7 @@ const INPUT_CLS = "bg-white text-[0.85rem] font-[Pretendard] text-v3-dark";
 const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
 
 const SELECT_CLS =
-  "w-full px-4 py-3 rounded-2xl border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
+  "w-full h-10 px-4 py-2.5 rounded-2xl border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
 
 interface ContractCreationFormProps {
   onClose?: () => void;
@@ -259,9 +257,9 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
   } = useFormStore();
 
   // Sync YYMMDD raw display when external YYYY-MM-DD state changes (e.g., client autofill).
-  useEffect(() => { setStartDateInput(isoToYymmdd(startDate)); }, [startDate]);
-  useEffect(() => { setEndDateInput(isoToYymmdd(endDate)); }, [endDate]);
-  useEffect(() => { setPaymentDateInput(isoToYymmdd(paymentDate)); }, [paymentDate]);
+  useEffect(() => { setStartDateInput(startDate); }, [startDate]);
+  useEffect(() => { setEndDateInput(endDate); }, [endDate]);
+  useEffect(() => { setPaymentDateInput(paymentDate); }, [paymentDate]);
 
   // 시작일과 서비스 기간이 모두 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/voucherDuration이 다시 바뀌어야만 덮어쓴다.
@@ -539,7 +537,7 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
               }
             }
 
-            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
+            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
             setDocumentCreated(true);
             resetAll();
             alert("계약서가 성공적으로 생성되었습니다.");
@@ -1018,17 +1016,15 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
               variant="v3"
               type="text"
               inputMode="numeric"
-              pattern="\d{6}"
-              maxLength={6}
-              placeholder="YYMMDD"
+              pattern="\d{4}-\d{2}-\d{2}"
+              maxLength={10}
+              placeholder="YYYY-MM-DD"
               value={startDateInput}
               onChange={(e) => {
-                const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
-                setStartDateInput(digits);
-                // 6자 완성 또는 완전 비움일 때만 ISO 갱신. 1~5자 partial 입력은 ISO 그대로 유지하여
-                // useEffect→setStartDateInput("") 의 입력 초기화 cascade 방지.
-                if (digits.length === 6) setStartDate(yymmddToIso(digits));
-                else if (digits.length === 0) setStartDate("");
+                const formatted = formatIsoDateInput(e.target.value);
+                setStartDateInput(formatted);
+                if (formatted.length === 10) setStartDate(formatted);
+                else if (formatted.length === 0) setStartDate("");
               }}
               className={INPUT_CLS}
             />
@@ -1039,15 +1035,15 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
               variant="v3"
               type="text"
               inputMode="numeric"
-              pattern="\d{6}"
-              maxLength={6}
-              placeholder="YYMMDD"
+              pattern="\d{4}-\d{2}-\d{2}"
+              maxLength={10}
+              placeholder="YYYY-MM-DD"
               value={endDateInput}
               onChange={(e) => {
-                const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
-                setEndDateInput(digits);
-                if (digits.length === 6) setEndDate(yymmddToIso(digits));
-                else if (digits.length === 0) setEndDate("");
+                const formatted = formatIsoDateInput(e.target.value);
+                setEndDateInput(formatted);
+                if (formatted.length === 10) setEndDate(formatted);
+                else if (formatted.length === 0) setEndDate("");
               }}
               className={INPUT_CLS}
             />
@@ -1058,15 +1054,15 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
               variant="v3"
               type="text"
               inputMode="numeric"
-              pattern="\d{6}"
-              maxLength={6}
-              placeholder="YYMMDD"
+              pattern="\d{4}-\d{2}-\d{2}"
+              maxLength={10}
+              placeholder="YYYY-MM-DD"
               value={paymentDateInput}
               onChange={(e) => {
-                const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
-                setPaymentDateInput(digits);
-                if (digits.length === 6) setPaymentDate(yymmddToIso(digits));
-                else if (digits.length === 0) setPaymentDate("");
+                const formatted = formatIsoDateInput(e.target.value);
+                setPaymentDateInput(formatted);
+                if (formatted.length === 10) setPaymentDate(formatted);
+                else if (formatted.length === 0) setPaymentDate("");
               }}
               className={INPUT_CLS}
             />

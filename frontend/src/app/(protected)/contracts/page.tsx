@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import {
   FileText,
+  FileSignature,
   Clock,
   CheckCircle2,
   AlertTriangle,
@@ -28,6 +29,7 @@ import { EformsignDocument } from "@/lib/eformsign/types";
 import {
   DocumentFilterType,
   mapStatusToLabel,
+  mapDocStatusLabel,
   getStatusCategory,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
@@ -77,6 +79,7 @@ import {
   extractDocumentContactInfo,
   extractDocumentFieldValue,
   extractDocumentFieldValues,
+  extractCustomerSignedTimestamp,
   extractOpenEvents,
   extractReRequestEvents,
 } from "@/lib/eformsign/document-details";
@@ -95,13 +98,13 @@ const ContractDocumentPreviewModal = dynamic(
   { ssr: false }
 );
 
-const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
+const EXCLUDED_CUSTOMER_NAMES: string[] = [];
 
 const TAB_ITEMS = [
   { label: "전체", value: "all" },
   { label: "대기", value: "in-progress" },
   { label: "완료", value: "completed" },
-  { label: "거부", value: "rejected" },
+  { label: "기간 만료", value: "rejected" },
 ];
 
 const DETAIL_TABS = [
@@ -118,10 +121,19 @@ type InfoCardRow = {
 };
 
 function getCustomerName(doc: EformsignDocument): string | null {
-  const recipients = doc.current_status?.step_recipients;
-  if (recipients && recipients.length > 0 && recipients[0]?.name) {
-    return recipients[0].name;
+  type Recipientish = { recipient_type?: string; name?: string };
+  const buckets: Recipientish[][] = [
+    (doc.recipients as Recipientish[]) ?? [],
+    (doc.current_status?.step_recipients as Recipientish[]) ?? [],
+  ];
+  for (const list of buckets) {
+    const outsider = list.find((r) => r?.recipient_type === "02" && r.name);
+    if (outsider?.name) return outsider.name;
   }
+  const fallback = (doc.current_status?.step_recipients as Recipientish[] | undefined)?.find(
+    (r) => r?.name && r?.recipient_type !== "01",
+  );
+  if (fallback?.name) return fallback.name;
   if (doc.last_editor?.name) return doc.last_editor.name;
   if (doc.creator?.name) return doc.creator.name;
   return null;
@@ -159,13 +171,17 @@ function mapCategoryToStatusType(category: "completed" | "rejected" | "in-progre
 
 function getSignatureProgress(
   category: "completed" | "rejected" | "in-progress",
-  hasOpenedDocument: boolean
+  hasOpenedDocument: boolean,
+  isReviewNeeded: boolean
 ) {
+  const isCompleted = category === "completed";
+  const isSigned = isCompleted || isReviewNeeded;
   const steps = [
     { label: "문서 생성", done: true },
     { label: "발송 완료", done: true },
-    { label: "문서 열람", done: category === "completed" || hasOpenedDocument },
-    { label: "계약 완료", done: category === "completed" },
+    { label: "이용자 문서 열람", done: isSigned || hasOpenedDocument },
+    { label: "이용자 서명 완료", done: isSigned },
+    { label: isCompleted ? "계약서 완료" : "최종 확인", done: isCompleted },
   ];
   return steps;
 }
@@ -393,17 +409,36 @@ export default function ContractsPage() {
   // Content loading: fetching filtered data after initial load is complete
   const isContentLoading = !isInitialLoading && isLoadingInfinite;
 
+  // documentId → clientName lookup from our DB. Required because eformsign's
+  // list_document response loses outsider info once the doc progresses past
+  // step 1 — we always want the customer's name surfaced in the UI.
+  const { data: clientNamesData = [] } = useQuery({
+    queryKey: ["eformsign-client-names"],
+    queryFn: () => eformsignApi.getDocumentClientNames(),
+    enabled: isAuthenticated,
+  });
+  const clientNamesMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of clientNamesData) map.set(r.documentId, r.clientName);
+    return map;
+  }, [clientNamesData]);
+  const resolveCustomerName = useCallback(
+    (doc: EformsignDocument | null): string | null =>
+      doc ? (clientNamesMap.get(doc.id) ?? getCustomerName(doc)) : null,
+    [clientNamesMap],
+  );
+
   // Use infinite scroll documents, with optional local search filter
   const documents = useMemo(() => {
     if (!searchQuery.trim()) return infiniteDocuments;
     return infiniteDocuments.filter((doc) => {
-      const customerName = getCustomerName(doc);
+      const customerName = resolveCustomerName(doc);
       const q = searchQuery.trim();
       if (customerName && matchesKoreanSearch(customerName, q)) return true;
       if (doc.document_name?.toLowerCase().includes(q.toLowerCase())) return true;
       return false;
     });
-  }, [infiniteDocuments, searchQuery]);
+  }, [infiniteDocuments, searchQuery, resolveCustomerName]);
 
   const stats = useMemo(() => {
     const docsForStats = statsDocuments.length > 0 ? statsDocuments : allDocuments;
@@ -538,6 +573,7 @@ export default function ContractsPage() {
                 icon={Send}
                 label="전자문서 발송"
                 data-component="contracts-header-send-contract"
+                className={isCreating ? "bg-v3-primary text-white hover:bg-v3-primary" : undefined}
               />
             }
           >
@@ -570,7 +606,7 @@ export default function ContractsPage() {
                   return (
                     <ContractsListItem
                       document={doc}
-                      customerName={doc ? getCustomerName(doc) : null}
+                      customerName={resolveCustomerName(doc)}
                       isLoading={isLoading}
                       isRefreshing={Boolean(doc && pendingDocumentIds.has(doc.id))}
                     />
@@ -674,12 +710,15 @@ function ContractDetail({
   const detailedDocument = detailQuery.data ?? doc;
   const isBaseDetailLoading = detailQuery.isFetching || detailQuery.isPlaceholderData;
   const category = getStatusCategory(detailedDocument.current_status?.status_type);
-  const statusType = mapCategoryToStatusType(category);
-  const statusLabel = mapStatusToLabel(detailedDocument.current_status?.status_type);
+  const statusLabel = mapDocStatusLabel(detailedDocument.current_status);
+  const statusType: StatusType =
+    statusLabel === "검토 필요" ? "review" : mapCategoryToStatusType(category);
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTabKey>("document");
   const [isReRequestDialogOpen, setIsReRequestDialogOpen] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const [isFinalizeOpen, setIsFinalizeOpen] = useState(false);
+  const [finalizeEndDate, setFinalizeEndDate] = useState<string>("");
   const canReRequest = canReRequestDocument(detailedDocument);
   const reRequestStepType = detailedDocument.current_status?.step_type ?? "";
   const reRequestStepSeq = detailedDocument.current_status?.step_index ?? "";
@@ -834,6 +873,13 @@ function ContractDetail({
       day: ["계약 종료 일", "계약종료일", "endDay"],
       full: ["계약 종료일", "계약종료일", "서비스 종료일", "서비스종료일", "endDate"],
     }) ?? "–";
+  const contractEndDateIso = (() => {
+    const year = extractDocumentFieldValue(detailedDocument, ["계약 종료 년도", "계약종료년도", "endYear"]);
+    const month = extractDocumentFieldValue(detailedDocument, ["계약 종료 월", "계약종료월", "endMonth"]);
+    const day = extractDocumentFieldValue(detailedDocument, ["계약 종료 일", "계약종료일", "endDay"]);
+    if (!year || !month || !day) return "";
+    return `${year.padStart(4, "0")}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  })();
   const paymentDate =
     extractFieldDate(detailedDocument, {
       year: ["본인부담금 수령 년도", "본인부담금수령년도", "결제 년도", "결제년도", "paymentYear"],
@@ -853,7 +899,11 @@ function ContractDetail({
   const reRequestEvents = extractReRequestEvents(detailedDocument);
   const openEvents = extractOpenEvents(detailedDocument);
   const hasOpenedDocument = openEvents.length > 0;
-  const steps = getSignatureProgress(category, hasOpenedDocument);
+  const isReviewNeeded = mapDocStatusLabel(detailedDocument.current_status) === "검토 필요";
+  const steps = getSignatureProgress(category, hasOpenedDocument, isReviewNeeded);
+  const customerSignedTimestamp = extractCustomerSignedTimestamp(detailedDocument);
+  const customerSignedDate =
+    customerSignedTimestamp != null ? formatDateTime(customerSignedTimestamp) : null;
   const sentDate = formatDateTime(detailedDocument.created_date);
   const sentDateLabel = formatDate(detailedDocument.created_date);
   const lastModifiedDate = formatDateTime(detailedDocument.updated_date);
@@ -943,25 +993,39 @@ function ContractDetail({
     });
   }
 
+  if (customerSignedTimestamp != null) {
+    activityItems.push({
+      icon: FileSignature,
+      iconVariant: "info",
+      text: `${customerName}님이 서명을 완료했습니다`,
+      time: formatDateTime(customerSignedTimestamp),
+    });
+  }
+
   if (category === "completed") {
     activityItems.push({
       icon: CheckCircle2,
       iconVariant: "success",
-      text: "서명이 완료되었습니다",
+      text: "제공기관이 계약서를 최종 확인했습니다",
       time: formatDateTime(detailedDocument.updated_date),
     });
   } else if (category === "rejected") {
     activityItems.push({
       icon: AlertTriangle,
       iconVariant: "danger",
-      text: "문서가 거부/만료되었습니다",
+      text: "문서 기간이 만료되었습니다",
       time: formatDateTime(detailedDocument.updated_date),
     });
   } else {
+    const pendingText = isReviewNeeded
+      ? "제공기관의 최종 확인 대기중입니다"
+      : hasOpenedDocument
+        ? "이용자 서명 대기중입니다"
+        : "아직 문서 열람을 하지 않았습니다";
     activityItems.push({
-      icon: Eye,
+      icon: isReviewNeeded ? FileSignature : Eye,
       iconVariant: "warning",
-      text: hasOpenedDocument ? "서명 대기중입니다" : "아직 문서 열람을 하지 않았습니다",
+      text: pendingText,
       time: "현재",
     });
   }
@@ -1016,9 +1080,9 @@ function ContractDetail({
         { label: "문서명", value: detailedDocument.document_name },
         { label: "템플릿", value: detailedDocument.template?.name ?? "–" },
         { label: "문서번호", value: detailedDocument.document_number ?? "–" },
-        { label: "작성일", value: sentDate },
-        { label: "최종수정일", value: lastModifiedDate },
         { label: "발송일", value: sentDate },
+        { label: "이용자 서명완료일", value: customerSignedDate ?? "" },
+        { label: "제공기관 최종확인일", value: contractCompletedDate ?? "" },
         ...(contractCompletedDate
           ? [{ label: "서명 완료일", value: contractCompletedDate }]
           : []),
@@ -1124,16 +1188,32 @@ function ContractDetail({
               동기화 중
             </div>
           )}
-          <Button
-            variant="positive"
-            size="sm"
-            data-component="contracts-detail-preview-trigger"
-            className="mt-0.5"
-            onClick={() => setIsPreviewOpen(true)}
-          >
-            <Eye className="h-4 w-4" />
-            문서 보기
-          </Button>
+          {isReviewNeeded ? (
+            <Button
+              variant="positive"
+              size="sm"
+              data-component="contracts-detail-finalize-trigger"
+              className="mt-0.5 w-[150px]"
+              onClick={() => {
+                setFinalizeEndDate(contractEndDateIso);
+                setIsFinalizeOpen(true);
+              }}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              확인하기
+            </Button>
+          ) : (
+            <Button
+              variant="positive"
+              size="sm"
+              data-component="contracts-detail-preview-trigger"
+              className="mt-0.5"
+              onClick={() => setIsPreviewOpen(true)}
+            >
+              <Eye className="h-4 w-4" />
+              문서 보기
+            </Button>
+          )}
           <button
             type="button"
             data-component="contracts-detail-activity-trigger"
@@ -1253,6 +1333,53 @@ function ContractDetail({
               disabled={reRequestMutation.isPending || !isRecipientPhoneValid}
             >
               재요청
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isFinalizeOpen} onOpenChange={setIsFinalizeOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>최종 확인</DialogTitle>
+            <DialogDescription>
+              서비스 완료일을 수정한 뒤 확정해 주세요.
+            </DialogDescription>
+          </DialogHeader>
+          <div data-component="contracts-finalize-end-date-field" className="pb-2">
+            <Label
+              htmlFor={`contract-finalize-end-date-${doc.id}`}
+              className="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+            >
+              서비스 완료일
+            </Label>
+            <Input
+              id={`contract-finalize-end-date-${doc.id}`}
+              type="text"
+              inputMode="numeric"
+              variant="v3"
+              placeholder="YYYY-MM-DD"
+              pattern="\d{4}-\d{2}-\d{2}"
+              value={finalizeEndDate}
+              onChange={(event) => setFinalizeEndDate(event.target.value)}
+            />
+          </div>
+          <DialogFooter className="sm:justify-stretch">
+            <Button
+              variant="neutral"
+              size="sm"
+              className="flex-1"
+              onClick={() => setIsFinalizeOpen(false)}
+            >
+              취소
+            </Button>
+            <Button
+              variant="positive"
+              size="sm"
+              className="flex-1"
+              onClick={() => setIsFinalizeOpen(false)}
+              disabled={!/^\d{4}-\d{2}-\d{2}$/.test(finalizeEndDate)}
+            >
+              완료
             </Button>
           </DialogFooter>
         </DialogContent>

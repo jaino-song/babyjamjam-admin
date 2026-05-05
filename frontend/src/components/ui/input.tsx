@@ -10,9 +10,9 @@ const inputVariants = cva(
         default:
           "h-10 rounded-md border border-input px-3 py-2 text-sm transition-colors focus-visible:border-primary",
         v3:
-          "rounded-2xl border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-v3-dark shadow-none outline-none transition-colors focus-visible:border-v3-primary",
+          "h-10 rounded-2xl border-[1.5px] border-v3-border bg-white px-4 py-2.5 text-[0.85rem] font-[Pretendard] text-v3-dark shadow-none outline-none transition-colors focus-visible:border-v3-primary",
         "v3-pill":
-          "rounded-pill border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-v3-dark shadow-none outline-none transition-colors focus-visible:border-v3-primary",
+          "h-10 rounded-pill border-[1.5px] border-v3-border bg-white px-4 py-2.5 text-[0.85rem] font-[Pretendard] text-v3-dark shadow-none outline-none transition-colors focus-visible:border-v3-primary",
       },
     },
     defaultVariants: {

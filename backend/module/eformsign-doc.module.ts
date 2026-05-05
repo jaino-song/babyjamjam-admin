@@ -11,6 +11,7 @@ import {
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
     ListPendingStaffCompletionUsecase,
+    ListClientNamesByBranchUsecase,
     SyncClientEndDateUsecase,
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
@@ -34,6 +35,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         ListEformsignDocsUsecase,
         CreateEformsignDocUsecase,
         ListPendingStaffCompletionUsecase,
+        ListClientNamesByBranchUsecase,
         SyncClientEndDateUsecase,
         // Use cases - External API
         GetEformsignAccessTokenUsecase,

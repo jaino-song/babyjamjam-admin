@@ -1,8 +1,8 @@
-import { serverAPIClient } from "@/lib/api/server";
+import { jwtDecode } from "jwt-decode";
 import { cookies } from "next/headers";
 import { cache } from "react";
-import { jwtDecode } from "jwt-decode";
-import axios from "axios";
+
+import { createServerApiUrl } from "@/lib/api/server-base-url";
 import type { AuthUser } from "@/hooks/useGetAuthUser";
 
 interface TokenPayload {
@@ -20,9 +20,10 @@ type CurrentUserResponse = AuthUser & {
   organizationName?: string | null;
 };
 
+const AUTH_ME_TIMEOUT_MS = 60000;
+
 // React cache()를 사용하여 같은 request cycle 내에서 중복 호출 방지
-// Next.js의 Request Memoization은 native fetch에만 적용되므로
-// axios를 사용하는 경우 수동으로 캐싱 필요
+// native fetch를 사용하지만 인증 정보는 request cycle 안에서만 재사용한다.
 export const getCurrentUser = cache(async () => {
   try {
     const cookieStore = await cookies();
@@ -32,33 +33,27 @@ export const getCurrentUser = cache(async () => {
       return null;
     }
 
-    // Send token as Bearer token in Authorization header
-    const res = await serverAPIClient.get(`/auth/me`, {
+    const res = await fetch(createServerApiUrl("/auth/me"), {
       headers: {
         Authorization: `Bearer ${authToken.value}`,
+        "Content-Type": "application/json",
       },
+      cache: "no-store",
+      signal: AbortSignal.timeout(AUTH_ME_TIMEOUT_MS),
     });
 
-    if (res.status !== 200) {
+    if (!res.ok) {
       console.error("[getCurrentUser] Failed to fetch user: non-200 response", res.status);
       return null;
     }
 
-    const user = res.data as CurrentUserResponse;
+    const user = (await res.json()) as CurrentUserResponse;
     return {
       ...user,
       branchName: user.branchName ?? user.organizationName ?? null,
     };
   } catch (error: unknown) {
-    if (axios.isAxiosError(error)) {
-      console.error("[getCurrentUser] Failed to fetch user:", error.message);
-      console.error("[getCurrentUser] Error code:", error.code);
-      console.error("[getCurrentUser] Error status:", error.response?.status);
-      console.error("[getCurrentUser] Request:", {
-        baseURL: error.config?.baseURL,
-        url: error.config?.url,
-      });
-    } else if (error instanceof Error) {
+    if (error instanceof Error) {
       console.error("[getCurrentUser] Failed to fetch user:", error.message);
     } else {
       console.error("[getCurrentUser] Failed to fetch user:", String(error));

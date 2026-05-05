@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Query, Logger, UseGuards } from "@nestjs/common";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { ListPendingStaffCompletionUsecase } from "application/usecases/eformsign-doc/list-pending-staff-completion.usecase";
+import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
 import {
     GetAccessTokenDto,
     RefreshAccessTokenDto,
@@ -19,6 +20,7 @@ export class EformsignDocController {
     constructor(
         private readonly eformsignDocService: EformsignDocService,
         private readonly listPendingStaffCompletionUsecase: ListPendingStaffCompletionUsecase,
+        private readonly listClientNamesByBranchUsecase: ListClientNamesByBranchUsecase,
     ) {}
 
     // ============ Local DB Endpoints ============
@@ -87,6 +89,17 @@ export class EformsignDocController {
     @Get("pending-staff-completion")
     listPendingStaffCompletion(@CurrentTenant() tenant: { branchId?: string }) {
         return this.listPendingStaffCompletionUsecase.execute(tenant.branchId ?? "");
+    }
+
+    /**
+     * GET /eformsign-docs/client-names
+     * Returns documentId → clientName mapping for current branch.
+     * Used by the contracts list to show the customer's name even after the
+     * doc has progressed past step 1 (eformsign list_document loses outsider info).
+     */
+    @Get("client-names")
+    listClientNames(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.listClientNamesByBranchUsecase.execute(tenant.branchId ?? "");
     }
 
     /**

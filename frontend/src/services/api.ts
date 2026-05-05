@@ -221,6 +221,10 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign-docs/pending-staff-completion');
         return data;
     },
+    getDocumentClientNames: async (): Promise<Array<{ documentId: string; clientName: string }>> => {
+        const { data } = await api.get('/eformsign-docs/client-names');
+        return data;
+    },
 }
 
 export type AlimtalkProvider = 'aligo' | 'channeltalk' | 'none';

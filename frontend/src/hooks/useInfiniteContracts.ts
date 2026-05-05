@@ -28,12 +28,23 @@ function sortByCreatedDate(docs: EformsignDocument[]): EformsignDocument[] {
   return [...docs].sort((a, b) => b.created_date - a.created_date);
 }
 
-// Helper to extract customer name from document
+// Helper to extract customer name from document.
+// Prefer the outsider (이용자, recipient_type "02") wherever they appear so docs
+// past step 1 still surface the customer rather than the current-step staff.
 function getCustomerName(doc: EformsignDocument): string | null {
-  const recipients = doc.current_status?.step_recipients;
-  if (recipients && recipients.length > 0 && recipients[0]?.name) {
-    return recipients[0].name;
+  type Recipientish = { recipient_type?: string; name?: string };
+  const buckets: Recipientish[][] = [
+    (doc.recipients as Recipientish[]) ?? [],
+    (doc.current_status?.step_recipients as Recipientish[]) ?? [],
+  ];
+  for (const list of buckets) {
+    const outsider = list.find((r) => r?.recipient_type === "02" && r.name);
+    if (outsider?.name) return outsider.name;
   }
+  const fallback = (doc.current_status?.step_recipients as Recipientish[] | undefined)?.find(
+    (r) => r?.name && r?.recipient_type !== "01",
+  );
+  if (fallback?.name) return fallback.name;
   if (doc.last_editor?.name) return doc.last_editor.name;
   if (doc.creator?.name) return doc.creator.name;
   return null;

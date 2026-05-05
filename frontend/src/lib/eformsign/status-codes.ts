@@ -48,7 +48,24 @@ export const IN_PROGRESS_CODES = [
 ] as const;
 
 // Korean status labels
-export type DocumentStatusLabel = "대기" | "완료" | "거부";
+export type DocumentStatusLabel = "대기" | "검토 필요" | "완료" | "기간 만료";
+
+/**
+ * Step-aware variant: when a doc is in-progress AND the current step's
+ * recipient is an internal member (recipient_type "01"), it has progressed
+ * past the customer's signature and is now waiting on staff confirmation.
+ * That state is surfaced as "검토 필요" instead of "대기".
+ */
+export function mapDocStatusLabel(currentStatus: {
+  status_type?: string;
+  step_recipients?: Array<{ recipient_type?: string }>;
+} | null | undefined): DocumentStatusLabel {
+  const base = mapStatusToLabel(currentStatus?.status_type);
+  if (base !== "대기") return base;
+  const recipients = currentStatus?.step_recipients ?? [];
+  const allInternal = recipients.length > 0 && recipients.every((r) => r?.recipient_type === "01");
+  return allInternal ? "검토 필요" : "대기";
+}
 
 // Filter types for API calls
 export type DocumentFilterType = "in-progress" | "completed" | "rejected" | null;
@@ -122,7 +139,7 @@ export function mapStatusToLabel(statusCode: string | undefined | null): Documen
     case "completed":
       return "완료";
     case "rejected":
-      return "거부";
+      return "기간 만료";
     default:
       return "대기";
   }
@@ -145,7 +162,7 @@ export function getStatusColor(status: string): BadgeVariant {
   if (lowerStatus.includes("대기") || lowerStatus.includes("pending") || lowerStatus.includes("진행")) {
     return "warning";
   }
-  if (lowerStatus.includes("거부") || lowerStatus.includes("reject")) {
+  if (lowerStatus.includes("기간 만료") || lowerStatus.includes("거부") || lowerStatus.includes("reject")) {
     return "destructive";
   }
   if (lowerStatus.includes("전체") || lowerStatus.includes("all")) {

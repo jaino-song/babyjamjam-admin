@@ -10,6 +10,7 @@
     "predev": "pnpm run prepare:rhwp",
     "prebuild": "pnpm run prepare:rhwp",
     "dev": "next dev",
+    "dev:webpack": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
