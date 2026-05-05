@@ -22,6 +22,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
     private readonly EFORMSIGN_DOC_API_URL: string; // for document endpoints (kr-api)
     private readonly EFORMSIGN_API_KEY: string;
     private readonly EFORMSIGN_PRIVATE_KEY: string;
+    private readonly EFORMSIGN_COMPANY_ID: string;
     private readonly isConfigured: boolean;
 
     constructor(private configService: ConfigService) {
@@ -30,12 +31,14 @@ export class EformsignApiClient implements IEformsignClientRepository {
         this.EFORMSIGN_DOC_API_URL = this.configService.get<string>("EFORMSIGN_DOC_API_URL") || "";
         this.EFORMSIGN_API_KEY = this.configService.get<string>("EFORMSIGN_API_KEY") || "";
         this.EFORMSIGN_PRIVATE_KEY = this.configService.get<string>("EFORMSIGN_PRIVATE_KEY") || "";
+        this.EFORMSIGN_COMPANY_ID = this.configService.get<string>("EFORMSIGN_COMPANY_ID") || "";
         this.isConfigured = Boolean(
             this.USER_EMAIL &&
             this.EFORMSIGN_API_URL &&
             this.EFORMSIGN_DOC_API_URL &&
             this.EFORMSIGN_API_KEY &&
-            this.EFORMSIGN_PRIVATE_KEY,
+            this.EFORMSIGN_PRIVATE_KEY &&
+            this.EFORMSIGN_COMPANY_ID,
         );
 
         if (!this.isConfigured) {

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString } from "class-validator";
+import { IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class GenerateStaffDocumentRequestDto {
     @IsString()
@@ -12,6 +12,10 @@ export class GenerateStaffDocumentRequestDto {
     @IsString()
     @IsNotEmpty()
     refreshToken!: string;
+
+    @IsOptional()
+    @IsString()
+    prefillEndDate?: string;
 }
 
 export class PendingStaffCompletionItemDto {

@@ -112,9 +112,13 @@ export class EformsignController {
             return await this.eformsignService.generateStaffCompletionOptions(
                 body.documentId,
                 body.accessToken,
-                body.refreshToken
+                body.refreshToken,
+                body.prefillEndDate,
             );
         } catch (error) {
+            if (error instanceof HttpException) {
+                throw error;
+            }
             const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
                 { error: message },

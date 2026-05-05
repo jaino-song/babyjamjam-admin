@@ -2,12 +2,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
-
-const EFORMSIGN_END_DATE_FIELD_IDS = {
-    year: "계약 종료 년도",
-    month: "계약 종료 월",
-    day: "계약 종료 일",
-} as const;
+import { EFORMSIGN_END_DATE_FIELD_IDS } from "./eformsign-end-date-field-ids";
 
 @Injectable()
 export class SyncClientEndDateUsecase {

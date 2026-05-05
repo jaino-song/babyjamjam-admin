@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
             documentId: body.documentId,
             accessToken,
             refreshToken,
+            prefillEndDate: body.prefillEndDate,
         }, {
             headers: getAuthHeaders(authToken),
         });

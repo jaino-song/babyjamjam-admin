@@ -1,8 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
 import * as https from "https";
 import { ContractDataDto } from "../dto/contract.dto";
+import { EFORMSIGN_END_DATE_FIELD_IDS } from "../usecases/eformsign-doc/eformsign-end-date-field-ids";
 
 export interface EformsignTokenResponse {
     oauth_token: {
@@ -10,6 +11,8 @@ export interface EformsignTokenResponse {
         refresh_token: string;
     };
 }
+
+const ISO_END_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 @Injectable()
 export class EformsignService {
@@ -213,7 +216,12 @@ export class EformsignService {
         };
     }
 
-    async generateStaffCompletionOptions(documentId: string, accessToken: string, refreshToken: string) {
+    async generateStaffCompletionOptions(
+        documentId: string,
+        accessToken: string,
+        refreshToken: string,
+        prefillEndDate?: string,
+    ) {
         this.assertConfigured();
         const params = new URLSearchParams({ include_detail_template_info: "true" });
         const docRes = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}?${params}`, {
@@ -223,10 +231,16 @@ export class EformsignService {
             throw new Error(`Failed to get document ${documentId} for staff completion: ${docRes.status} ${await docRes.text()}`);
         }
         const doc = await docRes.json();
-        const templateId = doc?.detail_template_info?.id ?? doc?.template_id;
+        const templateId =
+            doc?.detail_template_info?.id ??
+            doc?.template?.id ??
+            doc?.template_id;
         if (!templateId) {
             throw new Error(`Cannot resolve template_id for document ${documentId}`);
         }
+
+        const prefill = this.buildStaffCompletionPrefill(prefillEndDate);
+
         return {
             company: {
                 id: this.EFORMSIGN_COMPANY_ID,
@@ -252,6 +266,27 @@ export class EformsignService {
                 template_id: templateId,
                 document_id: documentId,
             },
+            ...(prefill ? { prefill } : {}),
+        };
+    }
+
+    private buildStaffCompletionPrefill(prefillEndDate?: string) {
+        if (typeof prefillEndDate === "undefined") {
+            return undefined;
+        }
+
+        if (!ISO_END_DATE_REGEX.test(prefillEndDate)) {
+            throw new BadRequestException("prefillEndDate must match YYYY-MM-DD");
+        }
+
+        const [year, month, day] = prefillEndDate.split("-");
+
+        return {
+            fields: [
+                { id: EFORMSIGN_END_DATE_FIELD_IDS.year, value: year, enabled: true, required: false },
+                { id: EFORMSIGN_END_DATE_FIELD_IDS.month, value: month, enabled: true, required: false },
+                { id: EFORMSIGN_END_DATE_FIELD_IDS.day, value: day, enabled: true, required: false },
+            ],
         };
     }
 

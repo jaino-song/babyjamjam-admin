@@ -21,5 +21,3 @@ export * from "./fetch-eformsign-doc-from-api.usecase";
 
 // Contract creation
 export * from "./create-and-send-contract.usecase";
-
-

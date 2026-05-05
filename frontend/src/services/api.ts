@@ -150,12 +150,14 @@ export const eformsignApi = {
     generateStaffDocument: async (
         documentId: string,
         accessToken?: string,
-        refreshToken?: string
+        refreshToken?: string,
+        prefillEndDate?: string,
     ) => {
         const { data } = await api.post('/generate-staff-document', {
             documentId,
             accessToken,
             refreshToken,
+            prefillEndDate,
         });
         return data;
     },

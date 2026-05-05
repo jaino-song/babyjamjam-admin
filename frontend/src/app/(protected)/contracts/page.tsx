@@ -25,10 +25,9 @@ import {
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
 import { useEformsignWebhookUpdates } from "@/hooks/useEformsignWebhookUpdates";
-import { EformsignDocument } from "@/lib/eformsign/types";
+import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
   DocumentFilterType,
-  mapStatusToLabel,
   mapDocStatusLabel,
   getStatusCategory,
   normalizeStatusCode,
@@ -83,12 +82,14 @@ import {
   extractOpenEvents,
   extractReRequestEvents,
 } from "@/lib/eformsign/document-details";
+import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { inferVoucherDurationFromAmounts } from "@/lib/voucher/duration";
 import { clientsApi } from "@/features/clients/api/clients.api";
 import type { Client, PaginatedResponse } from "@/lib/client/types";
 import { ContractsListItem } from "@/components/app/contracts/ContractsListItem";
 import { ContractCreationForm } from "@/components/app/messages/forms/ContractCreationForm";
+import { StaffCompletionIframeModal } from "@/components/app/contracts/StaffCompletionIframeModal";
 
 const ContractDocumentPreviewModal = dynamic(
   () =>
@@ -447,7 +448,7 @@ export default function ContractsPage() {
       return name && !EXCLUDED_CUSTOMER_NAMES.includes(name);
     });
 
-    let completed = 0;
+    let reviewNeeded = 0;
     let sendRequired = 0;
     let drafting = 0;
     let expired = 0;
@@ -457,7 +458,6 @@ export default function ContractsPage() {
       const cat = getStatusCategory(doc.current_status?.status_type);
 
       if (cat === "completed") {
-        completed++;
         continue;
       }
 
@@ -471,10 +471,15 @@ export default function ContractsPage() {
         continue;
       }
 
+      if (mapDocStatusLabel(doc.current_status) === "검토 필요") {
+        reviewNeeded++;
+        continue;
+      }
+
       sendRequired++;
     }
 
-    return { completed, sendRequired, drafting, expired };
+    return { reviewNeeded, sendRequired, drafting, expired };
   }, [allDocuments, statsDocuments]);
 
   const selectedDocument = useMemo(() => {
@@ -549,7 +554,7 @@ export default function ContractsPage() {
           name="contracts"
           isLoading={isInitialLoading}
           items={[
-            { icon: CheckCircle2, value: stats.completed, label: "완료", counter: "건", colorIndex: 2 },
+            { icon: CheckCircle2, value: stats.reviewNeeded, label: "검토 필요", counter: "건", colorIndex: 2 },
             { icon: Send, value: stats.sendRequired, label: "발송 필요", counter: "건", colorIndex: 1 },
             { icon: FileText, value: stats.drafting, label: "작성 대기중", counter: "건" },
             { icon: AlertTriangle, value: stats.expired, label: "기간 만료", counter: "건", colorIndex: 3 },
@@ -621,7 +626,10 @@ export default function ContractsPage() {
               title="전자계약서 작성"
               subtitle="고객에게 전자계약서를 발송합니다"
               avatar={
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                <div
+                  data-component="contracts-create-avatar"
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+                >
                   <Send className="h-5 w-5" />
                 </div>
               }
@@ -719,6 +727,8 @@ function ContractDetail({
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [isFinalizeOpen, setIsFinalizeOpen] = useState(false);
   const [finalizeEndDate, setFinalizeEndDate] = useState<string>("");
+  const [isStaffCompletionOpen, setIsStaffCompletionOpen] = useState(false);
+  const [staffCompletionOption, setStaffCompletionOption] = useState<EformsignDocumentOption | null>(null);
   const canReRequest = canReRequestDocument(detailedDocument);
   const reRequestStepType = detailedDocument.current_status?.step_type ?? "";
   const reRequestStepSeq = detailedDocument.current_status?.step_index ?? "";
@@ -878,7 +888,10 @@ function ContractDetail({
     const month = extractDocumentFieldValue(detailedDocument, ["계약 종료 월", "계약종료월", "endMonth"]);
     const day = extractDocumentFieldValue(detailedDocument, ["계약 종료 일", "계약종료일", "endDay"]);
     if (!year || !month || !day) return "";
-    return `${year.padStart(4, "0")}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    const yearNum = parseInt(year, 10);
+    if (Number.isNaN(yearNum)) return "";
+    const yearStr = (yearNum < 100 ? 2000 + yearNum : yearNum).toString().padStart(4, "0");
+    return `${yearStr}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
   })();
   const paymentDate =
     extractFieldDate(detailedDocument, {
@@ -906,17 +919,27 @@ function ContractDetail({
     customerSignedTimestamp != null ? formatDateTime(customerSignedTimestamp) : null;
   const sentDate = formatDateTime(detailedDocument.created_date);
   const sentDateLabel = formatDate(detailedDocument.created_date);
-  const lastModifiedDate = formatDateTime(detailedDocument.updated_date);
   const contractCompletedDate =
     category === "completed" ? formatDateTime(detailedDocument.updated_date) : null;
   const contractCompletedDateLabel =
     category === "completed" ? formatDate(detailedDocument.updated_date) : null;
 
   const expiredDate = detailedDocument.current_status?.expired_date;
+  const isFinalizeEndDateValid = /^\d{4}-\d{2}-\d{2}$/.test(finalizeEndDate);
 
   const handleReRequestDialogChange = (open: boolean) => {
     setIsReRequestDialogOpen(open);
     setRecipientPhone(initialRecipientPhone);
+  };
+
+  const resetFinalizeState = () => {
+    setIsFinalizeOpen(false);
+    setFinalizeEndDate("");
+  };
+
+  const closeStaffCompletionModal = () => {
+    setIsStaffCompletionOpen(false);
+    setStaffCompletionOption(null);
   };
 
   const reRequestMutation = useMutation({
@@ -948,6 +971,69 @@ function ContractDetail({
       });
     },
   });
+
+  const openStaffCompletionMutation = useMutation({
+    mutationFn: async (endDate: string) => {
+      const authResult = await eformsignApi.authenticate(Date.now());
+      if (!authResult.success) {
+        throw new Error("eformsign 인증에 실패했습니다.");
+      }
+
+      return eformsignApi.generateStaffDocument(doc.id, undefined, undefined, endDate);
+    },
+    onSuccess: (documentOption: EformsignDocumentOption) => {
+      setStaffCompletionOption(documentOption);
+      setIsFinalizeOpen(false);
+      setIsStaffCompletionOpen(true);
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "최종 확인 실패",
+        description: error instanceof Error ? error.message : "최종 확인 준비 중 오류가 발생했습니다.",
+      });
+    },
+  });
+
+  const handleFinalizeDialogChange = (open: boolean) => {
+    if (openStaffCompletionMutation.isPending) {
+      return;
+    }
+
+    if (open) {
+      setIsFinalizeOpen(true);
+      return;
+    }
+
+    resetFinalizeState();
+  };
+
+  const handleStaffCompletionSuccess = () => {
+    toast({
+      title: "최종 확인 완료",
+      description: "계약서가 완료 처리되었습니다.",
+    });
+    closeStaffCompletionModal();
+    resetFinalizeState();
+    queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+  };
+
+  const handleStaffCompletionError = (message: string) => {
+    toast({
+      variant: "destructive",
+      title: "최종 확인 실패",
+      description: message,
+    });
+    closeStaffCompletionModal();
+  };
+
+  const handleStaffCompletionCancel = () => {
+    toast({
+      title: "최종 확인 취소",
+      description: "최종 확인이 취소되었습니다.",
+    });
+    closeStaffCompletionModal();
+  };
 
   const activityItems: {
     icon: React.ComponentType<{ className?: string }>;
@@ -1195,7 +1281,7 @@ function ContractDetail({
               data-component="contracts-detail-finalize-trigger"
               className="mt-0.5 w-[150px]"
               onClick={() => {
-                setFinalizeEndDate(contractEndDateIso);
+                setFinalizeEndDate((current) => current || formatIsoDateInput(contractEndDateIso));
                 setIsFinalizeOpen(true);
               }}
             >
@@ -1337,7 +1423,7 @@ function ContractDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={isFinalizeOpen} onOpenChange={setIsFinalizeOpen}>
+      <Dialog open={isFinalizeOpen} onOpenChange={handleFinalizeDialogChange}>
         <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
             <DialogTitle>최종 확인</DialogTitle>
@@ -1360,7 +1446,8 @@ function ContractDetail({
               placeholder="YYYY-MM-DD"
               pattern="\d{4}-\d{2}-\d{2}"
               value={finalizeEndDate}
-              onChange={(event) => setFinalizeEndDate(event.target.value)}
+              onChange={(event) => setFinalizeEndDate(formatIsoDateInput(event.target.value))}
+              disabled={openStaffCompletionMutation.isPending}
             />
           </div>
           <DialogFooter className="sm:justify-stretch">
@@ -1368,7 +1455,8 @@ function ContractDetail({
               variant="neutral"
               size="sm"
               className="flex-1"
-              onClick={() => setIsFinalizeOpen(false)}
+              onClick={() => handleFinalizeDialogChange(false)}
+              disabled={openStaffCompletionMutation.isPending}
             >
               취소
             </Button>
@@ -1376,14 +1464,26 @@ function ContractDetail({
               variant="positive"
               size="sm"
               className="flex-1"
-              onClick={() => setIsFinalizeOpen(false)}
-              disabled={!/^\d{4}-\d{2}-\d{2}$/.test(finalizeEndDate)}
+              onClick={() => openStaffCompletionMutation.mutate(finalizeEndDate)}
+              disabled={openStaffCompletionMutation.isPending || !isFinalizeEndDateValid}
             >
-              완료
+              {openStaffCompletionMutation.isPending ? "처리 중..." : "완료"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <StaffCompletionIframeModal
+        open={isStaffCompletionOpen}
+        documentOption={staffCompletionOption}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeStaffCompletionModal();
+          }
+        }}
+        onSuccess={handleStaffCompletionSuccess}
+        onError={handleStaffCompletionError}
+        onCancel={handleStaffCompletionCancel}
+      />
       <Dialog open={isActivityOpen} onOpenChange={setIsActivityOpen}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>

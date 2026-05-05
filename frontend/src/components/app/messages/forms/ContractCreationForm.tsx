@@ -35,16 +35,7 @@ import { useEformsign } from "@/hooks/useEformsign";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 
-// Auto-formats raw user input into the YYYY-MM-DD display shape. Strips
-// non-digits, caps at 8 digits, and inserts hyphens after positions 4 and 6.
-// Partial input (digits.length < 8) returns a partial display string and the
-// caller keeps external ISO state empty until the full 10-char form is typed.
-function formatIsoDateInput(value: string): string {
-  const digits = value.replace(/\D/g, "").slice(0, 8);
-  if (digits.length <= 4) return digits;
-  if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
-  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
-}
+import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 
 // 한국 공휴일 (대체공휴일 포함). 발급 가능 연도 기준 2026~2027 hardcode — 매년 갱신 필요.
 // 출처: 공공데이터포털 특일정보 / 인사혁신처 공고. 음력 기반 명절은 다음 양력 변환:
