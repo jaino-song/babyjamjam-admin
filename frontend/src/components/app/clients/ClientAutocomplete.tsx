@@ -166,7 +166,7 @@ export function ClientAutocomplete({
                 </PopoverTrigger>
                 <PopoverContent
                     data-component="clients-autocomplete-dropdown"
-                    className="w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border border-v3-border bg-white p-0 text-v3-dark shadow-[0_12px_36px_hsla(214,50%,20%,0.12)]"
+                    className="w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
                     align="start"
                 >
                     <Command shouldFilter={false}>
@@ -187,13 +187,13 @@ export function ClientAutocomplete({
                                     </span>
                                 </CommandEmpty>
                             ) : (
-                                <CommandGroup>
+                                <CommandGroup className="p-0">
                                     {filteredClients.map((client) => (
                                         <CommandItem
                                             key={client.id}
                                             value={client.id.toString()}
                                             onSelect={() => handleSelect(client)}
-                                            className="flex flex-col items-start gap-1 rounded-[16px] px-3 py-2.5"
+                                            className="group flex flex-col items-start gap-1 rounded-[16px] px-3 py-2.5 data-[selected=true]:not-hover:bg-transparent data-[selected=true]:not-hover:text-current hover:text-white hover:rounded-none"
                                         >
                                             <div className="flex items-center gap-2 w-full">
                                                 <Check
@@ -212,7 +212,7 @@ export function ClientAutocomplete({
                                                     </StatusBadge>
                                                 )}
                                             </div>
-                                            <span className="text-xs text-muted-foreground ml-6">
+                                            <span className="text-xs text-muted-foreground ml-6 group-hover:text-white">
                                                 {client.phone || "-"}{" "}
                                                 {client.address && `· ${client.address}`}
                                             </span>
@@ -228,16 +228,16 @@ export function ClientAutocomplete({
                                 <CommandSeparator />
                                 <button
                                     type="button"
-                                    className="flex w-full flex-col rounded-[16px] px-3 py-3 text-left transition-colors hover:bg-accent"
+                                    className="group flex w-full flex-col rounded-[16px] px-3 py-3 text-left transition-colors hover:bg-accent hover:text-white hover:rounded-t-none"
                                     onClick={handleManualEntry}
                                 >
                                     <div className="flex items-center gap-2">
                                         <UserPlus className="h-4 w-4" />
-                                        <span className="text-sm font-medium text-primary">
+                                        <span className="text-sm font-medium text-primary group-hover:text-white">
                                             {t(locale, "contract-msg.manual-entry")}
                                         </span>
                                     </div>
-                                    <span className="text-xs text-muted-foreground mt-1">
+                                    <span className="text-xs text-muted-foreground mt-1 group-hover:text-white">
                                         {t(locale, "contract-msg.manual-entry-description")}
                                     </span>
                                 </button>

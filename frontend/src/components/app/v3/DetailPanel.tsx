@@ -85,7 +85,7 @@ export function DetailPanel({
       <div className="relative flex-1 min-h-0">
         <div
           data-component="detail-panel-scroll-content"
-          className="overflow-y-auto h-full px-6 pt-6 pb-12"
+          className="overflow-y-auto h-full px-6 pt-6 pb-6"
         >
           {children}
         </div>

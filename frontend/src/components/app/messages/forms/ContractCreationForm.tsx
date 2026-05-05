@@ -2,7 +2,8 @@
 import dayjs from "dayjs";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
-import { Check, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -21,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SteppedWizard } from "@/components/app/v3";
 import type { WizardStep } from "@/components/app/v3";
 import {
   Dialog,
@@ -177,7 +177,11 @@ const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
 const SELECT_CLS =
   "w-full px-4 py-3 rounded-2xl border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
 
-export const ContractCreationForm = () => {
+interface ContractCreationFormProps {
+  onClose?: () => void;
+}
+
+export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}) => {
   const router = useRouter();
   const locale = useLocale();
   const queryClient = useQueryClient();
@@ -251,6 +255,7 @@ export const ContractCreationForm = () => {
     setVoucherDuration,
     setVoucherYear,
     setArea,
+    resetAll,
   } = useFormStore();
 
   // Sync YYMMDD raw display when external YYYY-MM-DD state changes (e.g., client autofill).
@@ -536,6 +541,7 @@ export const ContractCreationForm = () => {
 
             queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
             setDocumentCreated(true);
+            resetAll();
             alert("계약서가 성공적으로 생성되었습니다.");
             handleDialogClose();
           },
@@ -568,6 +574,18 @@ export const ContractCreationForm = () => {
   const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
   const hasVoucherPricingSelection = Boolean(voucherType && voucherDuration);
 
+  const handleStepChange = (nextStep: number) => {
+    if (nextStep > activeStep) {
+      const validationMessage = getStepValidationMessage(activeStep);
+      if (validationMessage) {
+        setSubmitError(validationMessage);
+        return;
+      }
+    }
+    setSubmitError(null);
+    setActiveStep(nextStep);
+  };
+
   const getStepValidationMessage = (step: number): string | null => {
     if (step === 0 && !isStep1Valid) {
       return "고객 정보와 계약서를 선택해 주세요.";
@@ -582,18 +600,6 @@ export const ContractCreationForm = () => {
       return "계약 시작일, 결제일을 입력해 주세요.";
     }
     return null;
-  };
-
-  const handleStepChange = (nextStep: number) => {
-    if (nextStep > activeStep) {
-      const validationMessage = getStepValidationMessage(activeStep);
-      if (validationMessage) {
-        setSubmitError(validationMessage);
-        return;
-      }
-    }
-    setSubmitError(null);
-    setActiveStep(nextStep);
   };
 
   const handleWizardComplete = () => {
@@ -626,13 +632,13 @@ export const ContractCreationForm = () => {
                     <strong>{t(locale, "contract-msg.phone-label")}:</strong> {phone || "-"}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    <strong>{t(locale, "contract-msg.birthday-label")}:</strong> {birthday || "-"}
+                    <strong>{t(locale, "contract-msg.birthday-label")}:</strong> {birthday ? dayjs(birthday).format("YYYY년 MM월 DD일") : "-"}
                   </p>
                   <p className="text-sm text-muted-foreground">
                     <strong>{t(locale, "contract-msg.address-label")}:</strong> {address || "-"}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    <strong>{t(locale, "clients.form.due-date")}:</strong> {dueDate || "-"}
+                    <strong>{t(locale, "clients.form.due-date")}:</strong> {dueDate ? dayjs(dueDate).format("YYYY년 MM월 DD일") : "-"}
                   </p>
                 </div>
               )}
@@ -873,7 +879,7 @@ export const ContractCreationForm = () => {
       content: (
         <div className="flex flex-col gap-6">
           <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-4">
-            <div className="space-y-2 md:w-[120px] md:flex-none">
+            <div className="space-y-2 flex-1 min-w-0">
               <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-year-label")}</Label>
               <select
                 className={SELECT_CLS}
@@ -897,7 +903,7 @@ export const ContractCreationForm = () => {
                   value={voucherType}
                   onChange={(e) => handleVoucherTypeChange(e.target.value)}
                 >
-                  <option value="">{t(locale, "price-info-msg.voucher-type-label")}</option>
+                  <option value="" disabled hidden>{t(locale, "price-info-msg.voucher-type-label")}</option>
                   {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
                     <optgroup key={groupName} label={groupName}>
                       {Object.entries(types).map(([typeValue, typeData]) => (
@@ -925,7 +931,7 @@ export const ContractCreationForm = () => {
                   onChange={(e) => handleDurationChange(e.target.value)}
                   disabled={isVoucherPriceInfosLoading}
                 >
-                  <option value="">{t(locale, "price-info-msg.duration-label")}</option>
+                  <option value="" disabled hidden>{t(locale, "price-info-msg.duration-label")}</option>
                   {voucherPriceInfos.map((v) => (
                     <option key={v.duration} value={v.duration}>
                       {v.duration}일
@@ -1088,20 +1094,55 @@ export const ContractCreationForm = () => {
 
   return (
     <>
-      <div data-component="messages-contract-form" className="space-y-4">
-        <SteppedWizard
-          title={t(locale, "msg-type.contract")}
-          subtitle={t(locale, "contract-msg.subtitle")}
-          steps={wizardSteps}
-          currentStep={activeStep}
-          onStepChange={handleStepChange}
-          onComplete={handleWizardComplete}
-          onBack={() => router.push("/contracts")}
-          backLabel="전자문서 목록으로 돌아가기"
-          completeLabel={isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
-          isSubmitting={isSubmitting}
-          isNextDisabled={!isCurrentStepValid}
-        />
+      <div data-component="contract-creation-form" className="px-[20%] h-full flex flex-col">
+        <div data-component="messages-contract-form" className="flex flex-col gap-6 flex-1 min-h-0">
+        <div data-component="stepped-wizard-stepper-desktop" className="shrink-0 flex min-h-[2.4rem] items-center justify-center gap-0 overflow-visible py-1 pb-7">
+          {wizardSteps.map((step, idx) => {
+            const isCompleted = idx < activeStep;
+            const isCurrent = idx === activeStep;
+            return (
+              <div key={idx} data-component="stepped-wizard-stepper-desktop-item" className="contents">
+                <div data-component="stepped-wizard-stepper-desktop-step" className="relative flex items-center overflow-visible py-0.5">
+                  <div
+                    data-component="stepped-wizard-stepper-desktop-circle"
+                    className={cn(
+                      "flex h-7 w-7 items-center justify-center rounded-full text-[0.68rem] font-bold transition-all duration-300 will-change-transform",
+                      isCompleted && "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
+                      isCurrent && "scale-110 bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
+                      !isCompleted && !isCurrent && "border-2 border-v3-border bg-v3-dim-white text-v3-text-muted"
+                    )}
+                  >
+                    {isCompleted ? <Check className="w-3.5 h-3.5" strokeWidth={3} /> : idx + 1}
+                  </div>
+                  <span
+                    data-component="stepped-wizard-stepper-desktop-label"
+                    className={cn(
+                      "absolute top-full left-1/2 -translate-x-1/2 mt-1 text-[0.65rem] font-semibold whitespace-nowrap transition-colors",
+                      (isCompleted || isCurrent) ? "text-v3-primary" : "text-v3-text-muted"
+                    )}
+                  >
+                    {step.label}
+                  </span>
+                </div>
+                {idx < wizardSteps.length - 1 && (
+                  <div
+                    data-component="stepped-wizard-stepper-desktop-connector"
+                    className={cn(
+                      "mx-1.5 h-0.5 w-10 rounded-full",
+                      idx < activeStep ? "bg-v3-primary" : "bg-v3-border"
+                    )}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {wizardSteps[activeStep] && (
+          <div data-component="stepped-wizard-step-content" className="flex-1 min-h-0 overflow-y-auto p-1">
+            {wizardSteps[activeStep].content}
+          </div>
+        )}
 
         {(submitError || eformsignError) && (
           <Alert variant="destructive" data-component="messages-contract-form-error">
@@ -1114,6 +1155,51 @@ export const ContractCreationForm = () => {
             <AlertDescription>eformsign SDK를 로드하는 중입니다...</AlertDescription>
           </Alert>
         )}
+
+        <div data-component="stepped-wizard-actions" className="shrink-0 -mx-[20%] px-[20%] bg-white pt-4 pb-3 border-t border-v3-border flex items-center justify-between gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              resetAll();
+              if (onClose) onClose();
+              else router.push("/contracts");
+            }}
+          >
+            취소
+          </Button>
+          <div className="flex items-center gap-2">
+            {activeStep > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleStepChange(activeStep - 1)}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                이전
+              </Button>
+            )}
+            {activeStep < wizardSteps.length - 1 ? (
+              <Button
+                type="button"
+                onClick={() => handleStepChange(activeStep + 1)}
+                disabled={!isCurrentStepValid}
+              >
+                다음
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={handleWizardComplete}
+                disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || !isStep4Valid || isSubmitting}
+              >
+                {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
+              </Button>
+            )}
+          </div>
+        </div>
+        </div>
       </div>
 
       <Dialog open={isDialogOpen} onOpenChange={(open: boolean) => !open && handleDialogClose()}>

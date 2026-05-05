@@ -85,6 +85,7 @@ import { inferVoucherDurationFromAmounts } from "@/lib/voucher/duration";
 import { clientsApi } from "@/features/clients/api/clients.api";
 import type { Client, PaginatedResponse } from "@/lib/client/types";
 import { ContractsListItem } from "@/components/app/contracts/ContractsListItem";
+import { ContractCreationForm } from "@/components/app/messages/forms/ContractCreationForm";
 
 const ContractDocumentPreviewModal = dynamic(
   () =>
@@ -352,6 +353,7 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
 export default function ContractsPage() {
   const [activeTab, setActiveTab] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [deleteTargetDocumentId, setDeleteTargetDocumentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -519,7 +521,7 @@ export default function ContractsPage() {
           ]}
         />
 
-        <SplitLayout hasSelection={!!selectedDocument} onBack={() => setSelectedDocId(null)}>
+        <SplitLayout hasSelection={!!selectedDocument || isCreating} onBack={() => { setSelectedDocId(null); setIsCreating(false); }}>
           <ListPanel
             title="계약 목록"
             tabs={TAB_ITEMS}
@@ -532,7 +534,7 @@ export default function ContractsPage() {
             isContentLoading={isContentLoading}
             headerActions={
               <HeaderActionButton
-                href="/contracts/creation"
+                onClick={() => { setIsCreating(true); setSelectedDocId(null); }}
                 icon={Send}
                 label="전자문서 발송"
                 data-component="contracts-header-send-contract"
@@ -559,7 +561,7 @@ export default function ContractsPage() {
                       : !isLoading && !isRefreshing && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
                   );
                 }}
-                onSlotClick={(doc) => setSelectedDocId(doc.id)}
+                onSlotClick={(doc) => { setIsCreating(false); setSelectedDocId(doc.id); }}
                 // Load more props
                 hasMore={hasNextPage}
                 onLoadMore={() => fetchNextPage()}
@@ -578,7 +580,19 @@ export default function ContractsPage() {
             )}
           </ListPanel>
 
-          {isInitialLoading ? (
+          {isCreating ? (
+            <DetailPanel
+              title="전자계약서 작성"
+              subtitle="고객에게 전자계약서를 발송합니다"
+              avatar={
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                  <Send className="h-5 w-5" />
+                </div>
+              }
+            >
+              <ContractCreationForm onClose={() => setIsCreating(false)} />
+            </DetailPanel>
+          ) : isInitialLoading ? (
             <DetailSkeleton
               name="contracts-detail-skeleton"
               headerBadge
