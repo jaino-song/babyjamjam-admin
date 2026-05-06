@@ -43,7 +43,7 @@ describe("EformsignHeadlessService", () => {
             waitForURL: jest.fn().mockResolvedValue(undefined),
             goto: jest.fn().mockResolvedValue(undefined),
             close: jest.fn().mockResolvedValue(undefined),
-            evaluate: jest.fn().mockResolvedValue(true),
+            evaluate: jest.fn().mockResolvedValue("doc-from-callback"),
             frameLocator: jest.fn().mockReturnValue({}),
             locator: jest.fn().mockReturnValue({
                 first: () => ({
@@ -86,15 +86,33 @@ describe("EformsignHeadlessService", () => {
         service = new EformsignHeadlessService(config);
     });
 
-    it("dispatchCreation runs the creation gates and returns ok=true", async () => {
+    it("dispatchCreation runs the creation gates and returns ok=true with the SDK document_id", async () => {
         const result = await service.dispatchCreation({
             documentOption: { mode: { type: "01" } },
         });
 
         expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.documentId).toBe("doc-from-callback");
+        }
         expect(runEformsignCreationGates).toHaveBeenCalledTimes(1);
         // Login (1 context) + dispatch (1 context) = 2 contexts created.
         expect(browserMock.newContext).toHaveBeenCalledTimes(2);
+    });
+
+    it("dispatchCreation returns ok=false when the SDK success callback never fires", async () => {
+        // First waitForFunction call resolves (iframe src); second (success
+        // latch) rejects to simulate eformsign never confirming dispatch.
+        (pageMock.waitForFunction as jest.Mock)
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error("Timeout 90000ms exceeded"));
+
+        const result = await service.dispatchCreation({ documentOption: { mode: { type: "01" } } });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+            expect(result.reason).toContain("Timeout");
+        }
     });
 
     it("dispatchCreation reuses the cached cookies on the next call", async () => {
@@ -126,7 +144,8 @@ describe("EformsignHeadlessService", () => {
 
         expect(result.ok).toBe(true);
         if (result.ok) {
-            expect(result.documentId).toBe("doc-9");
+            // SDK callback is preferred; falls back to the param when callback omits the id.
+            expect(result.documentId).toBe("doc-from-callback");
         }
         expect(runEformsignFinalizeGates).toHaveBeenCalledTimes(1);
     });

@@ -171,12 +171,17 @@ export class EformsignHeadlessService implements OnModuleDestroy {
 
         await runEformsignCreationGates(page, eformsignFrame, this.logger);
 
-        await successPromise.catch(() => undefined);
+        // The gate runner only confirms the click sequence completed; the
+        // actual dispatch is acknowledged by the SDK success callback
+        // (`__eformsignSuccess`). If that never fires, the document was not
+        // sent — surface that as ok=false so the frontend falls back.
+        await successPromise;
+        const documentId = await this.readSuccessDocumentId(page);
 
         return {
             ok: true,
             durationMs: Date.now() - start,
-            documentId: params.documentId,
+            documentId: documentId ?? params.documentId,
         };
     }
 
@@ -207,13 +212,23 @@ export class EformsignHeadlessService implements OnModuleDestroy {
 
         await runEformsignFinalizeGates(page, eformsignFrame, this.logger);
 
-        await successPromise.catch(() => undefined);
+        await successPromise;
+        const documentId = await this.readSuccessDocumentId(page);
 
         return {
             ok: true,
             durationMs: Date.now() - start,
-            documentId: params.documentId,
+            documentId: documentId ?? params.documentId,
         };
+    }
+
+    private async readSuccessDocumentId(page: Page): Promise<string | undefined> {
+        return page
+            .evaluate(() => {
+                const w = window as unknown as { __eformsignSuccess?: { document_id?: string } };
+                return w.__eformsignSuccess?.document_id;
+            })
+            .catch(() => undefined);
     }
 
     /**

@@ -79,9 +79,19 @@ export class DispatchDocumentHeadlessUsecase {
                 };
             }
 
-            const documentId = result.documentId ?? this.tryExtractDocumentIdFromOption(documentOption) ?? "";
+            // The SDK success callback (`__eformsignSuccess.document_id`) is
+            // the only authoritative source of the new document id — mode:"01"
+            // payloads don't carry one. If it's missing we treat the run as a
+            // soft failure and fall back to the iframe so the user can retry.
+            const documentId = result.documentId;
             if (!documentId) {
-                this.logger.warn("Headless creation succeeded but no documentId was captured.");
+                this.logger.warn("Headless creation finished without a document_id from the SDK callback; falling back.");
+                return {
+                    ok: false,
+                    reason: "missing document_id from eformsign success callback",
+                    fallbackHint: "iframe",
+                    durationMs: result.durationMs,
+                };
             }
 
             if (params.clientId && documentId) {
@@ -122,8 +132,4 @@ export class DispatchDocumentHeadlessUsecase {
         }
     }
 
-    private tryExtractDocumentIdFromOption(option: Record<string, unknown>): string | undefined {
-        const mode = option["mode"] as { document_id?: string } | undefined;
-        return mode?.document_id;
-    }
 }
