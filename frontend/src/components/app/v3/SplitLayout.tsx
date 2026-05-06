@@ -17,7 +17,7 @@ interface SplitLayoutProps {
 
 function getDesktopGridClass(columns: 2 | 3): string {
   if (columns === 3) return "grid-cols-1 lg:grid-cols-3";
-  return "grid-cols-1 lg:grid-cols-[380px_1fr]";
+  return "grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)]";
 }
 
 export function SplitLayout({
@@ -45,7 +45,7 @@ export function SplitLayout({
       <SplitLayoutContext.Provider value={contextValue}>
         <div
           data-component="split-layout"
-          className={`grid ${getDesktopGridClass(columns)} gap-6 flex-1 h-full min-h-0`}
+          className={`grid ${getDesktopGridClass(columns)} gap-6 flex-1 h-full min-w-0 min-h-0`}
         >
           {childArray.map((child, index) => {
             const key = (child as React.ReactElement).key ?? `split-panel-${index}`;
@@ -54,7 +54,7 @@ export function SplitLayout({
               <div
                 key={key}
                 data-component="split-layout-panel"
-                className="min-h-0 flex flex-col animate-v3-slide-up"
+                className="min-w-0 min-h-0 flex flex-col animate-v3-slide-up"
               >
                 {child}
               </div>

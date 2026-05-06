@@ -5,6 +5,8 @@ export interface IEformsignDocRepository {
     findByDocumentId(branchid: string, documentId: string): Promise<EformsignDocEntity | null>;
     findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]>;
     findAll(branchid: string): Promise<EformsignDocEntity[]>;
+    findPendingStaffCompletion(branchid: string): Promise<EformsignDocEntity[]>;
+    findClientNamesByBranch(branchid: string): Promise<Array<{ documentId: string; clientName: string }>>;
     create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity>;
     update(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity>;
     upsertByDocumentId(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity>;

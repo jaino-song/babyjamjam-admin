@@ -26,6 +26,7 @@ export interface ContractDataDto {
     fullPrice: string;
     grant: string;
     actualPrice: string;
+    issuerPhone?: string;
   }
   
   export interface EformsignTokenResponse {

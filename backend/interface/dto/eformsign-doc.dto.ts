@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, IsDateString, IsBoolean } from "class-validator";
+import { IsBoolean, IsDateString, IsNumber, IsOptional, IsString } from "class-validator";
 
 /**
  * DTO for getting access token
@@ -83,4 +83,3 @@ export class CreateEformsignDocLocalDto {
     @IsBoolean()
     linkToClient?: boolean; // If true, also update client.e_doc_id
 }
-

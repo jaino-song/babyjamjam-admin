@@ -35,7 +35,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
             this.EFORMSIGN_API_URL &&
             this.EFORMSIGN_DOC_API_URL &&
             this.EFORMSIGN_API_KEY &&
-            this.EFORMSIGN_PRIVATE_KEY,
+            this.EFORMSIGN_PRIVATE_KEY
         );
 
         if (!this.isConfigured) {

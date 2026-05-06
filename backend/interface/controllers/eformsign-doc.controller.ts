@@ -1,5 +1,9 @@
-import { Body, Controller, Get, Post, Query, Logger, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Logger, MessageEvent, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import { Observable, filter, interval, map, merge } from "rxjs";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
+import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
+import { ListPendingStaffCompletionUsecase } from "application/usecases/eformsign-doc/list-pending-staff-completion.usecase";
+import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
 import {
     GetAccessTokenDto,
     RefreshAccessTokenDto,
@@ -15,7 +19,34 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 export class EformsignDocController {
     private readonly logger = new Logger(EformsignDocController.name);
 
-    constructor(private readonly eformsignDocService: EformsignDocService) {}
+    constructor(
+        private readonly eformsignDocService: EformsignDocService,
+        private readonly listPendingStaffCompletionUsecase: ListPendingStaffCompletionUsecase,
+        private readonly listClientNamesByBranchUsecase: ListClientNamesByBranchUsecase,
+        private readonly eventBus: EformsignDocsEventBus,
+    ) {}
+
+    /**
+     * GET /eformsign-docs/events
+     * Server-Sent Events stream of doc-list mutations for the current branch.
+     * Emits a `docs-changed` event after each webhook completes; sends a `ping`
+     * every 30s to keep proxies + clients honest.
+     */
+    @Sse("events")
+    events(@CurrentTenant() tenant: { branchId?: string }): Observable<MessageEvent> {
+        const branchId = tenant.branchId ?? "";
+
+        const docs = this.eventBus.events$.pipe(
+            filter((e) => e.branchId === branchId),
+            map((e) => ({ data: e, type: "docs-changed" } as MessageEvent)),
+        );
+
+        const heartbeat = interval(30000).pipe(
+            map(() => ({ data: { at: Date.now() }, type: "ping" } as MessageEvent)),
+        );
+
+        return merge(docs, heartbeat);
+    }
 
     // ============ Local DB Endpoints ============
 
@@ -78,6 +109,22 @@ export class EformsignDocController {
         @Query("documentId") documentId: string
     ) {
         return this.eformsignDocService.findByDocumentId(tenant.branchId ?? "", documentId);
+    }
+
+    @Get("pending-staff-completion")
+    listPendingStaffCompletion(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.listPendingStaffCompletionUsecase.execute(tenant.branchId ?? "");
+    }
+
+    /**
+     * GET /eformsign-docs/client-names
+     * Returns documentId → clientName mapping for current branch.
+     * Used by the contracts list to show the customer's name even after the
+     * doc has progressed past step 1 (eformsign list_document loses outsider info).
+     */
+    @Get("client-names")
+    listClientNames(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.listClientNamesByBranchUsecase.execute(tenant.branchId ?? "");
     }
 
     /**

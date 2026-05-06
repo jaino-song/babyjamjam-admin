@@ -68,6 +68,7 @@ api.interceptors.response.use(
                 url.includes('/access-token') || 
                 url.includes('/refresh-access-token') ||
                 url.includes('/generate-document') ||
+                url.includes('/generate-staff-document') ||
                 url.includes('/generate-signature');
             
             // Don't retry token refresh endpoints themselves

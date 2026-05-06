@@ -2,7 +2,8 @@
 import dayjs from "dayjs";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
-import { Check, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -21,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SteppedWizard } from "@/components/app/v3";
 import type { WizardStep } from "@/components/app/v3";
 import {
   Dialog,
@@ -29,10 +29,76 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEformsign } from "@/hooks/useEformsign";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
+
+import { formatIsoDateInput } from "@/lib/date/format-iso-input";
+
+// 한국 공휴일 (대체공휴일 포함). 발급 가능 연도 기준 2026~2027 hardcode — 매년 갱신 필요.
+// 출처: 공공데이터포털 특일정보 / 인사혁신처 공고. 음력 기반 명절은 다음 양력 변환:
+// - 설날 2026: 2/16(월),17(화),18(수); 2027: 2/6(토),7(일),8(월) + 대체 2/9(화)
+// - 추석 2026: 9/24(목),25(금),26(토) + 대체 9/28(월); 2027: 9/14(화),15(수),16(목)
+// - 부처님오신날 2026: 5/24(일) + 대체 5/25(월); 2027: 5/13(목)
+const KR_HOLIDAYS = new Set<string>([
+  // 2026
+  "2026-01-01", // 신정
+  "2026-02-16", "2026-02-17", "2026-02-18", // 설날
+  "2026-03-01", // 삼일절
+  "2026-03-02", // 삼일절 대체 (일요일)
+  "2026-05-05", // 어린이날
+  "2026-05-24", "2026-05-25", // 부처님오신날 + 대체
+  "2026-06-06", // 현충일
+  "2026-08-15", // 광복절
+  "2026-08-17", // 광복절 대체 (토요일)
+  "2026-09-24", "2026-09-25", "2026-09-26", "2026-09-28", // 추석 + 대체
+  "2026-10-03", "2026-10-05", // 개천절 + 대체 (토요일)
+  "2026-10-09", // 한글날
+  "2026-12-25", // 크리스마스
+  // 2027
+  "2027-01-01", // 신정
+  "2027-02-06", "2027-02-07", "2027-02-08", "2027-02-09", // 설날 + 대체
+  "2027-03-01", // 삼일절
+  "2027-05-05", // 어린이날
+  "2027-05-13", // 부처님오신날
+  "2027-06-06", "2027-06-07", // 현충일 + 대체 (일요일)
+  "2027-08-15", "2027-08-16", // 광복절 + 대체 (일요일)
+  "2027-09-14", "2027-09-15", "2027-09-16", // 추석
+  "2027-10-03", "2027-10-04", // 개천절 + 대체 (일요일)
+  "2027-10-09", // 한글날
+  "2027-12-25",
+]);
+
+function isBusinessDayKr(iso: string): boolean {
+  // iso = "YYYY-MM-DD". new Date(iso) parses as UTC midnight; getUTCDay() returns DOW (0=Sun, 6=Sat).
+  if (!iso) return false;
+  const d = new Date(iso + "T00:00:00Z");
+  const dow = d.getUTCDay();
+  if (dow === 0 || dow === 6) return false;
+  return !KR_HOLIDAYS.has(iso);
+}
+
+// startISO를 1일차로 카운트하되, 시작일이 비영업일이면 다음 영업일부터 1일차.
+// 반환: N번째 영업일의 ISO 문자열.
+function calcEndDateBusinessDays(startISO: string, n: number): string {
+  if (!startISO || !Number.isFinite(n) || n <= 0) return "";
+  const startMatch = startISO.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!startMatch) return "";
+  const cursor = new Date(startISO + "T00:00:00Z");
+  let counted = 0;
+  // 안전 가드: 충분한 상한 (영업일 30일은 달력 60일 안에 끝남, 여유 2x)
+  for (let i = 0; i < 365 && counted < n; i++) {
+    const iso = cursor.toISOString().slice(0, 10);
+    if (isBusinessDayKr(iso)) {
+      counted++;
+      if (counted === n) return iso;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return "";
+}
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/hooks";
 import voucherOptions from "../templates/json/voucher.json";
@@ -74,6 +140,7 @@ interface ContractDataDto {
   fullPrice: string;
   grant: string;
   actualPrice: string;
+  issuerPhone?: string;
 }
 
 const formatPrice = (price: number | string): string => {
@@ -97,18 +164,26 @@ const INPUT_CLS = "bg-white text-[0.85rem] font-[Pretendard] text-v3-dark";
 const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
 
 const SELECT_CLS =
-  "w-full px-4 py-3 rounded-2xl border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
+  "w-full h-10 px-4 py-2.5 rounded-2xl border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
 
-export const ContractCreationForm = () => {
+interface ContractCreationFormProps {
+  onClose?: () => void;
+}
+
+export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}) => {
   const router = useRouter();
   const locale = useLocale();
   const queryClient = useQueryClient();
+  const { data: authUser } = useGetAuthUser();
   const [activeStep, setActiveStep] = useState(0);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [documentCreated, setDocumentCreated] = useState(false);
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
+  const [startDateInput, setStartDateInput] = useState("");
+  const [endDateInput, setEndDateInput] = useState("");
+  const [paymentDateInput, setPaymentDateInput] = useState("");
 
   const { isLoaded: isEformsignLoaded, isLoading: isEformsignLoading, error: eformsignError, openDocument } =
     useEformsign();
@@ -169,7 +244,23 @@ export const ContractCreationForm = () => {
     setVoucherDuration,
     setVoucherYear,
     setArea,
+    resetAll,
   } = useFormStore();
+
+  // Sync YYMMDD raw display when external YYYY-MM-DD state changes (e.g., client autofill).
+  useEffect(() => { setStartDateInput(startDate); }, [startDate]);
+  useEffect(() => { setEndDateInput(endDate); }, [endDate]);
+  useEffect(() => { setPaymentDateInput(paymentDate); }, [paymentDate]);
+
+  // 시작일과 서비스 기간이 모두 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
+  // 사용자가 종료일을 수동 편집해도 startDate/voucherDuration이 다시 바뀌어야만 덮어쓴다.
+  useEffect(() => {
+    if (!startDate || !voucherDuration) return;
+    const n = parseInt(voucherDuration, 10);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const computed = calcEndDateBusinessDays(startDate, n);
+    if (computed) setEndDate(computed);
+  }, [startDate, voucherDuration, setEndDate]);
 
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(
     voucherType,
@@ -368,7 +459,7 @@ export const ContractCreationForm = () => {
       }
 
       const start = dayjs(startDate);
-      const end = dayjs(endDate);
+      const end = endDate ? dayjs(endDate) : null;
       const payment = dayjs(paymentDate);
       const today = dayjs();
 
@@ -377,19 +468,23 @@ export const ContractCreationForm = () => {
         customerContact: phone,
         customerDOB: birthday,
         customerAddress: address,
+        // inputOutsiderNumber (이용자 연락처) prefill 용 — 현재 로그인 계정의 phone 사용
+        issuerPhone: authUser?.phone ?? undefined,
         caretaker1Name: employeeName,
         caretaker1Contact: employeePhone,
         type: voucherType,
         days: voucherDuration,
         area,
-        contractDuration: `${start.format("YYYY-MM-DD")} ~ ${end.format("YYYY-MM-DD")}`,
+        contractDuration: end
+          ? `${start.format("YYYY-MM-DD")} ~ ${end.format("YYYY-MM-DD")}`
+          : `${start.format("YYYY-MM-DD")} ~`,
         startYear: start.format("YY"),
         startMonth: start.format("MM"),
         startDay: start.format("DD"),
         startDate,
-        endYear: end.format("YY"),
-        endMonth: end.format("MM"),
-        endDay: end.format("DD"),
+        endYear: end ? end.format("YY") : "",
+        endMonth: end ? end.format("MM") : "",
+        endDay: end ? end.format("DD") : "",
         endDate,
         paymentYear: payment.format("YY"),
         paymentMonth: payment.format("MM"),
@@ -425,7 +520,7 @@ export const ContractCreationForm = () => {
                   stepRecipientType: "01",
                   stepRecipientName: name,
                   stepRecipientSms: phone,
-                  expiredDate: end.add(30, "day").toISOString(),
+                  expiredDate: (end ?? start.add(60, "day")).add(30, "day").toISOString(),
                   linkToClient: true,
                 });
               } catch (docError) {
@@ -433,8 +528,9 @@ export const ContractCreationForm = () => {
               }
             }
 
-            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
+            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
             setDocumentCreated(true);
+            resetAll();
             alert("계약서가 성공적으로 생성되었습니다.");
             handleDialogClose();
           },
@@ -462,9 +558,22 @@ export const ContractCreationForm = () => {
   );
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
-  const isStep4Valid = Boolean(startDate && endDate && paymentDate);
+  // endDate는 이용자 서명 후 직원이 Step 3에서 사후 입력하므로 발급 시점에는 옵셔널.
+  const isStep4Valid = Boolean(startDate && paymentDate);
   const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
   const hasVoucherPricingSelection = Boolean(voucherType && voucherDuration);
+
+  const handleStepChange = (nextStep: number) => {
+    if (nextStep > activeStep) {
+      const validationMessage = getStepValidationMessage(activeStep);
+      if (validationMessage) {
+        setSubmitError(validationMessage);
+        return;
+      }
+    }
+    setSubmitError(null);
+    setActiveStep(nextStep);
+  };
 
   const getStepValidationMessage = (step: number): string | null => {
     if (step === 0 && !isStep1Valid) {
@@ -477,21 +586,9 @@ export const ContractCreationForm = () => {
       return "바우처 유형/기간과 금액 정보를 입력해 주세요.";
     }
     if (step === 3 && !isStep4Valid) {
-      return "계약 시작일, 종료일, 결제일을 입력해 주세요.";
+      return "계약 시작일, 결제일을 입력해 주세요.";
     }
     return null;
-  };
-
-  const handleStepChange = (nextStep: number) => {
-    if (nextStep > activeStep) {
-      const validationMessage = getStepValidationMessage(activeStep);
-      if (validationMessage) {
-        setSubmitError(validationMessage);
-        return;
-      }
-    }
-    setSubmitError(null);
-    setActiveStep(nextStep);
   };
 
   const handleWizardComplete = () => {
@@ -524,13 +621,13 @@ export const ContractCreationForm = () => {
                     <strong>{t(locale, "contract-msg.phone-label")}:</strong> {phone || "-"}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    <strong>{t(locale, "contract-msg.birthday-label")}:</strong> {birthday || "-"}
+                    <strong>{t(locale, "contract-msg.birthday-label")}:</strong> {birthday ? dayjs(birthday).format("YYYY년 MM월 DD일") : "-"}
                   </p>
                   <p className="text-sm text-muted-foreground">
                     <strong>{t(locale, "contract-msg.address-label")}:</strong> {address || "-"}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    <strong>{t(locale, "clients.form.due-date")}:</strong> {dueDate || "-"}
+                    <strong>{t(locale, "clients.form.due-date")}:</strong> {dueDate ? dayjs(dueDate).format("YYYY년 MM월 DD일") : "-"}
                   </p>
                 </div>
               )}
@@ -771,7 +868,7 @@ export const ContractCreationForm = () => {
       content: (
         <div className="flex flex-col gap-6">
           <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-4">
-            <div className="space-y-2 md:w-[120px] md:flex-none">
+            <div className="space-y-2 flex-1 min-w-0">
               <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-year-label")}</Label>
               <select
                 className={SELECT_CLS}
@@ -795,7 +892,7 @@ export const ContractCreationForm = () => {
                   value={voucherType}
                   onChange={(e) => handleVoucherTypeChange(e.target.value)}
                 >
-                  <option value="">{t(locale, "price-info-msg.voucher-type-label")}</option>
+                  <option value="" disabled hidden>{t(locale, "price-info-msg.voucher-type-label")}</option>
                   {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
                     <optgroup key={groupName} label={groupName}>
                       {Object.entries(types).map(([typeValue, typeData]) => (
@@ -823,7 +920,7 @@ export const ContractCreationForm = () => {
                   onChange={(e) => handleDurationChange(e.target.value)}
                   disabled={isVoucherPriceInfosLoading}
                 >
-                  <option value="">{t(locale, "price-info-msg.duration-label")}</option>
+                  <option value="" disabled hidden>{t(locale, "price-info-msg.duration-label")}</option>
                   {voucherPriceInfos.map((v) => (
                     <option key={v.duration} value={v.duration}>
                       {v.duration}일
@@ -908,9 +1005,18 @@ export const ContractCreationForm = () => {
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.start-date-label")}</Label>
             <Input
               variant="v3"
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="\d{4}-\d{2}-\d{2}"
+              maxLength={10}
+              placeholder="YYYY-MM-DD"
+              value={startDateInput}
+              onChange={(e) => {
+                const formatted = formatIsoDateInput(e.target.value);
+                setStartDateInput(formatted);
+                if (formatted.length === 10) setStartDate(formatted);
+                else if (formatted.length === 0) setStartDate("");
+              }}
               className={INPUT_CLS}
             />
           </div>
@@ -918,9 +1024,18 @@ export const ContractCreationForm = () => {
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.end-date-label")}</Label>
             <Input
               variant="v3"
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="\d{4}-\d{2}-\d{2}"
+              maxLength={10}
+              placeholder="YYYY-MM-DD"
+              value={endDateInput}
+              onChange={(e) => {
+                const formatted = formatIsoDateInput(e.target.value);
+                setEndDateInput(formatted);
+                if (formatted.length === 10) setEndDate(formatted);
+                else if (formatted.length === 0) setEndDate("");
+              }}
               className={INPUT_CLS}
             />
           </div>
@@ -928,9 +1043,18 @@ export const ContractCreationForm = () => {
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.payment-date-label")}</Label>
             <Input
               variant="v3"
-              type="date"
-              value={paymentDate}
-              onChange={(e) => setPaymentDate(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="\d{4}-\d{2}-\d{2}"
+              maxLength={10}
+              placeholder="YYYY-MM-DD"
+              value={paymentDateInput}
+              onChange={(e) => {
+                const formatted = formatIsoDateInput(e.target.value);
+                setPaymentDateInput(formatted);
+                if (formatted.length === 10) setPaymentDate(formatted);
+                else if (formatted.length === 0) setPaymentDate("");
+              }}
               className={INPUT_CLS}
             />
           </div>
@@ -938,10 +1062,10 @@ export const ContractCreationForm = () => {
       ),
       summary: (
         <div className="flex gap-3 flex-wrap">
-          {startDate && endDate && (
+          {startDate && (
             <span className={COMPLETED_PILL}>
               <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {startDate} ~ {endDate}
+              {startDate} ~ {endDate || "(직원 입력 예정)"}
             </span>
           )}
           {paymentDate && (
@@ -957,20 +1081,55 @@ export const ContractCreationForm = () => {
 
   return (
     <>
-      <div data-component="messages-contract-form" className="space-y-4">
-        <SteppedWizard
-          title={t(locale, "msg-type.contract")}
-          subtitle={t(locale, "contract-msg.subtitle")}
-          steps={wizardSteps}
-          currentStep={activeStep}
-          onStepChange={handleStepChange}
-          onComplete={handleWizardComplete}
-          onBack={() => router.push("/contracts")}
-          backLabel="전자문서 목록으로 돌아가기"
-          completeLabel={isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
-          isSubmitting={isSubmitting}
-          isNextDisabled={!isCurrentStepValid}
-        />
+      <div data-component="contract-creation-form" className="px-[20%] h-full flex flex-col">
+        <div data-component="messages-contract-form" className="flex flex-col gap-6 flex-1 min-h-0">
+        <div data-component="stepped-wizard-stepper-desktop" className="shrink-0 flex min-h-[2.4rem] items-center justify-center gap-0 overflow-visible py-1 pb-7">
+          {wizardSteps.map((step, idx) => {
+            const isCompleted = idx < activeStep;
+            const isCurrent = idx === activeStep;
+            return (
+              <div key={idx} data-component="stepped-wizard-stepper-desktop-item" className="contents">
+                <div data-component="stepped-wizard-stepper-desktop-step" className="relative flex items-center overflow-visible py-0.5">
+                  <div
+                    data-component="stepped-wizard-stepper-desktop-circle"
+                    className={cn(
+                      "flex h-7 w-7 items-center justify-center rounded-full text-[0.68rem] font-bold transition-all duration-300 will-change-transform",
+                      isCompleted && "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
+                      isCurrent && "scale-110 bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
+                      !isCompleted && !isCurrent && "border-2 border-v3-border bg-v3-dim-white text-v3-text-muted"
+                    )}
+                  >
+                    {isCompleted ? <Check className="w-3.5 h-3.5" strokeWidth={3} /> : idx + 1}
+                  </div>
+                  <span
+                    data-component="stepped-wizard-stepper-desktop-label"
+                    className={cn(
+                      "absolute top-full left-1/2 -translate-x-1/2 mt-1 text-[0.65rem] font-semibold whitespace-nowrap transition-colors",
+                      (isCompleted || isCurrent) ? "text-v3-primary" : "text-v3-text-muted"
+                    )}
+                  >
+                    {step.label}
+                  </span>
+                </div>
+                {idx < wizardSteps.length - 1 && (
+                  <div
+                    data-component="stepped-wizard-stepper-desktop-connector"
+                    className={cn(
+                      "mx-1.5 h-0.5 w-10 rounded-full",
+                      idx < activeStep ? "bg-v3-primary" : "bg-v3-border"
+                    )}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {wizardSteps[activeStep] && (
+          <div data-component="stepped-wizard-step-content" className="flex-1 min-h-0 overflow-y-auto p-1">
+            {wizardSteps[activeStep].content}
+          </div>
+        )}
 
         {(submitError || eformsignError) && (
           <Alert variant="destructive" data-component="messages-contract-form-error">
@@ -983,20 +1142,70 @@ export const ContractCreationForm = () => {
             <AlertDescription>eformsign SDK를 로드하는 중입니다...</AlertDescription>
           </Alert>
         )}
+
+        <div data-component="stepped-wizard-actions" className="shrink-0 -mx-[20%] px-[20%] bg-white pt-4 pb-3 border-t border-v3-border flex items-center justify-between gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              resetAll();
+              if (onClose) onClose();
+              else router.push("/contracts");
+            }}
+          >
+            취소
+          </Button>
+          <div className="flex items-center gap-2">
+            {activeStep > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="contract-creation-back"
+                onClick={() => handleStepChange(activeStep - 1)}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                이전
+              </Button>
+            )}
+            {activeStep < wizardSteps.length - 1 ? (
+              <Button
+                type="button"
+                data-testid="contract-creation-next"
+                onClick={() => handleStepChange(activeStep + 1)}
+                disabled={!isCurrentStepValid}
+              >
+                다음
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                data-testid="contract-creation-submit"
+                onClick={handleWizardComplete}
+                disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || !isStep4Valid || isSubmitting}
+              >
+                {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
+              </Button>
+            )}
+          </div>
+        </div>
+        </div>
       </div>
 
       <Dialog open={isDialogOpen} onOpenChange={(open: boolean) => !open && handleDialogClose()}>
         <DialogContent
           data-component="messages-contract-form-dialog"
-          className="max-w-full w-screen h-screen p-0 gap-0"
+          // Mobile: full-screen. Desktop (lg+): A4 portrait + eformsign 상하단 툴바 비율(약 0.73 w/h)을 맞춰 800×1102px 고정,
+          // 단 viewport이 작으면 95vh로 캡. flex column으로 헤더 + 남은 공간을 iframe이 차지하도록 한다.
+          className="max-w-full w-screen h-screen p-0 gap-0 flex flex-col lg:w-[800px] lg:max-w-[800px] lg:h-[1102px] lg:max-h-[95vh] lg:rounded-lg"
         >
-          <DialogHeader className="px-4 py-2 flex flex-row items-center justify-between border-b">
+          <DialogHeader className="px-4 py-2 flex flex-row items-center justify-between border-b shrink-0">
             <DialogTitle>계약서 작성</DialogTitle>
             <Button type="button" variant="ghost" size="icon" onClick={handleDialogClose} className="h-8 w-8">
               <X className="h-4 w-4" />
             </Button>
           </DialogHeader>
-          <div className="flex-1 overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
+          <div className="flex-1 min-h-0 overflow-hidden">
             <iframe id="eformsign_iframe" className="w-full h-full border-none" title="eformsign Document" />
           </div>
         </DialogContent>

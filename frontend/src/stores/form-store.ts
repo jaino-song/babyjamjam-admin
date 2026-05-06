@@ -66,43 +66,45 @@ interface FormStore {
     setVoucherDuration: (voucherDuration: string) => void;
     setVoucherYear: (voucherYear: number) => void;
     setArea: (area: string) => void;
+    // Reset all fields to initial state (for cancel/successful submission)
+    resetAll: () => void;
 }
 
 // 현재 연도를 기본값으로 사용
 const currentYear = new Date().getFullYear();
 
+const INITIAL_STATE = {
+    clientId: null,
+    isManualEntry: false,
+    name: "",
+    phone: "",
+    birthday: "",
+    dueDate: "",
+    address: "",
+    employeeId: null,
+    isEmployeeManualEntry: false,
+    employeeName: "",
+    employeePhone: "",
+    showEmployee2: false,
+    employee2Id: null,
+    isEmployee2ManualEntry: false,
+    employee2Name: "",
+    employee2Phone: "",
+    startDate: "",
+    endDate: "",
+    fullPrice: "",
+    grant: "",
+    actualPrice: "",
+    paymentDate: "",
+    voucherType: "",
+    voucherDuration: "",
+    voucherYear: currentYear,
+    area: "",
+};
+
 export const useFormStore = create<FormStore>((set) => {
     return {
-        // Client selection
-        clientId: null,
-        isManualEntry: false,
-        name: "",
-        phone: "",
-        birthday: "",
-        dueDate: "",
-        address: "",
-        // Employee 1 selection
-        employeeId: null,
-        isEmployeeManualEntry: false,
-        employeeName: "",
-        employeePhone: "",
-        // Employee 2 selection
-        showEmployee2: false,
-        employee2Id: null,
-        isEmployee2ManualEntry: false,
-        employee2Name: "",
-        employee2Phone: "",
-        // Contract details
-        startDate: "",
-        endDate: "",
-        fullPrice: "",
-        grant: "",
-        actualPrice: "",
-        paymentDate: "",
-        voucherType: "",
-        voucherDuration: "",
-        voucherYear: currentYear,
-        area: "",
+        ...INITIAL_STATE,
         // Client selection setters
         setClientId: (clientId: number | null) => set({ clientId }),
         setIsManualEntry: (isManualEntry: boolean) => set({ isManualEntry }),
@@ -167,5 +169,6 @@ export const useFormStore = create<FormStore>((set) => {
         setVoucherDuration: (voucherDuration: string) => set({ voucherDuration }),
         setVoucherYear: (voucherYear: number) => set({ voucherYear }),
         setArea: (area: string) => set({ area }),
+        resetAll: () => set(INITIAL_STATE),
     }
 })

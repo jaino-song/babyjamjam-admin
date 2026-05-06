@@ -1,8 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
 import * as https from "https";
 import { ContractDataDto } from "../dto/contract.dto";
+import { EFORMSIGN_END_DATE_FIELD_IDS } from "../usecases/eformsign-doc/eformsign-end-date-field-ids";
 
 export interface EformsignTokenResponse {
     oauth_token: {
@@ -10,6 +11,8 @@ export interface EformsignTokenResponse {
         refresh_token: string;
     };
 }
+
+const ISO_END_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 @Injectable()
 export class EformsignService {
@@ -158,7 +161,7 @@ export class EformsignService {
             },
             mode: {
                 type: "01",
-                templateId: templateId || this.EFORMSIGN_TEMPLATE_ID,
+                template_id: templateId || this.EFORMSIGN_TEMPLATE_ID,
             },
             prefill: {
                 document_name: "산모신생아건강관리서비스 계약서",
@@ -166,6 +169,9 @@ export class EformsignService {
                     { id: "이용자 성명", value: contractData.customerName, enabled: true },
                     { id: "이용자 생년월일", value: '', enabled: true },
                     { id: "이용자 주소", value: contractData.customerAddress, enabled: true },
+                    // inputOutsiderNumber (이용자 연락처) — 발급 staff (현재 로그인 계정)의 폰 번호로 prefill.
+                    // contractData.issuerPhone 미지정 시 customerContact 으로 fallback (test setup에서 둘이 동일).
+                    { id: "이용자 연락처", value: contractData.issuerPhone || contractData.customerContact, enabled: true },
                     { id: "계약 시작 년도", value: contractData.startYear },
                     { id: "계약 시작 월", value: contractData.startMonth },
                     { id: "계약 시작 일", value: contractData.startDay },
@@ -190,15 +196,97 @@ export class EformsignService {
                 recipients: [
                     {
                         step_idx: "2",
-                        stepType: "05",
+                        step_type: "05",
                         name: contractData.customerName,
                         id: "",
                         sms: contractData.customerContact,
                         use_sms: true,
                     },
+                    {
+                        step_idx: "3",
+                        step_type: "01",
+                        name: "제공기관 확인",
+                        id: this.USER_EMAIL,
+                        use_mail: false,
+                        use_sms: false,
+                    },
                 ],
             },
             return_fields: [contractData.customerName],
+        };
+    }
+
+    async generateStaffCompletionOptions(
+        documentId: string,
+        accessToken: string,
+        refreshToken: string,
+        prefillEndDate?: string,
+    ) {
+        this.assertConfigured();
+        const params = new URLSearchParams({ include_detail_template_info: "true" });
+        const docRes = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}?${params}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!docRes.ok) {
+            throw new Error(`Failed to get document ${documentId} for staff completion: ${docRes.status} ${await docRes.text()}`);
+        }
+        const doc = await docRes.json();
+        const templateId =
+            doc?.detail_template_info?.id ??
+            doc?.template?.id ??
+            doc?.template_id;
+        if (!templateId) {
+            throw new Error(`Cannot resolve template_id for document ${documentId}`);
+        }
+
+        const prefill = this.buildStaffCompletionPrefill(prefillEndDate);
+
+        return {
+            company: {
+                id: this.EFORMSIGN_COMPANY_ID,
+                country_code: "kr",
+                user_key: this.USER_EMAIL,
+            },
+            layout: {
+                lang_code: "ko",
+                zoom: "0.75",
+                viewer_toolbar: {
+                    "toolbar.save": "false",
+                    "toolbar.print": "false",
+                },
+            },
+            user: {
+                type: "01",
+                id: this.USER_EMAIL,
+                access_token: accessToken,
+                refresh_token: refreshToken,
+            },
+            mode: {
+                type: "02",
+                template_id: templateId,
+                document_id: documentId,
+            },
+            ...(prefill ? { prefill } : {}),
+        };
+    }
+
+    private buildStaffCompletionPrefill(prefillEndDate?: string) {
+        if (typeof prefillEndDate === "undefined") {
+            return undefined;
+        }
+
+        if (!ISO_END_DATE_REGEX.test(prefillEndDate)) {
+            throw new BadRequestException("prefillEndDate must match YYYY-MM-DD");
+        }
+
+        const [year, month, day] = prefillEndDate.split("-");
+
+        return {
+            fields: [
+                { id: EFORMSIGN_END_DATE_FIELD_IDS.year, value: year, enabled: true, required: false },
+                { id: EFORMSIGN_END_DATE_FIELD_IDS.month, value: month, enabled: true, required: false },
+                { id: EFORMSIGN_END_DATE_FIELD_IDS.day, value: day, enabled: true, required: false },
+            ],
         };
     }
 

@@ -10,10 +10,12 @@
     "predev": "pnpm run prepare:rhwp",
     "prebuild": "pnpm run prepare:rhwp",
     "dev": "next dev",
+    "dev:webpack": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "test": "jest",
+    "test:smoke": "RUN_SMOKE_TESTS=1 playwright test tests/contract-creation.smoke.spec.ts --timeout=120000",
     "test:screenshots": "playwright test tests/screenshots",
     "magi": "node ./bin/magi"
   },

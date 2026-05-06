@@ -18,6 +18,8 @@ interface DetailPanelProps {
   badges?: React.ReactNode;
   /** Trailing content on the right side of the header (e.g. Stepper) */
   trailing?: React.ReactNode;
+  /** Optional action row rendered between header and tabs. */
+  headerAction?: React.ReactNode;
   tabs?: React.ReactNode;
   overlay?: React.ReactNode;
   emptyState?: React.ReactNode;
@@ -31,6 +33,7 @@ export function DetailPanel({
   subtitle,
   badges,
   trailing,
+  headerAction,
   tabs,
   overlay,
   emptyState,
@@ -73,6 +76,7 @@ export function DetailPanel({
       {renderedHeader && <div data-component="detail-panel-header" className={showBackButton ? "px-6 pt-2" : "p-6"}>
         {renderedHeader}
       </div>}
+      {headerAction && <div className="px-6 pb-6">{headerAction}</div>}
       {tabs && <div className="px-6">{tabs}</div>}
       {resolvedOverlay ? (
         <div
@@ -85,7 +89,7 @@ export function DetailPanel({
       <div className="relative flex-1 min-h-0">
         <div
           data-component="detail-panel-scroll-content"
-          className="overflow-y-auto h-full px-6 pt-6 pb-12"
+          className="overflow-y-auto h-full px-6 pt-6 pb-6"
         >
           {children}
         </div>

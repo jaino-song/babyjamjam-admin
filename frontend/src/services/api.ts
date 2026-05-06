@@ -24,6 +24,14 @@ export interface EformsignAuthStatusResponse {
     hasRefreshToken: boolean;
 }
 
+export interface PendingStaffCompletionItem {
+    documentId: string;
+    clientId: number;
+    clientName: string;
+    signedAt: string;
+    statusDetail: string;
+}
+
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
@@ -139,6 +147,20 @@ export const eformsignApi = {
         const { data } = await api.post('/generate-document', { contractData, clientId });
         return data;
     },
+    generateStaffDocument: async (
+        documentId: string,
+        accessToken?: string,
+        refreshToken?: string,
+        prefillEndDate?: string,
+    ) => {
+        const { data } = await api.post('/generate-staff-document', {
+            documentId,
+            accessToken,
+            refreshToken,
+            prefillEndDate,
+        });
+        return data;
+    },
     // Create eformsign doc record to track document in local DB
     createDocRecord: async (params: {
         documentId: string;
@@ -195,6 +217,14 @@ export const eformsignApi = {
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents');
+        return data;
+    },
+    getPendingStaffCompletionDocs: async (): Promise<PendingStaffCompletionItem[]> => {
+        const { data } = await api.get('/eformsign-docs/pending-staff-completion');
+        return data;
+    },
+    getDocumentClientNames: async (): Promise<Array<{ documentId: string; clientName: string }>> => {
+        const { data } = await api.get('/eformsign-docs/client-names');
         return data;
     },
 }

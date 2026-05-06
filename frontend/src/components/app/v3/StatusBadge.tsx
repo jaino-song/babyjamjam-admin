@@ -2,7 +2,7 @@
 
 import { StatusPill } from "@/components/app/ui/status-badge";
 
-export type StatusType = 'active' | 'pending' | 'terminated' | 'expired' | 'completed' | 'signed' | 'breastPump' | 'careCenter';
+export type StatusType = 'active' | 'pending' | 'review' | 'terminated' | 'expired' | 'completed' | 'signed' | 'breastPump' | 'careCenter';
 
 interface StatusBadgeProps {
   status: StatusType;
@@ -13,6 +13,7 @@ const statusConfig: Record<StatusType, { variant: Parameters<typeof StatusPill>[
   active: { variant: "success", defaultLabel: "활성" },
   signed: { variant: "success", defaultLabel: "서명완료" },
   pending: { variant: "warning", defaultLabel: "대기" },
+  review: { variant: "primary", defaultLabel: "검토 필요" },
   terminated: { variant: "danger", defaultLabel: "중단" },
   expired: { variant: "danger", defaultLabel: "만료" },
   completed: { variant: "neutral", defaultLabel: "완료" },

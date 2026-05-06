@@ -5,7 +5,7 @@ import { Calendar, CircleCheck, FileSignature } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge, type StatusType } from "@/components/app/v3";
 import { cn } from "@/lib/utils";
-import { getStatusCategory, mapStatusToLabel } from "@/lib/eformsign/status-codes";
+import { getStatusCategory, mapDocStatusLabel } from "@/lib/eformsign/status-codes";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 
 interface ContractsListItemProps {
@@ -67,8 +67,9 @@ function ContractsListItemComponent({
   }
 
   const category = getStatusCategory(document.current_status?.status_type);
-  const statusType = mapCategoryToStatusType(category);
-  const statusLabel = mapStatusToLabel(document.current_status?.status_type);
+  const statusLabel = mapDocStatusLabel(document.current_status);
+  const isReviewNeeded = statusLabel === "검토 필요";
+  const statusType: StatusType = isReviewNeeded ? "review" : mapCategoryToStatusType(category);
   const sentDate = formatDate(document.created_date);
   const signedDate =
     category === "completed" ? formatDate(document.updated_date) : null;
@@ -83,7 +84,9 @@ function ContractsListItemComponent({
             ? "bg-v3-green-light"
             : category === "rejected"
               ? "bg-v3-burgundy-light"
-              : "bg-v3-orange-light"
+              : isReviewNeeded
+                ? "bg-v3-primary-light"
+                : "bg-v3-orange-light"
         )}
       >
         <FileSignature
@@ -93,7 +96,9 @@ function ContractsListItemComponent({
               ? "text-v3-green"
               : category === "rejected"
                 ? "text-v3-burgundy"
-                : "text-v3-orange"
+                : isReviewNeeded
+                  ? "text-v3-primary"
+                  : "text-v3-orange"
           )}
         />
       </div>
