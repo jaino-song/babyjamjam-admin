@@ -942,6 +942,15 @@ function ContractDetail({
     setStaffCompletionOption(null);
   };
 
+  const handleFinalizeSuccess = () => {
+    toast({
+      title: "최종 확인 완료",
+      description: "계약서가 완료 처리되었습니다.",
+    });
+    resetFinalizeState();
+    queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+  };
+
   const reRequestMutation = useMutation({
     mutationFn: async () => {
       return eformsignApi.reRequestDocument(doc.id, {
@@ -995,8 +1004,24 @@ function ContractDetail({
     },
   });
 
+  const approveOnlyMutation = useMutation({
+    mutationFn: async () => eformsignApi.approveDocument(doc.id),
+    onSuccess: () => {
+      handleFinalizeSuccess();
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "최종 확인 실패",
+        description: error instanceof Error ? error.message : "최종 확인 처리 중 오류가 발생했습니다.",
+      });
+    },
+  });
+
+  const isFinalizePending = openStaffCompletionMutation.isPending || approveOnlyMutation.isPending;
+
   const handleFinalizeDialogChange = (open: boolean) => {
-    if (openStaffCompletionMutation.isPending) {
+    if (isFinalizePending) {
       return;
     }
 
@@ -1009,13 +1034,8 @@ function ContractDetail({
   };
 
   const handleStaffCompletionSuccess = () => {
-    toast({
-      title: "최종 확인 완료",
-      description: "계약서가 완료 처리되었습니다.",
-    });
     closeStaffCompletionModal();
-    resetFinalizeState();
-    queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+    handleFinalizeSuccess();
   };
 
   const handleStaffCompletionError = (message: string) => {
@@ -1033,6 +1053,15 @@ function ContractDetail({
       description: "최종 확인이 취소되었습니다.",
     });
     closeStaffCompletionModal();
+  };
+
+  const handleFinalizeSubmit = () => {
+    if (finalizeEndDate === contractEndDateIso) {
+      approveOnlyMutation.mutate();
+      return;
+    }
+
+    openStaffCompletionMutation.mutate(finalizeEndDate);
   };
 
   const activityItems: {
@@ -1447,7 +1476,7 @@ function ContractDetail({
               pattern="\d{4}-\d{2}-\d{2}"
               value={finalizeEndDate}
               onChange={(event) => setFinalizeEndDate(formatIsoDateInput(event.target.value))}
-              disabled={openStaffCompletionMutation.isPending}
+              disabled={isFinalizePending}
             />
           </div>
           <DialogFooter className="sm:justify-stretch">
@@ -1456,7 +1485,7 @@ function ContractDetail({
               size="sm"
               className="flex-1"
               onClick={() => handleFinalizeDialogChange(false)}
-              disabled={openStaffCompletionMutation.isPending}
+              disabled={isFinalizePending}
             >
               취소
             </Button>
@@ -1464,10 +1493,10 @@ function ContractDetail({
               variant="positive"
               size="sm"
               className="flex-1"
-              onClick={() => openStaffCompletionMutation.mutate(finalizeEndDate)}
-              disabled={openStaffCompletionMutation.isPending || !isFinalizeEndDateValid}
+              onClick={handleFinalizeSubmit}
+              disabled={isFinalizePending || !isFinalizeEndDateValid}
             >
-              {openStaffCompletionMutation.isPending ? "처리 중..." : "완료"}
+              {isFinalizePending ? "처리 중..." : "완료"}
             </Button>
           </DialogFooter>
         </DialogContent>

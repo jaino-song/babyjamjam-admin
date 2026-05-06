@@ -1160,6 +1160,7 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
               <Button
                 type="button"
                 variant="outline"
+                data-testid="contract-creation-back"
                 onClick={() => handleStepChange(activeStep - 1)}
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -1169,6 +1170,7 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
             {activeStep < wizardSteps.length - 1 ? (
               <Button
                 type="button"
+                data-testid="contract-creation-next"
                 onClick={() => handleStepChange(activeStep + 1)}
                 disabled={!isCurrentStepValid}
               >
@@ -1178,6 +1180,7 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
             ) : (
               <Button
                 type="button"
+                data-testid="contract-creation-submit"
                 onClick={handleWizardComplete}
                 disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || !isStep4Valid || isSubmitting}
               >

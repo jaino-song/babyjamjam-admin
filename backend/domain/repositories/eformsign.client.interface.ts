@@ -93,6 +93,7 @@ export interface IEformsignClientRepository {
     refreshAccessToken(executionTime: number, refreshToken: string): Promise<EformsignTokenResponse>;
     getAllDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]>;
     getDocument(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse>;
+    approveDocument(accessToken: string, documentId: string, comment?: string): Promise<void>;
     createDocument(accessToken: string, payload: CreateDocumentPayload): Promise<CreateDocumentResponse>;
 }
 

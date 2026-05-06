@@ -15,6 +15,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "jest",
+    "test:smoke": "RUN_SMOKE_TESTS=1 playwright test tests/contract-creation.smoke.spec.ts --timeout=120000",
     "test:screenshots": "playwright test tests/screenshots",
     "magi": "node ./bin/magi"
   },

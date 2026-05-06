@@ -21,6 +21,21 @@ type CurrentUserResponse = AuthUser & {
 };
 
 const AUTH_ME_TIMEOUT_MS = 60000;
+const E2E_AUTH_COOKIE_NAME = "e2e_auth";
+const E2E_AUTH_USER: AuthUser = {
+  id: "e2e-user",
+  name: "E2E Tester",
+  email: "e2e@example.com",
+  phone: "010-1234-5678",
+  birthDate: "1990-01-01",
+  profileImage: "",
+  role: "admin",
+  branchName: "테스트 지점",
+};
+
+function isServerE2ETestMode(): boolean {
+  return process.env["NEXT_PUBLIC_E2E_TEST"] === "true" && process.env["NODE_ENV"] !== "production";
+}
 
 // React cache()를 사용하여 같은 request cycle 내에서 중복 호출 방지
 // native fetch를 사용하지만 인증 정보는 request cycle 안에서만 재사용한다.
@@ -31,6 +46,10 @@ export const getCurrentUser = cache(async () => {
 
     if (!authToken) {
       return null;
+    }
+
+    if (isServerE2ETestMode() || cookieStore.get(E2E_AUTH_COOKIE_NAME)?.value === "1") {
+      return E2E_AUTH_USER;
     }
 
     const res = await fetch(createServerApiUrl("/auth/me"), {
