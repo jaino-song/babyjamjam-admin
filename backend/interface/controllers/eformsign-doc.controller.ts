@@ -1,5 +1,7 @@
-import { Body, Controller, Get, Logger, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Logger, MessageEvent, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import { Observable, filter, interval, map, merge } from "rxjs";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
+import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
 import { ListPendingStaffCompletionUsecase } from "application/usecases/eformsign-doc/list-pending-staff-completion.usecase";
 import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
 import {
@@ -21,7 +23,30 @@ export class EformsignDocController {
         private readonly eformsignDocService: EformsignDocService,
         private readonly listPendingStaffCompletionUsecase: ListPendingStaffCompletionUsecase,
         private readonly listClientNamesByBranchUsecase: ListClientNamesByBranchUsecase,
+        private readonly eventBus: EformsignDocsEventBus,
     ) {}
+
+    /**
+     * GET /eformsign-docs/events
+     * Server-Sent Events stream of doc-list mutations for the current branch.
+     * Emits a `docs-changed` event after each webhook completes; sends a `ping`
+     * every 30s to keep proxies + clients honest.
+     */
+    @Sse("events")
+    events(@CurrentTenant() tenant: { branchId?: string }): Observable<MessageEvent> {
+        const branchId = tenant.branchId ?? "";
+
+        const docs = this.eventBus.events$.pipe(
+            filter((e) => e.branchId === branchId),
+            map((e) => ({ data: e, type: "docs-changed" } as MessageEvent)),
+        );
+
+        const heartbeat = interval(30000).pipe(
+            map(() => ({ data: { at: Date.now() }, type: "ping" } as MessageEvent)),
+        );
+
+        return merge(docs, heartbeat);
+    }
 
     // ============ Local DB Endpoints ============
 

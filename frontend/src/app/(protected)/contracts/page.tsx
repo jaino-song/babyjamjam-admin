@@ -23,6 +23,7 @@ import {
   useDeleteEformsignDocument,
 } from "@/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
+import { useEformsignDocsLiveStream } from "@/hooks/useEformsignDocsLiveStream";
 import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
 import { useEformsignWebhookUpdates } from "@/hooks/useEformsignWebhookUpdates";
 import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign/types";
@@ -378,6 +379,7 @@ export default function ContractsPage() {
     syncOnWindowFocus: false,
   });
   const { pendingDocumentIds } = useEformsignWebhookUpdates(isAuthenticated);
+  useEformsignDocsLiveStream(isAuthenticated);
   const { toast } = useToast();
   const deleteDocument = useDeleteEformsignDocument();
   const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);

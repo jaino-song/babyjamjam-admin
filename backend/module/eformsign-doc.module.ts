@@ -22,6 +22,7 @@ import { SbEformsignDocRepository } from "infrastructure/database/repositories/s
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
+import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
 
 @Module({
@@ -46,6 +47,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         CreateAndSendContractUsecase,
         // Service
         EformsignDocService,
+        EformsignDocsEventBus,
         // Repository bindings
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
@@ -60,6 +62,6 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
             useClass: SbClientRepository,
         },
     ],
-    exports: [EformsignDocService, SyncClientEndDateUsecase, EFORMSIGN_CLIENT_REPOSITORY],
+    exports: [EformsignDocService, SyncClientEndDateUsecase, EformsignDocsEventBus, EFORMSIGN_CLIENT_REPOSITORY],
 })
 export class EformsignDocModule {}

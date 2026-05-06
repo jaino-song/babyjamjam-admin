@@ -109,6 +109,10 @@ describe("EformsignWebhookService", () => {
     const employeeRepository = {
         findById: jest.fn(),
     };
+    const eventBus = {
+        emit: jest.fn(),
+        events$: { subscribe: jest.fn() },
+    };
 
     let service: EformsignWebhookService;
 
@@ -118,6 +122,7 @@ describe("EformsignWebhookService", () => {
             linkDocumentUsecase as never,
             syncClientEndDateUsecase as never,
             alimtalkService as never,
+            eventBus as never,
             eformsignApiClient as never,
             clientRepository as never,
             eformsignDocRepository as never,

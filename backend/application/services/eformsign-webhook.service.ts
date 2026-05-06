@@ -4,6 +4,7 @@ import { LinkDocumentToClientUsecase } from "application/usecases/eformsign-doc/
 import { SyncClientEndDateUsecase } from "application/usecases/eformsign-doc/sync-client-end-date.usecase";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
 import { AlimtalkService } from "./alimtalk.service";
+import { EformsignDocsEventBus } from "./eformsign-docs-event-bus.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
@@ -58,6 +59,7 @@ export class EformsignWebhookService {
         private readonly linkDocumentUsecase: LinkDocumentToClientUsecase,
         private readonly syncClientEndDateUsecase: SyncClientEndDateUsecase,
         private readonly alimtalkService: AlimtalkService,
+        private readonly eventBus: EformsignDocsEventBus,
         @Inject(EFORMSIGN_CLIENT_REPOSITORY)
         private readonly eformsignApiClient: IEformsignClientRepository,
         @Inject(CLIENT_REPOSITORY)
@@ -160,6 +162,8 @@ export class EformsignWebhookService {
                 this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
             }
         }
+
+        this.eventBus.emit({ branchId: branchid, documentId, reason: `pdf:${status}` });
     }
 
     /**
@@ -196,7 +200,10 @@ export class EformsignWebhookService {
                 `[document_action] Document ${documentId} not found in DB. ` +
                 `Ensure frontend calls POST /eformsign-docs to create the record first. Error: ${error}`
             );
+            return;
         }
+
+        this.eventBus.emit({ branchId: branchid, documentId, reason: `action:${action ?? "unknown"}` });
     }
 
     private async handleDocumentEvent(
@@ -258,6 +265,8 @@ export class EformsignWebhookService {
                 this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
             }
         }
+
+        this.eventBus.emit({ branchId: branchid, documentId, reason: `doc:${status}` });
     }
 
     private async sendContractSignedAlimtalkByDocumentId(
