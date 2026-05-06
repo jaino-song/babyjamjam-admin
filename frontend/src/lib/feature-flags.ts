@@ -1,20 +1,27 @@
 /**
- * Frontend feature flags. Read at module load from
- * `NEXT_PUBLIC_FEATURE_FLAGS` (comma-separated list of enabled flag names)
- * or per-flag `NEXT_PUBLIC_FEATURE_<NAME>` / `NEXT_PUBLIC_FEATURE_DISABLE_<NAME>`
- * env vars set to "1"/"true".
+ * Frontend feature flags. Each flag has:
+ *   - a `NEXT_PUBLIC_FEATURE_<NAME>` env var that can force it on, and
+ *   - a `NEXT_PUBLIC_FEATURE_DISABLE_<NAME>` env var that can force it off.
+ *
+ * Flags also pick up enable signals from `NEXT_PUBLIC_FEATURE_FLAGS`
+ * (comma-separated list of enabled flag names).
+ *
+ * Important: env vars are referenced via *literal* property access below so
+ * Next.js inlines them into the client bundle at build time. Dynamic
+ * `process.env[someKey]` reads do not get inlined and would always resolve
+ * to `undefined` in the browser.
  *
  * Flags are static for the page lifetime — toggling them requires a reload.
  */
 
 export type FeatureFlag = "headlessDispatch";
 
-const FLAG_ENV_VARS: Record<FeatureFlag, string> = {
-    headlessDispatch: "NEXT_PUBLIC_FEATURE_HEADLESS_DISPATCH",
+const ENABLE_VALUES: Record<FeatureFlag, string | undefined> = {
+    headlessDispatch: process.env.NEXT_PUBLIC_FEATURE_HEADLESS_DISPATCH,
 };
 
-const FLAG_DISABLE_ENV_VARS: Record<FeatureFlag, string> = {
-    headlessDispatch: "NEXT_PUBLIC_FEATURE_DISABLE_HEADLESS_DISPATCH",
+const DISABLE_VALUES: Record<FeatureFlag, string | undefined> = {
+    headlessDispatch: process.env.NEXT_PUBLIC_FEATURE_DISABLE_HEADLESS_DISPATCH,
 };
 
 /**
@@ -47,10 +54,10 @@ function isTruthyEnv(value: string | undefined): boolean {
 
 export function isFeatureEnabled(flag: FeatureFlag): boolean {
     // Explicit disable wins.
-    if (isTruthyEnv(process.env[FLAG_DISABLE_ENV_VARS[flag]])) {
+    if (isTruthyEnv(DISABLE_VALUES[flag])) {
         return false;
     }
     if (ENABLED_LIST.has(flag)) return true;
-    if (isTruthyEnv(process.env[FLAG_ENV_VARS[flag]])) return true;
+    if (isTruthyEnv(ENABLE_VALUES[flag])) return true;
     return FLAG_DEFAULTS[flag] ?? false;
 }
