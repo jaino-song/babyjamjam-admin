@@ -93,6 +93,7 @@ import type { Client, PaginatedResponse } from "@/lib/client/types";
 import { ContractsListItem } from "@/components/app/contracts/ContractsListItem";
 import { ContractCreationForm } from "@/components/app/messages/forms/ContractCreationForm";
 import { StaffCompletionIframeModal } from "@/components/app/contracts/StaffCompletionIframeModal";
+import { isFeatureEnabled } from "@/lib/feature-flags";
 
 const ContractDocumentPreviewModal = dynamic(
   () =>
@@ -988,16 +989,40 @@ function ContractDetail({
   });
 
   const openStaffCompletionMutation = useMutation({
-    mutationFn: async (endDate: string) => {
+    mutationFn: async (endDate: string): Promise<{ kind: "headless" } | { kind: "iframe"; option: EformsignDocumentOption }> => {
+      // BJJ-90: try the backend-driven finalize first when the flag is on.
+      if (isFeatureEnabled("headlessDispatch")) {
+        try {
+          const headless = await eformsignApi.finalizeHeadless(doc.id, endDate);
+          if (headless.ok) {
+            return { kind: "headless" };
+          }
+          console.warn("[finalize] headless finalize ok=false, falling back to iframe", headless.reason);
+        } catch (headlessError) {
+          console.warn("[finalize] headless finalize threw, falling back to iframe", headlessError);
+        }
+      }
+
       const authResult = await eformsignApi.authenticate(Date.now());
       if (!authResult.success) {
         throw new Error("eformsign 인증에 실패했습니다.");
       }
 
-      return eformsignApi.generateStaffDocument(doc.id, undefined, undefined, endDate);
+      const option = await eformsignApi.generateStaffDocument(doc.id, undefined, undefined, endDate);
+      return { kind: "iframe", option };
     },
-    onSuccess: (documentOption: EformsignDocumentOption) => {
-      setStaffCompletionOption(documentOption);
+    onSuccess: (result) => {
+      if (result.kind === "headless") {
+        setIsFinalizeOpen(false);
+        setFinalizeEndDate("");
+        toast({
+          title: "최종 확인 완료",
+          description: "계약서가 완료 처리되었습니다.",
+        });
+        queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+        return;
+      }
+      setStaffCompletionOption(result.option);
       setIsFinalizeOpen(false);
       setIsStaffCompletionOpen(true);
     },

@@ -4,12 +4,18 @@ import { EformsignDocService } from "application/services/eformsign-doc.service"
 import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
 import { ListPendingStaffCompletionUsecase } from "application/usecases/eformsign-doc/list-pending-staff-completion.usecase";
 import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
+import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
+import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import {
     GetAccessTokenDto,
     RefreshAccessTokenDto,
     FetchDocumentsDto,
     FetchDocumentByIdDto,
     CreateEformsignDocLocalDto,
+    DispatchHeadlessRequestDto,
+    DispatchHeadlessResponseDto,
+    FinalizeHeadlessRequestDto,
+    FinalizeHeadlessResponseDto,
 } from "interface/dto/eformsign-doc.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -23,6 +29,8 @@ export class EformsignDocController {
         private readonly eformsignDocService: EformsignDocService,
         private readonly listPendingStaffCompletionUsecase: ListPendingStaffCompletionUsecase,
         private readonly listClientNamesByBranchUsecase: ListClientNamesByBranchUsecase,
+        private readonly dispatchHeadlessUsecase: DispatchDocumentHeadlessUsecase,
+        private readonly finalizeHeadlessUsecase: FinalizeDocumentHeadlessUsecase,
         private readonly eventBus: EformsignDocsEventBus,
     ) {}
 
@@ -175,5 +183,60 @@ export class EformsignDocController {
     @Post("fetch")
     fetchFromApi(@Body() dto: FetchDocumentByIdDto) {
         return this.eformsignDocService.fetchFromApi(dto.accessToken, dto.documentId);
+    }
+
+    /**
+     * POST /eformsign-docs/dispatch-headless
+     * Run the creation iframe gate sequence (mode:"01") off-screen via Playwright.
+     * Returns { ok: false, fallbackHint: "iframe" } on any failure so the
+     * frontend can fall back to the existing iframe modal automatically.
+     */
+    @Post("dispatch-headless")
+    async dispatchHeadless(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: DispatchHeadlessRequestDto,
+    ): Promise<DispatchHeadlessResponseDto> {
+        this.logger.log(`[POST /eformsign-docs/dispatch-headless] clientId=${dto.clientId}`);
+        const result = await this.dispatchHeadlessUsecase.execute(tenant.branchId ?? "", {
+            contractData: dto.contractData,
+            clientId: dto.clientId,
+        });
+        if (!result.ok) {
+            this.logger.warn(`[dispatch-headless] failed: ${result.reason}`);
+            return {
+                ok: false,
+                durationMs: result.durationMs,
+                reason: result.reason,
+                fallbackHint: "iframe",
+            };
+        }
+        return {
+            ok: true,
+            documentId: result.documentId,
+            durationMs: result.durationMs,
+        };
+    }
+
+    /**
+     * POST /eformsign-docs/finalize-headless
+     * Run the staff-finalize iframe gate sequence (mode:"02") off-screen.
+     */
+    @Post("finalize-headless")
+    async finalizeHeadless(@Body() dto: FinalizeHeadlessRequestDto): Promise<FinalizeHeadlessResponseDto> {
+        this.logger.log(`[POST /eformsign-docs/finalize-headless] documentId=${dto.documentId}`);
+        const result = await this.finalizeHeadlessUsecase.execute({
+            documentId: dto.documentId,
+            prefillEndDate: dto.prefillEndDate,
+        });
+        if (!result.ok) {
+            this.logger.warn(`[finalize-headless] failed: ${result.reason}`);
+            return {
+                ok: false,
+                durationMs: result.durationMs,
+                reason: result.reason,
+                fallbackHint: "iframe",
+            };
+        }
+        return { ok: true, durationMs: result.durationMs };
     }
 }
