@@ -8,6 +8,7 @@ import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
+import { isFeatureEnabled } from "@/lib/feature-flags";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -496,6 +497,38 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
         grant,
         actualPrice,
       };
+
+      // BJJ-90: when the flag is on, drive the iframe gate sequence on the
+      // backend via Playwright. On any failure the response carries
+      // `fallbackHint: "iframe"` and we fall through to the iframe path.
+      if (isFeatureEnabled("headlessDispatch")) {
+        try {
+          setIsDialogOpen(true);
+          const headless = await eformsignApi.dispatchHeadless(
+            contractData,
+            finalClientId ?? undefined,
+          );
+
+          if (headless.ok) {
+            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+            setDocumentCreated(true);
+            resetAll();
+            alert("계약서가 성공적으로 생성되었습니다.");
+            handleDialogClose();
+            return;
+          }
+
+          console.warn(
+            "[contract-creation] headless dispatch returned ok=false, falling back to iframe",
+            headless.reason,
+          );
+        } catch (headlessError) {
+          console.warn(
+            "[contract-creation] headless dispatch threw, falling back to iframe",
+            headlessError,
+          );
+        }
+      }
 
       const documentOption: EformsignDocumentOption = await eformsignApi.generateDocument(
         contractData,

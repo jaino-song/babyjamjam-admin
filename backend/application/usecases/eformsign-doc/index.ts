@@ -21,3 +21,7 @@ export * from "./fetch-eformsign-doc-from-api.usecase";
 
 // Contract creation
 export * from "./create-and-send-contract.usecase";
+
+// Headless dispatch (BJJ-90)
+export * from "./dispatch-document-headless.usecase";
+export * from "./finalize-document-headless.usecase";

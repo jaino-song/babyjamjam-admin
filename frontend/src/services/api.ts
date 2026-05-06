@@ -32,6 +32,21 @@ export interface PendingStaffCompletionItem {
     statusDetail: string;
 }
 
+export interface HeadlessDispatchResponse {
+    ok: boolean;
+    documentId?: string;
+    durationMs: number;
+    reason?: string;
+    fallbackHint?: "iframe";
+}
+
+export interface HeadlessFinalizeResponse {
+    ok: boolean;
+    durationMs: number;
+    reason?: string;
+    fallbackHint?: "iframe";
+}
+
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
@@ -221,6 +236,36 @@ export const eformsignApi = {
     },
     getPendingStaffCompletionDocs: async (): Promise<PendingStaffCompletionItem[]> => {
         const { data } = await api.get('/eformsign-docs/pending-staff-completion');
+        return data;
+    },
+    /**
+     * BJJ-90: backend-driven creation dispatch. Drives the iframe gate
+     * sequence (mode:"01") via headless Chromium so staff don't see the
+     * iframe. Returns ok=false on any failure — the caller falls back to
+     * the existing iframe modal.
+     */
+    dispatchHeadless: async (
+        contractData: ContractDataDto,
+        clientId?: number,
+    ): Promise<HeadlessDispatchResponse> => {
+        const { data } = await api.post('/eformsign-docs/dispatch-headless', {
+            contractData,
+            clientId,
+        });
+        return data;
+    },
+    /**
+     * BJJ-90: backend-driven staff finalize (mode:"02"). Same fallback
+     * contract — ok=false instructs the caller to open the iframe modal.
+     */
+    finalizeHeadless: async (
+        documentId: string,
+        prefillEndDate?: string,
+    ): Promise<HeadlessFinalizeResponse> => {
+        const { data } = await api.post('/eformsign-docs/finalize-headless', {
+            documentId,
+            prefillEndDate,
+        });
         return data;
     },
     getDocumentClientNames: async (): Promise<Array<{ documentId: string; clientName: string }>> => {
