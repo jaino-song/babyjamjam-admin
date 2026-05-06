@@ -1,15 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * BJJ-90: when the headless flag is on, the 전자계약서 생성 button calls
- * /api/eformsign-docs/dispatch-headless and never opens the iframe modal.
- *
- * The frontend feature flag is read from
- * NEXT_PUBLIC_FEATURE_HEADLESS_DISPATCH at build time, so we skip when the
- * env var isn't set in this run.
+ * BJJ-90: with `headlessDispatch` default-on, the 전자계약서 생성 button calls
+ * /api/eformsign-docs/dispatch-headless and never opens the iframe modal
+ * unless the backend returns `ok: false`. Skip when the deploy under test
+ * has explicitly opted out via NEXT_PUBLIC_FEATURE_DISABLE_HEADLESS_DISPATCH.
  */
-const HEADLESS_FLAG = process.env.NEXT_PUBLIC_FEATURE_HEADLESS_DISPATCH;
-const SKIP_MESSAGE = "Set NEXT_PUBLIC_FEATURE_HEADLESS_DISPATCH=1 before running the dev server to exercise the headless dispatch path.";
+const HEADLESS_DISABLED = process.env.NEXT_PUBLIC_FEATURE_DISABLE_HEADLESS_DISPATCH;
+const SKIP_MESSAGE = "Headless dispatch is disabled in this deploy (NEXT_PUBLIC_FEATURE_DISABLE_HEADLESS_DISPATCH=1).";
 
 async function authStub(page: Page) {
     await page.context().addCookies([
@@ -27,7 +25,7 @@ async function authStub(page: Page) {
 }
 
 test.describe("contract creation — headless dispatch", () => {
-    test.skip(HEADLESS_FLAG !== "1" && HEADLESS_FLAG !== "true", SKIP_MESSAGE);
+    test.skip(HEADLESS_DISABLED === "1" || HEADLESS_DISABLED === "true", SKIP_MESSAGE);
 
     test("calls dispatch-headless and skips the iframe modal on success", async ({ page }) => {
         await authStub(page);

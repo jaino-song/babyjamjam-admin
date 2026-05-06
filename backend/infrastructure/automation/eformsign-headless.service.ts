@@ -1,10 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import {
     chromium,
     type Browser,
     type BrowserContext,
-    type Cookie,
     type Page,
 } from "playwright-core";
 import { runEformsignCreationGates } from "./eformsign-creation-gates";
@@ -28,49 +26,26 @@ export interface DispatchFinalizeParams {
     documentId: string;
 }
 
-interface CookieCache {
-    cookies: Cookie[];
-    capturedAt: number;
-}
-
-const COOKIE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const MAX_CONCURRENCY = 3;
-
-const EFORMSIGN_LOGIN_URL = "https://www.eformsign.com/auth/login";
-const EFORMSIGN_HOME_URL = "https://www.eformsign.com/";
 
 /**
  * Drives the eformsign embedded SDK off-screen so the iframe gate sequence
  * (입력 시작 → 회사 도장 ×3 → 다음 ×2 → 전송 → popup 전송) runs on the backend
  * instead of the staff's browser. The SDK is the only path eformsign exposes
  * to advance a workflow step — see memory: `eformsign — no REST approve endpoint`.
+ *
+ * Authentication mirrors the frontend: `documentOption.user.access_token` is
+ * generated server-side via the eformsign API-key + private-key signature,
+ * and the SDK uses it directly. No service-account login or cookies needed —
+ * the headless browser is just a way to render the SDK and click its buttons.
  */
 @Injectable()
 export class EformsignHeadlessService implements OnModuleDestroy {
     private readonly logger = new Logger(EformsignHeadlessService.name);
 
-    private readonly userEmail: string;
-    private readonly servicePassword: string;
-    private readonly companyId: string;
-    private readonly isConfigured: boolean;
-
     private browser: Browser | null = null;
-    private cookieCache: CookieCache | null = null;
     private readonly inflight = new Set<Promise<unknown>>();
     private readonly waitQueue: Array<() => void> = [];
-
-    constructor(private readonly configService: ConfigService) {
-        this.userEmail = this.configService.get<string>("EFORMSIGN_USER_EMAIL") || "";
-        this.servicePassword = this.configService.get<string>("EFORMSIGN_SERVICE_ACCOUNT_PASSWORD") || "";
-        this.companyId = this.configService.get<string>("EFORMSIGN_COMPANY_ID") || "";
-        this.isConfigured = Boolean(this.userEmail && this.servicePassword);
-
-        if (!this.isConfigured) {
-            this.logger.warn(
-                "EformsignHeadlessService disabled: set EFORMSIGN_USER_EMAIL and EFORMSIGN_SERVICE_ACCOUNT_PASSWORD to enable headless dispatch.",
-            );
-        }
-    }
 
     async onModuleDestroy(): Promise<void> {
         if (this.browser) {
@@ -85,15 +60,14 @@ export class EformsignHeadlessService implements OnModuleDestroy {
 
     /**
      * Drive the creation iframe gate sequence (mode:"01"). Returns ok=false
-     * on selector miss / timeout / login redirect — the caller should fall
-     * back to surfacing the iframe to the user.
+     * on selector miss / timeout / SDK error — the caller falls back to
+     * surfacing the iframe to the user.
      */
     async dispatchCreation(params: DispatchCreationParams): Promise<HeadlessDispatchResult> {
         return this.runWithSlot(async () => {
             const start = Date.now();
             try {
-                this.assertConfigured();
-                const context = await this.getAuthedContext();
+                const context = await this.newContext();
                 const page = await context.newPage();
                 try {
                     return await this.driveCreation(page, params, start);
@@ -122,8 +96,7 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         return this.runWithSlot(async () => {
             const start = Date.now();
             try {
-                this.assertConfigured();
-                const context = await this.getAuthedContext();
+                const context = await this.newContext();
                 const page = await context.newPage();
                 try {
                     return await this.driveFinalize(page, params, start);
@@ -265,12 +238,6 @@ export class EformsignHeadlessService implements OnModuleDestroy {
 </script></body></html>`;
     }
 
-    private assertConfigured(): void {
-        if (!this.isConfigured) {
-            throw new Error("Headless dispatch is not configured (missing service-account credentials).");
-        }
-    }
-
     private async getBrowser(): Promise<Browser> {
         if (this.browser && this.browser.isConnected()) {
             return this.browser;
@@ -286,64 +253,13 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         return this.browser;
     }
 
-    private async getAuthedContext(): Promise<BrowserContext> {
+    private async newContext(): Promise<BrowserContext> {
         const browser = await this.getBrowser();
-        const cookies = await this.loginIfStale();
-        const context = await browser.newContext({
+        return browser.newContext({
             viewport: { width: 1280, height: 900 },
             userAgent:
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
         });
-        if (cookies.length > 0) {
-            await context.addCookies(cookies);
-        }
-        return context;
-    }
-
-    /**
-     * Lazily acquire (and refresh) eformsign session cookies for the service
-     * account. Cookies are cached in memory for `COOKIE_CACHE_TTL_MS`; on
-     * staleness or absence we run a fresh login flow.
-     */
-    private async loginIfStale(): Promise<Cookie[]> {
-        const now = Date.now();
-        if (
-            this.cookieCache &&
-            now - this.cookieCache.capturedAt < COOKIE_CACHE_TTL_MS &&
-            this.cookieCache.cookies.length > 0
-        ) {
-            return this.cookieCache.cookies;
-        }
-
-        this.logger.log("Refreshing eformsign service-account session (headless login).");
-
-        const browser = await this.getBrowser();
-        const context = await browser.newContext();
-        const page = await context.newPage();
-        try {
-            await page.goto(EFORMSIGN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
-            const emailInput = page.locator('input[type="email"], input[name="email"], input[name="id"]').first();
-            const passwordInput = page.locator('input[type="password"]').first();
-            await emailInput.waitFor({ timeout: 15_000 });
-            await emailInput.fill(this.userEmail);
-            await passwordInput.fill(this.servicePassword);
-
-            const submit = page.getByRole("button", { name: /로그인|Log\s*in/i }).first();
-            await submit.click();
-
-            await page.waitForURL((url) => !url.toString().includes("/auth/login"), { timeout: 20_000 });
-
-            const cookies = await context.cookies(EFORMSIGN_HOME_URL);
-            if (cookies.length === 0) {
-                throw new Error("eformsign login produced no cookies");
-            }
-
-            this.cookieCache = { cookies, capturedAt: Date.now() };
-            return cookies;
-        } finally {
-            await page.close().catch(() => undefined);
-            await context.close().catch(() => undefined);
-        }
     }
 
     /**
@@ -366,10 +282,5 @@ export class EformsignHeadlessService implements OnModuleDestroy {
                 next();
             }
         }
-    }
-
-    /** For tests. */
-    invalidateCookieCacheForTest(): void {
-        this.cookieCache = null;
     }
 }

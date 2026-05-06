@@ -1,12 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * BJJ-90: when the headless flag is on, the 완료 button calls
+ * BJJ-90: with `headlessDispatch` default-on, the 완료 button calls
  * /api/eformsign-docs/finalize-headless and never mounts
- * StaffCompletionIframeModal. On ok=false the existing iframe path is used.
+ * StaffCompletionIframeModal unless the backend returns `ok: false`.
  */
-const HEADLESS_FLAG = process.env.NEXT_PUBLIC_FEATURE_HEADLESS_DISPATCH;
-const SKIP_MESSAGE = "Set NEXT_PUBLIC_FEATURE_HEADLESS_DISPATCH=1 before running the dev server to exercise the headless finalize path.";
+const HEADLESS_DISABLED = process.env.NEXT_PUBLIC_FEATURE_DISABLE_HEADLESS_DISPATCH;
+const SKIP_MESSAGE = "Headless dispatch is disabled in this deploy (NEXT_PUBLIC_FEATURE_DISABLE_HEADLESS_DISPATCH=1).";
 
 async function authStub(page: Page) {
     await page.context().addCookies([
@@ -24,7 +24,7 @@ async function authStub(page: Page) {
 }
 
 test.describe("staff finalize — headless dispatch", () => {
-    test.skip(HEADLESS_FLAG !== "1" && HEADLESS_FLAG !== "true", SKIP_MESSAGE);
+    test.skip(HEADLESS_DISABLED === "1" || HEADLESS_DISABLED === "true", SKIP_MESSAGE);
 
     test("calls finalize-headless and skips the iframe modal on success", async ({ page }) => {
         await authStub(page);
