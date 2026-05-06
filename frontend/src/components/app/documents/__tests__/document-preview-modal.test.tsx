@@ -100,6 +100,18 @@ class ResizeObserverMock {
   disconnect() {}
 }
 
+function dispatchPinchWheel(target: Element, deltaY: number) {
+  return fireEvent(
+    target,
+    new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY,
+    })
+  );
+}
+
 let blobUrlIndex = 0;
 const originalFetch = global.fetch;
 const originalCreateObjectUrl = URL.createObjectURL;
@@ -167,6 +179,50 @@ describe("DocumentPreviewModal", () => {
     await waitFor(() => {
       expect(screen.getByText("150%")).toBeInTheDocument();
       expect(screen.getByTestId("pdf-page-1")).toHaveAttribute("data-width", "480");
+    });
+  });
+
+  it("updates PDF zoom from trackpad pinch wheel events", async () => {
+    render(
+      <DocumentPreviewModal
+        open={true}
+        onClose={jest.fn()}
+        doc={baseDocument}
+        categories={categories}
+      />
+    );
+
+    await screen.findByTestId("pdf-page-1");
+
+    const previewCanvas = document.querySelector('[data-component="document-preview-canvas"]');
+    expect(previewCanvas).not.toBeNull();
+    if (!previewCanvas) {
+      throw new Error("document preview canvas was not rendered");
+    }
+
+    const previewDialog = document.querySelector('[data-component="contracts-document-preview"]');
+    expect(previewDialog).not.toBeNull();
+    if (!previewDialog) {
+      throw new Error("document preview dialog was not rendered");
+    }
+
+    dispatchPinchWheel(previewDialog, -40);
+    expect(screen.getByLabelText("PDF 미리보기 확대/축소")).toHaveValue("100");
+
+    dispatchPinchWheel(previewCanvas, -40);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("PDF 미리보기 확대/축소")).toHaveValue("105");
+      expect(screen.getByText("105%")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-1")).toHaveAttribute("data-width", "336");
+    });
+
+    dispatchPinchWheel(previewCanvas, 40);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("PDF 미리보기 확대/축소")).toHaveValue("100");
+      expect(screen.getByText("100%")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-1")).toHaveAttribute("data-width", "320");
     });
   });
 

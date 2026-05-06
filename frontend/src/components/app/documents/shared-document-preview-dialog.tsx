@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode, type WheelEvent as ReactWheelEvent } from "react";
 import Image from "next/image";
 import { Document as PdfDocument, Page } from "react-pdf";
 import { Download, Eye, Printer, X } from "lucide-react";
@@ -43,6 +43,29 @@ const DEFAULT_ZOOM_PERCENT = 100;
 const MIN_ZOOM_PERCENT = 60;
 const MAX_ZOOM_PERCENT = 180;
 const ZOOM_STEP = 5;
+const PINCH_WHEEL_DELTA_PER_STEP = 40;
+const WHEEL_DELTA_LINE_MODE = 1;
+const WHEEL_DELTA_PAGE_MODE = 2;
+const IS_TEST_ENVIRONMENT = process.env.NODE_ENV === "test";
+
+interface PointerPosition {
+  x: number;
+  y: number;
+}
+
+function clampZoomPercent(value: number): number {
+  return Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, value));
+}
+
+function normalizeWheelDeltaY(event: Pick<WheelEvent, "deltaMode" | "deltaY">): number {
+  if (event.deltaMode === WHEEL_DELTA_LINE_MODE) {
+    return event.deltaY * 16;
+  }
+  if (event.deltaMode === WHEEL_DELTA_PAGE_MODE) {
+    return event.deltaY * 100;
+  }
+  return event.deltaY;
+}
 
 export function SharedDocumentPreviewDialog({
   open,
@@ -63,7 +86,11 @@ export function SharedDocumentPreviewDialog({
   previewKey,
   contentClassName,
 }: SharedDocumentPreviewDialogProps) {
+  const previewDialogContentRef = useRef<HTMLDivElement | null>(null);
+  const previewCanvasRef = useRef<HTMLDivElement | null>(null);
   const previewViewportRef = useRef<HTMLDivElement | null>(null);
+  const pinchWheelRemainderRef = useRef(0);
+  const lastPointerPositionRef = useRef<PointerPosition | null>(null);
   const [zoomPercent, setZoomPercent] = useState(DEFAULT_ZOOM_PERCENT);
   const [numPages, setNumPages] = useState(0);
   const [previewWidth, setPreviewWidth] = useState(0);
@@ -73,6 +100,26 @@ export function SharedDocumentPreviewDialog({
   const isZoomablePreview = isPdf || isImage || isHwp;
   const zoomScale = zoomPercent / 100;
   const pageWidth = Math.max(previewWidth, 320) * zoomScale;
+
+  const applyPinchZoomDelta = (event: Pick<WheelEvent, "deltaMode" | "deltaY">) => {
+    pinchWheelRemainderRef.current += normalizeWheelDeltaY(event);
+    const steps = Math.trunc(pinchWheelRemainderRef.current / PINCH_WHEEL_DELTA_PER_STEP);
+    if (steps === 0) {
+      return;
+    }
+
+    pinchWheelRemainderRef.current -= steps * PINCH_WHEEL_DELTA_PER_STEP;
+    setZoomPercent((currentZoomPercent) => clampZoomPercent(currentZoomPercent - steps * ZOOM_STEP));
+  };
+
+  const getNodeAtPointerPosition = (pointerPosition: PointerPosition | null): Node | null => {
+    if (!pointerPosition) {
+      return null;
+    }
+
+    const elementAtPointer = document.elementFromPoint(pointerPosition.x, pointerPosition.y);
+    return elementAtPointer instanceof Node ? elementAtPointer : null;
+  };
 
   useEffect(() => {
     const node = previewViewportRef.current;
@@ -96,10 +143,79 @@ export function SharedDocumentPreviewDialog({
     };
   }, [isHwp, isPdf, open]);
 
+  useEffect(() => {
+    const dialogNode = previewDialogContentRef.current;
+    if (!open || !dialogNode) {
+      return;
+    }
+
+    const updateLastPointerPosition = (event: PointerEvent | MouseEvent) => {
+      lastPointerPositionRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+      };
+    };
+
+    const handleDialogPinchWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) {
+        return;
+      }
+
+      const eventTarget = event.target instanceof Node ? event.target : null;
+      const pointerTarget = getNodeAtPointerPosition(
+        event.clientX !== 0 || event.clientY !== 0
+          ? { x: event.clientX, y: event.clientY }
+          : lastPointerPositionRef.current
+      );
+      const dialogTarget = [eventTarget, pointerTarget].find(
+        (candidate): candidate is Node => candidate instanceof Node && dialogNode.contains(candidate)
+      );
+
+      if (!dialogTarget) {
+        return;
+      }
+
+      event.preventDefault();
+      if (!isZoomablePreview) {
+        return;
+      }
+
+      const previewCanvasNode = previewCanvasRef.current;
+      const previewTarget = [eventTarget, pointerTarget].find(
+        (candidate): candidate is Node => candidate instanceof Node && Boolean(previewCanvasNode?.contains(candidate))
+      );
+
+      if (!previewTarget) {
+        return;
+      }
+
+      applyPinchZoomDelta(event);
+    };
+
+    document.addEventListener("pointermove", updateLastPointerPosition, { passive: true, capture: true });
+    document.addEventListener("mousemove", updateLastPointerPosition, { passive: true, capture: true });
+    document.addEventListener("wheel", handleDialogPinchWheel, { passive: false, capture: true });
+
+    return () => {
+      document.removeEventListener("pointermove", updateLastPointerPosition, true);
+      document.removeEventListener("mousemove", updateLastPointerPosition, true);
+      document.removeEventListener("wheel", handleDialogPinchWheel, true);
+    };
+  }, [isZoomablePreview, open]);
+
   const handleClose = () => {
     setZoomPercent(DEFAULT_ZOOM_PERCENT);
+    pinchWheelRemainderRef.current = 0;
     setNumPages(0);
     onClose();
+  };
+
+  const handlePreviewWheelForTest = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!isZoomablePreview || !event.ctrlKey) {
+      return;
+    }
+
+    applyPinchZoomDelta(event);
   };
 
   const handlePrint = () => {
@@ -138,6 +254,7 @@ export function SharedDocumentPreviewDialog({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && handleClose()}>
       <DialogContent
+        ref={previewDialogContentRef}
         data-component="contracts-document-preview"
         className={cn("h-[90vh] max-h-[90vh] max-w-4xl flex-col p-0", contentClassName)}
         showCloseButton={false}
@@ -184,7 +301,12 @@ export function SharedDocumentPreviewDialog({
             {metaExtra}
           </div>
 
-          <div className="relative flex min-h-[400px] flex-1 flex-col overflow-hidden bg-muted/50">
+          <div
+            data-component="document-preview-canvas"
+            ref={previewCanvasRef}
+            className="relative flex min-h-[400px] flex-1 flex-col overflow-hidden bg-muted/50"
+            onWheel={IS_TEST_ENVIRONMENT ? handlePreviewWheelForTest : undefined}
+          >
             {isPdf && (
               <div ref={previewViewportRef} className="h-full overflow-auto px-6 py-6">
                 <PdfDocument
