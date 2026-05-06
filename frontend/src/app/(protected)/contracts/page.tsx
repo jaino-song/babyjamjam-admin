@@ -24,6 +24,8 @@ import {
 } from "@/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useEformsignDocsLiveStream } from "@/hooks/useEformsignDocsLiveStream";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
 import { useEformsignWebhookUpdates } from "@/hooks/useEformsignWebhookUpdates";
 import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign/types";
@@ -707,6 +709,8 @@ function ContractDetail({
   isRefreshing?: boolean;
   onDeleteRequest?: (documentId: string) => void;
 }) {
+  const isMobile = useIsMobile();
+  const isNarrowHeader = useBreakpoint(1612);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const customerName = getCustomerName(doc) ?? "–";
@@ -1251,6 +1255,70 @@ function ContractDetail({
         ? providerTabCards
         : serviceTabCards;
 
+  const stepperActions = (
+    <div data-component="contracts-stepper-actions" className="flex items-start gap-2">
+      {isRefreshing && (
+        <div
+          data-component="contracts-detail-sync-indicator"
+          className="flex items-center gap-1 rounded-full bg-v3-dim-white px-3 py-1 text-[0.7rem] font-medium text-v3-text-muted"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          동기화 중
+        </div>
+      )}
+      <button
+        type="button"
+        data-component="contracts-detail-activity-trigger"
+        className="overflow-visible rounded-[18px] p-1 transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
+        onClick={() => setIsActivityOpen(true)}
+        aria-label="활동 기록 보기"
+        title="활동 기록 보기"
+      >
+        <Stepper steps={steps} size={isMobile ? "sm" : undefined} />
+      </button>
+      {(canReRequest || onDeleteRequest) && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              data-component="contracts-detail-more-trigger"
+              className="mt-2 h-8 w-8 rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+              aria-label="계약 작업 더보기"
+            >
+              <MoreVertical className="h-5 w-5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            data-component="contracts-detail-more-content"
+            align="end"
+            sideOffset={8}
+            className="min-w-[8rem]"
+          >
+            {canReRequest && (
+              <DropdownMenuItem
+                data-component="contracts-detail-more-rerequest"
+                onSelect={() => handleReRequestDialogChange(true)}
+              >
+                재요청
+              </DropdownMenuItem>
+            )}
+            {canReRequest && onDeleteRequest && <DropdownMenuSeparator />}
+            {onDeleteRequest && (
+              <DropdownMenuItem
+                data-component="contracts-detail-more-delete"
+                variant="destructive"
+                onSelect={() => onDeleteRequest(doc.id)}
+              >
+                삭제
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
+  );
+
   return (
     <DetailPanel
       title={detailedDocument.document_name}
@@ -1275,71 +1343,11 @@ function ContractDetail({
           )}
         </span>
       }
-      trailing={
-        <div data-component="contracts-stepper-actions" className="flex items-start gap-2">
-          {isRefreshing && (
-            <div
-              data-component="contracts-detail-sync-indicator"
-              className="flex items-center gap-1 rounded-full bg-v3-dim-white px-3 py-1 text-[0.7rem] font-medium text-v3-text-muted"
-            >
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              동기화 중
-            </div>
-          )}
-          <button
-            type="button"
-            data-component="contracts-detail-activity-trigger"
-            className="overflow-visible rounded-[18px] p-1 transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
-            onClick={() => setIsActivityOpen(true)}
-            aria-label="활동 기록 보기"
-            title="활동 기록 보기"
-          >
-            <Stepper steps={steps} />
-          </button>
-          {(canReRequest || onDeleteRequest) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  data-component="contracts-detail-more-trigger"
-                  className="mt-2 h-8 w-8 rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
-                  aria-label="계약 작업 더보기"
-                >
-                  <MoreVertical className="h-5 w-5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                data-component="contracts-detail-more-content"
-                align="end"
-                sideOffset={8}
-                className="min-w-[8rem]"
-              >
-                {canReRequest && (
-                  <DropdownMenuItem
-                    data-component="contracts-detail-more-rerequest"
-                    onSelect={() => handleReRequestDialogChange(true)}
-                  >
-                    재요청
-                  </DropdownMenuItem>
-                )}
-                {canReRequest && onDeleteRequest && <DropdownMenuSeparator />}
-                {onDeleteRequest && (
-                  <DropdownMenuItem
-                    data-component="contracts-detail-more-delete"
-                    variant="destructive"
-                    onSelect={() => onDeleteRequest(doc.id)}
-                  >
-                    삭제
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
-      }
+      trailing={isNarrowHeader ? undefined : stepperActions}
       headerAction={
-        isReviewNeeded ? (
+        <>
+          {isNarrowHeader && stepperActions}
+          {isReviewNeeded ? (
           <Button
             variant="positive"
             size="sm"
@@ -1364,8 +1372,9 @@ function ContractDetail({
             <Eye className="h-4 w-4" />
             문서 보기
           </Button>
-        )
-      }
+        )}
+      </>
+    }
       tabs={
         <DetailTabs
           tabs={[...DETAIL_TABS]}
