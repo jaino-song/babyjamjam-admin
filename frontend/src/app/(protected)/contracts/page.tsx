@@ -1004,21 +1004,7 @@ function ContractDetail({
     },
   });
 
-  const approveOnlyMutation = useMutation({
-    mutationFn: async () => eformsignApi.approveDocument(doc.id),
-    onSuccess: () => {
-      handleFinalizeSuccess();
-    },
-    onError: (error) => {
-      toast({
-        variant: "destructive",
-        title: "최종 확인 실패",
-        description: error instanceof Error ? error.message : "최종 확인 처리 중 오류가 발생했습니다.",
-      });
-    },
-  });
-
-  const isFinalizePending = openStaffCompletionMutation.isPending || approveOnlyMutation.isPending;
+  const isFinalizePending = openStaffCompletionMutation.isPending;
 
   const handleFinalizeDialogChange = (open: boolean) => {
     if (isFinalizePending) {
@@ -1056,11 +1042,6 @@ function ContractDetail({
   };
 
   const handleFinalizeSubmit = () => {
-    if (finalizeEndDate === contractEndDateIso) {
-      approveOnlyMutation.mutate();
-      return;
-    }
-
     openStaffCompletionMutation.mutate(finalizeEndDate);
   };
 
@@ -1303,32 +1284,6 @@ function ContractDetail({
               동기화 중
             </div>
           )}
-          {isReviewNeeded ? (
-            <Button
-              variant="positive"
-              size="sm"
-              data-component="contracts-detail-finalize-trigger"
-              className="mt-0.5 w-[150px]"
-              onClick={() => {
-                setFinalizeEndDate((current) => current || formatIsoDateInput(contractEndDateIso));
-                setIsFinalizeOpen(true);
-              }}
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              확인하기
-            </Button>
-          ) : (
-            <Button
-              variant="positive"
-              size="sm"
-              data-component="contracts-detail-preview-trigger"
-              className="mt-0.5"
-              onClick={() => setIsPreviewOpen(true)}
-            >
-              <Eye className="h-4 w-4" />
-              문서 보기
-            </Button>
-          )}
           <button
             type="button"
             data-component="contracts-detail-activity-trigger"
@@ -1346,7 +1301,7 @@ function ContractDetail({
                   variant="ghost"
                   size="icon"
                   data-component="contracts-detail-more-trigger"
-                  className="mt-0.5 h-9 w-9 rounded-full border-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+                  className="mt-2 h-8 w-8 rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
                   aria-label="계약 작업 더보기"
                 >
                   <MoreVertical className="h-5 w-5" />
@@ -1380,6 +1335,34 @@ function ContractDetail({
             </DropdownMenu>
           )}
         </div>
+      }
+      headerAction={
+        isReviewNeeded ? (
+          <Button
+            variant="positive"
+            size="sm"
+            data-component="contracts-detail-finalize-trigger"
+            className="w-1/4"
+            onClick={() => {
+              setFinalizeEndDate((current) => current || formatIsoDateInput(contractEndDateIso));
+              setIsFinalizeOpen(true);
+            }}
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            확인하기
+          </Button>
+        ) : (
+          <Button
+            variant="positive"
+            size="sm"
+            data-component="contracts-detail-preview-trigger"
+            className="w-1/4"
+            onClick={() => setIsPreviewOpen(true)}
+          >
+            <Eye className="h-4 w-4" />
+            문서 보기
+          </Button>
+        )
       }
       tabs={
         <DetailTabs

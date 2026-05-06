@@ -1,15 +1,13 @@
-import { Body, Controller, Get, HttpException, HttpStatus, Logger, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Logger, Post, Query, UseGuards } from "@nestjs/common";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { ListPendingStaffCompletionUsecase } from "application/usecases/eformsign-doc/list-pending-staff-completion.usecase";
 import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
-import { ApproveStaffDocumentUsecase } from "application/usecases/eformsign-doc/approve-staff-document.usecase";
 import {
     GetAccessTokenDto,
     RefreshAccessTokenDto,
     FetchDocumentsDto,
     FetchDocumentByIdDto,
     CreateEformsignDocLocalDto,
-    ApproveDocumentDto,
 } from "interface/dto/eformsign-doc.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -23,7 +21,6 @@ export class EformsignDocController {
         private readonly eformsignDocService: EformsignDocService,
         private readonly listPendingStaffCompletionUsecase: ListPendingStaffCompletionUsecase,
         private readonly listClientNamesByBranchUsecase: ListClientNamesByBranchUsecase,
-        private readonly approveStaffDocumentUsecase: ApproveStaffDocumentUsecase,
     ) {}
 
     // ============ Local DB Endpoints ============
@@ -105,22 +102,6 @@ export class EformsignDocController {
         return this.listClientNamesByBranchUsecase.execute(tenant.branchId ?? "");
     }
 
-    @Post("approve")
-    async approveDocument(
-        @CurrentTenant() tenant: { branchId?: string },
-        @Body() dto: ApproveDocumentDto,
-    ) {
-        try {
-            await this.approveStaffDocumentUsecase.execute(tenant.branchId ?? "", dto.documentId);
-            return { success: true };
-        } catch (error) {
-            const message = this.getErrorMessage(error);
-            const status = error instanceof HttpException ? error.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
-            this.logger.error(`[POST /eformsign-docs/approve] Failed to approve ${dto.documentId}: ${message}`);
-            throw new HttpException({ error: message }, status);
-        }
-    }
-
     /**
      * GET /eformsign-docs/client?clientId=123
      * Find all stored eformsign documents linked to a client
@@ -169,29 +150,5 @@ export class EformsignDocController {
     @Post("fetch")
     fetchFromApi(@Body() dto: FetchDocumentByIdDto) {
         return this.eformsignDocService.fetchFromApi(dto.accessToken, dto.documentId);
-    }
-
-    private getErrorMessage(error: unknown): string {
-        if (error instanceof HttpException) {
-            const response = error.getResponse();
-            if (typeof response === "string") {
-                return response;
-            }
-
-            if (response && typeof response === "object") {
-                const data = response as { error?: string; message?: string | string[] };
-                if (typeof data.error === "string") {
-                    return data.error;
-                }
-                if (Array.isArray(data.message)) {
-                    return data.message.join(", ");
-                }
-                if (typeof data.message === "string") {
-                    return data.message;
-                }
-            }
-        }
-
-        return error instanceof Error ? error.message : "Unknown error";
     }
 }

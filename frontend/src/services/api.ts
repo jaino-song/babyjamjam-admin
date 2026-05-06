@@ -223,12 +223,6 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign-docs/pending-staff-completion');
         return data;
     },
-    approveDocument: async (documentId: string): Promise<{ success: boolean }> => {
-        const { data } = await api.post('/eformsign-docs/approve', {
-            documentId,
-        });
-        return data;
-    },
     getDocumentClientNames: async (): Promise<Array<{ documentId: string; clientName: string }>> => {
         const { data } = await api.get('/eformsign-docs/client-names');
         return data;

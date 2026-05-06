@@ -83,8 +83,3 @@ export class CreateEformsignDocLocalDto {
     @IsBoolean()
     linkToClient?: boolean; // If true, also update client.e_doc_id
 }
-
-export class ApproveDocumentDto {
-    @IsString()
-    documentId!: string;
-}
