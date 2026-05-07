@@ -132,6 +132,19 @@ async function installCommonRoutes(page: Page) {
       return route.fulfill({ status: 200, contentType: "text/event-stream", body: ":ok\n\n" });
     }
 
+    if (url.pathname === "/api/eformsign-docs/dispatch-headless") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: false,
+          reason: "headless disabled in offline contract-creation spec",
+          fallbackHint: "iframe",
+          durationMs: 1,
+        }),
+      });
+    }
+
     return route.fallback();
   });
 
@@ -327,6 +340,7 @@ test.describe("Contract creation iframe + success flow", () => {
     await page.route("**/api/eformsign-docs", async (route) => {
       if (route.request().method() === "POST") {
         capturedCreateDocRecordBody = route.request().postDataJSON() as Record<string, unknown>;
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
         return route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -364,7 +378,6 @@ test.describe("Contract creation iframe + success flow", () => {
         grant: MOCK_VOUCHER_PRICE_INFOS[0].grant,
         actualPrice: MOCK_VOUCHER_PRICE_INFOS[0].actualPrice,
         startDate: "2026-06-01",
-        endDate: "2026-06-15",
         paymentYear: "26",
         paymentMonth: "06",
         paymentDay: "03",
@@ -374,6 +387,11 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect.poll(async () => {
       return page.evaluate(() => (window as Window & { __eformsignCalls?: unknown[] }).__eformsignCalls?.length ?? 0);
     }).toBeGreaterThan(0);
+    await expect(page.getByTestId("contract-creation-progress-step-client-started")).toHaveAttribute(
+      "data-state",
+      "active"
+    );
+    await expect(page.getByTestId("contract-creation-progress-spinner-client-started")).toBeVisible();
 
     const sdkCall = await page.evaluate(() => {
       const calls = (window as Window & {
@@ -386,6 +404,25 @@ test.describe("Contract creation iframe + success flow", () => {
       mode: { type: "01", template_id: "tpl-create-test" },
     });
 
+    await page.evaluate(() => {
+      const calls = (window as Window & {
+        __eformsignCalls: Array<{ actionCallback?: (response: unknown) => void }>;
+      }).__eformsignCalls;
+      calls[0].actionCallback?.({
+        type: "document",
+        fn: "actionCallback",
+        data: [
+          { name: "전송", code: "21" },
+          { name: "func_get_return_fields", code: "99" },
+        ],
+      });
+    });
+    await expect(page.getByTestId("contract-creation-progress-step-info-inserted")).toHaveAttribute(
+      "data-state",
+      "active"
+    );
+    await expect(page.getByTestId("contract-creation-progress-spinner-info-inserted")).toBeVisible();
+
     const successAlert = page.waitForEvent("dialog");
     await page.evaluate((documentId) => {
       const calls = (window as Window & {
@@ -393,6 +430,11 @@ test.describe("Contract creation iframe + success flow", () => {
       }).__eformsignCalls;
       calls[0].successCallback?.({ code: "-1", document_id: documentId, type: "document" });
     }, CONTRACT_DOC_ID);
+    await expect(page.getByTestId("contract-creation-progress-step-creating")).toHaveAttribute(
+      "data-state",
+      "active"
+    );
+    await expect(page.getByTestId("contract-creation-progress-spinner-creating")).toBeVisible();
     const dialog = await successAlert;
     expect(dialog.message()).toBe("계약서가 성공적으로 생성되었습니다.");
     await dialog.accept();
@@ -407,6 +449,7 @@ test.describe("Contract creation iframe + success flow", () => {
       linkToClient: true,
     });
     await expect(page.locator('[data-component="messages-contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.getByTestId("contract-creation-progress-step-sent")).toHaveAttribute("data-state", "done");
   });
 
   test("step 1 keeps 다음 disabled until the required selections are complete", async ({ page }) => {

@@ -2,7 +2,7 @@
 import dayjs from "dayjs";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
-import { Check, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, LoaderCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
@@ -171,6 +171,126 @@ interface ContractCreationFormProps {
   onClose?: () => void;
 }
 
+const CONTRACT_CREATION_PROGRESS_STEPS = [
+  { key: "client-started", label: "전자문서 클라이언트 시작" },
+  { key: "info-inserted", label: "이용자 정보 입력 완료" },
+  { key: "creating", label: "전자문서 생성 중" },
+  { key: "sent", label: "전자문서 전송 완료" },
+] as const;
+
+type ContractCreationProgressStep = (typeof CONTRACT_CREATION_PROGRESS_STEPS)[number]["key"];
+
+interface ContractCreationProgressState {
+  step: ContractCreationProgressStep | null;
+  completed: boolean;
+  failed: boolean;
+}
+
+const INITIAL_CREATION_PROGRESS: ContractCreationProgressState = {
+  step: null,
+  completed: false,
+  failed: false,
+};
+
+function getCreationProgressIndex(step: ContractCreationProgressStep | null): number {
+  if (!step) return -1;
+  return CONTRACT_CREATION_PROGRESS_STEPS.findIndex((item) => item.key === step);
+}
+
+function ContractCreationProgressStepper({
+  progress,
+  className,
+}: {
+  progress: ContractCreationProgressState;
+  className?: string;
+}) {
+  const currentIndex = getCreationProgressIndex(progress.step);
+
+  if (currentIndex < 0) {
+    return null;
+  }
+
+  return (
+    <section
+      data-component="contract-creation-processing-stepper"
+      data-testid="contract-creation-progress-stepper"
+      className={cn(
+        "rounded-2xl border border-v3-border bg-white/95 px-4 py-3 shadow-[0_8px_28px_hsla(214,50%,20%,0.08)]",
+        className,
+      )}
+      aria-label="전자계약서 생성 진행 상태"
+    >
+      <ol className="flex flex-col">
+        {CONTRACT_CREATION_PROGRESS_STEPS.map((item, idx) => {
+          const isDone = progress.completed ? idx <= currentIndex : idx < currentIndex;
+          const isActive = idx === currentIndex && !progress.completed && !progress.failed;
+          const isFailed = idx === currentIndex && progress.failed;
+          const state = isFailed ? "error" : isActive ? "active" : isDone ? "done" : "pending";
+
+          return (
+            <li
+              key={item.key}
+              data-component="contract-creation-processing-step"
+              data-testid={`contract-creation-progress-step-${item.key}`}
+              data-state={state}
+              className="relative flex gap-3 pb-4 last:pb-0"
+            >
+              {idx < CONTRACT_CREATION_PROGRESS_STEPS.length - 1 && (
+                <span
+                  data-component="contract-creation-processing-connector"
+                  className={cn(
+                    "absolute left-[15px] top-8 h-[calc(100%-2rem)] w-0.5 rounded-full",
+                    idx < currentIndex ? "bg-v3-primary" : "bg-v3-border",
+                  )}
+                  aria-hidden="true"
+                />
+              )}
+              <span
+                data-component="contract-creation-processing-circle"
+                className={cn(
+                  "relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[0.7rem] font-bold transition-colors",
+                  state === "done" && "bg-v3-primary text-white",
+                  state === "active" && "bg-v3-primary text-white ring-2 ring-v3-primary/25 ring-offset-2",
+                  state === "error" && "bg-destructive text-destructive-foreground",
+                  state === "pending" && "border border-v3-border bg-v3-dim-white text-v3-text-muted",
+                )}
+              >
+                {state === "done" ? (
+                  <Check className="h-4 w-4" strokeWidth={3} />
+                ) : state === "active" ? (
+                  <LoaderCircle
+                    data-testid={`contract-creation-progress-spinner-${item.key}`}
+                    className="h-4 w-4 contract-creation-processing-spinner"
+                    strokeWidth={2.4}
+                  />
+                ) : (
+                  idx + 1
+                )}
+              </span>
+              <span className="flex min-w-0 flex-col pt-1">
+                <span
+                  data-component="contract-creation-processing-label"
+                  className={cn(
+                    "text-sm font-semibold leading-5",
+                    (state === "done" || state === "active") && "text-v3-dark",
+                    state === "pending" && "text-v3-text-muted",
+                    state === "error" && "text-destructive",
+                  )}
+                >
+                  {item.label}
+                </span>
+                {state === "active" && (
+                  <span className="text-xs font-medium text-v3-text-muted">처리 중</span>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
+
 export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}) => {
   const router = useRouter();
   const locale = useLocale();
@@ -181,6 +301,7 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [documentCreated, setDocumentCreated] = useState(false);
+  const [creationProgress, setCreationProgress] = useState<ContractCreationProgressState>(INITIAL_CREATION_PROGRESS);
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
   const [startDateInput, setStartDateInput] = useState("");
   const [endDateInput, setEndDateInput] = useState("");
@@ -432,6 +553,7 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
 
     setIsSubmitting(true);
     setSubmitError(null);
+    setCreationProgress(INITIAL_CREATION_PROGRESS);
 
     try {
       let finalClientId = clientId;
@@ -502,14 +624,37 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
       // backend via Playwright. On any failure the response carries
       // `fallbackHint: "iframe"` and we fall through to the iframe path.
       if (isFeatureEnabled("headlessDispatch")) {
+        const progressTimers: Array<ReturnType<typeof setTimeout>> = [];
         try {
           setIsDialogOpen(true);
+          setCreationProgress({ step: "client-started", completed: false, failed: false });
+          progressTimers.push(
+            setTimeout(() => {
+              setCreationProgress((current) =>
+                current.step === "client-started" && !current.completed && !current.failed
+                  ? { step: "info-inserted", completed: false, failed: false }
+                  : current,
+              );
+            }, 1_000),
+          );
+          progressTimers.push(
+            setTimeout(() => {
+              setCreationProgress((current) =>
+                (current.step === "client-started" || current.step === "info-inserted") &&
+                !current.completed &&
+                !current.failed
+                  ? { step: "creating", completed: false, failed: false }
+                  : current,
+              );
+            }, 2_000),
+          );
           const headless = await eformsignApi.dispatchHeadless(
             contractData,
             finalClientId ?? undefined,
           );
 
           if (headless.ok) {
+            setCreationProgress({ step: "sent", completed: true, failed: false });
             queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
             setDocumentCreated(true);
             resetAll();
@@ -527,6 +672,8 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
             "[contract-creation] headless dispatch threw, falling back to iframe",
             headlessError,
           );
+        } finally {
+          progressTimers.forEach((timer) => clearTimeout(timer));
         }
       }
 
@@ -536,10 +683,12 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
       );
 
       setIsDialogOpen(true);
+      setCreationProgress({ step: "client-started", completed: false, failed: false });
 
       setTimeout(() => {
         openDocument(documentOption, "eformsign_iframe", {
           onSuccess: async (response) => {
+            setCreationProgress({ step: "creating", completed: false, failed: false });
             if (finalClientId && response.document_id) {
               try {
                 await eformsignApi.createDocRecord({
@@ -561,6 +710,7 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
               }
             }
 
+            setCreationProgress({ step: "sent", completed: true, failed: false });
             queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
             setDocumentCreated(true);
             resetAll();
@@ -569,13 +719,31 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
           },
           onError: (response) => {
             console.error("Document creation failed:", response);
+            setCreationProgress((current) => ({
+              step: current.step ?? "creating",
+              completed: false,
+              failed: true,
+            }));
             setSubmitError(`문서 생성 실패: ${response.message}`);
             handleDialogClose();
+          },
+          onAction: () => {
+            setCreationProgress((current) =>
+              current.step === "client-started" && !current.completed && !current.failed
+                ? { step: "info-inserted", completed: false, failed: false }
+                : current,
+            );
           },
         });
       }, 500);
     } catch (error) {
       console.error("Error creating contract:", error);
+      setIsDialogOpen(false);
+      setCreationProgress((current) => ({
+        step: current.step ?? "client-started",
+        completed: false,
+        failed: true,
+      }));
       setSubmitError(error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했습니다.");
     } finally {
       setIsSubmitting(false);
@@ -1164,6 +1332,10 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
           </div>
         )}
 
+        {!isDialogOpen && (
+          <ContractCreationProgressStepper progress={creationProgress} className="shrink-0" />
+        )}
+
         {(submitError || eformsignError) && (
           <Alert variant="destructive" data-component="messages-contract-form-error">
             <AlertDescription>{submitError || eformsignError}</AlertDescription>
@@ -1228,9 +1400,9 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
       <Dialog open={isDialogOpen} onOpenChange={(open: boolean) => !open && handleDialogClose()}>
         <DialogContent
           data-component="messages-contract-form-dialog"
-          // Mobile: full-screen. Desktop (lg+): A4 portrait + eformsign 상하단 툴바 비율(약 0.73 w/h)을 맞춰 800×1102px 고정,
-          // 단 viewport이 작으면 95vh로 캡. flex column으로 헤더 + 남은 공간을 iframe이 차지하도록 한다.
-          className="max-w-full w-screen h-screen p-0 gap-0 flex flex-col lg:w-[800px] lg:max-w-[800px] lg:h-[1102px] lg:max-h-[95vh] lg:rounded-lg"
+          // Mobile: full-screen. Desktop (lg+): keep the eformsign canvas near A4 portrait,
+          // with a fixed progress rail beside it and 95vh cap for shorter viewports.
+          className="max-w-full w-screen h-screen p-0 gap-0 flex flex-col lg:w-[1088px] lg:max-w-[95vw] lg:h-[1102px] lg:max-h-[95vh] lg:rounded-lg"
         >
           <DialogHeader className="px-4 py-2 flex flex-row items-center justify-between border-b shrink-0">
             <DialogTitle>계약서 작성</DialogTitle>
@@ -1238,8 +1410,14 @@ export const ContractCreationForm = ({ onClose }: ContractCreationFormProps = {}
               <X className="h-4 w-4" />
             </Button>
           </DialogHeader>
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <iframe id="eformsign_iframe" className="w-full h-full border-none" title="eformsign Document" />
+          <div className="flex flex-1 min-h-0 flex-col overflow-hidden lg:flex-row">
+            <ContractCreationProgressStepper
+              progress={creationProgress}
+              className="m-3 shrink-0 lg:my-4 lg:ml-4 lg:mr-0 lg:w-64"
+            />
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <iframe id="eformsign_iframe" className="w-full h-full border-none" title="eformsign Document" />
+            </div>
           </div>
         </DialogContent>
       </Dialog>

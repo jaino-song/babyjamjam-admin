@@ -54,6 +54,7 @@ import {
   PageSection,
   DetailSkeleton,
   ListEmptyState,
+  DetailEmptyState,
   SectionNav,
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
@@ -376,7 +377,7 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
 
 const NAV_SECTIONS = [
   { id: "maternity", label: "산모 계약서", icon: FileSignature },
-  { id: "caregiver", label: "관리사 계약서", icon: Briefcase },
+  { id: "caregiver", label: "제공인력 계약서", icon: Briefcase },
   { id: "documents", label: "전자문서 목록", icon: FileText },
   { id: "notifications", label: "알림 설정", icon: Bell },
 ] as const;
@@ -427,6 +428,11 @@ export default function ContractsPage() {
   const isInitialLoading = isBootstrappingAuth || isLoadingInfinite;
   // Content loading: fetching filtered data after initial load is complete
   const isContentLoading = !isInitialLoading && isLoadingInfinite;
+  // Stats are derived from the "전체" tab's data and are independent of which
+  // tab is currently being fetched — only show the skeleton until the very
+  // first stats payload lands.
+  const isStatsLoading =
+    isBootstrappingAuth || (statsDocuments.length === 0 && filterType === null && isLoadingInfinite);
 
   // documentId → clientName lookup from our DB. Required because eformsign's
   // list_document response loses outsider info once the doc progresses past
@@ -572,7 +578,7 @@ export default function ContractsPage() {
     <PageSection name="contracts">
       <StatsBar
         name="contracts"
-        isLoading={isInitialLoading}
+        isLoading={isStatsLoading}
         items={[
           { icon: CheckCircle2, value: stats.reviewNeeded, label: "검토 필요", counter: "건", colorIndex: 0 },
           { icon: Send, value: stats.sendRequired, label: "이용자 완료 필요", counter: "건", colorIndex: 1 },
@@ -694,10 +700,28 @@ export default function ContractsPage() {
           {activeSection === "caregiver" ? (
             <section data-component="contracts-caregiver" className="flex flex-1 min-h-0 flex-col">
               <SplitLayout hasSelection={false}>
-                <ListPanel title="관리사 계약 목록" subtitle="아직 준비 중입니다">
-                  <ListEmptyState message="아직 준비 중입니다" />
+                <ListPanel
+                  title="제공인력 계약 목록"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <ListEmptyState message="아직 준비중입니다" />
                 </ListPanel>
-                <EmptyState icon={Briefcase} message="아직 준비 중입니다" />
+                <DetailPanel
+                  title="제공인력 계약서"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <DetailEmptyState icon={Briefcase} message="아직 준비중입니다" />
+                </DetailPanel>
               </SplitLayout>
             </section>
           ) : null}
@@ -705,10 +729,28 @@ export default function ContractsPage() {
           {activeSection === "documents" ? (
             <section data-component="contracts-documents" className="flex flex-1 min-h-0 flex-col">
               <SplitLayout hasSelection={false}>
-                <ListPanel title="전자문서 목록" subtitle="아직 준비 중입니다">
-                  <ListEmptyState message="아직 준비 중입니다" />
+                <ListPanel
+                  title="전자문서 목록"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <ListEmptyState message="아직 준비중입니다" />
                 </ListPanel>
-                <EmptyState icon={FileText} message="아직 준비 중입니다" />
+                <DetailPanel
+                  title="전자문서"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <DetailEmptyState icon={FileText} message="아직 준비중입니다" />
+                </DetailPanel>
               </SplitLayout>
             </section>
           ) : null}
@@ -716,10 +758,28 @@ export default function ContractsPage() {
           {activeSection === "notifications" ? (
             <section data-component="contracts-notifications" className="flex flex-1 min-h-0 flex-col">
               <SplitLayout hasSelection={false}>
-                <ListPanel title="알림 설정" subtitle="아직 준비 중입니다">
-                  <ListEmptyState message="아직 준비 중입니다" />
+                <ListPanel
+                  title="알림 설정"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <ListEmptyState message="아직 준비중입니다" />
                 </ListPanel>
-                <EmptyState icon={Bell} message="아직 준비 중입니다" />
+                <DetailPanel
+                  title="알림 설정"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <DetailEmptyState icon={Bell} message="아직 준비중입니다" />
+                </DetailPanel>
               </SplitLayout>
             </section>
           ) : null}

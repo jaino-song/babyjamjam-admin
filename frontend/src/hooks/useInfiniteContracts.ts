@@ -124,10 +124,23 @@ export function useInfiniteContracts({
     refetchOnWindowFocus: false,
   });
 
-  // Flatten loaded pages into a single document list.
+  // Flatten loaded pages into a single document list, deduping by id.
+  // The backend's getAllDocuments only dedupes within a single response, so a
+  // document appearing in multiple status streams (e.g. completed and rejected)
+  // can leak across pages. Dedupe here to keep React keys unique and avoid
+  // double-rendering.
   const fetchedDocuments = useMemo(() => {
     if (!query.data) return EMPTY_DOCUMENTS;
-    return query.data.pages.flatMap((page) => page.documents);
+    const seen = new Set<string>();
+    const deduped: EformsignDocument[] = [];
+    for (const page of query.data.pages) {
+      for (const doc of page.documents) {
+        if (seen.has(doc.id)) continue;
+        seen.add(doc.id);
+        deduped.push(doc);
+      }
+    }
+    return deduped;
   }, [query.data]);
 
   const excludedNameSet = useMemo(() => new Set(excludedNames), [excludedNames]);

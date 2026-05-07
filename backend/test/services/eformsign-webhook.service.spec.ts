@@ -96,12 +96,17 @@ describe("EformsignWebhookService", () => {
     };
     const eformsignApiClient = {
         getAccessToken: jest.fn(),
+        getDocument: jest.fn(),
+    };
+    const notificationService = {
+        sendToBranchUsers: jest.fn(),
     };
     const clientRepository = {
         findById: jest.fn(),
     };
     const eformsignDocRepository = {
         findByDocumentId: jest.fn(),
+        findBranchIdByDocumentId: jest.fn(),
     };
     const employeeScheduleRepository = {
         findByClientId: jest.fn(),
@@ -123,6 +128,7 @@ describe("EformsignWebhookService", () => {
             syncClientEndDateUsecase as never,
             alimtalkService as never,
             eventBus as never,
+            notificationService as never,
             eformsignApiClient as never,
             clientRepository as never,
             eformsignDocRepository as never,
@@ -139,6 +145,14 @@ describe("EformsignWebhookService", () => {
                 refresh_token: "test-refresh-token",
             },
         });
+        eformsignApiClient.getDocument.mockResolvedValue({
+            current_status: {
+                status_type: "060",
+                step_recipients: [{ recipient_type: "02" }],
+            },
+        });
+        notificationService.sendToBranchUsers.mockResolvedValue({ sent: 1, failed: 0 });
+        eformsignDocRepository.findBranchIdByDocumentId.mockResolvedValue(branchId);
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity());
         clientRepository.findById.mockResolvedValue(createClientEntity());
         employeeScheduleRepository.findByClientId.mockResolvedValue([]);
@@ -155,6 +169,16 @@ describe("EformsignWebhookService", () => {
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
         expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
+    });
+
+    it("should resolve the branch from the local document before updating webhook status", async () => {
+        await expect(service.processWebhook("company-1", createDocumentPayload())).resolves.toBeUndefined();
+
+        expect(eformsignDocRepository.findBranchIdByDocumentId).toHaveBeenCalledWith(documentId);
+        expect(updateStatusUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({ documentId }),
+        );
     });
 
     it("should keep processing document events when sync throws", async () => {
@@ -182,5 +206,67 @@ describe("EformsignWebhookService", () => {
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
         expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
         expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
+    });
+
+    it("should notify branch users when a document reaches review-required status", async () => {
+        eformsignApiClient.getDocument.mockResolvedValue({
+            current_status: {
+                status_type: "070",
+                step_recipients: [{ recipient_type: "01" }],
+            },
+        });
+        const payload = createDocumentPayload();
+        if (!payload.document) {
+            throw new Error("document payload is required");
+        }
+        payload.document.status = "doc_accept_participant";
+
+        await expect(service.processWebhook(branchId, payload)).resolves.toBeUndefined();
+
+        expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+            branchId,
+            "전자문서 검토 필요",
+            "산모신생아건강관리서비스 계약서 검토가 필요합니다. 최종 확인을 진행해 주세요.",
+            {
+                type: "eformsign-review-required",
+                documentId,
+                url: `/contracts?documentId=${documentId}`,
+            },
+            {
+                dedupe: {
+                    type: "eformsign-review-required",
+                    documentId,
+                },
+            },
+        );
+    });
+
+    it("should not notify branch users when the current recipient is still external", async () => {
+        const payload = createDocumentPayload();
+        if (!payload.document) {
+            throw new Error("document payload is required");
+        }
+        payload.document.status = "doc_accept_participant";
+
+        await expect(service.processWebhook(branchId, payload)).resolves.toBeUndefined();
+
+        expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+    });
+
+    it("should keep processing when review-required notification lookup fails", async () => {
+        eformsignApiClient.getDocument.mockRejectedValue(new Error("eformsign unavailable"));
+        const payload = createDocumentPayload();
+        if (!payload.document) {
+            throw new Error("document payload is required");
+        }
+        payload.document.status = "doc_accept_participant";
+
+        await expect(service.processWebhook(branchId, payload)).resolves.toBeUndefined();
+
+        expect(eventBus.emit).toHaveBeenCalledWith({
+            branchId,
+            documentId,
+            reason: "doc:doc_accept_participant",
+        });
     });
 });

@@ -1261,6 +1261,12 @@ body {
   }
 }
 
+@keyframes contract-creation-processing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .animate-pop-in {
   animation: popIn 0.3s ease-out;
 }
@@ -1279,4 +1285,8 @@ body {
 
 .animate-float {
   animation: float 3s ease-in-out infinite;
+}
+
+.contract-creation-processing-spinner {
+  animation: contract-creation-processing-spin 0.8s linear infinite;
 }

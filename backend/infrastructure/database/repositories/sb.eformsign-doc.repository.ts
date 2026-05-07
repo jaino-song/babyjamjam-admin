@@ -22,6 +22,14 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return doc ? EformsignDocMapper.toDomain(doc) : null;
     }
 
+    async findBranchIdByDocumentId(documentId: string): Promise<string | null> {
+        const doc = await this.prismaService.eformsign_doc.findUnique({
+            where: { documentId },
+            select: { branchId: true },
+        });
+        return doc?.branchId ?? null;
+    }
+
     async findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
             where: { clientId: clientId, branchId: branchid },
