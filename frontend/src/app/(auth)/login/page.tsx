@@ -5,14 +5,18 @@ import dynamic from "next/dynamic";
 
 import { useAuthShellVariant } from "@/features/auth/shared/use-auth-shell-variant";
 
+function AuthLoginLoading() {
+  return <div data-component="auth-login-loading" className="min-h-screen" />;
+}
+
 const LoginPageDesktop = dynamic(
   () => import("@/features/auth/login/desktop/login-page-desktop").then((mod) => mod.LoginPageDesktop),
-  { ssr: false },
+  { ssr: false, loading: AuthLoginLoading },
 );
 
 const LoginPageMobile = dynamic(
   () => import("@/features/auth/login/mobile/login-page-mobile").then((mod) => mod.LoginPageMobile),
-  { ssr: false },
+  { ssr: false, loading: AuthLoginLoading },
 );
 
 export default function LoginPage() {
@@ -31,8 +35,4 @@ function LoginPageContent() {
   }
 
   return shellVariant === "mobile" ? <LoginPageMobile /> : <LoginPageDesktop />;
-}
-
-function AuthLoginLoading() {
-  return <div data-component="auth-login-loading" className="min-h-screen" />;
 }
