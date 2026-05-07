@@ -24,14 +24,6 @@ export interface EformsignAuthStatusResponse {
     hasRefreshToken: boolean;
 }
 
-export interface PendingStaffCompletionItem {
-    documentId: string;
-    clientId: number;
-    clientName: string;
-    signedAt: string;
-    statusDetail: string;
-}
-
 export interface HeadlessDispatchResponse {
     ok: boolean;
     documentId?: string;
@@ -201,16 +193,16 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/documents', { params });
         return data;
     },
-    getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/in-progress');
+    getInProgressDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents/in-progress', { params });
         return data;
     },
-    getCompletedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/completed');
+    getCompletedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents/completed', { params });
         return data;
     },
-    getRejectedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/rejected');
+    getRejectedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents/rejected', { params });
         return data;
     },
     deleteDocuments: async (
@@ -232,10 +224,6 @@ export const eformsignApi = {
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents');
-        return data;
-    },
-    getPendingStaffCompletionDocs: async (): Promise<PendingStaffCompletionItem[]> => {
-        const { data } = await api.get('/eformsign-docs/pending-staff-completion');
         return data;
     },
     /**

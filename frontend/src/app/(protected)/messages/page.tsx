@@ -1835,7 +1835,7 @@ export default function MessagesPage() {
           onSelect={(id) => setActiveSection(id as MessageSectionId)}
         />
 
-        <div data-component="messages-panel" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {activeSection === "scheduled" ? (
             <section data-component="messages-scheduled-section" className="flex min-h-0 flex-1 flex-col">
               <MessageScheduledSection />

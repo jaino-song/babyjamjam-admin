@@ -17,11 +17,3 @@ export class GenerateStaffDocumentRequestDto {
     @IsString()
     prefillEndDate?: string;
 }
-
-export class PendingStaffCompletionItemDto {
-    documentId!: string;
-    clientId!: number;
-    clientName!: string;
-    signedAt!: string;
-    statusDetail!: string;
-}

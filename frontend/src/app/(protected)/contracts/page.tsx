@@ -18,6 +18,8 @@ import {
   Eye,
   MapPin,
   Loader2,
+  Briefcase,
+  Bell,
 } from "lucide-react";
 import {
   useDeleteEformsignDocument,
@@ -52,6 +54,7 @@ import {
   PageSection,
   DetailSkeleton,
   ListEmptyState,
+  SectionNav,
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
@@ -371,7 +374,17 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
   );
 }
 
+const NAV_SECTIONS = [
+  { id: "maternity", label: "산모 계약서", icon: FileSignature },
+  { id: "caregiver", label: "관리사 계약서", icon: Briefcase },
+  { id: "documents", label: "전자문서 목록", icon: FileText },
+  { id: "notifications", label: "알림 설정", icon: Bell },
+] as const;
+
+type SectionId = (typeof NAV_SECTIONS)[number]["id"];
+
 export default function ContractsPage() {
+  const [activeSection, setActiveSection] = useState<SectionId>("maternity");
   const [activeTab, setActiveTab] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -467,7 +480,9 @@ export default function ContractsPage() {
       }
 
       if (cat === "rejected") {
-        expired++;
+        if (normalizedStatus === "080") {
+          expired++;
+        }
         continue;
       }
 
@@ -555,17 +570,27 @@ export default function ContractsPage() {
 
   return (
     <PageSection name="contracts">
-        <StatsBar
-          name="contracts"
-          isLoading={isInitialLoading}
-          items={[
-            { icon: CheckCircle2, value: stats.reviewNeeded, label: "검토 필요", counter: "건", colorIndex: 2 },
-            { icon: Send, value: stats.sendRequired, label: "발송 필요", counter: "건", colorIndex: 1 },
-            { icon: FileText, value: stats.drafting, label: "작성 대기중", counter: "건" },
-            { icon: AlertTriangle, value: stats.expired, label: "기간 만료", counter: "건", colorIndex: 3 },
-          ]}
+      <StatsBar
+        name="contracts"
+        isLoading={isInitialLoading}
+        items={[
+          { icon: CheckCircle2, value: stats.reviewNeeded, label: "검토 필요", counter: "건", colorIndex: 0 },
+          { icon: Send, value: stats.sendRequired, label: "이용자 완료 필요", counter: "건", colorIndex: 1 },
+          { icon: FileText, value: stats.drafting, label: "작성 대기중", counter: "건" },
+          { icon: AlertTriangle, value: stats.expired, label: "기간 만료", counter: "건", colorIndex: 3 },
+        ]}
+      />
+
+      <div data-component="contracts-sections" className="flex flex-col lg:flex-row gap-8 flex-1 min-h-0">
+        <SectionNav
+          items={NAV_SECTIONS}
+          activeId={activeSection}
+          onSelect={(id) => setActiveSection(id as SectionId)}
         />
 
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+          {activeSection === "maternity" ? (
+            <section data-component="contracts-maternity" className="flex flex-1 min-h-0 flex-col">
         <SplitLayout hasSelection={!!selectedDocument || isCreating} onBack={() => { setSelectedDocId(null); setIsCreating(false); }}>
           <ListPanel
             title="계약 목록"
@@ -663,6 +688,43 @@ export default function ContractsPage() {
             <EmptyState icon={FileText} message="계약을 선택하면 상세 정보가 표시됩니다" />
           )}
         </SplitLayout>
+            </section>
+          ) : null}
+
+          {activeSection === "caregiver" ? (
+            <section data-component="contracts-caregiver" className="flex flex-1 min-h-0 flex-col">
+              <SplitLayout hasSelection={false}>
+                <ListPanel title="관리사 계약 목록" subtitle="아직 준비 중입니다">
+                  <ListEmptyState message="아직 준비 중입니다" />
+                </ListPanel>
+                <EmptyState icon={Briefcase} message="아직 준비 중입니다" />
+              </SplitLayout>
+            </section>
+          ) : null}
+
+          {activeSection === "documents" ? (
+            <section data-component="contracts-documents" className="flex flex-1 min-h-0 flex-col">
+              <SplitLayout hasSelection={false}>
+                <ListPanel title="전자문서 목록" subtitle="아직 준비 중입니다">
+                  <ListEmptyState message="아직 준비 중입니다" />
+                </ListPanel>
+                <EmptyState icon={FileText} message="아직 준비 중입니다" />
+              </SplitLayout>
+            </section>
+          ) : null}
+
+          {activeSection === "notifications" ? (
+            <section data-component="contracts-notifications" className="flex flex-1 min-h-0 flex-col">
+              <SplitLayout hasSelection={false}>
+                <ListPanel title="알림 설정" subtitle="아직 준비 중입니다">
+                  <ListEmptyState message="아직 준비 중입니다" />
+                </ListPanel>
+                <EmptyState icon={Bell} message="아직 준비 중입니다" />
+              </SplitLayout>
+            </section>
+          ) : null}
+        </div>
+      </div>
 
       <Dialog
         open={deleteTargetDocumentId != null}

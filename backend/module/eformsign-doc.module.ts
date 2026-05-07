@@ -10,7 +10,6 @@ import {
     FetchEformsignDocFromApiUsecase,
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
-    ListPendingStaffCompletionUsecase,
     ListClientNamesByBranchUsecase,
     SyncClientEndDateUsecase,
     DispatchDocumentHeadlessUsecase,
@@ -40,7 +39,6 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FindEformsignDocsByClientIdUsecase,
         ListEformsignDocsUsecase,
         CreateEformsignDocUsecase,
-        ListPendingStaffCompletionUsecase,
         ListClientNamesByBranchUsecase,
         SyncClientEndDateUsecase,
         // Use cases - External API
