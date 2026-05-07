@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useRef } from "react";
 import { Check, ChevronsUpDown, UserPlus, X, Loader2 } from "lucide-react";
 import { useEmployees, Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -9,6 +9,21 @@ import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+    CommandSeparator,
+} from "@/components/ui/command";
 
 interface EmployeeAutocompleteProps {
     "data-testid"?: string;
@@ -39,106 +54,53 @@ export function EmployeeAutocomplete({
     const { data: employees, isLoading } = useEmployees();
     const setPrefillName = useEmployeeDialogStore((state) => state.setPrefillName);
 
+    const [isOpen, setIsOpen] = useState(false);
     const [inputValue, setInputValue] = useState("");
-    const [isFocused, setIsFocused] = useState(false);
-    const [highlightedIndex, setHighlightedIndex] = useState(-1);
-    const containerRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
 
     const availableEmployees = useMemo(() => {
         if (!employees) return [];
-        return employees.filter(emp => !excludeIds.includes(emp.id));
+        return employees.filter((emp) => !excludeIds.includes(emp.id));
     }, [employees, excludeIds]);
 
     const selectedEmployee = useMemo(() => {
         if (value === null || value === undefined || !employees) return null;
-        return employees.find(emp => emp.id === value) || null;
+        return employees.find((emp) => emp.id === value) || null;
     }, [value, employees]);
 
     const filteredEmployees = useMemo(() => {
-        if (!inputValue.trim()) return [];
+        if (!inputValue.trim()) return availableEmployees;
         const searchTerm = inputValue.trim();
-        return availableEmployees.filter(emp =>
-            matchesKoreanSearch(emp.name, searchTerm) ||
-            emp.workArea.some(area => area.toLowerCase().includes(searchTerm.toLowerCase())) ||
-            emp.phone.includes(searchTerm)
+        return availableEmployees.filter(
+            (emp) =>
+                matchesKoreanSearch(emp.name, searchTerm) ||
+                emp.workArea.some((area) =>
+                    area.toLowerCase().includes(searchTerm.toLowerCase()),
+                ) ||
+                emp.phone.includes(searchTerm),
         );
     }, [availableEmployees, inputValue]);
 
-    const showDropdown = isFocused && inputValue.trim().length > 0;
-
-    useEffect(() => {
-        queueMicrotask(() => {
-            if (selectedEmployee) {
-                setInputValue(selectedEmployee.name);
-            } else if (value === null || value === undefined) {
-                setInputValue("");
-            }
-        });
-    }, [selectedEmployee, value]);
-
-    useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-                setIsFocused(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
-
-    useEffect(() => {
-        const nextOptionsCount = filteredEmployees.length;
-        queueMicrotask(() => {
-            void nextOptionsCount;
-            setHighlightedIndex(-1);
-        });
-    }, [filteredEmployees]);
-
     const handleSelect = (employee: Employee) => {
-        setInputValue(employee.name);
         onChange(employee.id, employee);
-        setIsFocused(false);
-        inputRef.current?.blur();
+        setIsOpen(false);
+        setInputValue("");
     };
 
-    const handleClear = () => {
-        setInputValue("");
+    const handleClear = (e: React.MouseEvent) => {
+        e.stopPropagation();
         onChange(null, null);
-        inputRef.current?.focus();
+        setInputValue("");
     };
 
     const handleManualEntry = () => {
         setPrefillName(inputValue);
-        setIsFocused(false);
+        setIsOpen(false);
         setTimeout(() => {
             if (onManualEntry) {
                 onManualEntry(inputValue);
             }
         }, 100);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (!showDropdown) return;
-        const totalItems = filteredEmployees.length + (allowManualEntry ? 1 : 0);
-
-        if (e.key === "ArrowDown") {
-            e.preventDefault();
-            setHighlightedIndex(prev => (prev + 1) % totalItems);
-        } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            setHighlightedIndex(prev => (prev - 1 + totalItems) % totalItems);
-        } else if (e.key === "Enter" && highlightedIndex >= 0) {
-            e.preventDefault();
-            if (highlightedIndex < filteredEmployees.length) {
-                handleSelect(filteredEmployees[highlightedIndex]);
-            } else if (allowManualEntry) {
-                handleManualEntry();
-            }
-        } else if (e.key === "Escape") {
-            setIsFocused(false);
-            inputRef.current?.blur();
-        }
     };
 
     return (
@@ -153,118 +115,114 @@ export function EmployeeAutocomplete({
                     {required && <span className="text-destructive ml-1">*</span>}
                 </Label>
             )}
-            <div ref={containerRef} className="relative">
-                <input
-                    ref={inputRef}
-                    type="text"
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onFocus={() => setIsFocused(true)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={t(locale, "clients.form.employee-search-placeholder")}
-                    data-component="employee-autocomplete-input"
-                    style={{ outline: "2px solid transparent", outlineOffset: "2px" }}
-                    className={cn(
-                        "h-10 w-full rounded-full border-2 border-v3-border bg-white px-4 py-2 pr-20 text-[0.85rem] font-normal text-v3-dark shadow-none transition-all duration-300",
-                        "placeholder:text-muted-foreground hover:bg-v3-dim-white focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-                        error && "border-destructive",
-                        !error && "border-v3-border"
-                    )}
-                />
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                    {isLoading && (
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    )}
-                    {selectedEmployee && !isLoading && (
-                        <button
-                            type="button"
-                            onClick={handleClear}
-                            className="p-0.5 rounded-sm hover:bg-accent"
-                        >
-                            <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                        </button>
-                    )}
-                    <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
-                </div>
-
-                {showDropdown && (
-                    <div
-                        className="absolute top-full left-0 right-0 z-50 mt-2 overflow-hidden rounded-[22px] border border-v3-border bg-white text-v3-dark shadow-[0_12px_36px_hsla(214,50%,20%,0.12)] animate-in fade-in-0 zoom-in-95"
-                        data-testid="employee-autocomplete-dropdown"
-                    >
-                        {isLoading ? (
-                            <div className="flex items-center justify-center py-6">
-                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                            </div>
-                        ) : filteredEmployees.length === 0 ? (
-                            <div className="py-6 text-center text-sm text-muted-foreground">
-                                {t(locale, "clients.form.no-employee-found")}
-                            </div>
-                        ) : (
-                                <div className="max-h-[200px] overflow-y-auto p-1">
-                                    {filteredEmployees.map((employee, index) => (
-                                    <button
-                                        type="button"
-                                        key={employee.id}
-                                        onMouseDown={(e) => {
-                                            e.preventDefault();
-                                            handleSelect(employee);
-                                        }}
-                                        onMouseEnter={() => setHighlightedIndex(index)}
-                                        className={cn(
-                                            "flex w-full cursor-pointer flex-col items-start gap-1 rounded-[16px] px-3 py-2.5 text-left transition-colors",
-                                            highlightedIndex === index && "bg-accent",
-                                            selectedEmployee?.id === employee.id && "bg-accent/50"
-                                        )}
-                                    >
-                                        <div className="flex items-center gap-2 w-full">
-                                            <Check
-                                                className={cn(
-                                                    "h-4 w-4 shrink-0",
-                                                    selectedEmployee?.id === employee.id ? "opacity-100" : "opacity-0"
-                                                )}
-                                            />
-                                            <span className="font-medium text-sm">{employee.name}</span>
-                                        </div>
-                                        <span className="text-xs text-muted-foreground ml-6">
-                                            {employee.workArea.join(", ")} · {employee.phone}
-                                        </span>
-                                    </button>
-                                ))}
-                            </div>
+            <Popover open={isOpen} onOpenChange={setIsOpen}>
+                <PopoverTrigger asChild>
+                    <Button
+                        ref={triggerRef}
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={isOpen}
+                        data-component="employee-autocomplete-input"
+                        className={cn(
+                            "w-full justify-between font-normal",
+                            selectedEmployee ? "text-v3-dark" : "text-muted-foreground",
+                            error && "border-destructive focus:ring-destructive",
                         )}
+                    >
+                        <span className="truncate">
+                            {selectedEmployee
+                                ? selectedEmployee.name
+                                : t(locale, "clients.form.employee-search-placeholder")}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                            {isLoading && (
+                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            )}
+                            {selectedEmployee && !isLoading && (
+                                <X
+                                    className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
+                                    onClick={handleClear}
+                                />
+                            )}
+                            <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                    </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                    data-component="employee-autocomplete-dropdown"
+                    className="w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
+                    align="start"
+                >
+                    <Command shouldFilter={false}>
+                        <CommandInput
+                            placeholder={t(locale, "clients.form.employee-search-placeholder")}
+                            value={inputValue}
+                            onValueChange={setInputValue}
+                        />
+                        <CommandList>
+                            {isLoading ? (
+                                <div className="flex items-center justify-center py-6">
+                                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                </div>
+                            ) : filteredEmployees.length === 0 ? (
+                                <CommandEmpty>
+                                    <span className="text-muted-foreground">
+                                        {t(locale, "clients.form.no-employee-found")}
+                                    </span>
+                                </CommandEmpty>
+                            ) : (
+                                <CommandGroup className="p-0">
+                                    {filteredEmployees.map((employee) => (
+                                        <CommandItem
+                                            key={employee.id}
+                                            value={employee.id.toString()}
+                                            onSelect={() => handleSelect(employee)}
+                                            className="group flex flex-col items-start gap-1 rounded-[16px] px-3 py-2.5 data-[selected=true]:not-hover:bg-transparent data-[selected=true]:not-hover:text-current hover:text-white hover:rounded-none"
+                                        >
+                                            <div className="flex items-center gap-2 w-full">
+                                                <Check
+                                                    className={cn(
+                                                        "h-4 w-4 shrink-0",
+                                                        selectedEmployee?.id === employee.id
+                                                            ? "opacity-100"
+                                                            : "opacity-0",
+                                                    )}
+                                                />
+                                                <span className="font-medium">{employee.name}</span>
+                                            </div>
+                                            <span className="text-xs text-muted-foreground ml-6 group-hover:text-white">
+                                                {employee.workArea.join(", ")} · {employee.phone}
+                                            </span>
+                                        </CommandItem>
+                                    ))}
+                                </CommandGroup>
+                            )}
+                        </CommandList>
 
                         {allowManualEntry && (
                             <>
-                                <div className="h-px bg-border" />
+                                <CommandSeparator />
                                 <button
                                     type="button"
-                                    onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        handleManualEntry();
-                                    }}
-                                    onMouseEnter={() => setHighlightedIndex(filteredEmployees.length)}
-                                    className={cn(
-                                        "flex w-full cursor-pointer flex-col rounded-[16px] px-3 py-3 text-left transition-colors",
-                                        highlightedIndex === filteredEmployees.length && "bg-accent"
-                                    )}
+                                    className="group flex w-full flex-col rounded-[16px] px-3 py-3 text-left transition-colors hover:bg-accent hover:text-white hover:rounded-t-none"
+                                    onClick={handleManualEntry}
                                     data-testid="employee-autocomplete-add-button"
                                 >
                                     <div className="flex items-center gap-2">
                                         <UserPlus className="h-4 w-4" />
-                                        <span className="text-sm font-medium text-primary">
+                                        <span className="text-sm font-medium text-primary group-hover:text-white">
                                             {t(locale, "contract-msg.employee-manual-entry")}
                                         </span>
                                     </div>
-                                    <span className="text-xs text-muted-foreground mt-1 ml-6">
+                                    <span className="text-xs text-muted-foreground mt-1 group-hover:text-white">
                                         {t(locale, "contract-msg.employee-manual-entry-description")}
                                     </span>
                                 </button>
                             </>
                         )}
-                    </div>
-                )}
-            </div>
+                    </Command>
+                </PopoverContent>
+            </Popover>
 
             {helperText && (
                 <p className={cn("text-xs", error ? "text-destructive" : "text-muted-foreground")}>

@@ -6,9 +6,11 @@ import {
     LinkDocumentToClientUsecase,
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
+import { EFORMSIGN_CLIENT_REPOSITORY } from "domain/repositories/eformsign.client.interface";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { EMPLOYEE_SCHEDULE_REPOSITORY } from "domain/repositories/employee-schedule.repository.interface";
 import { EMPLOYEE_REPOSITORY } from "domain/repositories/employee.repository.interface";
+import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { SbEmployeeScheduleRepository } from "infrastructure/database/repositories/sb.employee-schedule.repository";
@@ -16,9 +18,10 @@ import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.em
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { AlimtalkModule } from "./alimtalk.module";
+import { EformsignDocModule } from "./eformsign-doc.module";
 
 @Module({
-    imports: [DatabaseModule, AlimtalkModule],
+    imports: [DatabaseModule, AlimtalkModule, EformsignDocModule],
     controllers: [EformsignWebhookController],
     providers: [
         WebhookGuard,
@@ -28,6 +31,10 @@ import { AlimtalkModule } from "./alimtalk.module";
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
             useClass: SbEformsignDocRepository,
+        },
+        {
+            provide: EFORMSIGN_CLIENT_REPOSITORY,
+            useClass: EformsignApiClient,
         },
         {
             provide: CLIENT_REPOSITORY,

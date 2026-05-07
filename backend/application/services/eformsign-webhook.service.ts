@@ -1,9 +1,12 @@
 import { Injectable, Logger, Inject } from "@nestjs/common";
 import { UpdateEformsignDocStatusUsecase } from "application/usecases/eformsign-doc/update-eformsign-doc-status.usecase";
 import { LinkDocumentToClientUsecase } from "application/usecases/eformsign-doc/link-document-to-client.usecase";
+import { SyncClientEndDateUsecase } from "application/usecases/eformsign-doc/sync-client-end-date.usecase";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
 import { AlimtalkService } from "./alimtalk.service";
+import { EformsignDocsEventBus } from "./eformsign-docs-event-bus.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
@@ -19,6 +22,7 @@ const DOCUMENT_STATUS = {
 
     // Participant actions
     DOC_REQUEST_PARTICIPANT: "doc_request_participant", // 참여자 요청
+    DOC_REQUEST_APPROVAL: "doc_request_approval",       // 결재 요청
     DOC_ACCEPT_PARTICIPANT: "doc_accept_participant",   // 참여자 승인
     DOC_REJECT_PARTICIPANT: "doc_reject_participant",   // 참여자 거부
     DOC_ACCEPT_OUTSIDER: "doc_accept_outsider",        // 외부자 승인
@@ -53,7 +57,11 @@ export class EformsignWebhookService {
     constructor(
         private readonly updateStatusUsecase: UpdateEformsignDocStatusUsecase,
         private readonly linkDocumentUsecase: LinkDocumentToClientUsecase,
+        private readonly syncClientEndDateUsecase: SyncClientEndDateUsecase,
         private readonly alimtalkService: AlimtalkService,
+        private readonly eventBus: EformsignDocsEventBus,
+        @Inject(EFORMSIGN_CLIENT_REPOSITORY)
+        private readonly eformsignApiClient: IEformsignClientRepository,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         @Inject(EFORMSIGN_DOC_REPOSITORY)
@@ -134,6 +142,17 @@ export class EformsignWebhookService {
                 await this.linkDocumentUsecase.execute(branchid, documentId);
                 this.logger.log(`Document ${documentId} successfully linked to client`);
 
+                try {
+                    const accessTokenResponse = await this.eformsignApiClient.getAccessToken(Date.now());
+                    await this.syncClientEndDateUsecase.execute(
+                        branchid,
+                        documentId,
+                        accessTokenResponse.oauth_token.access_token
+                    );
+                } catch (error) {
+                    this.logger.error(`Failed to sync end date for document ${documentId}: ${error}`);
+                }
+
                 await this.sendContractSignedAlimtalkByDocumentId(
                     branchid,
                     documentId,
@@ -143,6 +162,8 @@ export class EformsignWebhookService {
                 this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
             }
         }
+
+        this.eventBus.emit({ branchId: branchid, documentId, reason: `pdf:${status}` });
     }
 
     /**
@@ -179,7 +200,10 @@ export class EformsignWebhookService {
                 `[document_action] Document ${documentId} not found in DB. ` +
                 `Ensure frontend calls POST /eformsign-docs to create the record first. Error: ${error}`
             );
+            return;
         }
+
+        this.eventBus.emit({ branchId: branchid, documentId, reason: `action:${action ?? "unknown"}` });
     }
 
     private async handleDocumentEvent(
@@ -221,6 +245,17 @@ export class EformsignWebhookService {
                 await this.linkDocumentUsecase.execute(branchid, documentId);
                 this.logger.log(`Document ${documentId} successfully linked to client`);
 
+                try {
+                    const accessTokenResponse = await this.eformsignApiClient.getAccessToken(Date.now());
+                    await this.syncClientEndDateUsecase.execute(
+                        branchid,
+                        documentId,
+                        accessTokenResponse.oauth_token.access_token
+                    );
+                } catch (error) {
+                    this.logger.error(`Failed to sync end date for document ${documentId}: ${error}`);
+                }
+
                 await this.sendContractSignedAlimtalkByDocumentId(
                     branchid,
                     documentId,
@@ -230,6 +265,8 @@ export class EformsignWebhookService {
                 this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
             }
         }
+
+        this.eventBus.emit({ branchId: branchid, documentId, reason: `doc:${status}` });
     }
 
     private async sendContractSignedAlimtalkByDocumentId(
@@ -312,6 +349,8 @@ export class EformsignWebhookService {
             // In-progress states (pending action)
             case DOCUMENT_STATUS.DOC_REQUEST_PARTICIPANT:
                 return { statusType: "060", statusDetail: "서명 요청됨" };
+            case DOCUMENT_STATUS.DOC_REQUEST_APPROVAL:
+                return { statusType: "060", statusDetail: "결재 요청됨" };
             case DOCUMENT_STATUS.DOC_ACCEPT_PARTICIPANT:
             case DOCUMENT_STATUS.DOC_ACCEPT_OUTSIDER:
                 return { statusType: "060", statusDetail: "서명 진행중" };

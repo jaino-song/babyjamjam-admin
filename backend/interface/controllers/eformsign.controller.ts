@@ -2,6 +2,7 @@ import { Controller, Post, Get, Delete, Body, Query, Param, HttpException, HttpS
 import { EformsignService } from "../../application/services/eformsign.service";
 import { ContractDataDto } from "../../application/dto/contract.dto";
 import { AreaTemplateService } from "../../application/services/area-template.service";
+import { GenerateStaffDocumentRequestDto } from "../dto/staff-document.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { Response } from "express";
@@ -97,6 +98,27 @@ export class EformsignController {
                 clientId: body.clientId,
             };
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            throw new HttpException(
+                { error: message },
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    @Post("generate-staff-document")
+    async generateStaffDocument(@Body() body: GenerateStaffDocumentRequestDto) {
+        try {
+            return await this.eformsignService.generateStaffCompletionOptions(
+                body.documentId,
+                body.accessToken,
+                body.refreshToken,
+                body.prefillEndDate,
+            );
+        } catch (error) {
+            if (error instanceof HttpException) {
+                throw error;
+            }
             const message = error instanceof Error ? error.message : "Unknown error";
             throw new HttpException(
                 { error: message },

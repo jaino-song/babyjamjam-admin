@@ -58,8 +58,10 @@ const CONTACT_EMAIL_ALIASES = [
 
 const REREQUEST_CODES = new Set(["063"]);
 const OPEN_CODES = new Set(["034", "064", "074", "076"]);
+const SIGN_CODES = new Set(["032", "062"]);
 const REREQUEST_KEYWORDS = ["rerequest", "re_request", "재요청"];
 const OPEN_KEYWORDS = ["doc_open", "open_participant", "open_outsider", "open_reviewer", "open_reader", "열람"];
+const SIGN_KEYWORDS = ["accept_participant", "accept_outsider", "참여자 승인", "외부자 승인"];
 const FIELD_IDENTIFIER_KEYS = ["id", "field_id", "name", "field_name", "key", "label", "title"] as const;
 const FIELD_VALUE_KEYS = ["value", "field_value", "input_value", "display_value", "content", "text"] as const;
 const EVENT_TYPE_KEYS = [
@@ -401,6 +403,10 @@ function isOpenRecord(record: UnknownRecord): boolean {
   return hasMatchingEvent(record, OPEN_CODES, OPEN_KEYWORDS);
 }
 
+function isSignRecord(record: UnknownRecord): boolean {
+  return hasMatchingEvent(record, SIGN_CODES, SIGN_KEYWORDS);
+}
+
 export function extractDocumentAddress(document: Pick<EformsignDocument, "fields" | "detail_template_info"> | null | undefined): string | null {
   if (!document) {
     return null;
@@ -474,4 +480,50 @@ export function extractOpenEvents(
   document: Pick<EformsignDocument, "histories" | "previous_status" | "current_status" | "updated_date"> | null | undefined
 ): EformsignTimelineEvent[] {
   return extractTimelineEvents(document, isOpenRecord, OPEN_CODES);
+}
+
+export function extractSignEvents(
+  document: Pick<EformsignDocument, "histories" | "previous_status" | "current_status" | "updated_date"> | null | undefined
+): EformsignTimelineEvent[] {
+  return extractTimelineEvents(document, isSignRecord, SIGN_CODES);
+}
+
+/**
+ * Returns the timestamp at which the customer's step finished — i.e. the
+ * moment the workflow transitioned from the customer's signing step into the
+ * staff approval step. For 2-step docs this is the record where
+ * status_type === "060" AND step_index === "3" (staff approval requested).
+ * Falls back to the earliest "doc_accept_outsider/participant" event for
+ * legacy 1-step docs that have no separate staff step.
+ */
+export function extractCustomerSignedTimestamp(
+  document: Pick<EformsignDocument, "histories" | "previous_status" | "current_status" | "updated_date"> | null | undefined
+): number | null {
+  if (!document) return null;
+
+  const candidates: number[] = [];
+  const sources = [document.histories, document.previous_status];
+  const stepIndexKeys = ["step_index", "stepIndex", "step_idx", "step_seq"] as const;
+
+  for (const source of sources) {
+    for (const record of collectRecords(source)) {
+      const statusType = getFirstString(record, EVENT_TYPE_KEYS);
+      const stepIndex = getFirstString(record, stepIndexKeys);
+      if (
+        statusType != null &&
+        normalizeStatusCode(statusType) === "060" &&
+        stepIndex === "3"
+      ) {
+        const timestamp =
+          getFirstTimestamp(record, EVENT_TIMESTAMP_KEYS) ??
+          timestampFromUnknown(record.timestamp);
+        if (timestamp != null) candidates.push(timestamp);
+      }
+    }
+  }
+
+  if (candidates.length > 0) return Math.min(...candidates);
+
+  const signEvents = extractSignEvents(document);
+  return signEvents.length > 0 ? signEvents[0].timestamp : null;
 }
