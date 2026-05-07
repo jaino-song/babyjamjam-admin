@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import DocumentPreviewModal from "../document-preview-modal";
 import { getDownloadFileName, getPreviewKind } from "../document-preview-utils";
 import type { Document } from "@/hooks/use-documents";
@@ -104,6 +104,7 @@ let blobUrlIndex = 0;
 const originalFetch = global.fetch;
 const originalCreateObjectUrl = URL.createObjectURL;
 const originalRevokeObjectUrl = URL.revokeObjectURL;
+const originalElementFromPoint = document.elementFromPoint;
 
 beforeAll(() => {
   global.ResizeObserver = ResizeObserverMock as typeof ResizeObserver;
@@ -125,6 +126,13 @@ beforeAll(() => {
     configurable: true,
     value: jest.fn(),
   });
+
+  if (typeof document.elementFromPoint !== "function") {
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: jest.fn(() => null),
+    });
+  }
 });
 
 beforeEach(() => {
@@ -142,6 +150,16 @@ afterAll(() => {
     configurable: true,
     value: originalRevokeObjectUrl,
   });
+
+  if (typeof originalElementFromPoint === "function") {
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: originalElementFromPoint,
+    });
+    return;
+  }
+
+  Reflect.deleteProperty(document, "elementFromPoint");
 });
 
 describe("DocumentPreviewModal", () => {
@@ -168,6 +186,145 @@ describe("DocumentPreviewModal", () => {
       expect(screen.getByText("150%")).toBeInTheDocument();
       expect(screen.getByTestId("pdf-page-1")).toHaveAttribute("data-width", "480");
     });
+  });
+
+  it("zooms when document-targeted pinch wheel hit-tests inside the canvas", async () => {
+    render(
+      <DocumentPreviewModal
+        open={true}
+        onClose={jest.fn()}
+        doc={baseDocument}
+        categories={categories}
+      />
+    );
+
+    await screen.findByTestId("pdf-page-1");
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+    const previewPage = screen.getByTestId("pdf-page-1");
+    const elementFromPointSpy = jest.spyOn(document, "elementFromPoint").mockReturnValue(previewPage as Element);
+
+    try {
+      const zoomIn = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        clientX: 100,
+        clientY: 100,
+        deltaY: -5,
+      });
+      act(() => {
+        document.documentElement.dispatchEvent(zoomIn);
+      });
+
+      expect(zoomIn.defaultPrevented).toBe(true);
+      expect(elementFromPointSpy).toHaveBeenCalledWith(100, 100);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("PDF 미리보기 확대/축소")).toHaveValue("105");
+        expect(screen.getByText("105%")).toBeInTheDocument();
+        expect(screen.getByTestId("pdf-page-1")).toHaveAttribute("data-width", "336");
+      });
+
+      const zoomOut = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        clientX: 100,
+        clientY: 100,
+        deltaY: 5,
+      });
+      act(() => {
+        document.documentElement.dispatchEvent(zoomOut);
+      });
+
+      expect(zoomOut.defaultPrevented).toBe(true);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("PDF 미리보기 확대/축소")).toHaveValue("100");
+        expect(screen.getByText("100%")).toBeInTheDocument();
+        expect(screen.getByTestId("pdf-page-1")).toHaveAttribute("data-width", "320");
+      });
+    } finally {
+      elementFromPointSpy.mockRestore();
+    }
+  });
+
+  it("suppresses ambiguous first pinch wheel while dialog is open", async () => {
+    render(
+      <DocumentPreviewModal
+        open={true}
+        onClose={jest.fn()}
+        doc={baseDocument}
+        categories={categories}
+      />
+    );
+
+    await screen.findByTestId("pdf-page-1");
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+
+    const elementFromPointSpy = jest.spyOn(document, "elementFromPoint").mockReturnValue(null);
+
+    try {
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        clientX: 0,
+        clientY: 0,
+        deltaY: -40,
+      });
+      document.documentElement.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(elementFromPointSpy).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("PDF 미리보기 확대/축소")).toHaveValue("100");
+    } finally {
+      elementFromPointSpy.mockRestore();
+    }
+  });
+
+  it("does not zoom when pinch wheel hit-tests inside dialog but outside canvas", async () => {
+    render(
+      <DocumentPreviewModal
+        open={true}
+        onClose={jest.fn()}
+        doc={baseDocument}
+        categories={categories}
+      />
+    );
+
+    await screen.findByTestId("pdf-page-1");
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+
+    const dialogContent = document.querySelector('[data-component="contracts-document-preview"]');
+    expect(dialogContent).not.toBeNull();
+    if (!dialogContent) throw new Error("dialog not rendered");
+
+    const elementFromPointSpy = jest.spyOn(document, "elementFromPoint").mockReturnValue(dialogContent as Element);
+
+    try {
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        clientX: 50,
+        clientY: 50,
+        deltaY: -40,
+      });
+      document.documentElement.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(elementFromPointSpy).toHaveBeenCalledWith(50, 50);
+      expect(screen.getByLabelText("PDF 미리보기 확대/축소")).toHaveValue("100");
+    } finally {
+      elementFromPointSpy.mockRestore();
+    }
   });
 
   it("uses the same zoom slider pattern for image previews", () => {
