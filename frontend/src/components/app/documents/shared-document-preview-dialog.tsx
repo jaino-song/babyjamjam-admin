@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, type ReactNode, type WheelEvent as ReactWheelEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import { Document as PdfDocument, Page } from "react-pdf";
 import { Download, Eye, Printer, X } from "lucide-react";
@@ -41,12 +41,11 @@ interface SharedDocumentPreviewDialogProps {
 
 const DEFAULT_ZOOM_PERCENT = 100;
 const MIN_ZOOM_PERCENT = 60;
-const MAX_ZOOM_PERCENT = 180;
-const ZOOM_STEP = 5;
-const PINCH_WHEEL_DELTA_PER_STEP = 40;
+const MAX_ZOOM_PERCENT = 300;
+const ZOOM_STEP = 1;
+const PINCH_WHEEL_DELTA_PER_STEP = 1;
 const WHEEL_DELTA_LINE_MODE = 1;
 const WHEEL_DELTA_PAGE_MODE = 2;
-const IS_TEST_ENVIRONMENT = process.env.NODE_ENV === "test";
 
 interface PointerPosition {
   x: number;
@@ -65,6 +64,62 @@ function normalizeWheelDeltaY(event: Pick<WheelEvent, "deltaMode" | "deltaY">): 
     return event.deltaY * 100;
   }
   return event.deltaY;
+}
+
+// Set NEXT_PUBLIC_DEBUG_PINCH=1 in .env.local to log every pinch wheel event.
+function describeTarget(target: EventTarget | null): string {
+  if (!(target instanceof Element)) {
+    return String(target);
+  }
+
+  const dataComponent = target.getAttribute("data-component");
+  const id = target.id ? `#${target.id}` : "";
+  const className =
+    typeof target.className === "string"
+      ? `.${target.className
+          .split(/\s+/)
+          .slice(0, 3)
+          .filter(Boolean)
+          .join(".")}`
+      : "";
+
+  return `${target.tagName.toLowerCase()}${id}${dataComponent ? `[data-component="${dataComponent}"]` : ""}${className}`;
+}
+
+function logGestureEvent(
+  event: WheelEvent,
+  scope: string,
+  phase: "pre" | "post-prevent",
+  zoomPercent?: number
+): void {
+  if (process.env.NEXT_PUBLIC_DEBUG_PINCH !== "1") {
+    return;
+  }
+
+  if (phase === "pre") {
+    const path = event.composedPath().slice(0, 8).map(describeTarget);
+    console.info("[pinch:pre]", {
+      cancelable: event.cancelable,
+      defaultPrevented: event.defaultPrevented,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+      deltaMode: event.deltaMode,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      target: describeTarget(event.target),
+      scope,
+      zoomPercent,
+      path: path.join(" > "),
+    });
+    return;
+  }
+
+  console.info("[pinch:post-prevent]", {
+    cancelable: event.cancelable,
+    defaultPrevented: event.defaultPrevented,
+  });
 }
 
 export function SharedDocumentPreviewDialog({
@@ -100,6 +155,7 @@ export function SharedDocumentPreviewDialog({
   const isZoomablePreview = isPdf || isImage || isHwp;
   const zoomScale = zoomPercent / 100;
   const pageWidth = Math.max(previewWidth, 320) * zoomScale;
+  const zoomPercentRef = useRef(DEFAULT_ZOOM_PERCENT);
 
   const applyPinchZoomDelta = (event: Pick<WheelEvent, "deltaMode" | "deltaY">) => {
     pinchWheelRemainderRef.current += normalizeWheelDeltaY(event);
@@ -144,62 +200,122 @@ export function SharedDocumentPreviewDialog({
   }, [isHwp, isPdf, open]);
 
   useEffect(() => {
-    const dialogNode = previewDialogContentRef.current;
-    if (!open || !dialogNode) {
+    zoomPercentRef.current = zoomPercent;
+  }, [zoomPercent]);
+
+  useEffect(() => {
+    if (!open) {
       return;
     }
+    type PinchScope = "preview" | "dialog" | "outside" | "ambiguous";
 
-    const updateLastPointerPosition = (event: PointerEvent | MouseEvent) => {
-      lastPointerPositionRef.current = {
-        x: event.clientX,
-        y: event.clientY,
+    let frameId = 0;
+    let controller: AbortController | null = null;
+
+    const attachPinchListeners = () => {
+      const dialogNode = previewDialogContentRef.current;
+      if (!dialogNode) {
+        frameId = window.requestAnimationFrame(attachPinchListeners);
+        return;
+      }
+
+      // Clear stale pointer coordinates so the first weak pinch after reopen is safely treated as ambiguous.
+      lastPointerPositionRef.current = null;
+
+      const updateLastPointerPosition = (event: PointerEvent | MouseEvent) => {
+        lastPointerPositionRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+        };
       };
-    };
 
-    const handleDialogPinchWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey) {
-        return;
-      }
+      const resolvePinchScope = (event: WheelEvent): PinchScope => {
+        const previewCanvasNode = previewCanvasRef.current;
+        const eventPath = event.composedPath();
 
-      const eventTarget = event.target instanceof Node ? event.target : null;
-      const pointerTarget = getNodeAtPointerPosition(
-        event.clientX !== 0 || event.clientY !== 0
+        if (previewCanvasNode && eventPath.includes(previewCanvasNode)) {
+          return "preview";
+        }
+        if (eventPath.includes(dialogNode)) {
+          return "dialog";
+        }
+
+        const eventTarget = event.target instanceof Node ? event.target : null;
+        if (eventTarget && previewCanvasNode?.contains(eventTarget)) {
+          return "preview";
+        }
+        if (eventTarget && dialogNode.contains(eventTarget)) {
+          return "dialog";
+        }
+
+        const hasRealCoords =
+          (event.clientX !== 0 || event.clientY !== 0) &&
+          Number.isFinite(event.clientX) &&
+          Number.isFinite(event.clientY);
+        const point = hasRealCoords
           ? { x: event.clientX, y: event.clientY }
-          : lastPointerPositionRef.current
-      );
-      const dialogTarget = [eventTarget, pointerTarget].find(
-        (candidate): candidate is Node => candidate instanceof Node && dialogNode.contains(candidate)
-      );
+          : lastPointerPositionRef.current;
+        const hit = getNodeAtPointerPosition(point);
 
-      if (!dialogTarget) {
-        return;
-      }
+        if (previewCanvasNode && hit && previewCanvasNode.contains(hit)) {
+          return "preview";
+        }
+        if (hit && dialogNode.contains(hit)) {
+          return "dialog";
+        }
+        if (hit) {
+          return "outside";
+        }
 
-      event.preventDefault();
-      if (!isZoomablePreview) {
-        return;
-      }
+        return "ambiguous";
+      };
 
-      const previewCanvasNode = previewCanvasRef.current;
-      const previewTarget = [eventTarget, pointerTarget].find(
-        (candidate): candidate is Node => candidate instanceof Node && Boolean(previewCanvasNode?.contains(candidate))
-      );
+      const handledWheelEvents = new WeakSet<WheelEvent>();
 
-      if (!previewTarget) {
-        return;
-      }
+      const handlePinchWheel = (event: WheelEvent) => {
+        if (!event.ctrlKey || handledWheelEvents.has(event)) {
+          return;
+        }
 
-      applyPinchZoomDelta(event);
+        const scope = resolvePinchScope(event);
+        if (scope === "outside") {
+          return;
+        }
+
+        handledWheelEvents.add(event);
+
+        logGestureEvent(event, scope, "pre", zoomPercentRef.current);
+
+        if (event.cancelable) {
+          event.preventDefault();
+          logGestureEvent(event, scope, "post-prevent");
+        }
+
+        if (scope === "preview" && isZoomablePreview) {
+          applyPinchZoomDelta(event);
+        }
+      };
+
+      controller = new AbortController();
+      const blockingWheel: AddEventListenerOptions = { passive: false, capture: true, signal: controller.signal };
+      const passivePointer: AddEventListenerOptions = { passive: true, capture: true, signal: controller.signal };
+
+      window.addEventListener("wheel", handlePinchWheel, blockingWheel);
+      document.addEventListener("wheel", handlePinchWheel, blockingWheel);
+      dialogNode.addEventListener("wheel", handlePinchWheel, blockingWheel);
+      previewCanvasRef.current?.addEventListener("wheel", handlePinchWheel, blockingWheel);
+
+      document.addEventListener("pointermove", updateLastPointerPosition, passivePointer);
+      document.addEventListener("pointerover", updateLastPointerPosition, passivePointer);
+      document.addEventListener("mousemove", updateLastPointerPosition, passivePointer);
+      document.addEventListener("mouseover", updateLastPointerPosition, passivePointer);
     };
 
-    document.addEventListener("pointermove", updateLastPointerPosition, { passive: true, capture: true });
-    document.addEventListener("mousemove", updateLastPointerPosition, { passive: true, capture: true });
-    document.addEventListener("wheel", handleDialogPinchWheel, { passive: false, capture: true });
+    attachPinchListeners();
 
     return () => {
-      document.removeEventListener("pointermove", updateLastPointerPosition, true);
-      document.removeEventListener("mousemove", updateLastPointerPosition, true);
-      document.removeEventListener("wheel", handleDialogPinchWheel, true);
+      window.cancelAnimationFrame(frameId);
+      controller?.abort();
     };
   }, [isZoomablePreview, open]);
 
@@ -208,14 +324,6 @@ export function SharedDocumentPreviewDialog({
     pinchWheelRemainderRef.current = 0;
     setNumPages(0);
     onClose();
-  };
-
-  const handlePreviewWheelForTest = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!isZoomablePreview || !event.ctrlKey) {
-      return;
-    }
-
-    applyPinchZoomDelta(event);
   };
 
   const handlePrint = () => {
@@ -305,7 +413,6 @@ export function SharedDocumentPreviewDialog({
             data-component="document-preview-canvas"
             ref={previewCanvasRef}
             className="relative flex min-h-[400px] flex-1 flex-col overflow-hidden bg-muted/50"
-            onWheel={IS_TEST_ENVIRONMENT ? handlePreviewWheelForTest : undefined}
           >
             {isPdf && (
               <div ref={previewViewportRef} className="h-full overflow-auto px-6 py-6">
