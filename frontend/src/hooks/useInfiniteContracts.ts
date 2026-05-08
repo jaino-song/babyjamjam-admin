@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
@@ -68,6 +68,13 @@ interface UseInfiniteContractsOptions {
   filterType?: DocumentFilterType;
   /** Names to exclude from the results */
   excludedNames?: readonly string[];
+  /**
+   * Eagerly auto-fetch every remaining page in the background so
+   * `allDocuments` becomes the true full list (not just pages scrolled into
+   * view). Required when callers compute counts/stats from `allDocuments` —
+   * without it, derived totals under-report immediately after load.
+   */
+  eager?: boolean;
 }
 
 /**
@@ -90,6 +97,7 @@ export function useInfiniteContracts({
   enabled = true,
   filterType = null,
   excludedNames = EMPTY_EXCLUDED_NAMES,
+  eager = false,
 }: UseInfiniteContractsOptions = {}) {
   const query = useInfiniteQuery<EformsignDocumentsResponse>({
     queryKey: infiniteContractsQueryKeys.documents(filterType),
@@ -166,6 +174,17 @@ export function useInfiniteContracts({
   // Total reported by upstream eformsign for per-status tabs. Not meaningful
   // for the 전체 tab (it is the first page's deduped batch size).
   const totalCount = query.data?.pages[0]?.total_rows ?? 0;
+
+  // Eager mode: walk every remaining page so `allDocuments` is the true full
+  // list. Each page completion bumps query.hasNextPage; the effect refires
+  // and pulls the next page until exhaustion. Disabled by default so per-tab
+  // pagination stays cheap.
+  useEffect(() => {
+    if (!eager) return;
+    if (!query.hasNextPage) return;
+    if (query.isFetchingNextPage) return;
+    void query.fetchNextPage();
+  }, [eager, query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage]);
 
   return {
     documents,

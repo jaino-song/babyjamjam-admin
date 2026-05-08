@@ -451,6 +451,11 @@ export default function ContractsPage() {
     enabled: isAuthenticated,
     filterType,
     excludedNames: EXCLUDED_CUSTOMER_NAMES,
+    // 전체 tab populates the stats counters by iterating allDocuments. Without
+    // eager-loading, `allDocuments` only holds pages the user already
+    // scrolled into view, so the StatsBar under-reports until they scroll the
+    // full list. Per-status tabs keep normal pagination.
+    eager: filterType === null,
   });
   const [statsDocuments, setStatsDocuments] = useState<EformsignDocument[]>([]);
 
