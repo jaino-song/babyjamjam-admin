@@ -29,6 +29,7 @@ export interface HeadlessDispatchResponse {
     documentId?: string;
     durationMs: number;
     reason?: string;
+    failedStep?: string;
     fallbackHint?: "iframe";
 }
 
@@ -235,10 +236,12 @@ export const eformsignApi = {
     dispatchHeadless: async (
         contractData: ContractDataDto,
         clientId?: number,
+        progressId?: string,
     ): Promise<HeadlessDispatchResponse> => {
         const { data } = await api.post('/eformsign-docs/dispatch-headless', {
             contractData,
             clientId,
+            progressId,
         });
         return data;
     },
@@ -249,10 +252,12 @@ export const eformsignApi = {
     finalizeHeadless: async (
         documentId: string,
         prefillEndDate?: string,
+        progressId?: string,
     ): Promise<HeadlessFinalizeResponse> => {
         const { data } = await api.post('/eformsign-docs/finalize-headless', {
             documentId,
             prefillEndDate,
+            progressId,
         });
         return data;
     },

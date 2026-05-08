@@ -66,11 +66,43 @@ const MOCK_VOUCHER_PRICE_INFOS = [
     actualPrice: "234567",
   },
 ];
-const MOCK_DOCUMENT_LIST = {
+const MOCK_DOCUMENT_LIST: {
+  documents: unknown[];
+  total_rows: number;
+  limit: number;
+  skip: number;
+} = {
   documents: [],
   total_rows: 0,
   limit: 100,
   skip: 0,
+};
+const MOCK_EXISTING_DOCUMENT = {
+  id: "doc-existing-test",
+  document_number: "BJJ-2026-001",
+  template: { id: "tpl-existing-test", name: "남동구 계약서" },
+  document_name: "기존 전자문서",
+  creator: { recipient_type: "01", id: "staff@example.com", name: "담당자" },
+  created_date: Date.parse("2026-05-01T09:00:00.000Z"),
+  last_editor: { recipient_type: "01", id: "staff@example.com", name: "담당자" },
+  updated_date: Date.parse("2026-05-01T09:00:00.000Z"),
+  recipients: [{ recipient_type: "02", name: "기존고객", sms: "01099998888" }],
+  current_status: {
+    status_type: "060",
+    status_doc_type: "대기",
+    status_doc_detail: "대기",
+    step_type: "05",
+    step_index: "2",
+    step_name: "이용자 서명",
+    step_recipients: [{ recipient_type: "02", name: "기존고객", sms: "01099998888" }],
+    step_group: 1,
+    expired_date: Date.parse("2026-06-01T09:00:00.000Z"),
+    _expired: false,
+  },
+  fields: [],
+  next_status: [],
+  previous_status: [],
+  histories: [],
 };
 const MOCK_SDK_OPTIONS = {
   company: { id: "company-id", country_code: "kr", user_key: "staff@example.com" },
@@ -90,7 +122,13 @@ const MOCK_SDK_OPTIONS = {
   },
 };
 
-async function installCommonRoutes(page: Page) {
+async function installCommonRoutes(
+  page: Page,
+  options: {
+    documentList?: typeof MOCK_DOCUMENT_LIST;
+    detailDocument?: typeof MOCK_EXISTING_DOCUMENT;
+  } = {},
+) {
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
 
@@ -155,9 +193,22 @@ async function installCommonRoutes(page: Page) {
       body: JSON.stringify({ hasAppAuthToken: true, hasAccessToken: true, hasRefreshToken: true }),
     })
   );
-  await page.route("**/api/eformsign/documents**", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(MOCK_DOCUMENT_LIST) })
-  );
+  await page.route("**/api/eformsign/documents**", (route) => {
+    const url = new URL(route.request().url());
+    if (options.detailDocument && url.pathname.endsWith(`/api/eformsign/documents/${options.detailDocument.id}`)) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(options.detailDocument),
+      });
+    }
+
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(options.documentList ?? MOCK_DOCUMENT_LIST),
+    });
+  });
   await page.route("**/api/eformsign-docs/client-names", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) })
   );
@@ -262,6 +313,7 @@ async function openContractCreationForm(page: Page) {
   await page.locator('[data-component="contracts-header-send-contract"]').click();
   await expect(page.locator('[data-component="contract-creation-form"]')).toBeVisible();
   await expect(page.locator('[data-component="stepped-wizard-stepper-desktop"]')).toBeVisible();
+  await expect(page.locator('[data-component="stepped-wizard-stepper-desktop"]')).toContainText("전자문서 생성");
 }
 
 async function selectClient(page: Page, name: string) {
@@ -361,6 +413,22 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect(page.getByTestId("contract-creation-submit")).toBeEnabled();
     await page.getByTestId("contract-creation-submit").click();
 
+    await expect(page.getByTestId("contract-creation-progress-step-client-started")).toHaveAttribute(
+      "data-state",
+      "error"
+    );
+    await expect(page.getByTestId("contract-creation-progress-step-client-started")).toContainText(
+      "전자문서 클라이언트 시작 실패"
+    );
+    await expect(page.getByTestId("contract-creation-progress-step-client-started")).toContainText(
+      "수동으로 입력해 주세요"
+    );
+    await expect(page.getByTestId("contract-creation-progress-error-client-started")).toBeVisible();
+    await expect(page.getByTestId("contract-creation-retry")).toBeVisible();
+    await expect(page.locator('[data-component="messages-contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
+
+    await page.getByTestId("contract-creation-manual").click();
     await expect.poll(() => capturedGenerateBody).not.toBeNull();
     expect(capturedGenerateBody).toEqual(expect.objectContaining({
       clientId: MOCK_CLIENT.id,
@@ -387,11 +455,11 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect.poll(async () => {
       return page.evaluate(() => (window as Window & { __eformsignCalls?: unknown[] }).__eformsignCalls?.length ?? 0);
     }).toBeGreaterThan(0);
-    await expect(page.getByTestId("contract-creation-progress-step-client-started")).toHaveAttribute(
-      "data-state",
-      "active"
-    );
-    await expect(page.getByTestId("contract-creation-progress-spinner-client-started")).toBeVisible();
+    const manualDialog = page.locator('[data-component="messages-contract-form-dialog"]');
+    await expect(manualDialog).toBeVisible();
+    await expect(page.locator("#eformsign_iframe")).toBeVisible();
+    await expect(page.getByTestId("contract-creation-progress-stepper")).toHaveCount(1);
+    await expect(manualDialog.locator('[data-testid="contract-creation-progress-stepper"]')).toHaveCount(0);
 
     const sdkCall = await page.evaluate(() => {
       const calls = (window as Window & {
@@ -417,11 +485,6 @@ test.describe("Contract creation iframe + success flow", () => {
         ],
       });
     });
-    await expect(page.getByTestId("contract-creation-progress-step-info-inserted")).toHaveAttribute(
-      "data-state",
-      "active"
-    );
-    await expect(page.getByTestId("contract-creation-progress-spinner-info-inserted")).toBeVisible();
 
     const successAlert = page.waitForEvent("dialog");
     await page.evaluate((documentId) => {
@@ -430,11 +493,6 @@ test.describe("Contract creation iframe + success flow", () => {
       }).__eformsignCalls;
       calls[0].successCallback?.({ code: "-1", document_id: documentId, type: "document" });
     }, CONTRACT_DOC_ID);
-    await expect(page.getByTestId("contract-creation-progress-step-creating")).toHaveAttribute(
-      "data-state",
-      "active"
-    );
-    await expect(page.getByTestId("contract-creation-progress-spinner-creating")).toBeVisible();
     const dialog = await successAlert;
     expect(dialog.message()).toBe("계약서가 성공적으로 생성되었습니다.");
     await dialog.accept();
@@ -450,6 +508,14 @@ test.describe("Contract creation iframe + success flow", () => {
     });
     await expect(page.locator('[data-component="messages-contract-form-dialog"]')).toHaveCount(0);
     await expect(page.getByTestId("contract-creation-progress-step-sent")).toHaveAttribute("data-state", "done");
+    const actions = page.locator('[data-component="stepped-wizard-actions"]');
+    await expect(actions.getByRole("button", { name: "취소" })).toHaveCount(0);
+    await expect(page.getByTestId("contract-creation-new-send")).toBeVisible();
+
+    await page.getByTestId("contract-creation-new-send").click();
+    await expect(actions.getByRole("button", { name: "취소" })).toBeVisible();
+    await expect(page.getByTestId("contract-creation-next")).toBeDisabled();
+    await expect(page.getByTestId("contract-creation-progress-stepper")).toHaveCount(0);
   });
 
   test("step 1 keeps 다음 disabled until the required selections are complete", async ({ page }) => {
@@ -468,7 +534,235 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect(nextButton).toBeEnabled();
   });
 
-  test("backend failure shows an error and keeps the wizard on the final step", async ({ page }) => {
+  test("shows backend headless progress inline while dispatch is pending", async ({ page }) => {
+    await stubEformsignSdk(page);
+    await installCommonRoutes(page);
+
+    let releaseDispatch: () => void = () => undefined;
+    const dispatchCanFinish = new Promise<void>((resolve) => {
+      releaseDispatch = resolve;
+    });
+
+    await page.route("**/api/eformsign-docs/dispatch-headless/progress**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          'event: progress\ndata: {"step":"client-started"}\n\n',
+          'event: progress\ndata: {"step":"info-inserted"}\n\n',
+          'event: progress\ndata: {"step":"creating"}\n\n',
+        ].join(""),
+      })
+    );
+    await page.route("**/api/eformsign-docs/dispatch-headless", async (route) => {
+      await dispatchCanFinish;
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: false,
+          reason: "release to iframe fallback after progress assertion",
+          fallbackHint: "iframe",
+          durationMs: 1,
+        }),
+      });
+    });
+    await page.route("**/api/generate-document", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(MOCK_SDK_OPTIONS),
+      })
+    );
+
+    await openContractCreationForm(page);
+    await completeContractWizard(page);
+    await page.getByTestId("contract-creation-submit").click();
+
+    await expect(page.locator('[data-component="stepped-wizard-stepper-desktop-circle"]').nth(4)).toHaveClass(/scale-110/);
+    await expect(page.getByTestId("contract-creation-progress-stepper")).toHaveCount(1);
+    await expect.poll(async () => page.getByTestId("contract-creation-progress-stepper").evaluate((el) => el.tagName))
+      .toBe("OL");
+    await expect(page.getByTestId("contract-creation-progress-step-client-started")).toHaveAttribute(
+      "data-state",
+      "done"
+    );
+    await expect(page.getByTestId("contract-creation-progress-step-info-inserted")).toHaveAttribute(
+      "data-state",
+      "done"
+    );
+    await expect(page.getByTestId("contract-creation-progress-step-creating")).toHaveAttribute(
+      "data-state",
+      "active"
+    );
+    await expect(page.getByTestId("contract-creation-progress-spinner-creating")).toBeVisible();
+    await expect(page.locator('[data-component="messages-contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
+
+    releaseDispatch();
+    await expect(page.getByTestId("contract-creation-progress-step-creating")).toHaveAttribute(
+      "data-state",
+      "error"
+    );
+    await expect(page.getByTestId("contract-creation-progress-step-creating")).toContainText("전자문서 생성 실패");
+    await expect(page.getByTestId("contract-creation-progress-error-creating")).toBeVisible();
+    await expect(page.getByTestId("contract-creation-retry")).toBeVisible();
+    await expect(page.locator('[data-component="messages-contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
+  });
+
+  test("returns to the in-progress creation detail instead of starting a new send session", async ({ page }) => {
+    await stubEformsignSdk(page);
+    await installCommonRoutes(page, {
+      documentList: {
+        documents: [MOCK_EXISTING_DOCUMENT],
+        total_rows: 1,
+        limit: 100,
+        skip: 0,
+      },
+      detailDocument: MOCK_EXISTING_DOCUMENT,
+    });
+
+    let releaseDispatch: () => void = () => undefined;
+    const dispatchCanFinish = new Promise<void>((resolve) => {
+      releaseDispatch = resolve;
+    });
+
+    await page.route("**/api/eformsign-docs/dispatch-headless/progress**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          'event: progress\ndata: {"step":"client-started"}\n\n',
+          'event: progress\ndata: {"step":"info-inserted"}\n\n',
+          'event: progress\ndata: {"step":"creating"}\n\n',
+        ].join(""),
+      })
+    );
+    await page.route("**/api/eformsign-docs/dispatch-headless", async (route) => {
+      await dispatchCanFinish;
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: false,
+          reason: "release after retained-session assertion",
+          fallbackHint: "iframe",
+          durationMs: 1,
+        }),
+      });
+    });
+
+    await openContractCreationForm(page);
+    await completeContractWizard(page);
+    await page.getByTestId("contract-creation-submit").click();
+
+    await expect(page.getByTestId("contract-creation-progress-step-creating")).toHaveAttribute(
+      "data-state",
+      "active"
+    );
+    await page.locator('[data-component="contracts-list-item-content"]').getByText("기존고객").click();
+    await expect(page.locator('[data-component="contracts-detail-content"]')).toBeVisible();
+    await expect(page.locator('[data-component="contract-creation-form"]')).toBeHidden();
+
+    await page.locator('[data-component="contracts-header-send-contract"]').click();
+    await expect(page.locator('[data-component="contract-creation-form"]')).toBeVisible();
+    await expect(page.getByTestId("contract-creation-progress-step-creating")).toHaveAttribute(
+      "data-state",
+      "active"
+    );
+    await expect(page.getByTestId("contract-creation-submit")).toHaveCount(0);
+    await expect(page.getByTestId("contract-creation-progress-stepper")).toHaveCount(1);
+
+    releaseDispatch();
+    await expect(page.getByTestId("contract-creation-progress-step-creating")).toHaveAttribute(
+      "data-state",
+      "error"
+    );
+  });
+
+  test("marks the failed backend step and retries headless dispatch", async ({ page }) => {
+    await stubEformsignSdk(page);
+    await installCommonRoutes(page);
+
+    let progressRequests = 0;
+    let dispatchCalls = 0;
+
+    await page.route("**/api/eformsign-docs/dispatch-headless/progress**", (route) => {
+      progressRequests += 1;
+      const events = progressRequests === 1
+        ? [
+          'event: progress\ndata: {"step":"client-started"}\n\n',
+          'event: progress\ndata: {"step":"info-inserted"}\n\n',
+          'event: progress\ndata: {"step":"failed","failedStep":"info-inserted","reason":"selector miss"}\n\n',
+        ]
+        : [
+          'event: progress\ndata: {"step":"client-started"}\n\n',
+          'event: progress\ndata: {"step":"info-inserted"}\n\n',
+          'event: progress\ndata: {"step":"creating"}\n\n',
+          'event: progress\ndata: {"step":"sent"}\n\n',
+        ];
+
+      return route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.join(""),
+      });
+    });
+    await page.route("**/api/eformsign-docs/dispatch-headless", async (route) => {
+      dispatchCalls += 1;
+      if (dispatchCalls === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(
+          dispatchCalls === 1
+            ? {
+              ok: false,
+              reason: "selector miss",
+              fallbackHint: "iframe",
+              durationMs: 1,
+            }
+            : {
+              ok: true,
+              documentId: CONTRACT_DOC_ID,
+              durationMs: 2,
+            },
+        ),
+      });
+    });
+
+    await openContractCreationForm(page);
+    await completeContractWizard(page);
+    await page.getByTestId("contract-creation-submit").click();
+
+    const failedStep = page.getByTestId("contract-creation-progress-step-info-inserted");
+    await expect(failedStep).toHaveAttribute("data-state", "error");
+    await expect(failedStep).toContainText("이용자 정보 입력 실패");
+    await expect(failedStep).toContainText("수동으로 입력해 주세요");
+    await expect(page.getByTestId("contract-creation-progress-error-info-inserted")).toBeVisible();
+    await expect(page.getByTestId("contract-creation-retry")).toBeVisible();
+    await expect(page.locator('[data-component="messages-contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
+
+    const successAlert = page.waitForEvent("dialog");
+    await page.getByTestId("contract-creation-retry").click();
+    const dialog = await successAlert;
+    expect(dialog.message()).toBe("계약서가 성공적으로 생성되었습니다.");
+    await dialog.accept();
+
+    expect(dispatchCalls).toBe(2);
+    await expect(page.getByTestId("contract-creation-progress-step-sent")).toHaveAttribute("data-state", "done");
+    const actions = page.locator('[data-component="stepped-wizard-actions"]');
+    await expect(actions.getByRole("button", { name: "취소" })).toHaveCount(0);
+    await expect(page.getByTestId("contract-creation-new-send")).toBeVisible();
+    await expect(page.locator('[data-component="messages-contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
+  });
+
+  test("manual fallback failure shows an error and returns to the contract info step", async ({ page }) => {
     await stubEformsignSdk(page);
     await installCommonRoutes(page);
     await page.route("**/api/generate-document", (route) =>
@@ -478,6 +772,8 @@ test.describe("Contract creation iframe + success flow", () => {
     await openContractCreationForm(page);
     await completeContractWizard(page);
     await page.getByTestId("contract-creation-submit").click();
+    await expect(page.getByTestId("contract-creation-manual")).toBeVisible();
+    await page.getByTestId("contract-creation-manual").click();
 
     await expect(page.locator('[data-component="messages-contract-form-error"]')).toContainText(
       "Request failed with status code 500"

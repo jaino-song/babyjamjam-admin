@@ -1,11 +1,14 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { EformsignService } from "application/services/eformsign.service";
 import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
+import { EformsignHeadlessProgressService } from "application/services/eformsign-headless-progress.service";
+import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 import { GetEformsignAccessTokenUsecase } from "./get-eformsign-access-token.usecase";
 
 export interface FinalizeHeadlessParams {
     documentId: string;
     prefillEndDate?: string;
+    progressId?: string;
 }
 
 export interface FinalizeHeadlessSuccess {
@@ -18,6 +21,7 @@ export interface FinalizeHeadlessFailure {
     reason: string;
     fallbackHint: "iframe";
     durationMs: number;
+    failedStep?: EformsignHeadlessProgressStep;
 }
 
 export type FinalizeHeadlessResult = FinalizeHeadlessSuccess | FinalizeHeadlessFailure;
@@ -35,10 +39,12 @@ export class FinalizeDocumentHeadlessUsecase {
         private readonly eformsignService: EformsignService,
         private readonly headlessService: EformsignHeadlessService,
         private readonly getAccessTokenUsecase: GetEformsignAccessTokenUsecase,
+        private readonly progressService: EformsignHeadlessProgressService,
     ) {}
 
     async execute(params: FinalizeHeadlessParams): Promise<FinalizeHeadlessResult> {
         const start = Date.now();
+        let latestProgressStep: EformsignHeadlessProgressStep | undefined;
         try {
             const tokenResponse = await this.getAccessTokenUsecase.execute(Date.now());
             const accessToken = tokenResponse.oauth_token.access_token;
@@ -54,14 +60,20 @@ export class FinalizeDocumentHeadlessUsecase {
             const result = await this.headlessService.dispatchFinalize({
                 documentOption,
                 documentId: params.documentId,
+                onProgress: (step) => {
+                    latestProgressStep = step;
+                    this.progressService.emit(params.progressId, step);
+                },
             });
 
             if (!result.ok) {
+                this.progressService.emit(params.progressId, "failed", result.reason, latestProgressStep);
                 return {
                     ok: false,
                     reason: result.reason,
                     fallbackHint: "iframe",
                     durationMs: result.durationMs,
+                    failedStep: latestProgressStep,
                 };
             }
 
@@ -69,11 +81,13 @@ export class FinalizeDocumentHeadlessUsecase {
         } catch (error) {
             const reason = error instanceof Error ? error.message : "unknown headless finalize error";
             this.logger.error(`FinalizeDocumentHeadlessUsecase failed: ${reason}`);
+            this.progressService.emit(params.progressId, "failed", reason, latestProgressStep);
             return {
                 ok: false,
                 reason,
                 fallbackHint: "iframe",
                 durationMs: Date.now() - start,
+                failedStep: latestProgressStep,
             };
         }
     }

@@ -2,11 +2,12 @@ import type { FrameLocator, Page } from "playwright-core";
 import type { Logger as NestLogger } from "@nestjs/common";
 import {
     EFORMSIGN_GATE_POLL_MS,
-    REQUEST_SEND_DIALOG_SELECTOR,
+    FINALIZE_REQUEST_SEND_DIALOG_SELECTOR,
     findVisibleLocator,
     getEformsignGateSnapshot,
     isSuccessLatched,
 } from "./eformsign-gate-utils";
+import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 
 const EFORMSIGN_FINALIZE_GATE_TIMEOUT_MS = 30_000;
 
@@ -20,16 +21,29 @@ export async function runEformsignFinalizeGates(
     page: Page,
     eformsignFrame: FrameLocator,
     logger: NestLogger | Console = console,
+    onProgress?: (step: EformsignHeadlessProgressStep) => void,
 ): Promise<"success-latched" | "request-send-clicked"> {
     const deadline = Date.now() + EFORMSIGN_FINALIZE_GATE_TIMEOUT_MS;
     let lastAction = "none";
+    let creatingEmitted = false;
+
+    // Finalize prefill (서비스 종료일) is applied via the SDK options before the
+    // iframe even renders, so as soon as we reach the gate loop the data is
+    // effectively "inserted". Mirrors creation's info-inserted semantics.
+    onProgress?.("info-inserted");
+
+    const emitCreating = () => {
+        if (creatingEmitted) return;
+        creatingEmitted = true;
+        onProgress?.("creating");
+    };
 
     while (Date.now() < deadline) {
         if (await isSuccessLatched(page)) {
             return "success-latched";
         }
 
-        const requestSendDialog = eformsignFrame.locator(REQUEST_SEND_DIALOG_SELECTOR);
+        const requestSendDialog = eformsignFrame.locator(FINALIZE_REQUEST_SEND_DIALOG_SELECTOR);
 
         const requestSendButton = await findVisibleLocator(
             requestSendDialog.getByRole("button", { name: "전송" }),
@@ -37,6 +51,7 @@ export async function runEformsignFinalizeGates(
         if (requestSendButton) {
             (logger as NestLogger).log?.("[finalize-gate] clicked popup 전송") ??
                 console.log("[finalize-gate] clicked popup 전송");
+            emitCreating();
             await requestSendButton.click();
             return "request-send-clicked";
         }
@@ -48,6 +63,7 @@ export async function runEformsignFinalizeGates(
         if (topLevelSendButton) {
             (logger as NestLogger).log?.("[finalize-gate] clicked top-level 전송") ??
                 console.log("[finalize-gate] clicked top-level 전송");
+            emitCreating();
             await topLevelSendButton.click();
             lastAction = "clicked top-level 전송";
             await page.waitForTimeout(250);

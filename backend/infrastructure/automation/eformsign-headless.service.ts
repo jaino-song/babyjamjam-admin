@@ -7,6 +7,7 @@ import {
 } from "playwright-core";
 import { runEformsignCreationGates } from "./eformsign-creation-gates";
 import { runEformsignFinalizeGates } from "./eformsign-finalize-gates";
+import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 
 /**
  * Result envelope returned by the headless service. The frontend uses
@@ -19,14 +20,18 @@ export type HeadlessDispatchResult =
 export interface DispatchCreationParams {
     documentOption: Record<string, unknown>;
     documentId?: string;
+    onProgress?: (step: EformsignHeadlessProgressStep) => void;
 }
 
 export interface DispatchFinalizeParams {
     documentOption: Record<string, unknown>;
     documentId: string;
+    onProgress?: (step: EformsignHeadlessProgressStep) => void;
 }
 
 const MAX_CONCURRENCY = 3;
+const EFORMSIGN_SDK_URL = "https://www.eformsign.com/lib/js/efs_embedded_v2.js";
+const EFORMSIGN_JQUERY_URL = "https://www.eformsign.com/plugins/jquery/jquery.min.js";
 
 /**
  * Drives the eformsign embedded SDK off-screen so the iframe gate sequence
@@ -123,26 +128,18 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         start: number,
     ): Promise<HeadlessDispatchResult> {
         const html = this.buildEmbeddedSdkHtml(params.documentOption, "eformsign_iframe");
-        await page.setContent(html, { waitUntil: "domcontentloaded" });
+        await this.gotoEmbeddedSdkPage(page, html, "creation");
 
         const eformsignFrame = page.frameLocator("iframe#eformsign_iframe");
-        await page.waitForFunction(
-            () => {
-                const frame = document.getElementById("eformsign_iframe");
-                return Boolean(
-                    frame instanceof HTMLIFrameElement &&
-                        frame.src.startsWith("https://www.eformsign.com/"),
-                );
-            },
-            { timeout: 30_000 },
-        );
+        await this.waitForEformsignIframe(page, "eformsign_iframe");
+        params.onProgress?.("client-started");
 
         const successPromise = page.waitForFunction(
             () => (window as unknown as { __eformsignSuccess?: unknown }).__eformsignSuccess !== undefined,
             { timeout: 90_000 },
         );
 
-        await runEformsignCreationGates(page, eformsignFrame, this.logger);
+        await runEformsignCreationGates(page, eformsignFrame, this.logger, params.onProgress);
 
         // The gate runner only confirms the click sequence completed; the
         // actual dispatch is acknowledged by the SDK success callback
@@ -150,6 +147,7 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         // sent — surface that as ok=false so the frontend falls back.
         await successPromise;
         const documentId = await this.readSuccessDocumentId(page);
+        params.onProgress?.("sent");
 
         return {
             ok: true,
@@ -164,29 +162,22 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         start: number,
     ): Promise<HeadlessDispatchResult> {
         const html = this.buildEmbeddedSdkHtml(params.documentOption, "eformsign_finalize_iframe");
-        await page.setContent(html, { waitUntil: "domcontentloaded" });
+        await this.gotoEmbeddedSdkPage(page, html, "finalize");
 
         const eformsignFrame = page.frameLocator("iframe#eformsign_finalize_iframe");
-        await page.waitForFunction(
-            () => {
-                const frame = document.getElementById("eformsign_finalize_iframe");
-                return Boolean(
-                    frame instanceof HTMLIFrameElement &&
-                        frame.src.startsWith("https://www.eformsign.com/"),
-                );
-            },
-            { timeout: 30_000 },
-        );
+        await this.waitForEformsignIframe(page, "eformsign_finalize_iframe");
+        params.onProgress?.("client-started");
 
         const successPromise = page.waitForFunction(
             () => (window as unknown as { __eformsignSuccess?: unknown }).__eformsignSuccess !== undefined,
             { timeout: 60_000 },
         );
 
-        await runEformsignFinalizeGates(page, eformsignFrame, this.logger);
+        await runEformsignFinalizeGates(page, eformsignFrame, this.logger, params.onProgress);
 
         await successPromise;
         const documentId = await this.readSuccessDocumentId(page);
+        params.onProgress?.("sent");
 
         return {
             ok: true,
@@ -204,6 +195,51 @@ export class EformsignHeadlessService implements OnModuleDestroy {
             .catch(() => undefined);
     }
 
+    private async gotoEmbeddedSdkPage(page: Page, html: string, purpose: string): Promise<void> {
+        const url = `http://localhost:3000/__eformsign-headless/${purpose}-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2)}`;
+
+        await page.route(url, (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "text/html; charset=utf-8",
+                body: html,
+            }),
+        );
+
+        // eformsign's embedded SDK miscomputes the iframe URL when opened from
+        // about:blank. Serve the same HTML through an intercepted local origin
+        // so the SDK builds a full https://www.eformsign.com iframe src.
+        await page.goto(url, { waitUntil: "domcontentloaded" });
+    }
+
+    private async waitForEformsignIframe(page: Page, iframeId: string): Promise<void> {
+        await page.waitForFunction(
+            (targetIframeId) => {
+                const w = window as unknown as { __eformsignBootError?: string };
+                if (w.__eformsignBootError) {
+                    return true;
+                }
+                const frame = document.getElementById(targetIframeId);
+                return Boolean(
+                    frame instanceof HTMLIFrameElement &&
+                        frame.src.startsWith("https://www.eformsign.com/"),
+                );
+            },
+            iframeId,
+            { timeout: 30_000 },
+        );
+
+        const bootError = await page.evaluate(() => {
+            const w = window as unknown as { __eformsignBootError?: string };
+            return w.__eformsignBootError;
+        });
+        if (bootError) {
+            throw new Error(bootError);
+        }
+    }
+
     /**
      * Build a minimal HTML page that loads the eformsign embedded SDK script
      * and opens the supplied documentOption in an iframe with the given id.
@@ -215,13 +251,24 @@ export class EformsignHeadlessService implements OnModuleDestroy {
 <html><head><meta charset="utf-8"><title>headless</title></head>
 <body style="margin:0">
 <iframe id="${iframeId}" style="width:100vw;height:100vh;border:0"></iframe>
-<script src="https://www.eformsign.com/embedded/sdk/eformsigndocument.min.js"></script>
 <script>
 (function () {
     var option = ${optionJson};
+    function fail(message) {
+        window.__eformsignBootError = message;
+        console.error(message);
+    }
+    function loadScript(src, done) {
+        var script = document.createElement("script");
+        script.src = src;
+        script.async = false;
+        script.onload = function () { done(); };
+        script.onerror = function () { fail("Failed to load script: " + src); };
+        document.head.appendChild(script);
+    }
     function open() {
         if (typeof window.EformSignDocument !== "function") {
-            return setTimeout(open, 100);
+            return fail("EformSignDocument SDK did not initialize");
         }
         var sdk = new window.EformSignDocument();
         sdk.document(
@@ -233,7 +280,9 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         );
         sdk.open();
     }
-    open();
+    loadScript("${EFORMSIGN_JQUERY_URL}", function () {
+        loadScript("${EFORMSIGN_SDK_URL}", open);
+    });
 })();
 </script></body></html>`;
     }

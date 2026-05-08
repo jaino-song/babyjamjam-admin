@@ -8,6 +8,7 @@ import {
     getEformsignGateSnapshot,
     isSuccessLatched,
 } from "./eformsign-gate-utils";
+import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 
 const EFORMSIGN_CREATION_GATE_TIMEOUT_MS = 60_000;
 
@@ -21,9 +22,18 @@ export async function runEformsignCreationGates(
     page: Page,
     eformsignFrame: FrameLocator,
     logger: NestLogger | Logger | Console = console,
+    onProgress?: (step: EformsignHeadlessProgressStep) => void,
 ): Promise<"success-latched" | "request-send-clicked"> {
     const deadline = Date.now() + EFORMSIGN_CREATION_GATE_TIMEOUT_MS;
     let lastAction = "none";
+    let stampConfirmCount = 0;
+    let infoInsertedEmitted = false;
+
+    const emitInfoInserted = () => {
+        if (infoInsertedEmitted) return;
+        infoInsertedEmitted = true;
+        onProgress?.("info-inserted");
+    };
 
     while (Date.now() < deadline) {
         if (await isSuccessLatched(page)) {
@@ -38,6 +48,10 @@ export async function runEformsignCreationGates(
             (logger as NestLogger).log?.("[creation-gate] clicked 회사 도장 확인") ??
                 console.log("[creation-gate] clicked 회사 도장 확인");
             await confirmButton.click();
+            stampConfirmCount++;
+            if (stampConfirmCount >= 3) {
+                emitInfoInserted();
+            }
             lastAction = "clicked 회사 도장 확인";
             await page.waitForTimeout(250);
             continue;
@@ -51,6 +65,8 @@ export async function runEformsignCreationGates(
             (logger as NestLogger).log?.("[creation-gate] clicked popup 전송") ??
                 console.log("[creation-gate] clicked popup 전송");
             await requestSendButton.click();
+            emitInfoInserted();
+            onProgress?.("creating");
             return "request-send-clicked";
         }
 
@@ -62,6 +78,8 @@ export async function runEformsignCreationGates(
             (logger as NestLogger).log?.("[creation-gate] clicked top-level 전송") ??
                 console.log("[creation-gate] clicked top-level 전송");
             await topLevelSendButton.click();
+            emitInfoInserted();
+            onProgress?.("creating");
             lastAction = "clicked top-level 전송";
             await page.waitForTimeout(250);
             continue;
