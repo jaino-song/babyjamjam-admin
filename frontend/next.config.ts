@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
         root: path.resolve(__dirname, ".."),
     },
     experimental: {
+        optimizePackageImports: ["lucide-react", "react-icons"],
         ...(localBuildCpus ? { cpus: localBuildCpus } : {}),
         ...(localStaticGenerationMaxConcurrency
             ? { staticGenerationMaxConcurrency: localStaticGenerationMaxConcurrency }

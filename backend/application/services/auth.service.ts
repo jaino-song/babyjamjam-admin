@@ -1132,16 +1132,13 @@ export class AuthService {
 
     /**
      * Validate password strength
-     * Requirements: min 8 chars, uppercase, lowercase, number, special char
+     * Requirements: min 8 chars, lowercase, number, special char
      */
     validatePasswordStrength(password: string): PasswordValidationResult {
         const errors: string[] = [];
 
         if (password.length < 8) {
             errors.push('비밀번호는 최소 8자 이상이어야 합니다.');
-        }
-        if (!/[A-Z]/.test(password)) {
-            errors.push('비밀번호에 대문자가 포함되어야 합니다.');
         }
         if (!/[a-z]/.test(password)) {
             errors.push('비밀번호에 소문자가 포함되어야 합니다.');

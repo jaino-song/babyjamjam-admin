@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { authApi } from "@/services/api";
+import { resendVerificationEmail } from "@/features/auth/shared/auth-api";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 import { loginWithEmail } from "@/app/(auth)/login/actions";
@@ -123,7 +123,7 @@ export function useLoginPageController() {
 
     setIsResendingVerification(true);
     try {
-      const response = await authApi.resendVerification(targetEmail);
+      const response = await resendVerificationEmail(targetEmail);
       if (response.success) {
         safeStorageSetItem("local", "auth:verificationEmail", targetEmail);
       }

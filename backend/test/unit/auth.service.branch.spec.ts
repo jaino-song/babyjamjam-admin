@@ -447,6 +447,15 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     // registerWithEmail Tests
     // ============================================
     describe("registerWithEmail", () => {
+        it("should allow passwords without uppercase letters when other requirements pass", async () => {
+            const result = service.validatePasswordStrength("password1!");
+
+            expect(result).toEqual({
+                valid: true,
+                errors: [],
+            });
+        });
+
         it("should preserve the submitted branch role on membership creation", async () => {
             prismaService.branch.findUnique.mockResolvedValue(mockBranch);
             prismaService.user.findUnique
@@ -464,7 +473,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
             await service.registerWithEmail(
                 "manager@example.com",
-                "Password1!",
+                "password1!",
                 "Manager User",
                 "010-1234-5678",
                 "1990-01-01",
