@@ -17,6 +17,8 @@ interface TabItem {
 interface ListPanelProps {
   title: string;
   subtitle?: string;
+  /** Optional avatar element rendered to the left of the title group */
+  avatar?: React.ReactNode;
   tabs?: TabItem[];
   activeTab?: string;
   onTabChange?: (value: string) => void;
@@ -39,6 +41,7 @@ interface ListPanelProps {
 export function ListPanel({
   title,
   subtitle,
+  avatar,
   tabs,
   activeTab,
   onTabChange,
@@ -91,12 +94,15 @@ export function ListPanel({
     <div data-component="list-panel" className="relative bg-white rounded-[28px] shadow-v3 flex flex-col flex-1 self-stretch overflow-hidden h-full min-h-0">
       <div data-component="list-panel-top-area" className="shrink-0">
         <div data-component="list-panel-header" className={headerClassName}>
-          <PanelTitleGroup
-            component="list-panel"
-            title={title}
-            subtitle={subtitle}
-            titleClassName="text-xl"
-          />
+          <div className="flex items-center gap-4 min-w-0">
+            {avatar}
+            <PanelTitleGroup
+              component="list-panel"
+              title={title}
+              subtitle={subtitle}
+              titleClassName="text-xl"
+            />
+          </div>
           {headerActions && (
             <div
               data-component="list-panel-header-actions"

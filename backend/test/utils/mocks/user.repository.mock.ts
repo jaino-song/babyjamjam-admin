@@ -94,4 +94,8 @@ export class MockUserRepository implements IUserRepository {
             user => user.role !== null && roles.includes(user.role),
         );
     }
+
+    async findNotificationRecipientsByBranchId(_branchId: string): Promise<UserEntity[]> {
+        return Array.from(this.users.values());
+    }
 }

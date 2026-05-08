@@ -1,5 +1,6 @@
 import { IsBoolean, IsDateString, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, Matches } from "class-validator";
 import { ContractDataDto } from "application/dto/contract.dto";
+import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 
 /**
  * DTO for getting access token
@@ -95,6 +96,10 @@ export class DispatchHeadlessRequestDto {
     @IsOptional()
     @IsNumber()
     clientId?: number;
+
+    @IsOptional()
+    @IsString()
+    progressId?: string;
 }
 
 export interface DispatchHeadlessResponseDto {
@@ -102,6 +107,7 @@ export interface DispatchHeadlessResponseDto {
     documentId?: string;
     durationMs: number;
     reason?: string;
+    failedStep?: EformsignHeadlessProgressStep;
     fallbackHint?: "iframe";
 }
 
@@ -117,6 +123,10 @@ export class FinalizeHeadlessRequestDto {
     @IsString()
     @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: "prefillEndDate must match YYYY-MM-DD" })
     prefillEndDate?: string;
+
+    @IsOptional()
+    @IsString()
+    progressId?: string;
 }
 
 export interface FinalizeHeadlessResponseDto {

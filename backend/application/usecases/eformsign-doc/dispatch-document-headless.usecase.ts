@@ -6,10 +6,13 @@ import { AreaTemplateService } from "application/services/area-template.service"
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { GetEformsignAccessTokenUsecase } from "./get-eformsign-access-token.usecase";
 import { CreateEformsignDocUsecase } from "./create-eformsign-doc.usecase";
+import { EformsignHeadlessProgressService } from "application/services/eformsign-headless-progress.service";
+import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 
 export interface DispatchHeadlessParams {
     contractData: ContractDataDto;
     clientId?: number;
+    progressId?: string;
 }
 
 export interface DispatchHeadlessSuccess {
@@ -23,6 +26,7 @@ export interface DispatchHeadlessFailure {
     reason: string;
     fallbackHint: "iframe";
     durationMs: number;
+    failedStep?: EformsignHeadlessProgressStep;
 }
 
 export type DispatchHeadlessResult = DispatchHeadlessSuccess | DispatchHeadlessFailure;
@@ -45,11 +49,13 @@ export class DispatchDocumentHeadlessUsecase {
         private readonly areaTemplateService: AreaTemplateService,
         private readonly getAccessTokenUsecase: GetEformsignAccessTokenUsecase,
         private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
+        private readonly progressService: EformsignHeadlessProgressService,
         @Inject(CLIENT_REPOSITORY) private readonly clientRepository: IClientRepository,
     ) {}
 
     async execute(branchId: string, params: DispatchHeadlessParams): Promise<DispatchHeadlessResult> {
         const start = Date.now();
+        let latestProgressStep: EformsignHeadlessProgressStep | undefined;
         try {
             const tokenResponse = await this.getAccessTokenUsecase.execute(Date.now());
             const accessToken = tokenResponse.oauth_token.access_token;
@@ -68,14 +74,22 @@ export class DispatchDocumentHeadlessUsecase {
                 templateId,
             ) as Record<string, unknown>;
 
-            const result = await this.headlessService.dispatchCreation({ documentOption });
+            const result = await this.headlessService.dispatchCreation({
+                documentOption,
+                onProgress: (step) => {
+                    latestProgressStep = step;
+                    this.progressService.emit(params.progressId, step);
+                },
+            });
 
             if (!result.ok) {
+                this.progressService.emit(params.progressId, "failed", result.reason, latestProgressStep);
                 return {
                     ok: false,
                     reason: result.reason,
                     fallbackHint: "iframe",
                     durationMs: result.durationMs,
+                    failedStep: latestProgressStep,
                 };
             }
 
@@ -86,11 +100,18 @@ export class DispatchDocumentHeadlessUsecase {
             const documentId = result.documentId;
             if (!documentId) {
                 this.logger.warn("Headless creation finished without a document_id from the SDK callback; falling back.");
+                this.progressService.emit(
+                    params.progressId,
+                    "failed",
+                    "missing document_id from eformsign success callback",
+                    latestProgressStep,
+                );
                 return {
                     ok: false,
                     reason: "missing document_id from eformsign success callback",
                     fallbackHint: "iframe",
                     durationMs: result.durationMs,
+                    failedStep: latestProgressStep,
                 };
             }
 
@@ -123,11 +144,13 @@ export class DispatchDocumentHeadlessUsecase {
         } catch (error) {
             const reason = error instanceof Error ? error.message : "unknown headless dispatch error";
             this.logger.error(`DispatchDocumentHeadlessUsecase failed: ${reason}`);
+            this.progressService.emit(params.progressId, "failed", reason, latestProgressStep);
             return {
                 ok: false,
                 reason,
                 fallbackHint: "iframe",
                 durationMs: Date.now() - start,
+                failedStep: latestProgressStep,
             };
         }
     }

@@ -24,19 +24,12 @@ export interface EformsignAuthStatusResponse {
     hasRefreshToken: boolean;
 }
 
-export interface PendingStaffCompletionItem {
-    documentId: string;
-    clientId: number;
-    clientName: string;
-    signedAt: string;
-    statusDetail: string;
-}
-
 export interface HeadlessDispatchResponse {
     ok: boolean;
     documentId?: string;
     durationMs: number;
     reason?: string;
+    failedStep?: string;
     fallbackHint?: "iframe";
 }
 
@@ -201,16 +194,16 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/documents', { params });
         return data;
     },
-    getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/in-progress');
+    getInProgressDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents/in-progress', { params });
         return data;
     },
-    getCompletedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/completed');
+    getCompletedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents/completed', { params });
         return data;
     },
-    getRejectedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/rejected');
+    getRejectedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents/rejected', { params });
         return data;
     },
     deleteDocuments: async (
@@ -234,10 +227,6 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/documents');
         return data;
     },
-    getPendingStaffCompletionDocs: async (): Promise<PendingStaffCompletionItem[]> => {
-        const { data } = await api.get('/eformsign-docs/pending-staff-completion');
-        return data;
-    },
     /**
      * BJJ-90: backend-driven creation dispatch. Drives the iframe gate
      * sequence (mode:"01") via headless Chromium so staff don't see the
@@ -247,10 +236,12 @@ export const eformsignApi = {
     dispatchHeadless: async (
         contractData: ContractDataDto,
         clientId?: number,
+        progressId?: string,
     ): Promise<HeadlessDispatchResponse> => {
         const { data } = await api.post('/eformsign-docs/dispatch-headless', {
             contractData,
             clientId,
+            progressId,
         });
         return data;
     },
@@ -261,10 +252,12 @@ export const eformsignApi = {
     finalizeHeadless: async (
         documentId: string,
         prefillEndDate?: string,
+        progressId?: string,
     ): Promise<HeadlessFinalizeResponse> => {
         const { data } = await api.post('/eformsign-docs/finalize-headless', {
             documentId,
             prefillEndDate,
+            progressId,
         });
         return data;
     },

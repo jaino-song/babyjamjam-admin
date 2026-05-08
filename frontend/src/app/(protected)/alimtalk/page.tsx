@@ -1731,14 +1731,14 @@ export default function AlimtalkPage() {
 
   return (
     <section data-component="alimtalk" className="space-y-6">
-      <div data-component="alimtalk-content" className="flex flex-col lg:flex-row gap-8">
+      <div data-component="alimtalk-sections" className="flex flex-col lg:flex-row gap-8">
         <SectionNav
           items={NAV_SECTIONS}
           activeId={activeSection}
           onSelect={(id) => setActiveSection(id as SectionId)}
         />
 
-        <div data-component="alimtalk-sections" className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0">
           {activeSection === "overview" ? (
             <section data-component="alimtalk-overview">
               <UpcomingAlimtalkManager />

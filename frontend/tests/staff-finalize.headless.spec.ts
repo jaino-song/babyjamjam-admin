@@ -95,4 +95,87 @@ test.describe("staff finalize — headless dispatch", () => {
 
         expect(result).toMatchObject({ ok: false, fallbackHint: "iframe" });
     });
+
+    test("forwards progressId in the request body when supplied", async ({ page }) => {
+        await authStub(page);
+
+        let finalizeBody: Record<string, unknown> | null = null;
+        await page.route("**/api/eformsign-docs/finalize-headless", async (route) => {
+            finalizeBody = route.request().postDataJSON() as Record<string, unknown>;
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ ok: true, durationMs: 100 }),
+            });
+        });
+
+        await page.goto("/contracts");
+
+        await page.evaluate(async () => {
+            await fetch("/api/eformsign-docs/finalize-headless", {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    documentId: "doc-with-progress",
+                    prefillEndDate: "2026-08-01",
+                    progressId: "progress-7c1e",
+                }),
+            });
+        });
+
+        expect(finalizeBody).toMatchObject({
+            documentId: "doc-with-progress",
+            prefillEndDate: "2026-08-01",
+            progressId: "progress-7c1e",
+        });
+    });
+
+    test("finalize progress SSE proxy route rejects requests without progressId", async ({ page }) => {
+        await authStub(page);
+        await page.goto("/contracts");
+
+        const status = await page.evaluate(async () => {
+            const response = await fetch("/api/eformsign-docs/finalize-headless/progress", {
+                credentials: "include",
+            });
+            return response.status;
+        });
+
+        // The proxy must validate progressId before forwarding upstream.
+        expect(status).toBe(400);
+    });
+
+    test("finalize progress SSE proxy streams the upstream events through to the browser", async ({ page }) => {
+        await authStub(page);
+
+        // Mock the upstream Nest SSE so the proxy has something to forward.
+        await page.route(
+            "**/eformsign-docs/finalize-headless/progress?progressId=progress-stream",
+            (route) =>
+                route.fulfill({
+                    status: 200,
+                    contentType: "text/event-stream",
+                    body: [
+                        'event: progress\ndata: {"step":"client-started"}\n\n',
+                        'event: progress\ndata: {"step":"info-inserted"}\n\n',
+                        'event: progress\ndata: {"step":"sent"}\n\n',
+                    ].join(""),
+                }),
+        );
+
+        await page.goto("/contracts");
+
+        const body = await page.evaluate(async () => {
+            const response = await fetch(
+                "/api/eformsign-docs/finalize-headless/progress?progressId=progress-stream",
+                { credentials: "include" },
+            );
+            return response.text();
+        });
+
+        expect(body).toContain('"step":"client-started"');
+        expect(body).toContain('"step":"info-inserted"');
+        expect(body).toContain('"step":"sent"');
+    });
 });

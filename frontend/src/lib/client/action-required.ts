@@ -5,7 +5,7 @@ export const ACTION_REQUIRED_SEND_THRESHOLD_DAYS = 6;
 
 export type ActionRequiredReason =
   | "교체 요청"
-  | "서명 필요"
+  | "이용자 완료 필요"
   | "발송 필요";
 
 export interface ActionRequiredStatus {
@@ -58,7 +58,7 @@ export function getActionRequiredStatus(
   }
 
   if (isDocumentSent && client.documentStatus !== "completed" && daysUntilStart <= ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS) {
-    return { reason: "서명 필요", priority: 2 };
+    return { reason: "이용자 완료 필요", priority: 2 };
   }
 
   return null;

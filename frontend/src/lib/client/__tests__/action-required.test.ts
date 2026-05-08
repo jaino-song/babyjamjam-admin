@@ -87,7 +87,7 @@ describe("getActionRequiredStatus", () => {
       referenceDate,
     );
 
-    expect(status).toEqual({ reason: "서명 필요", priority: 2 });
+    expect(status).toEqual({ reason: "이용자 완료 필요", priority: 2 });
     expect(ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS).toBe(2);
   });
 

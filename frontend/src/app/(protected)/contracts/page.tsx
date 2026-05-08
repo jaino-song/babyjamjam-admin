@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
@@ -18,6 +18,8 @@ import {
   Eye,
   MapPin,
   Loader2,
+  Briefcase,
+  Bell,
 } from "lucide-react";
 import {
   useDeleteEformsignDocument,
@@ -52,6 +54,8 @@ import {
   PageSection,
   DetailSkeleton,
   ListEmptyState,
+  DetailEmptyState,
+  SectionNav,
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
@@ -93,7 +97,43 @@ import type { Client, PaginatedResponse } from "@/lib/client/types";
 import { ContractsListItem } from "@/components/app/contracts/ContractsListItem";
 import { ContractCreationForm } from "@/components/app/messages/forms/ContractCreationForm";
 import { StaffCompletionIframeModal } from "@/components/app/contracts/StaffCompletionIframeModal";
+import {
+  HeadlessProgressStepper,
+  type HeadlessProgressState,
+  type HeadlessProgressStep,
+  type HeadlessProgressStepKey,
+} from "@/components/app/eformsign/HeadlessProgressStepper";
 import { isFeatureEnabled } from "@/lib/feature-flags";
+
+const FINALIZE_PROGRESS_STEPS: readonly HeadlessProgressStep[] = [
+  { key: "client-started", label: "전자문서 클라이언트 시작", errorLabel: "전자문서 클라이언트 시작 실패" },
+  { key: "info-inserted", label: "서비스 종료일 적용중", errorLabel: "서비스 종료일 적용 실패" },
+  { key: "creating", label: "전자문서 최종 확인중", errorLabel: "전자문서 최종 확인 실패" },
+  { key: "sent", label: "전자문서 처리 완료", errorLabel: "전자문서 처리 실패" },
+];
+
+const INITIAL_FINALIZE_PROGRESS: HeadlessProgressState = {
+  step: null,
+  completed: false,
+  failed: false,
+};
+
+interface FinalizeProgressEvent {
+  step: HeadlessProgressStepKey | "failed";
+  failedStep?: HeadlessProgressStepKey;
+  reason?: string;
+}
+
+function isFinalizeProgressStepKey(value: string): value is HeadlessProgressStepKey {
+  return FINALIZE_PROGRESS_STEPS.some((item) => item.key === value);
+}
+
+function createFinalizeProgressId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `finalize-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 const ContractDocumentPreviewModal = dynamic(
   () =>
@@ -371,10 +411,21 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
   );
 }
 
+const NAV_SECTIONS = [
+  { id: "maternity", label: "산모 계약서", icon: FileSignature },
+  { id: "caregiver", label: "제공인력 계약서", icon: Briefcase },
+  { id: "documents", label: "전자문서 목록", icon: FileText },
+  { id: "notifications", label: "알림 설정", icon: Bell },
+] as const;
+
+type SectionId = (typeof NAV_SECTIONS)[number]["id"];
+
 export default function ContractsPage() {
+  const [activeSection, setActiveSection] = useState<SectionId>("maternity");
   const [activeTab, setActiveTab] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [hasContractCreationSession, setHasContractCreationSession] = useState(false);
   const [deleteTargetDocumentId, setDeleteTargetDocumentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -400,6 +451,11 @@ export default function ContractsPage() {
     enabled: isAuthenticated,
     filterType,
     excludedNames: EXCLUDED_CUSTOMER_NAMES,
+    // 전체 tab populates the stats counters by iterating allDocuments. Without
+    // eager-loading, `allDocuments` only holds pages the user already
+    // scrolled into view, so the StatsBar under-reports until they scroll the
+    // full list. Per-status tabs keep normal pagination.
+    eager: filterType === null,
   });
   const [statsDocuments, setStatsDocuments] = useState<EformsignDocument[]>([]);
 
@@ -414,6 +470,11 @@ export default function ContractsPage() {
   const isInitialLoading = isBootstrappingAuth || isLoadingInfinite;
   // Content loading: fetching filtered data after initial load is complete
   const isContentLoading = !isInitialLoading && isLoadingInfinite;
+  // Stats are derived from the "전체" tab's data and are independent of which
+  // tab is currently being fetched — only show the skeleton until the very
+  // first stats payload lands.
+  const isStatsLoading =
+    isBootstrappingAuth || (statsDocuments.length === 0 && filterType === null && isLoadingInfinite);
 
   // documentId → clientName lookup from our DB. Required because eformsign's
   // list_document response loses outsider info once the doc progresses past
@@ -467,7 +528,9 @@ export default function ContractsPage() {
       }
 
       if (cat === "rejected") {
-        expired++;
+        if (normalizedStatus === "080") {
+          expired++;
+        }
         continue;
       }
 
@@ -500,6 +563,20 @@ export default function ContractsPage() {
     setActiveTab(value);
     setSelectedDocId(null);
   };
+
+  const handleStartContractCreation = useCallback(() => {
+    setSelectedDocId(null);
+    setIsCreating(true);
+  }, []);
+
+  const handleCloseContractCreation = useCallback(() => {
+    setIsCreating(false);
+    setHasContractCreationSession(false);
+  }, []);
+
+  const handleContractCreationSessionChange = useCallback((hasSession: boolean) => {
+    setHasContractCreationSession(hasSession);
+  }, []);
 
   const handleDeleteRequest = (documentId: string) => {
     setDeleteTargetDocumentId(documentId);
@@ -555,18 +632,34 @@ export default function ContractsPage() {
 
   return (
     <PageSection name="contracts">
-        <StatsBar
-          name="contracts"
-          isLoading={isInitialLoading}
-          items={[
-            { icon: CheckCircle2, value: stats.reviewNeeded, label: "검토 필요", counter: "건", colorIndex: 2 },
-            { icon: Send, value: stats.sendRequired, label: "발송 필요", counter: "건", colorIndex: 1 },
-            { icon: FileText, value: stats.drafting, label: "작성 대기중", counter: "건" },
-            { icon: AlertTriangle, value: stats.expired, label: "기간 만료", counter: "건", colorIndex: 3 },
-          ]}
+      <StatsBar
+        name="contracts"
+        isLoading={isStatsLoading}
+        items={[
+          { icon: CheckCircle2, value: stats.reviewNeeded, label: "검토 필요", counter: "건", colorIndex: 0 },
+          { icon: Send, value: stats.sendRequired, label: "이용자 완료 필요", counter: "건", colorIndex: 1 },
+          { icon: FileText, value: stats.drafting, label: "작성 대기중", counter: "건" },
+          { icon: AlertTriangle, value: stats.expired, label: "기간 만료", counter: "건", colorIndex: 3 },
+        ]}
+      />
+
+      <div data-component="contracts-sections" className="flex flex-col lg:flex-row gap-8 flex-1 min-h-0">
+        <SectionNav
+          items={NAV_SECTIONS}
+          activeId={activeSection}
+          onSelect={(id) => setActiveSection(id as SectionId)}
         />
 
-        <SplitLayout hasSelection={!!selectedDocument || isCreating} onBack={() => { setSelectedDocId(null); setIsCreating(false); }}>
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+          {activeSection === "maternity" ? (
+            <section data-component="contracts-maternity" className="flex flex-1 min-h-0 flex-col">
+        <SplitLayout
+          hasSelection={!!selectedDocument || isCreating || hasContractCreationSession}
+          onBack={() => {
+            setSelectedDocId(null);
+            setIsCreating(false);
+          }}
+        >
           <ListPanel
             title="계약 목록"
             tabs={TAB_ITEMS}
@@ -579,11 +672,15 @@ export default function ContractsPage() {
             isContentLoading={isContentLoading}
             headerActions={
               <HeaderActionButton
-                onClick={() => { setIsCreating(true); setSelectedDocId(null); }}
+                onClick={handleStartContractCreation}
                 icon={Send}
                 label="전자문서 발송"
                 data-component="contracts-header-send-contract"
-                className={isCreating ? "bg-v3-primary text-white hover:bg-v3-primary" : undefined}
+                className={
+                  isCreating || hasContractCreationSession
+                    ? "bg-v3-primary text-white hover:bg-v3-primary"
+                    : undefined
+                }
               />
             }
           >
@@ -626,22 +723,31 @@ export default function ContractsPage() {
             )}
           </ListPanel>
 
-          {isCreating ? (
-            <DetailPanel
-              title="전자계약서 작성"
-              subtitle="고객에게 전자계약서를 발송합니다"
-              avatar={
-                <div
-                  data-component="contracts-create-avatar"
-                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
-                >
-                  <Send className="h-5 w-5" />
-                </div>
-              }
+          {(isCreating || hasContractCreationSession) && (
+            <div
+              data-component="contracts-create-retained-session"
+              className={isCreating ? "contents" : "hidden"}
             >
-              <ContractCreationForm onClose={() => setIsCreating(false)} />
-            </DetailPanel>
-          ) : isInitialLoading ? (
+              <DetailPanel
+                title="전자계약서 작성"
+                subtitle="고객에게 전자계약서를 발송합니다"
+                avatar={
+                  <div
+                    data-component="contracts-create-avatar"
+                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+                  >
+                    <Send className="h-5 w-5" />
+                  </div>
+                }
+              >
+                <ContractCreationForm
+                  onClose={handleCloseContractCreation}
+                  onSessionStateChange={handleContractCreationSessionChange}
+                />
+              </DetailPanel>
+            </div>
+          )}
+          {!isCreating && isInitialLoading ? (
             <DetailSkeleton
               name="contracts-detail-skeleton"
               headerBadge
@@ -652,17 +758,108 @@ export default function ContractsPage() {
                 { titleWidth: "w-20", rows: ["w-full"] },
               ]}
             />
-          ) : selectedDocument ? (
+          ) : !isCreating && selectedDocument ? (
             <ContractDetail
               key={selectedDocument.id}
               document={selectedDocument}
               isRefreshing={pendingDocumentIds.has(selectedDocument.id)}
               onDeleteRequest={handleDeleteRequest}
             />
-          ) : (
+          ) : !isCreating && !hasContractCreationSession ? (
             <EmptyState icon={FileText} message="계약을 선택하면 상세 정보가 표시됩니다" />
-          )}
+          ) : null}
         </SplitLayout>
+            </section>
+          ) : null}
+
+          {activeSection === "caregiver" ? (
+            <section data-component="contracts-caregiver" className="flex flex-1 min-h-0 flex-col">
+              <SplitLayout hasSelection={false}>
+                <ListPanel
+                  title="제공인력 계약 목록"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <ListEmptyState message="아직 준비중입니다" />
+                </ListPanel>
+                <DetailPanel
+                  title="제공인력 계약서"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <DetailEmptyState icon={Briefcase} message="아직 준비중입니다" />
+                </DetailPanel>
+              </SplitLayout>
+            </section>
+          ) : null}
+
+          {activeSection === "documents" ? (
+            <section data-component="contracts-documents" className="flex flex-1 min-h-0 flex-col">
+              <SplitLayout hasSelection={false}>
+                <ListPanel
+                  title="전자문서 목록"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <ListEmptyState message="아직 준비중입니다" />
+                </ListPanel>
+                <DetailPanel
+                  title="전자문서"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <DetailEmptyState icon={FileText} message="아직 준비중입니다" />
+                </DetailPanel>
+              </SplitLayout>
+            </section>
+          ) : null}
+
+          {activeSection === "notifications" ? (
+            <section data-component="contracts-notifications" className="flex flex-1 min-h-0 flex-col">
+              <SplitLayout hasSelection={false}>
+                <ListPanel
+                  title="알림 설정"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <ListEmptyState message="아직 준비중입니다" />
+                </ListPanel>
+                <DetailPanel
+                  title="알림 설정"
+                  subtitle="아직 준비중입니다"
+                  avatar={
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-5 w-5" />
+                    </div>
+                  }
+                >
+                  <DetailEmptyState icon={Bell} message="아직 준비중입니다" />
+                </DetailPanel>
+              </SplitLayout>
+            </section>
+          ) : null}
+        </div>
+      </div>
 
       <Dialog
         open={deleteTargetDocumentId != null}
@@ -734,6 +931,9 @@ function ContractDetail({
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [isFinalizeOpen, setIsFinalizeOpen] = useState(false);
   const [finalizeEndDate, setFinalizeEndDate] = useState<string>("");
+  const [finalizeProgress, setFinalizeProgress] = useState<HeadlessProgressState>(INITIAL_FINALIZE_PROGRESS);
+  const finalizeProgressIdRef = useRef<string | null>(null);
+  const finalizeEventSourceRef = useRef<EventSource | null>(null);
   const [isStaffCompletionOpen, setIsStaffCompletionOpen] = useState(false);
   const [staffCompletionOption, setStaffCompletionOption] = useState<EformsignDocumentOption | null>(null);
   const canReRequest = canReRequestDocument(detailedDocument);
@@ -939,10 +1139,26 @@ function ContractDetail({
     setRecipientPhone(initialRecipientPhone);
   };
 
+  const closeFinalizeProgressStream = useCallback(() => {
+    finalizeEventSourceRef.current?.close();
+    finalizeEventSourceRef.current = null;
+    finalizeProgressIdRef.current = null;
+  }, []);
+
   const resetFinalizeState = () => {
     setIsFinalizeOpen(false);
     setFinalizeEndDate("");
+    setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
+    closeFinalizeProgressStream();
   };
+
+  useEffect(() => {
+    return () => {
+      finalizeEventSourceRef.current?.close();
+      finalizeEventSourceRef.current = null;
+      finalizeProgressIdRef.current = null;
+    };
+  }, []);
 
   const closeStaffCompletionModal = () => {
     setIsStaffCompletionOpen(false);
@@ -993,7 +1209,8 @@ function ContractDetail({
       // BJJ-90: try the backend-driven finalize first when the flag is on.
       if (isFeatureEnabled("headlessDispatch")) {
         try {
-          const headless = await eformsignApi.finalizeHeadless(doc.id, endDate);
+          const progressId = finalizeProgressIdRef.current ?? undefined;
+          const headless = await eformsignApi.finalizeHeadless(doc.id, endDate, progressId);
           if (headless.ok) {
             return { kind: "headless" };
           }
@@ -1012,6 +1229,8 @@ function ContractDetail({
       return { kind: "iframe", option };
     },
     onSuccess: (result) => {
+      closeFinalizeProgressStream();
+      setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
       if (result.kind === "headless") {
         setIsFinalizeOpen(false);
         setFinalizeEndDate("");
@@ -1019,7 +1238,21 @@ function ContractDetail({
           title: "최종 확인 완료",
           description: "계약서가 완료 처리되었습니다.",
         });
+        // Headless finalize completes within ~1s of the SDK success callback,
+        // but eformsign's status field (060 → 070) and the matching webhook
+        // can lag a few seconds behind. Invalidate immediately and again at
+        // 2s/5s so the list eventually reflects the new status without
+        // requiring the user to refresh the tab.
         queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+        const delays = [2000, 5000];
+        delays.forEach((delay) => {
+          setTimeout(() => {
+            queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+            queryClient.invalidateQueries({
+              queryKey: ["eformsign-documents", "detail", doc.id],
+            });
+          }, delay);
+        });
         return;
       }
       setStaffCompletionOption(result.option);
@@ -1027,6 +1260,8 @@ function ContractDetail({
       setIsStaffCompletionOpen(true);
     },
     onError: (error) => {
+      closeFinalizeProgressStream();
+      setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
       toast({
         variant: "destructive",
         title: "최종 확인 실패",
@@ -1073,6 +1308,46 @@ function ContractDetail({
   };
 
   const handleFinalizeSubmit = () => {
+    const progressId = createFinalizeProgressId();
+    finalizeProgressIdRef.current = progressId;
+    setFinalizeProgress({ step: "client-started", completed: false, failed: false });
+
+    // Close any prior stream defensively before opening a new one (e.g. retry).
+    finalizeEventSourceRef.current?.close();
+    const source = new EventSource(
+      `/api/eformsign-docs/finalize-headless/progress?progressId=${encodeURIComponent(progressId)}`,
+    );
+    finalizeEventSourceRef.current = source;
+    source.addEventListener("progress", (event) => {
+      let data: FinalizeProgressEvent;
+      try {
+        data = JSON.parse((event as MessageEvent).data) as FinalizeProgressEvent;
+      } catch {
+        return;
+      }
+      if (data.step === "failed") {
+        const fallbackStep =
+          data.failedStep && isFinalizeProgressStepKey(data.failedStep) ? data.failedStep : null;
+        setFinalizeProgress((current) => ({
+          step: fallbackStep ?? current.step ?? "client-started",
+          completed: false,
+          failed: true,
+        }));
+        return;
+      }
+      if (!isFinalizeProgressStepKey(data.step)) return;
+      const nextStep = data.step;
+      setFinalizeProgress((current) =>
+        current.failed
+          ? current
+          : {
+            step: nextStep,
+            completed: nextStep === "sent",
+            failed: false,
+          },
+      );
+    });
+
     openStaffCompletionMutation.mutate(finalizeEndDate);
   };
 
@@ -1479,45 +1754,61 @@ function ContractDetail({
               서비스 완료일을 수정한 뒤 확정해 주세요.
             </DialogDescription>
           </DialogHeader>
-          <div data-component="contracts-finalize-end-date-field" className="pb-2">
-            <Label
-              htmlFor={`contract-finalize-end-date-${doc.id}`}
-              className="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+          {isFinalizePending || finalizeProgress.step !== null ? (
+            <div
+              data-component="contracts-finalize-progress-section"
+              className="flex justify-center py-2"
             >
-              서비스 완료일
-            </Label>
-            <Input
-              id={`contract-finalize-end-date-${doc.id}`}
-              type="text"
-              inputMode="numeric"
-              variant="v3"
-              placeholder="YYYY-MM-DD"
-              pattern="\d{4}-\d{2}-\d{2}"
-              value={finalizeEndDate}
-              onChange={(event) => setFinalizeEndDate(formatIsoDateInput(event.target.value))}
-              disabled={isFinalizePending}
-            />
-          </div>
-          <DialogFooter className="sm:justify-stretch">
-            <Button
-              variant="neutral"
-              size="sm"
-              className="flex-1"
-              onClick={() => handleFinalizeDialogChange(false)}
-              disabled={isFinalizePending}
-            >
-              취소
-            </Button>
-            <Button
-              variant="positive"
-              size="sm"
-              className="flex-1"
-              onClick={handleFinalizeSubmit}
-              disabled={isFinalizePending || !isFinalizeEndDateValid}
-            >
-              {isFinalizePending ? "처리 중..." : "완료"}
-            </Button>
-          </DialogFooter>
+              <HeadlessProgressStepper
+                steps={FINALIZE_PROGRESS_STEPS}
+                progress={finalizeProgress}
+                ariaLabel="전자계약서 최종 확인 진행 상태"
+                dataComponentPrefix="contracts-finalize-progress"
+                testIdPrefix="contracts-finalize-progress"
+                className="w-full max-w-[20rem]"
+              />
+            </div>
+          ) : (
+            <>
+              <div data-component="contracts-finalize-end-date-field" className="pb-2">
+                <Label
+                  htmlFor={`contract-finalize-end-date-${doc.id}`}
+                  className="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+                >
+                  서비스 완료일
+                </Label>
+                <Input
+                  id={`contract-finalize-end-date-${doc.id}`}
+                  type="text"
+                  inputMode="numeric"
+                  variant="v3"
+                  placeholder="YYYY-MM-DD"
+                  pattern="\d{4}-\d{2}-\d{2}"
+                  value={finalizeEndDate}
+                  onChange={(event) => setFinalizeEndDate(formatIsoDateInput(event.target.value))}
+                />
+              </div>
+              <DialogFooter className="sm:justify-stretch">
+                <Button
+                  variant="neutral"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => handleFinalizeDialogChange(false)}
+                >
+                  취소
+                </Button>
+                <Button
+                  variant="positive"
+                  size="sm"
+                  className="flex-1"
+                  onClick={handleFinalizeSubmit}
+                  disabled={!isFinalizeEndDateValid}
+                >
+                  완료
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
       <StaffCompletionIframeModal

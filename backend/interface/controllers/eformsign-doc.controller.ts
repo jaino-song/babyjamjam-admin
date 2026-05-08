@@ -2,7 +2,7 @@ import { Body, Controller, Get, Logger, MessageEvent, Post, Query, Sse, UseGuard
 import { Observable, filter, interval, map, merge } from "rxjs";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
-import { ListPendingStaffCompletionUsecase } from "application/usecases/eformsign-doc/list-pending-staff-completion.usecase";
+import { EformsignHeadlessProgressService } from "application/services/eformsign-headless-progress.service";
 import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
 import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
@@ -27,11 +27,11 @@ export class EformsignDocController {
 
     constructor(
         private readonly eformsignDocService: EformsignDocService,
-        private readonly listPendingStaffCompletionUsecase: ListPendingStaffCompletionUsecase,
         private readonly listClientNamesByBranchUsecase: ListClientNamesByBranchUsecase,
         private readonly dispatchHeadlessUsecase: DispatchDocumentHeadlessUsecase,
         private readonly finalizeHeadlessUsecase: FinalizeDocumentHeadlessUsecase,
         private readonly eventBus: EformsignDocsEventBus,
+        private readonly headlessProgressService: EformsignHeadlessProgressService,
     ) {}
 
     /**
@@ -54,6 +54,34 @@ export class EformsignDocController {
         );
 
         return merge(docs, heartbeat);
+    }
+
+    @Sse("dispatch-headless/progress")
+    dispatchHeadlessProgress(@Query("progressId") progressId: string): Observable<MessageEvent> {
+        const progress = this.headlessProgressService.events$.pipe(
+            filter((event) => event.progressId === progressId),
+            map((event) => ({ data: event, type: "progress" } as MessageEvent)),
+        );
+
+        const heartbeat = interval(30000).pipe(
+            map(() => ({ data: { at: Date.now() }, type: "ping" } as MessageEvent)),
+        );
+
+        return merge(progress, heartbeat);
+    }
+
+    @Sse("finalize-headless/progress")
+    finalizeHeadlessProgress(@Query("progressId") progressId: string): Observable<MessageEvent> {
+        const progress = this.headlessProgressService.events$.pipe(
+            filter((event) => event.progressId === progressId),
+            map((event) => ({ data: event, type: "progress" } as MessageEvent)),
+        );
+
+        const heartbeat = interval(30000).pipe(
+            map(() => ({ data: { at: Date.now() }, type: "ping" } as MessageEvent)),
+        );
+
+        return merge(progress, heartbeat);
     }
 
     // ============ Local DB Endpoints ============
@@ -117,11 +145,6 @@ export class EformsignDocController {
         @Query("documentId") documentId: string
     ) {
         return this.eformsignDocService.findByDocumentId(tenant.branchId ?? "", documentId);
-    }
-
-    @Get("pending-staff-completion")
-    listPendingStaffCompletion(@CurrentTenant() tenant: { branchId?: string }) {
-        return this.listPendingStaffCompletionUsecase.execute(tenant.branchId ?? "");
     }
 
     /**
@@ -200,6 +223,7 @@ export class EformsignDocController {
         const result = await this.dispatchHeadlessUsecase.execute(tenant.branchId ?? "", {
             contractData: dto.contractData,
             clientId: dto.clientId,
+            progressId: dto.progressId,
         });
         if (!result.ok) {
             this.logger.warn(`[dispatch-headless] failed: ${result.reason}`);
@@ -207,6 +231,7 @@ export class EformsignDocController {
                 ok: false,
                 durationMs: result.durationMs,
                 reason: result.reason,
+                failedStep: result.failedStep,
                 fallbackHint: "iframe",
             };
         }
@@ -227,6 +252,7 @@ export class EformsignDocController {
         const result = await this.finalizeHeadlessUsecase.execute({
             documentId: dto.documentId,
             prefillEndDate: dto.prefillEndDate,
+            progressId: dto.progressId,
         });
         if (!result.ok) {
             this.logger.warn(`[finalize-headless] failed: ${result.reason}`);

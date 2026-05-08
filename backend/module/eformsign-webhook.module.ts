@@ -19,9 +19,10 @@ import { DatabaseModule } from "infrastructure/database/database.module";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { AlimtalkModule } from "./alimtalk.module";
 import { EformsignDocModule } from "./eformsign-doc.module";
+import { NotificationModule } from "./notification.module";
 
 @Module({
-    imports: [DatabaseModule, AlimtalkModule, EformsignDocModule],
+    imports: [DatabaseModule, AlimtalkModule, EformsignDocModule, NotificationModule],
     controllers: [EformsignWebhookController],
     providers: [
         WebhookGuard,

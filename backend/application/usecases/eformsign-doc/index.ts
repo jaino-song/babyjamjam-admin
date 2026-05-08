@@ -8,7 +8,6 @@ export * from "./list-eformsign-docs.usecase";
 export * from "./create-eformsign-doc.usecase";
 export * from "./update-eformsign-doc-status.usecase";
 export * from "./link-document-to-client.usecase";
-export * from "./list-pending-staff-completion.usecase";
 export * from "./list-client-names-by-branch.usecase";
 export * from "./sync-client-end-date.usecase";
 // NOTE: UpdateClientContractStatusUsecase deprecated - service status is now computed from dates

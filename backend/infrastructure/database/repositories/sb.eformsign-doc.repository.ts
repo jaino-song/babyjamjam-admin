@@ -22,6 +22,14 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return doc ? EformsignDocMapper.toDomain(doc) : null;
     }
 
+    async findBranchIdByDocumentId(documentId: string): Promise<string | null> {
+        const doc = await this.prismaService.eformsign_doc.findUnique({
+            where: { documentId },
+            select: { branchId: true },
+        });
+        return doc?.branchId ?? null;
+    }
+
     async findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
             where: { clientId: clientId, branchId: branchid },
@@ -53,19 +61,6 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return docs
             .filter((d) => d.documentId && d.clientId != null && nameById.has(d.clientId))
             .map((d) => ({ documentId: d.documentId, clientName: nameById.get(d.clientId!)! }));
-    }
-
-    async findPendingStaffCompletion(branchid: string): Promise<EformsignDocEntity[]> {
-        const docs = await this.prismaService.eformsign_doc.findMany({
-            where: {
-                branchId: branchid,
-                statusType: "060",
-                statusDetail: "서명 요청됨",
-                stepIndex: "3",
-            },
-            orderBy: { updatedDate: "desc" },
-        });
-        return docs.map(EformsignDocMapper.toDomain);
     }
 
     async create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {

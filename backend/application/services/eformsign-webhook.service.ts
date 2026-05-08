@@ -5,8 +5,13 @@ import { SyncClientEndDateUsecase } from "application/usecases/eformsign-doc/syn
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
 import { AlimtalkService } from "./alimtalk.service";
 import { EformsignDocsEventBus } from "./eformsign-docs-event-bus.service";
+import { NotificationService } from "./notification.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
-import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
+import {
+    EFORMSIGN_CLIENT_REPOSITORY,
+    type EformsignApiDocumentResponse,
+    type IEformsignClientRepository,
+} from "domain/repositories/eformsign.client.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
@@ -50,6 +55,33 @@ const EVENT_TYPES = {
     READY_DOCUMENT_PDF: "ready_document_pdf", // PDF generation complete
 };
 
+const REVIEW_REQUIRED_NOTIFICATION_TYPE = "eformsign-review-required";
+
+const STATUS_NAME_TO_CODE: Record<string, string> = {
+    doc_complete: "003",
+    doc_accept_approval: "012",
+    doc_accept_reception: "022",
+    doc_accept_outsider: "032",
+    doc_request_revoke: "040",
+    doc_revoke: "042",
+    doc_request_reject: "045",
+    doc_request_delete: "047",
+    doc_delete: "049",
+    doc_request_participant: "060",
+    doc_reject_participant: "061",
+    doc_accept_participant: "062",
+    doc_rerequest_participant: "063",
+    doc_open_participant: "064",
+    doc_request_reviewer: "070",
+    doc_reject_reviewer: "071",
+    doc_accept_reviewer: "072",
+    doc_expired: "080",
+    face_signature_complete: "092",
+};
+
+const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
+const REJECTED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"]);
+
 @Injectable()
 export class EformsignWebhookService {
     private readonly logger = new Logger(EformsignWebhookService.name);
@@ -60,6 +92,7 @@ export class EformsignWebhookService {
         private readonly syncClientEndDateUsecase: SyncClientEndDateUsecase,
         private readonly alimtalkService: AlimtalkService,
         private readonly eventBus: EformsignDocsEventBus,
+        private readonly notificationService: NotificationService,
         @Inject(EFORMSIGN_CLIENT_REPOSITORY)
         private readonly eformsignApiClient: IEformsignClientRepository,
         @Inject(CLIENT_REPOSITORY)
@@ -74,25 +107,29 @@ export class EformsignWebhookService {
 
     async processWebhook(branchid: string, payload: EformsignWebhookPayloadDto): Promise<void> {
         const { event_type, webhook_id, document, ready_document_pdf, document_action } = payload;
+        const documentId = document?.id ?? ready_document_pdf?.document_id ?? document_action?.document_id;
+        const resolvedBranchId = documentId
+            ? await this.resolveBranchIdForDocument(branchid, documentId)
+            : branchid;
 
         this.logger.log(`Processing webhook ${webhook_id}: event_type=${event_type}`);
 
         // Handle document events (status changes)
         if (event_type === EVENT_TYPES.DOCUMENT && document) {
-            await this.handleDocumentEvent(branchid, document);
+            await this.handleDocumentEvent(resolvedBranchId, document);
             return;
         }
 
         // Handle document_action events (open, view actions)
         // Note: eformsign sends action data inside the `document` object (document.action field)
         if (event_type === EVENT_TYPES.DOCUMENT_ACTION && document) {
-            await this.handleDocumentActionEvent(branchid, document);
+            await this.handleDocumentActionEvent(resolvedBranchId, document);
             return;
         }
 
         // Handle PDF ready events - also update status since it contains document_status
         if (event_type === EVENT_TYPES.READY_DOCUMENT_PDF && ready_document_pdf) {
-            await this.handleReadyDocumentPdfEvent(branchid, ready_document_pdf);
+            await this.handleReadyDocumentPdfEvent(resolvedBranchId, ready_document_pdf);
             return;
         }
 
@@ -239,6 +276,8 @@ export class EformsignWebhookService {
             return;
         }
 
+        await this.notifyReviewRequiredIfNeeded(branchid, documentId, document_title, statusType);
+
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
             this.logger.log(`Document ${documentId} completed, linking to client`);
             try {
@@ -321,6 +360,88 @@ export class EformsignWebhookService {
         const month = String(date.getMonth() + 1).padStart(2, "0");
         const day = String(date.getDate()).padStart(2, "0");
         return `${year}-${month}-${day}`;
+    }
+
+    private async resolveBranchIdForDocument(fallbackBranchId: string, documentId: string): Promise<string> {
+        try {
+            const branchId = await this.eformsignDocRepository.findBranchIdByDocumentId(documentId);
+            return branchId ?? fallbackBranchId;
+        } catch (error) {
+            this.logger.warn(`Failed to resolve branch for document ${documentId}: ${error}`);
+            return fallbackBranchId;
+        }
+    }
+
+    private normalizeStatusCode(statusType: string | null | undefined): string {
+        const normalized = statusType?.trim().toLowerCase();
+        if (!normalized) {
+            return "000";
+        }
+
+        return STATUS_NAME_TO_CODE[normalized] ?? normalized.padStart(3, "0");
+    }
+
+    private isReviewRequiredStatus(
+        currentStatus: EformsignApiDocumentResponse["current_status"] | null | undefined
+    ): boolean {
+        const statusCode = this.normalizeStatusCode(currentStatus?.status_type);
+        if (COMPLETED_STATUS_CODES.has(statusCode) || REJECTED_STATUS_CODES.has(statusCode)) {
+            return false;
+        }
+
+        const recipients = currentStatus?.step_recipients ?? [];
+        return recipients.length > 0 && recipients.every((recipient) => recipient.recipient_type === "01");
+    }
+
+    private async notifyReviewRequiredIfNeeded(
+        branchid: string,
+        documentId: string,
+        documentTitle: string,
+        localStatusType: string,
+    ): Promise<void> {
+        if (localStatusType !== "060") {
+            return;
+        }
+
+        try {
+            const accessTokenResponse = await this.eformsignApiClient.getAccessToken(Date.now());
+            const document = await this.eformsignApiClient.getDocument(
+                accessTokenResponse.oauth_token.access_token,
+                documentId,
+            );
+
+            if (!this.isReviewRequiredStatus(document.current_status)) {
+                return;
+            }
+
+            const title = "전자문서 검토 필요";
+            const body = `${documentTitle || "전자문서"} 검토가 필요합니다. 최종 확인을 진행해 주세요.`;
+            const data = {
+                type: REVIEW_REQUIRED_NOTIFICATION_TYPE,
+                documentId,
+                url: `/contracts?documentId=${encodeURIComponent(documentId)}`,
+            };
+
+            const result = await this.notificationService.sendToBranchUsers(
+                branchid,
+                title,
+                body,
+                data,
+                {
+                    dedupe: {
+                        type: REVIEW_REQUIRED_NOTIFICATION_TYPE,
+                        documentId,
+                    },
+                },
+            );
+            this.logger.log(
+                `Review-required notification for document ${documentId}: ${result.sent} sent, ${result.failed} failed`,
+            );
+        } catch (error) {
+            this.logger.warn(
+                `Failed to send review-required notification for document ${documentId}: ${error}`
+            );
+        }
     }
 
     private mapStatus(status: string): { statusType: string; statusDetail: string } {

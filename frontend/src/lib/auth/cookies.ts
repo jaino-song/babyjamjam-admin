@@ -37,10 +37,6 @@ function isServerE2ETestMode(): boolean {
   return process.env["NEXT_PUBLIC_E2E_TEST"] === "true" && process.env["NODE_ENV"] !== "production";
 }
 
-function isE2ECookieAllowed(): boolean {
-  return process.env["NODE_ENV"] !== "production";
-}
-
 // React cache()를 사용하여 같은 request cycle 내에서 중복 호출 방지
 // native fetch를 사용하지만 인증 정보는 request cycle 안에서만 재사용한다.
 export const getCurrentUser = cache(async () => {
@@ -52,9 +48,14 @@ export const getCurrentUser = cache(async () => {
       return null;
     }
 
+    // The hard-coded admin bypass requires BOTH the build-time E2E flag
+    // (NEXT_PUBLIC_E2E_TEST=true on a non-production build) AND an explicit
+    // per-request cookie. The cookie alone is insufficient — without the
+    // build flag, a regular user on a dev/staging deploy could self-elevate
+    // to admin by setting one cookie in their browser.
     if (
-      isServerE2ETestMode() ||
-      (isE2ECookieAllowed() && cookieStore.get(E2E_AUTH_COOKIE_NAME)?.value === "1")
+      isServerE2ETestMode() &&
+      cookieStore.get(E2E_AUTH_COOKIE_NAME)?.value === "1"
     ) {
       return E2E_AUTH_USER;
     }

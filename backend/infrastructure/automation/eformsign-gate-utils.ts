@@ -2,7 +2,14 @@ import type { FrameLocator, Locator, Page } from "playwright-core";
 
 export const EFORMSIGN_GATE_POLL_MS = 500;
 export const EFORMSIGN_READY_TEXT = "필수 입력 항목을 모두 작성했습니다.";
+// eformsign uses two different popup IDs depending on the SDK mode:
+//   - mode "01" (creation): #requestWithInputCommentPopup
+//   - mode "02" (finalize):  #inputCommentPopup
+// Keeping these as separate single-id selectors avoids Playwright's multi-match
+// isVisible() throw, which the gate's catch() masks as `not visible` and makes
+// the loop fall back to the (now-blocked) top-level 전송.
 export const REQUEST_SEND_DIALOG_SELECTOR = "#requestWithInputCommentPopup";
+export const FINALIZE_REQUEST_SEND_DIALOG_SELECTOR = "#inputCommentPopup";
 
 /**
  * Returns the first visible match in `locator`, or null if none are visible.

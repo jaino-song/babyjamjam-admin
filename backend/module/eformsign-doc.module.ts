@@ -10,7 +10,6 @@ import {
     FetchEformsignDocFromApiUsecase,
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
-    ListPendingStaffCompletionUsecase,
     ListClientNamesByBranchUsecase,
     SyncClientEndDateUsecase,
     DispatchDocumentHeadlessUsecase,
@@ -26,6 +25,7 @@ import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignService } from "application/services/eformsign.service";
 import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
+import { EformsignHeadlessProgressService } from "application/services/eformsign-headless-progress.service";
 import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
 import { AreaTemplateModule } from "module/area-template.module";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
@@ -40,7 +40,6 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FindEformsignDocsByClientIdUsecase,
         ListEformsignDocsUsecase,
         CreateEformsignDocUsecase,
-        ListPendingStaffCompletionUsecase,
         ListClientNamesByBranchUsecase,
         SyncClientEndDateUsecase,
         // Use cases - External API
@@ -58,6 +57,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         EformsignService,
         EformsignHeadlessService,
         EformsignDocsEventBus,
+        EformsignHeadlessProgressService,
         // Repository bindings
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
@@ -72,6 +72,12 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
             useClass: SbClientRepository,
         },
     ],
-    exports: [EformsignDocService, SyncClientEndDateUsecase, EformsignDocsEventBus, EFORMSIGN_CLIENT_REPOSITORY],
+    exports: [
+        EformsignDocService,
+        SyncClientEndDateUsecase,
+        EformsignDocsEventBus,
+        EformsignHeadlessProgressService,
+        EFORMSIGN_CLIENT_REPOSITORY,
+    ],
 })
 export class EformsignDocModule {}

@@ -34,9 +34,17 @@ describe("EformsignHeadlessService", () => {
     function buildPageMock() {
         return {
             setContent: jest.fn().mockResolvedValue(undefined),
+            route: jest.fn().mockResolvedValue(undefined),
+            goto: jest.fn().mockResolvedValue(undefined),
             waitForFunction: jest.fn().mockResolvedValue(undefined),
             close: jest.fn().mockResolvedValue(undefined),
-            evaluate: jest.fn().mockResolvedValue("doc-from-callback"),
+            evaluate: jest.fn().mockImplementation((fn: unknown) => {
+                const source = String(fn);
+                if (source.includes("__eformsignSuccess")) {
+                    return Promise.resolve("doc-from-callback");
+                }
+                return Promise.resolve(undefined);
+            }),
             frameLocator: jest.fn().mockReturnValue({}),
         };
     }
@@ -118,5 +126,37 @@ describe("EformsignHeadlessService", () => {
             expect(result.documentId).toBe("doc-from-callback");
         }
         expect(runEformsignFinalizeGates).toHaveBeenCalledTimes(1);
+    });
+
+    it("dispatchFinalize forwards onProgress and emits client-started + sent", async () => {
+        const onProgress = jest.fn();
+        (runEformsignFinalizeGates as jest.Mock).mockImplementationOnce(
+            async (
+                _page: unknown,
+                _frame: unknown,
+                _logger: unknown,
+                cb?: (step: string) => void,
+            ) => {
+                cb?.("info-inserted");
+                cb?.("creating");
+                return "success-latched";
+            },
+        );
+
+        const result = await service.dispatchFinalize({
+            documentOption: { mode: { type: "02", document_id: "doc-9" } },
+            documentId: "doc-9",
+            onProgress,
+        });
+
+        expect(result.ok).toBe(true);
+        // Driver emits client-started after iframe boot, then forwards
+        // info-inserted/creating from the gate runner, then sent on success.
+        expect(onProgress).toHaveBeenCalledWith("client-started");
+        expect(onProgress).toHaveBeenCalledWith("info-inserted");
+        expect(onProgress).toHaveBeenCalledWith("creating");
+        expect(onProgress).toHaveBeenCalledWith("sent");
+        const gateCallArgs = (runEformsignFinalizeGates as jest.Mock).mock.calls[0];
+        expect(typeof gateCallArgs[3]).toBe("function");
     });
 });
