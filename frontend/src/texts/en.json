@@ -195,7 +195,7 @@
     "area-label": "Service Area",
     "start-date-label": "Contract Start Date",
     "start-date-placeholder": "2025-01-01",
-    "end-date-label": "Contract End Date",
+    "end-date-label": "End Date",
     "end-date-placeholder": "2025-12-31",
     "employee-select-label": "Select Provider 1",
     "employee-manual-entry": "Add New Provider",

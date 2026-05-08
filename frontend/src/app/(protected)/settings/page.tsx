@@ -117,14 +117,14 @@ export default function SettingsPage() {
 
   return (
     <section data-component="settings" className="space-y-6">
-      <div data-component="settings-content" className="flex flex-col lg:flex-row gap-8">
+      <div data-component="settings-sections" className="flex flex-col lg:flex-row gap-8">
         <SectionNav
           items={BASE_NAV_SECTIONS}
           activeId={activeSection}
           onSelect={(id) => setActiveSection(id as SectionId)}
         />
 
-        <div data-component="settings-sections" className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0">
           {activeSection === "profile" && (
           <section data-component="settings-profile">
             <ContentPaper variant="v3">

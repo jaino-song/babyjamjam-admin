@@ -80,6 +80,22 @@ export class NotificationService {
         await Promise.all(userIds.map((userId) => this.sendEmailNotificationToUser(userId, title, body)));
     }
 
+    private async hasExistingNotification(
+        branchid: string,
+        userId: string,
+        dedupe: { type: string; documentId: string },
+    ): Promise<boolean> {
+        const notifications = await this.getNotificationsUsecase.execute(branchid, userId, {
+            limit: 100,
+            offset: 0,
+        });
+
+        return notifications.some((notification) =>
+            notification.data?.["type"] === dedupe.type &&
+            notification.data?.["documentId"] === dedupe.documentId
+        );
+    }
+
     // VAPID Key
     getVapidPublicKey(): string {
         return this.getVapidKeyUsecase.execute();
@@ -168,5 +184,50 @@ export class NotificationService {
         const result = await this.sendNotificationUsecase.sendToUsers({ userIds, title, body, data });
         await this.sendEmailNotificationsToUsers(userIds, title, body);
         return result;
+    }
+
+    async sendToBranchUsers(
+        branchid: string,
+        title: string,
+        body: string,
+        data?: Record<string, unknown>,
+        options?: { dedupe?: { type: string; documentId: string } },
+    ): Promise<{ sent: number; failed: number }> {
+        const users = await this.userRepository.findNotificationRecipientsByBranchId(branchid);
+        const uniqueUsers = Array.from(new Map(users.map((user) => [user.id, user])).values());
+        if (uniqueUsers.length === 0) {
+            return { sent: 0, failed: 0 };
+        }
+
+        const results = await Promise.allSettled(uniqueUsers.map(async (user) => {
+            if (options?.dedupe) {
+                const exists = await this.hasExistingNotification(branchid, user.id, options.dedupe);
+                if (exists) {
+                    return "skipped" as const;
+                }
+            }
+
+            await this.sendNotification(branchid, user.id, title, body, data);
+            return "sent" as const;
+        }));
+
+        let sent = 0;
+        let failed = 0;
+        for (const result of results) {
+            if (result.status === "fulfilled") {
+                if (result.value === "sent") {
+                    sent++;
+                }
+                continue;
+            }
+
+            failed++;
+            this.logger.error(
+                `Failed to send branch notification for branch ${branchid}`,
+                result.reason instanceof Error ? result.reason.stack : String(result.reason),
+            );
+        }
+
+        return { sent, failed };
     }
 }

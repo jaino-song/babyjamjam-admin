@@ -2,6 +2,10 @@
 
 This document defines the architectural patterns, code branch, and conventions for the NestJS backend following Clean Architecture and Domain-Driven Design (DDD) principles.
 
+Related integration notes:
+
+- [eformsign Headless Playwright Dispatch](./eformsign-headless-playwright.md) - backend Playwright structure for eformsign creation/finalize automation and iframe fallback.
+
 ---
 
 ## 1. Architecture Overview

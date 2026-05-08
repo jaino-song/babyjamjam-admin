@@ -53,7 +53,7 @@
   /* Border & Input */
   --border: 214 32% 85%;
   --input: 214 32% 85%;
-  --ring: 217 71% 24%;
+  --ring: 214 100% 75%;
 
   /* Radius */
   --radius: 0.5rem;
@@ -1261,6 +1261,12 @@ body {
   }
 }
 
+@keyframes contract-creation-processing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .animate-pop-in {
   animation: popIn 0.3s ease-out;
 }
@@ -1279,4 +1285,8 @@ body {
 
 .animate-float {
   animation: float 3s ease-in-out infinite;
+}
+
+.contract-creation-processing-spinner {
+  animation: contract-creation-processing-spin 0.8s linear infinite;
 }

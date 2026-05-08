@@ -190,5 +190,5 @@ export interface EformsignDocumentView {
   doc_id: string;
   customer_name: string;
   created_date: number;
-  status: "대기" | "완료" | "거부";
+  status: "대기" | "검토 필요" | "완료" | "기간 만료";
 }

@@ -8,11 +8,11 @@ const inputVariants = cva(
     variants: {
       variant: {
         default:
-          "h-10 rounded-md border border-input px-3 py-2 text-sm transition-colors focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)]",
+          "h-10 rounded-md border border-input px-3 py-2 text-sm transition-colors focus-visible:border-primary",
         v3:
-          "h-12 rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 py-2 text-[0.85rem] text-v3-dark shadow-none transition-all duration-200 ease-in-out focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)] focus-visible:scale-[1.02]",
+          "h-10 rounded-2xl border-[1.5px] border-v3-border bg-white px-4 py-2.5 text-[0.85rem] font-[Pretendard] text-v3-dark shadow-none outline-none transition-colors focus-visible:border-v3-primary",
         "v3-pill":
-          "h-12 rounded-pill border-[1.5px] border-v3-border bg-white px-4 py-2 text-[0.85rem] text-v3-dark shadow-none transition-all duration-200 ease-in-out focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)] focus-visible:scale-[1.02]",
+          "h-10 rounded-pill border-[1.5px] border-v3-border bg-white px-4 py-2.5 text-[0.85rem] font-[Pretendard] text-v3-dark shadow-none outline-none transition-colors focus-visible:border-v3-primary",
       },
     },
     defaultVariants: {

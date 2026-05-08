@@ -10,6 +10,10 @@ import {
     FetchEformsignDocFromApiUsecase,
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
+    ListClientNamesByBranchUsecase,
+    SyncClientEndDateUsecase,
+    DispatchDocumentHeadlessUsecase,
+    FinalizeDocumentHeadlessUsecase,
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_CLIENT_REPOSITORY } from "domain/repositories/eformsign.client.interface";
@@ -19,10 +23,15 @@ import { SbEformsignDocRepository } from "infrastructure/database/repositories/s
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
+import { EformsignService } from "application/services/eformsign.service";
+import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
+import { EformsignHeadlessProgressService } from "application/services/eformsign-headless-progress.service";
+import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
+import { AreaTemplateModule } from "module/area-template.module";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
 
 @Module({
-    imports: [DatabaseModule],
+    imports: [DatabaseModule, AreaTemplateModule],
     controllers: [EformsignDocController],
     providers: [
         // Use cases - Local DB
@@ -31,6 +40,8 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FindEformsignDocsByClientIdUsecase,
         ListEformsignDocsUsecase,
         CreateEformsignDocUsecase,
+        ListClientNamesByBranchUsecase,
+        SyncClientEndDateUsecase,
         // Use cases - External API
         GetEformsignAccessTokenUsecase,
         RefreshEformsignAccessTokenUsecase,
@@ -38,8 +49,15 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FetchEformsignDocFromApiUsecase,
         // Use cases - Contract creation
         CreateAndSendContractUsecase,
-        // Service
+        // Use cases - Headless dispatch (BJJ-90)
+        DispatchDocumentHeadlessUsecase,
+        FinalizeDocumentHeadlessUsecase,
+        // Services
         EformsignDocService,
+        EformsignService,
+        EformsignHeadlessService,
+        EformsignDocsEventBus,
+        EformsignHeadlessProgressService,
         // Repository bindings
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
@@ -54,6 +72,12 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
             useClass: SbClientRepository,
         },
     ],
-    exports: [EformsignDocService],
+    exports: [
+        EformsignDocService,
+        SyncClientEndDateUsecase,
+        EformsignDocsEventBus,
+        EformsignHeadlessProgressService,
+        EFORMSIGN_CLIENT_REPOSITORY,
+    ],
 })
 export class EformsignDocModule {}

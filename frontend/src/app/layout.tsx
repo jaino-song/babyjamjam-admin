@@ -47,7 +47,7 @@ export default async function RootLayout({
 
   return (
     <html lang={locale}>
-      <body className={`${Pretendard.variable} antialiased min-h-screen`}>
+      <body className={`${Pretendard.variable} antialiased min-h-screen`} suppressHydrationWarning>
         <div data-component="app-root">
           <div data-component="app-providers">
             <QueryProvider>

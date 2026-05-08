@@ -24,6 +24,22 @@ export interface EformsignAuthStatusResponse {
     hasRefreshToken: boolean;
 }
 
+export interface HeadlessDispatchResponse {
+    ok: boolean;
+    documentId?: string;
+    durationMs: number;
+    reason?: string;
+    failedStep?: string;
+    fallbackHint?: "iframe";
+}
+
+export interface HeadlessFinalizeResponse {
+    ok: boolean;
+    durationMs: number;
+    reason?: string;
+    fallbackHint?: "iframe";
+}
+
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
@@ -139,6 +155,20 @@ export const eformsignApi = {
         const { data } = await api.post('/generate-document', { contractData, clientId });
         return data;
     },
+    generateStaffDocument: async (
+        documentId: string,
+        accessToken?: string,
+        refreshToken?: string,
+        prefillEndDate?: string,
+    ) => {
+        const { data } = await api.post('/generate-staff-document', {
+            documentId,
+            accessToken,
+            refreshToken,
+            prefillEndDate,
+        });
+        return data;
+    },
     // Create eformsign doc record to track document in local DB
     createDocRecord: async (params: {
         documentId: string;
@@ -164,16 +194,16 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/documents', { params });
         return data;
     },
-    getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/in-progress');
+    getInProgressDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents/in-progress', { params });
         return data;
     },
-    getCompletedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/completed');
+    getCompletedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents/completed', { params });
         return data;
     },
-    getRejectedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/rejected');
+    getRejectedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents/rejected', { params });
         return data;
     },
     deleteDocuments: async (
@@ -195,6 +225,44 @@ export const eformsignApi = {
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents');
+        return data;
+    },
+    /**
+     * BJJ-90: backend-driven creation dispatch. Drives the iframe gate
+     * sequence (mode:"01") via headless Chromium so staff don't see the
+     * iframe. Returns ok=false on any failure — the caller falls back to
+     * the existing iframe modal.
+     */
+    dispatchHeadless: async (
+        contractData: ContractDataDto,
+        clientId?: number,
+        progressId?: string,
+    ): Promise<HeadlessDispatchResponse> => {
+        const { data } = await api.post('/eformsign-docs/dispatch-headless', {
+            contractData,
+            clientId,
+            progressId,
+        });
+        return data;
+    },
+    /**
+     * BJJ-90: backend-driven staff finalize (mode:"02"). Same fallback
+     * contract — ok=false instructs the caller to open the iframe modal.
+     */
+    finalizeHeadless: async (
+        documentId: string,
+        prefillEndDate?: string,
+        progressId?: string,
+    ): Promise<HeadlessFinalizeResponse> => {
+        const { data } = await api.post('/eformsign-docs/finalize-headless', {
+            documentId,
+            prefillEndDate,
+            progressId,
+        });
+        return data;
+    },
+    getDocumentClientNames: async (): Promise<Array<{ documentId: string; clientName: string }>> => {
+        const { data } = await api.get('/eformsign-docs/client-names');
         return data;
     },
 }

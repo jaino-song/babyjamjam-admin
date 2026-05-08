@@ -58,4 +58,16 @@ export class SbUserRepository implements IUserRepository {
         });
         return users.map(UserMapper.toDomain);
     }
+
+    async findNotificationRecipientsByBranchId(branchId: string): Promise<UserEntity[]> {
+        const users = await this.prismaService.user.findMany({
+            where: {
+                OR: [
+                    { ownedBranches: { some: { id: branchId } } },
+                    { userBranches: { some: { branchId } } },
+                ],
+            },
+        });
+        return users.map(UserMapper.toDomain);
+    }
 }

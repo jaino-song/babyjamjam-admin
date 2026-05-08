@@ -37,6 +37,19 @@ export interface EformsignApiDocumentResponse {
         value: string;
         type: string;
     }>;
+    next_status?: Array<{
+        step_type: string;
+        step_name?: string;
+        step_recipients?: Array<{
+            recipient_type?: string;
+            id?: string;
+            name?: string;
+        }>;
+        status_type?: string;
+        step_group?: number;
+        step_index?: string;
+        step_seq?: string;
+    }>;
 }
 
 export interface EformsignApiListResponse {

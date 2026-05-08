@@ -1,4 +1,6 @@
-import { IsNumber, IsOptional, IsString, IsDateString, IsBoolean } from "class-validator";
+import { IsBoolean, IsDateString, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, Matches } from "class-validator";
+import { ContractDataDto } from "application/dto/contract.dto";
+import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 
 /**
  * DTO for getting access token
@@ -84,3 +86,52 @@ export class CreateEformsignDocLocalDto {
     linkToClient?: boolean; // If true, also update client.e_doc_id
 }
 
+/**
+ * DTO for headless dispatch (creation, mode:"01")
+ */
+export class DispatchHeadlessRequestDto {
+    @IsObject()
+    contractData!: ContractDataDto;
+
+    @IsOptional()
+    @IsNumber()
+    clientId?: number;
+
+    @IsOptional()
+    @IsString()
+    progressId?: string;
+}
+
+export interface DispatchHeadlessResponseDto {
+    ok: boolean;
+    documentId?: string;
+    durationMs: number;
+    reason?: string;
+    failedStep?: EformsignHeadlessProgressStep;
+    fallbackHint?: "iframe";
+}
+
+/**
+ * DTO for headless finalize (mode:"02")
+ */
+export class FinalizeHeadlessRequestDto {
+    @IsString()
+    @IsNotEmpty()
+    documentId!: string;
+
+    @IsOptional()
+    @IsString()
+    @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: "prefillEndDate must match YYYY-MM-DD" })
+    prefillEndDate?: string;
+
+    @IsOptional()
+    @IsString()
+    progressId?: string;
+}
+
+export interface FinalizeHeadlessResponseDto {
+    ok: boolean;
+    durationMs: number;
+    reason?: string;
+    fallbackHint?: "iframe";
+}

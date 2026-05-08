@@ -36,12 +36,14 @@ export interface StepperProps {
   showCheckOnDone?: boolean;
   /** Additional class names on the root wrapper. */
   className?: string;
+  /** Additional class names on each connector — useful for widening spacing for long labels. */
+  connectorClassName?: string;
 }
 
 const SIZE_MAP: Record<StepperSize, { circle: string; font: string; label: string; connector: string }> = {
-  sm: { circle: "w-6 h-6", font: "text-[0.55rem]", label: "text-[0.5rem]", connector: "px-1.5 text-xs" },
-  md: { circle: "w-8 h-8", font: "text-[0.65rem]", label: "text-[0.6rem]", connector: "px-2 text-sm" },
-  lg: { circle: "w-10 h-10", font: "text-xs", label: "text-[0.7rem]", connector: "px-2.5 text-base" },
+  sm: { circle: "w-6 h-6", font: "text-[0.55rem]", label: "text-[0.5rem]", connector: "min-w-10 px-1.5" },
+  md: { circle: "w-8 h-8", font: "text-[0.65rem]", label: "text-[0.6rem]", connector: "min-w-16 px-2" },
+  lg: { circle: "w-10 h-10", font: "text-xs", label: "text-[0.7rem]", connector: "min-w-20 px-2.5" },
 };
 
 function resolveState(step: StepperStep, index: number, activeStep?: number): StepState {
@@ -65,11 +67,12 @@ export function Stepper({
   size = "md",
   showCheckOnDone = false,
   className,
+  connectorClassName,
 }: StepperProps) {
   const tokens = SIZE_MAP[size];
 
   return (
-    <div data-component="stepper" className={cn("flex items-center", className)}>
+    <div data-component="stepper" className={cn("flex items-center px-1 pt-1 pb-5", className)}>
       {steps.map((step, idx) => {
         const state = resolveState(step, idx, activeStep);
         const nextState = idx < steps.length - 1 ? resolveState(steps[idx + 1], idx + 1, activeStep) : null;
@@ -85,7 +88,7 @@ export function Stepper({
 
         return (
           <React.Fragment key={step.label}>
-            <div data-component="stepper-step" className="relative flex flex-1 flex-col items-center">
+            <div data-component="stepper-step" className="relative flex flex-col items-center">
               <div
                 data-component="stepper-circle"
                 className={cn(
@@ -113,12 +116,17 @@ export function Stepper({
               <div
                 data-component="stepper-connector"
                 className={cn(
-                  "shrink-0 select-none font-semibold leading-none",
+                  "flex flex-1 items-center select-none",
                   tokens.connector,
-                  nextState === "done" || nextState === "active" ? "text-v3-primary" : "text-v3-border",
+                  connectorClassName,
                 )}
               >
-                -
+                <div
+                  className={cn(
+                    "h-0.5 w-full rounded-full",
+                    nextState === "done" || nextState === "active" ? "bg-v3-primary" : "bg-v3-border",
+                  )}
+                />
               </div>
             )}
           </React.Fragment>

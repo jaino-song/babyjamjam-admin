@@ -1,18 +1,18 @@
 "use client";
 
-import { useCallback, useState, useMemo, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
 
-const INITIAL_VISIBLE_COUNT = 6; // First load: teaser view (4 full + 2 fading)
-const PAGE_SIZE = 6; // How many more to show each time
+const PAGE_SIZE = 20;
 const EMPTY_DOCUMENTS: EformsignDocument[] = [];
 const EMPTY_EXCLUDED_NAMES: readonly string[] = [];
 
-// Filter documents by actual status code
+// Filter documents by actual status code. Used as a safety net for the merged
+// "전체" endpoint; per-status endpoints are already filtered server-side.
 function filterByActualStatus(
   docs: EformsignDocument[],
   type: DocumentFilterType
@@ -23,17 +23,34 @@ function filterByActualStatus(
   );
 }
 
-// Sort documents by created_date descending (newest first)
+// Sort by created_date desc. Per-status endpoints already return sorted
+// (eformsign yields newest first per status), so this is mostly a no-op there.
+// For "전체", the merged-dedupe endpoint interleaves three status streams, so
+// after concatenating multiple pages we re-sort to keep the global newest-first
+// order — this can shift previously-displayed items if a later page surfaces a
+// newer cross-status item, which is the unavoidable trade-off of paginating a
+// merged stream without server-side merge-sort.
 function sortByCreatedDate(docs: EformsignDocument[]): EformsignDocument[] {
   return [...docs].sort((a, b) => b.created_date - a.created_date);
 }
 
-// Helper to extract customer name from document
+// Helper to extract customer name from document.
+// Prefer the outsider (이용자, recipient_type "02") wherever they appear so docs
+// past step 1 still surface the customer rather than the current-step staff.
 function getCustomerName(doc: EformsignDocument): string | null {
-  const recipients = doc.current_status?.step_recipients;
-  if (recipients && recipients.length > 0 && recipients[0]?.name) {
-    return recipients[0].name;
+  type Recipientish = { recipient_type?: string; name?: string };
+  const buckets: Recipientish[][] = [
+    (doc.recipients as Recipientish[]) ?? [],
+    (doc.current_status?.step_recipients as Recipientish[]) ?? [],
+  ];
+  for (const list of buckets) {
+    const outsider = list.find((r) => r?.recipient_type === "02" && r.name);
+    if (outsider?.name) return outsider.name;
   }
+  const fallback = (doc.current_status?.step_recipients as Recipientish[] | undefined)?.find(
+    (r) => r?.name && r?.recipient_type !== "01",
+  );
+  if (fallback?.name) return fallback.name;
   if (doc.last_editor?.name) return doc.last_editor.name;
   if (doc.creator?.name) return doc.creator.name;
   return null;
@@ -54,34 +71,52 @@ interface UseInfiniteContractsOptions {
 }
 
 /**
- * Client-side paginated hook for contracts.
- * Fetches all documents once, then reveals them progressively via "load more".
+ * Server-side paginated hook for contracts.
+ *
+ * Per-status tabs (대기/완료/기간 만료) hit dedicated eformsign endpoints with
+ * real `limit`/`skip` pagination using `total_rows` from the upstream response.
+ *
+ * The "전체" tab calls the merged endpoint which fetches `limit` items from
+ * each of the three status streams in parallel, then dedupes. `total_rows` from
+ * that endpoint is the deduped batch size — not a reliable global total — so
+ * we use a "fetch until empty" cursor instead: keep paginating until a page
+ * returns no documents (meaning all three status streams are exhausted at
+ * the current offset).
+ *
+ * Each tab has its own cache (queryKey differs by filterType) and persists for
+ * `staleTime`, so tab switches do not refetch within that window.
  */
 export function useInfiniteContracts({
   enabled = true,
   filterType = null,
   excludedNames = EMPTY_EXCLUDED_NAMES,
 }: UseInfiniteContractsOptions = {}) {
-  // Track how many items are visible (starts at 6, increases by 20 each load)
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
-
-  // Reset visible count when filter changes
-  useEffect(() => {
-    queueMicrotask(() => {
-      setVisibleCount(INITIAL_VISIBLE_COUNT);
-    });
-  }, [filterType]);
-
-  // Fetch all documents once
-  const query = useQuery<EformsignDocumentsResponse>({
+  const query = useInfiniteQuery<EformsignDocumentsResponse>({
     queryKey: infiniteContractsQueryKeys.documents(filterType),
-    queryFn: async () => {
-      const response = await eformsignApi.getAllDocuments({
-        limit: 100,
-        skip: 0,
-        type: filterType,
-      });
-      return response;
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const skip = typeof pageParam === "number" ? pageParam : 0;
+      const params = { limit: PAGE_SIZE, skip };
+      switch (filterType) {
+        case "in-progress":
+          return await eformsignApi.getInProgressDocuments(params);
+        case "completed":
+          return await eformsignApi.getCompletedDocuments(params);
+        case "rejected":
+          return await eformsignApi.getRejectedDocuments(params);
+        case null:
+        default:
+          return await eformsignApi.getAllDocuments({ ...params, type: null });
+      }
+    },
+    getNextPageParam: (lastPage) => {
+      const nextSkip = lastPage.skip + lastPage.limit;
+      if (filterType === null) {
+        // 전체 (merged-dedupe): fetch until a page returns empty.
+        return lastPage.documents.length > 0 ? nextSkip : undefined;
+      }
+      // Per-status: real total_rows from eformsign.
+      return nextSkip < lastPage.total_rows ? nextSkip : undefined;
     },
     enabled,
     staleTime: 1000 * 60 * 5, // 5 minutes
@@ -89,18 +124,35 @@ export function useInfiniteContracts({
     refetchOnWindowFocus: false,
   });
 
-  // Process and filter all documents
-  const queryDocuments = query.data?.documents;
+  // Flatten loaded pages into a single document list, deduping by id.
+  // The backend's getAllDocuments only dedupes within a single response, so a
+  // document appearing in multiple status streams (e.g. completed and rejected)
+  // can leak across pages. Dedupe here to keep React keys unique and avoid
+  // double-rendering.
+  const fetchedDocuments = useMemo(() => {
+    if (!query.data) return EMPTY_DOCUMENTS;
+    const seen = new Set<string>();
+    const deduped: EformsignDocument[] = [];
+    for (const page of query.data.pages) {
+      for (const doc of page.documents) {
+        if (seen.has(doc.id)) continue;
+        seen.add(doc.id);
+        deduped.push(doc);
+      }
+    }
+    return deduped;
+  }, [query.data]);
 
   const excludedNameSet = useMemo(() => new Set(excludedNames), [excludedNames]);
 
-  const allFilteredDocuments = useMemo(() => {
-    if (!queryDocuments) return EMPTY_DOCUMENTS;
+  const documents = useMemo(() => {
+    if (fetchedDocuments.length === 0) return EMPTY_DOCUMENTS;
 
-    // Filter by status type
-    let docs = filterByActualStatus(queryDocuments, filterType);
+    // Server filters by status for per-status endpoints; this is a safety net
+    // for the merged "전체" endpoint (which returns all statuses) and a no-op
+    // for other tabs.
+    let docs = filterByActualStatus(fetchedDocuments, filterType);
 
-    // Filter out excluded names
     if (excludedNameSet.size > 0) {
       docs = docs.filter((doc) => {
         const name = getCustomerName(doc);
@@ -108,31 +160,21 @@ export function useInfiniteContracts({
       });
     }
 
-    // Sort by created_date
     return sortByCreatedDate(docs);
-  }, [excludedNameSet, filterType, queryDocuments]);
+  }, [excludedNameSet, filterType, fetchedDocuments]);
 
-  // Slice to visible count
-  const documents = useMemo(() => {
-    return allFilteredDocuments.slice(0, visibleCount);
-  }, [allFilteredDocuments, visibleCount]);
-
-  // Check if there are more items to show
-  const totalFilteredCount = allFilteredDocuments.length;
-  const hasNextPage = visibleCount < totalFilteredCount;
-
-  const fetchNextPage = useCallback(() => {
-    setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, totalFilteredCount));
-  }, [setVisibleCount, totalFilteredCount]);
+  // Total reported by upstream eformsign for per-status tabs. Not meaningful
+  // for the 전체 tab (it is the first page's deduped batch size).
+  const totalCount = query.data?.pages[0]?.total_rows ?? 0;
 
   return {
     documents,
-    allDocuments: allFilteredDocuments,
+    allDocuments: documents,
     isLoading: query.isLoading,
-    isFetchingNextPage: false,
-    hasNextPage,
-    fetchNextPage,
-    totalCount: allFilteredDocuments.length,
+    isFetchingNextPage: query.isFetchingNextPage,
+    hasNextPage: !!query.hasNextPage,
+    fetchNextPage: query.fetchNextPage,
+    totalCount,
     error: query.error,
     refetch: query.refetch,
   };
