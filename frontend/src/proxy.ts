@@ -38,8 +38,8 @@ const AUTH_ONLY_ROUTES = [
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Skip public routes
-  if (PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
+  // Skip public routes ("/" needs exact match — startsWith would match every path)
+  if (pathname === "/" || PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
     return NextResponse.next();
   }
 

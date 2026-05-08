@@ -39,6 +39,7 @@
     "hero_title_line2": "To Digital",
     "hero_subtitle": "All BabyJamJam operations in one platform. A back office connecting clients, providers, contracts, and messages.",
     "scroll_hint": "Scroll to learn more",
+    "nav_brand": "BabyJamJam Admin",
     "nav_problem": "Problem",
     "nav_solution": "Solution",
     "nav_features": "Features",
@@ -63,7 +64,7 @@
     "mock_contract_step2_sub": "SMS sent · Notified via KakaoTalk",
     "mock_contract_step3": "Contract Complete",
     "mock_contract_step3_sub": "Auto-saved when both parties sign",
-    "footer": "© 2025 BabyJamJam. All rights reserved."
+    "footer": "© 2026 All rights reserved by Covenant Labs."
   },
   "dashboard": {
     "title": "Admin Dashboard",

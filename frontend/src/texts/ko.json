@@ -67,6 +67,7 @@
     "hero_title_line2": "디지털로",
     "hero_subtitle": "아가잼잼의 모든 운영을 하나의 플랫폼에서. 고객, 인력, 계약, 문자까지 연결된 백오피스입니다.",
     "scroll_hint": "스크롤하여 더 알아보기",
+    "nav_brand": "아가잼잼 어드민",
     "nav_problem": "문제",
     "nav_solution": "해결",
     "nav_features": "기능",
@@ -91,7 +92,7 @@
     "mock_contract_step2_sub": "문자 발송 완료 · 알림톡으로 안내",
     "mock_contract_step3": "계약 완료",
     "mock_contract_step3_sub": "양측 서명 완료 시 자동 저장",
-    "footer": "© 2025 아가잼잼. All rights reserved."
+    "footer": "© 2026 All rights reserved by Covenant Labs."
   },
   "dashboard": {
     "title": "관리자 대시보드",
