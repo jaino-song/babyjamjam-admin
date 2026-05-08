@@ -1,7 +1,5 @@
 "use client";
 
-import { api } from "@/lib/api/client";
-
 export interface AuthActionResponse {
   success: boolean;
   message?: string;
@@ -11,6 +9,14 @@ export interface AuthActionResponse {
 }
 
 export async function resendVerificationEmail(email: string): Promise<AuthActionResponse> {
-  const { data } = await api.post("/auth/resend-verification", { email });
-  return data;
+  const response = await fetch("/api/auth/resend-verification", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ email }),
+  });
+  if (!response.ok) {
+    throw new Error(`resend-verification failed: ${response.status}`);
+  }
+  return response.json();
 }
