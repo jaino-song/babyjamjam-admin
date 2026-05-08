@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>인천 아이미래로 백오피스</title>
+    <style>
+        :root {
+            --primary: #12366a;
+            --primary-light: #1e4a8f;
+            --accent: #10b981;
+            --text: #111827;
+            --text-light: #6b7280;
+            --bg: #f3f4f6;
+            --card: #ffffff;
+            --border: #e5e7eb;
+            --success: #10b981;
+            --warning: #f59e0b;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            color: var(--text);
+            background: var(--bg);
+        }
+        
+        .navbar {
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 1000;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo { font-size: 1.4rem; font-weight: 800; color: var(--primary); text-decoration: none; }
+        
+        .nav-right { display: flex; gap: 1.5rem; align-items: center; }
+        
+        .nav-right a {
+            text-decoration: none;
+            color: var(--text-light);
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+        
+        .nav-right a:hover { color: var(--primary); }
+        
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+        }
+        
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .btn-primary:hover { background: var(--primary-light); }
+        
+        .hero {
+            padding: 140px 2rem 80px;
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1.2fr;
+            gap: 4rem;
+            align-items: center;
+            min-height: 90vh;
+        }
+        
+        .hero-text h1 {
+            font-size: clamp(2.2rem, 4vw, 3.5rem);
+            font-weight: 800;
+            line-height: 1.15;
+            margin-bottom: 1.5rem;
+            color: var(--text);
+        }
+        
+        .hero-text h1 span {
+            color: var(--primary);
+        }
+        
+        .hero-text p {
+            font-size: 1.15rem;
+            color: var(--text-light);
+            margin-bottom: 2.5rem;
+            line-height: 1.8;
+        }
+        
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 3rem;
+        }
+        
+        .btn-lg { padding: 1rem 2rem; font-size: 1rem; }
+        
+        .stats-row {
+            display: flex;
+            gap: 2rem;
+        }
+        
+        .stat-item h4 {
+            font-size: 1.75rem;
+            font-weight: 800;
+            color: var(--primary);
+        }
+        
+        .stat-item p {
+            font-size: 0.875rem;
+            color: var(--text-light);
+            margin: 0;
+        }
+        
+        /* Mock Dashboard */
+        .mock-dashboard {
+            background: var(--card);
+            border-radius: 20px;
+            box-shadow: 0 25px 80px rgba(0,0,0,0.12);
+            border: 1px solid var(--border);
+            overflow: hidden;
+            transform: perspective(1000px) rotateY(-5deg) rotateX(2deg);
+            transition: transform 0.5s ease;
+        }
+        
+        .mock-dashboard:hover {
+            transform: perspective(1000px) rotateY(0deg) rotateX(0deg);
+        }
+        
+        .mock-header {
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            padding: 1.25rem 1.5rem;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .mock-title { font-weight: 700; font-size: 0.9rem; }
+        
+        .mock-avatar {
+            width: 32px; height: 32px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+        }
+        
+        .mock-body { padding: 1.5rem; }
+        
+        .mock-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .mock-stat {
+            background: var(--bg);
+            padding: 1rem;
+            border-radius: 12px;
+        }
+        
+        .mock-stat-label {
+            font-size: 0.75rem;
+            color: var(--text-light);
+            margin-bottom: 0.5rem;
+        }
+        
+        .mock-stat-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text);
+        }
+        
+        .mock-stat-value.up { color: var(--success); }
+        .mock-stat-value.warn { color: var(--warning); }
+        
+        .mock-chart {
+            background: var(--bg);
+            border-radius: 12px;
+            padding: 1rem;
+            height: 140px;
+            display: flex;
+            align-items: flex-end;
+            gap: 0.5rem;
+        }
+        
+        .mock-bar {
+            flex: 1;
+            background: linear-gradient(to top, var(--primary), var(--primary-light));
+            border-radius: 4px 4px 0 0;
+            opacity: 0.8;
+            transition: height 1s ease;
+        }
+        
+        .mock-bar:nth-child(3) { background: linear-gradient(to top, var(--accent), #34d399); }
+        
+        .features-section {
+            padding: 80px 2rem;
+            background: white;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .features-section h2 {
+            text-align: center;
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 3rem;
+        }
+        
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+        
+        .feature-item {
+            display: flex;
+            gap: 1.25rem;
+            padding: 1.5rem;
+            border-radius: 16px;
+            background: var(--bg);
+            transition: all 0.3s;
+        }
+        
+        .feature-item:hover {
+            transform: translateX(8px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+        }
+        
+        .feature-item-icon {
+            width: 48px; height: 48px;
+            background: white;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        
+        .feature-item h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .feature-item p { font-size: 0.9rem; color: var(--text-light); line-height: 1.6; }
+        
+        .cta-bar {
+            background: var(--primary);
+            color: white;
+            padding: 4rem 2rem;
+            text-align: center;
+        }
+        
+        .cta-bar h2 { font-size: 1.75rem; margin-bottom: 1rem; }
+        .cta-bar p { opacity: 0.9; margin-bottom: 1.5rem; }
+        .cta-bar .btn { background: white; color: var(--primary); font-weight: 700; }
+        .cta-bar .btn:hover { background: #f3f4f6; }
+        
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-light);
+            font-size: 0.85rem;
+            background: white;
+            border-top: 1px solid var(--border);
+        }
+        
+        @media (max-width: 900px) {
+            .hero { grid-template-columns: 1fr; gap: 3rem; }
+            .mock-dashboard { transform: none; }
+            .hero-text { text-align: center; }
+            .hero-buttons, .stats-row { justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <a href="#" class="logo">🏢 인천 아이미래로</a>
+        <div class="nav-right">
+            <a href="#features">기능</a>
+            <a href="#about">소개</a>
+            <a href="/login" class="btn btn-primary">로그인</a>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-text">
+            <h1>운영을 한눈에,<br><span>모두가 함께</span></h1>
+            <p>
+                고객 관리, 제공인력 매칭, 전자계약, 문자 발송까지.<br>
+                인천 아이미래로의 모든 운영 업무를 하나의 대시보드에서 해결하세요.
+            </p>
+            <div class="hero-buttons">
+                <a href="/login" class="btn btn-primary btn-lg">무료로 시작하기</a>
+            </div>
+            <div class="stats-row">
+                <div class="stat-item">
+                    <h4 id="statClients">0</h4>
+                    <p>관리 고객</p>
+                </div>
+                <div class="stat-item">
+                    <h4 id="statEmployees">0</h4>
+                    <p>제공인력</p>
+                </div>
+                <div class="stat-item">
+                    <h4 id="statContracts">0</h4>
+                    <p>계약 완료</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mock-dashboard">
+            <div class="mock-header">
+                <span class="mock-title">관리자 대시보드</span>
+                <div class="mock-avatar"></div>
+            </div>
+            <div class="mock-body">
+                <div class="mock-stats">
+                    <div class="mock-stat">
+                        <div class="mock-stat-label">서비스 이용 중</div>
+                        <div class="mock-stat-value up">128명</div>
+                    </div>
+                    <div class="mock-stat">
+                        <div class="mock-stat-label">대기 예약</div>
+                        <div class="mock-stat-value warn">14건</div>
+                    </div>
+                    <div class="mock-stat">
+                        <div class="mock-stat-label">미완료 계약서</div>
+                        <div class="mock-stat-value">3건</div>
+                    </div>
+                </div>
+                <div class="mock-chart" id="mockChart">
+                    <div class="mock-bar" style="height: 40%"></div>
+                    <div class="mock-bar" style="height: 65%"></div>
+                    <div class="mock-bar" style="height: 50%"></div>
+                    <div class="mock-bar" style="height: 80%"></div>
+                    <div class="mock-bar" style="height: 60%"></div>
+                    <div class="mock-bar" style="height: 90%"></div>
+                    <div class="mock-bar" style="height: 75%"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="features-section" id="features">
+        <div class="container">
+            <h2>핵심 기능</h2>
+            <div class="feature-list">
+                <div class="feature-item">
+                    <div class="feature-item-icon">📋</div>
+                    <div>
+                        <h3>고객 & 제공인력 DB</h3>
+                        <p>산모님과 제공인력의 정보, 이력, 상태를 체계적으로 관리하고 검색하세요.</p>
+                    </div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-item-icon">✍️</div>
+                    <div>
+                        <h3>전자계약서 연동</h3>
+                        <p>이폼사인과 연동되어 계약서 작성부터 서명까지 번거로움 없이 진행됩니다.</p>
+                    </div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-item-icon">📱</div>
+                    <div>
+                        <h3>알림톡 / SMS</h3>
+                        <p>템플릿을 활용한 자동 문자 생성과 Aligo 연동으로 빠른 소통이 가능합니다.</p>
+                    </div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-item-icon">🤖</div>
+                    <div>
+                        <h3>AI 요금표 분석</h3>
+                        <p>바우처 요금표 이미지를 업로드하면 AI가 자동으로 가격 정보를 추출합니다.</p>
+                    </div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-item-icon">🔔</div>
+                    <div>
+                        <h3>실시간 알림</h3>
+                        <p>계약서 서명 완료, 예약 변경 등 중요한 이벤트를 즉시 알려드립니다.</p>
+                    </div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-item-icon">📁</div>
+                    <div>
+                        <h3>문서 클라우드</h3>
+                        <p>모든 계약서와 문서를 클라우드에 안전하게 보관하고 언제든지 조회하세요.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta-bar" id="about">
+        <h2>복잡한 운영, 이제는 쉽게</h2>
+        <p>인천 아이미래로 백오피스와 함께 디지털 전환을 시작하세요.</p>
+        <a href="/login" class="btn btn-lg">로그인 하러 가기</a>
+    </section>
+
+    <footer>
+        <p>© 2025 인천 아이미래로. All rights reserved.</p>
+    </footer>
+
+    <script>
+        // Animate stats counter
+        function animateValue(id, start, end, duration) {
+            const obj = document.getElementById(id);
+            const range = end - start;
+            const increment = end > start ? 1 : -1;
+            const stepTime = Math.abs(Math.floor(duration / range));
+            let current = start;
+            
+            const timer = setInterval(() => {
+                current += increment * Math.ceil(range / (duration / 16));
+                if ((increment > 0 && current >= end) || (increment < 0 && current <= end)) {
+                    current = end;
+                    clearInterval(timer);
+                }
+                obj.textContent = current.toLocaleString();
+            }, 16);
+        }
+
+        // Trigger animation when element is in view
+        const statsObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    animateValue('statClients', 0, 128, 1500);
+                    animateValue('statEmployees', 0, 56, 1500);
+                    animateValue('statContracts', 0, 342, 1500);
+                    statsObserver.disconnect();
+                }
+            });
+        }, { threshold: 0.5 });
+
+        statsObserver.observe(document.getElementById('statClients'));
+
+        // Animate mock chart bars
+        const chartObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const bars = entry.target.querySelectorAll('.mock-bar');
+                    bars.forEach((bar, i) => {
+                        const finalHeight = bar.style.height;
+                        bar.style.height = '0%';
+                        setTimeout(() => {
+                            bar.style.transition = 'height 0.8s ease';
+                            bar.style.height = finalHeight;
+                        }, i * 100);
+                    });
+                    chartObserver.disconnect();
+                }
+            });
+        }, { threshold: 0.5 });
+
+        chartObserver.observe(document.getElementById('mockChart'));
+
+        // Feature items hover effect with slight delay
+        document.querySelectorAll('.feature-item').forEach(item => {
+            item.addEventListener('mouseenter', () => {
+                item.style.background = '#e5e7eb';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'var(--bg)';
+            });
+        });
+    </script>
+</body>
+</html>

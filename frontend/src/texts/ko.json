@@ -7,7 +7,7 @@
     "unknown": "사용자"
   },
   "common": {
-    "title": "인천 아이미래로 백오피스",
+    "title": "아가잼잼 관리자 앱",
     "subtitle": "아날로그에서 디지털로",
     "start": "시작하기",
     "welcome": "환영합니다",
@@ -59,8 +59,39 @@
     "preview": "실시간 미리보기"
   },
   "header": {
-    "companyName": "인천 아이미래로",
-    "companySubtitle": "운영 플랫폼"
+    "companyName": "아가잼잼",
+    "companySubtitle": "관리자 앱"
+  },
+  "landing": {
+    "hero_title_line1": "아날로그에서",
+    "hero_title_line2": "디지털로",
+    "hero_subtitle": "아가잼잼의 모든 운영을 하나의 플랫폼에서. 고객, 인력, 계약, 문자까지 연결된 백오피스입니다.",
+    "scroll_hint": "스크롤하여 더 알아보기",
+    "nav_problem": "문제",
+    "nav_solution": "해결",
+    "nav_features": "기능",
+    "step1_number": "01",
+    "step1_title": "복잡한 고객 관리",
+    "step1_desc": "엑셀 파일과 수기 기록으로 산모님 정보를 관리하다 본다면 검색도 어렵고 실수도 잦습니다. 체계적인 관리가 필요합니다.",
+    "step2_number": "02",
+    "step2_title": "빠른 소통, 템플릿 문자",
+    "step2_desc": "매번 비슷한 문자를 타이핑할 필요 없이 템플릿을 선택하고 변수만 채워넣으면 완성. Aligo 연동으로 바로 발송합니다.",
+    "step3_number": "03",
+    "step3_title": "종이 없는 계약",
+    "step3_desc": "이폼사인과 연동되어 계약서 작성, 검토, 서명까지 플랫폼 안에서 끝납니다. 출력할 필요도, 보관할 공간도 필요 없습니다.",
+    "cta_title": "디지털 전환, 지금 시작하세요",
+    "cta_subtitle": "아가잼잼 관리자 앱과 함께라면 복잡한 운영은 과거가 됩니다.",
+    "cta_button": "로그인 후 시작하기",
+    "mock_status_active": "이용 중",
+    "mock_status_pending": "대기",
+    "mock_status_scheduled": "예정",
+    "mock_contract_step1": "계약서 작성 완료",
+    "mock_contract_step1_sub": "이폼사인 문서 생성됨",
+    "mock_contract_step2": "고객 서명 대기 중",
+    "mock_contract_step2_sub": "문자 발송 완료 · 알림톡으로 안내",
+    "mock_contract_step3": "계약 완료",
+    "mock_contract_step3_sub": "양측 서명 완료 시 자동 저장",
+    "footer": "© 2025 아가잼잼. All rights reserved."
   },
   "dashboard": {
     "title": "관리자 대시보드",

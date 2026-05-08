@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>인천 아이미래로 백오피스</title>
+    <style>
+        :root {
+            --bg: #0a0e1a;
+            --surface: #111827;
+            --surface-hover: #1f2937;
+            --border: #1f2937;
+            --text: #f3f4f6;
+            --text-dim: #9ca3af;
+            --primary: #60a5fa;
+            --primary-glow: rgba(96, 165, 250, 0.15);
+            --accent-green: #34d399;
+            --accent-amber: #fbbf24;
+            --accent-rose: #fb7185;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        
+        /* Navbar */
+        .navbar {
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .logo {
+            font-size: 1.3rem;
+            font-weight: 800;
+            color: var(--text);
+            text-decoration: none;
+            letter-spacing: -0.02em;
+        }
+        
+        .logo span { color: var(--primary); }
+        
+        .nav-right {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+        }
+        
+        .nav-right a {
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        
+        .nav-right a:hover { color: var(--text); }
+        
+        .btn {
+            padding: 0.65rem 1.25rem;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-decoration: none;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .btn-primary {
+            background: var(--primary);
+            color: var(--bg);
+        }
+        
+        .btn-primary:hover {
+            background: #93c5fd;
+            box-shadow: 0 0 20px var(--primary-glow);
+        }
+        
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        
+        .btn-outline:hover { background: var(--surface-hover); }
+        
+        .btn-lg { padding: 0.875rem 1.75rem; font-size: 1rem; }
+        
+        /* Hero */
+        .hero {
+            padding: 60px 2rem 40px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .hero h1 {
+            font-size: clamp(2.5rem, 5vw, 4rem);
+            font-weight: 800;
+            line-height: 1.1;
+            letter-spacing: -0.03em;
+            margin-bottom: 1.5rem;
+        }
+        
+        .hero h1 .gradient {
+            background: linear-gradient(135deg, var(--primary), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero-sub {
+            font-size: 1.15rem;
+            color: var(--text-dim);
+            max-width: 480px;
+            margin-bottom: 2.5rem;
+        }
+        
+        .hero-actions {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 3rem;
+        }
+        
+        /* Bento Grid */
+        .bento {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-auto-rows: 180px;
+            gap: 1rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem 80px;
+        }
+        
+        .bento-item {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .bento-item::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: radial-gradient(circle at 50% 0%, rgba(96, 165, 250, 0.08), transparent 70%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .bento-item:hover::before { opacity: 1; }
+        
+        .bento-item:hover {
+            border-color: #374151;
+            transform: translateY(-2px);
+        }
+        
+        .bento-item span { position: relative; z-index: 1; }
+        
+        .bento-icon {
+            font-size: 1.75rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .bento-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+        
+        .bento-desc {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            line-height: 1.6;
+        }
+        
+        .bento-large { grid-column: span 2; grid-row: span 2; }
+        .bento-wide { grid-column: span 2; }
+        .bento-tall { grid-row: span 2; }
+        
+        .bento-glow {
+            box-shadow: 0 0 30px var(--primary-glow);
+            border-color: rgba(96, 165, 250, 0.2);
+        }
+        
+        .stats-row {
+            display: flex;
+            gap: 2rem;
+            margin-top: auto;
+        }
+        
+        .stat h3 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .stat p { font-size: 0.8rem; color: var(--text-dim); }
+        
+        .mini-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.4rem;
+            height: 60px;
+            margin-top: 1rem;
+        }
+        
+        .mini-bar {
+            flex: 1;
+            background: linear-gradient(to top, var(--primary), transparent);
+            border-radius: 4px 4px 0 0;
+            opacity: 0.6;
+            transition: opacity 0.3s;
+        }
+        
+        .bento-item:hover .mini-bar { opacity: 1; }
+        
+        .tag {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: rgba(96, 165, 250, 0.1);
+            color: var(--primary);
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+        
+        .tag-green { background: rgba(52, 211, 153, 0.1); color: var(--accent-green); }
+        .tag-amber { background: rgba(251, 191, 36, 0.1); color: var(--accent-amber); }
+        .tag-rose { background: rgba(251, 113, 133, 0.1); color: var(--accent-rose); }
+        
+        /* Footer CTA */
+        .footer-cta {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem 80px;
+        }
+        
+        .footer-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 3rem;
+            text-align: center;
+        }
+        
+        .footer-box h2 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+        }
+        
+        .footer-box p {
+            color: var(--text-dim);
+            margin-bottom: 1.5rem;
+        }
+        
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+        }
+        
+        @media (max-width: 900px) {
+            .bento { grid-template-columns: repeat(2, 1fr); }
+            .bento-large { grid-column: span 2; }
+            .bento-tall { grid-row: span 1; }
+        }
+        
+        @media (max-width: 600px) {
+            .bento { grid-template-columns: 1fr; }
+            .bento-large, .bento-wide { grid-column: span 1; }
+            .hero-actions { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <a href="#" class="logo">🏢 인천 <span>아이미래로</span></a>
+        <div class="nav-right">
+            <a href="#features">기능</a>
+            <a href="/login" class="btn btn-primary">로그인</a>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <h1>아날로그에서<br><span class="gradient">디지털로</span></h1>
+        <p class="hero-sub">
+            인천 아이미래로의 모든 운영을 하나의 플랫폼에서.
+            고객, 인력, 계약, 문자까지 연결된 백오피스입니다.
+        </p>
+        <div class="hero-actions">
+            <a href="/login" class="btn btn-primary btn-lg">시작하기</a>
+            <a href="#features" class="btn btn-outline btn-lg">둘러보기</a>
+        </div>
+    </section>
+
+    <section class="bento" id="features">
+        <div class="bento-item bento-large bento-glow">
+            <div>
+                <div class="tag">대시보드</div>
+                <div class="bento-title">운영 현황 한눈에</div>
+                <div class="bento-desc">
+                    서비스 이용 중인 고객, 대기 예약, 미완료 계약서를
+                    실시간으로 모니터링하세요.
+                </div>
+            </div>
+            <div class="mini-chart">
+                <div class="mini-bar" style="height: 40%"></div>
+                <div class="mini-bar" style="height: 70%"></div>
+                <div class="mini-bar" style="height: 55%"></div>
+                <div class="mini-bar" style="height: 85%"></div>
+                <div class="mini-bar" style="height: 60%"></div>
+                <div class="mini-bar" style="height: 90%"></div>
+                <div class="mini-bar" style="height: 75%"></div>
+            </div>
+        </div>
+        
+        <div class="bento-item bento-tall">
+            <div>
+                <div class="bento-icon">👥</div>
+                <div class="bento-title">고객 관리</div>
+                <div class="bento-desc">
+                    산모님 기본 정보, 서비스 이력, 계약 상태를 체계적으로 관리합니다.
+                </div>
+            </div>
+        </div>
+        
+        <div class="bento-item">
+            <div class="bento-icon">🤝</div>
+            <div class="bento-title">제공인력</div>
+            <div class="bento-desc">근무 가능 여부와 지역별 현황</div>
+        </div>
+        
+        <div class="bento-item">
+            <div>
+                <div class="tag tag-green">연동</div>
+                <div class="bento-title">전자계약서</div>
+                <div class="bento-desc">이폼사인 연동으로 종이 없이</div>
+            </div>
+        </div>
+        
+        <div class="bento-item bento-wide">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; width: 100%;">
+                <div>
+                    <div class="tag tag-amber">메시지</div>
+                    <div class="bento-title">알림톡 / SMS</div>
+                    <div class="bento-desc">
+                        템플릿 기반 문자 생성과 Aligo 연동으로 빠른 메시지 발송
+                    </div>
+                </div>
+                <div style="font-size: 3rem; opacity: 0.3;">💬</div>
+            </div>
+        </div>
+        
+        <div class="bento-item">
+            <div>
+                <div class="tag tag-rose">AI</div>
+                <div class="bento-title">요금표 분석</div>
+                <div class="bento-desc">이미지 업로드 시 AI 자동 추출</div>
+            </div>
+        </div>
+        
+        <div class="bento-item">
+            <div class="bento-icon">📁</div>
+            <div class="bento-title">문서 관리</div>
+            <div class="bento-desc">클라우드 기반 안전한 보관</div>
+        </div>
+        
+        <div class="bento-item bento-wide">
+            <div style="width: 100%;">
+                <div class="bento-title">운영 데이터</div>
+                <div class="stats-row">
+                    <div class="stat">
+                        <h3 id="stat1">0</h3>
+                        <p>관리 고객</p>
+                    </div>
+                    <div class="stat">
+                        <h3 id="stat2">0</h3>
+                        <p>등록 인력</p>
+                    </div>
+                    <div class="stat">
+                        <h3 id="stat3">0</h3>
+                        <p>계약 완료</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="footer-cta">
+        <div class="footer-box">
+            <h2>복잡한 운영의 끝</h2>
+            <p>인천 아이미래로 백오피스와 함께 디지털 전환을 시작하세요.</p>
+            <a href="/login" class="btn btn-primary btn-lg">로그인 하러 가기</a>
+        </div>
+    </section>
+
+    <footer>
+        <p>© 2025 인천 아이미래로. All rights reserved.</p>
+    </footer>
+
+    <script>
+        // Counter animation
+        function countUp(id, target, duration) {
+            const el = document.getElementById(id);
+            const start = 0;
+            const increment = target / (duration / 16);
+            let current = start;
+            
+            const timer = setInterval(() => {
+                current += increment;
+                if (current >= target) {
+                    current = target;
+                    clearInterval(timer);
+                }
+                el.textContent = Math.floor(current).toLocaleString() + '+';
+            }, 16);
+        }
+
+        const statsObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    countUp('stat1', 128, 1500);
+                    countUp('stat2', 56, 1500);
+                    countUp('stat3', 342, 1500);
+                    statsObserver.disconnect();
+                }
+            });
+        }, { threshold: 0.5 });
+
+        statsObserver.observe(document.getElementById('stat1'));
+
+        // Staggered entrance for bento items
+        const bentoItems = document.querySelectorAll('.bento-item');
+        const bentoObserver = new IntersectionObserver((entries) => {
+            entries.forEach((entry, index) => {
+                if (entry.isIntersecting) {
+                    setTimeout(() => {
+                        entry.target.style.opacity = '1';
+                        entry.target.style.transform = 'translateY(0)';
+                    }, index * 80);
+                    bentoObserver.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.1 });
+
+        bentoItems.forEach(item => {
+            item.style.opacity = '0';
+            item.style.transform = 'translateY(20px)';
+            item.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            bentoObserver.observe(item);
+        });
+
+        // Mini bar chart animation
+        const miniBars = document.querySelectorAll('.mini-bar');
+        const chartObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    miniBars.forEach((bar, i) => {
+                        const h = bar.style.height;
+                        bar.style.height = '0%';
+                        setTimeout(() => {
+                            bar.style.transition = 'height 0.6s ease';
+                            bar.style.height = h;
+                        }, i * 80);
+                    });
+                    chartObserver.disconnect();
+                }
+            });
+        }, { threshold: 0.5 });
+
+        const chartContainer = document.querySelector('.mini-chart');
+        if (chartContainer) chartObserver.observe(chartContainer);
+    </script>
+</body>
+</html>

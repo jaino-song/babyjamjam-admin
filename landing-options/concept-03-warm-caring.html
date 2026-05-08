@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>인천 아이미래로 백오피스</title>
+    <style>
+        :root {
+            --primary: #12366a;
+            --rose: #f43f5e;
+            --rose-light: #ffe4e6;
+            --sky: #e0f2fe;
+            --amber: #fef3c7;
+            --mint: #d1fae5;
+            --text: #1e293b;
+            --text-light: #64748b;
+            --bg: #fff1f2;
+            --card: #ffffff;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            color: var(--text);
+            background: linear-gradient(180deg, #fff1f2 0%, #ffffff 50%, #f0f9ff 100%);
+            min-height: 100vh;
+        }
+        
+        .navbar {
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: var(--primary);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 2.5rem;
+            align-items: center;
+            list-style: none;
+        }
+        
+        .nav-links a {
+            text-decoration: none;
+            color: var(--text-light);
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        
+        .nav-links a:hover { color: var(--primary); }
+        
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 50px;
+            font-weight: 600;
+            text-decoration: none;
+            font-size: 0.95rem;
+            transition: all 0.3s;
+            cursor: pointer;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), #1e4a8f);
+            color: white;
+            box-shadow: 0 4px 15px rgba(18, 54, 106, 0.3);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(18, 54, 106, 0.4);
+        }
+        
+        .btn-lg { padding: 1rem 2.5rem; font-size: 1.1rem; }
+        
+        /* Hero */
+        .hero {
+            text-align: center;
+            padding: 80px 2rem 60px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        .hero-badge {
+            display: inline-block;
+            padding: 0.5rem 1.25rem;
+            background: var(--rose-light);
+            color: var(--rose);
+            border-radius: 50px;
+            font-size: 0.875rem;
+            font-weight: 700;
+            margin-bottom: 2rem;
+        }
+        
+        .hero h1 {
+            font-size: clamp(2.2rem, 5vw, 3.5rem);
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 1.5rem;
+            color: var(--primary);
+        }
+        
+        .hero p {
+            font-size: 1.2rem;
+            color: var(--text-light);
+            line-height: 1.8;
+            margin-bottom: 2.5rem;
+        }
+        
+        .hero-cta {
+            margin-bottom: 4rem;
+        }
+        
+        /* Floating Cards */
+        .floating-cards {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+            perspective: 1000px;
+        }
+        
+        .float-card {
+            background: var(--card);
+            padding: 1.5rem 2rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.06);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            animation: float 6s ease-in-out infinite;
+            border: 1px solid rgba(0,0,0,0.04);
+        }
+        
+        .float-card:nth-child(2) { animation-delay: -2s; }
+        .float-card:nth-child(3) { animation-delay: -4s; }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        .float-icon {
+            width: 48px; height: 48px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+        
+        .float-card:nth-child(1) .float-icon { background: var(--rose-light); }
+        .float-card:nth-child(2) .float-icon { background: var(--sky); }
+        .float-card:nth-child(3) .float-icon { background: var(--mint); }
+        
+        .float-text h4 { font-size: 1rem; margin-bottom: 0.25rem; }
+        .float-text p { font-size: 0.8rem; color: var(--text-light); margin: 0; }
+        
+        /* Story Section */
+        .story {
+            padding: 100px 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .story-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 3rem;
+            align-items: center;
+        }
+        
+        .story-text h2 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            color: var(--primary);
+        }
+        
+        .story-text p {
+            color: var(--text-light);
+            line-height: 1.8;
+            margin-bottom: 1.5rem;
+            font-size: 1.05rem;
+        }
+        
+        .story-visual {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+        
+        .story-box {
+            padding: 2rem;
+            border-radius: 24px;
+            text-align: center;
+            transition: transform 0.3s;
+        }
+        
+        .story-box:hover { transform: scale(1.05); }
+        
+        .story-box:nth-child(1) { background: var(--rose-light); }
+        .story-box:nth-child(2) { background: var(--sky); margin-top: 2rem; }
+        .story-box:nth-child(3) { background: var(--mint); margin-top: -2rem; }
+        .story-box:nth-child(4) { background: var(--amber); }
+        
+        .story-box .emoji { font-size: 3rem; margin-bottom: 1rem; display: block; }
+        .story-box h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .story-box p { font-size: 0.85rem; color: var(--text-light); margin: 0; }
+        
+        /* Testimonials */
+        .testimonials {
+            padding: 80px 2rem;
+            background: white;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .testimonials h2 {
+            text-align: center;
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 3rem;
+        }
+        
+        .testi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+        }
+        
+        .testi-card {
+            background: linear-gradient(135deg, #f8fafc, #ffffff);
+            padding: 2rem;
+            border-radius: 20px;
+            border: 1px solid #f1f5f9;
+            position: relative;
+            transition: all 0.3s;
+        }
+        
+        .testi-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.06);
+        }
+        
+        .testi-card::before {
+            content: '"';
+            font-size: 4rem;
+            color: var(--rose);
+            opacity: 0.2;
+            position: absolute;
+            top: 0.5rem;
+            left: 1.5rem;
+            font-family: Georgia, serif;
+            line-height: 1;
+        }
+        
+        .testi-text {
+            font-size: 0.95rem;
+            line-height: 1.7;
+            color: var(--text);
+            margin-bottom: 1.5rem;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .testi-author {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        
+        .testi-avatar {
+            width: 40px; height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary), var(--rose));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 0.875rem;
+        }
+        
+        .testi-info h4 { font-size: 0.9rem; margin-bottom: 0.1rem; }
+        .testi-info p { font-size: 0.8rem; color: var(--text-light); margin: 0; }
+        
+        /* CTA */
+        .cta {
+            padding: 100px 2rem;
+            text-align: center;
+            background: linear-gradient(135deg, var(--primary), #1e3a5f);
+            color: white;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .cta::before {
+            content: '';
+            position: absolute;
+            width: 400px; height: 400px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 50%;
+            top: -200px; right: -100px;
+        }
+        
+        .cta h2 {
+            font-size: 2.25rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            position: relative;
+        }
+        
+        .cta p {
+            opacity: 0.85;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+            position: relative;
+        }
+        
+        .cta .btn {
+            background: white;
+            color: var(--primary);
+            position: relative;
+        }
+        
+        .cta .btn:hover { background: #f8fafc; }
+        
+        footer {
+            text-align: center;
+            padding: 2.5rem;
+            color: var(--text-light);
+            font-size: 0.85rem;
+            background: #f8fafc;
+        }
+        
+        @media (max-width: 768px) {
+            .nav-links { display: none; }
+            .story-grid { grid-template-columns: 1fr; }
+            .story-visual { grid-template-columns: 1fr; }
+            .story-box:nth-child(2), .story-box:nth-child(3) { margin-top: 0; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <a href="#" class="logo">🤱 인천 아이미래로</a>
+        <ul class="nav-links">
+            <li><a href="#story">우리의 이야기</a></li>
+            <li><a href="#testimonials">후기</a></li>
+            <li><a href="/login" class="btn btn-primary">로그인</a></li>
+        </ul>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-badge">산후조리원 운영 플랫폼</div>
+        <h1>보다 따뜻한 케어를<br>위한 시작</h1>
+        <p>
+            산모님과 제공인력을 잇는 모든 순간,<br>
+            인천 아이미래로 백오피스가 함께합니다.
+        </p>
+        <div class="hero-cta">
+            <a href="/login" class="btn btn-primary btn-lg">시작하기 →</a>
+        </div>
+        
+        <div class="floating-cards">
+            <div class="float-card">
+                <div class="float-icon">👶</div>
+                <div class="float-text">
+                    <h4>고객 관리</h4>
+                    <p>산모님 정보 한눈에</p>
+                </div>
+            </div>
+            <div class="float-card">
+                <div class="float-icon">💌</div>
+                <div class="float-text">
+                    <h4>알림톡 발송</h4>
+                    <p>템플릿으로 빠르게</p>
+                </div>
+            </div>
+            <div class="float-card">
+                <div class="float-icon">✍️</div>
+                <div class="float-text">
+                    <h4>전자계약</h4>
+                    <p>종이 없이 간편하게</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="story" id="story">
+        <div class="story-grid">
+            <div class="story-text">
+                <h2>왜 아이미래로인가요?</h2>
+                <p>
+                    산후조리원 운영은 수많은 정보와 서류, 소통으로 가득합니다.
+                    아이미래로 백오피스는 그 모든 과정을 디지털로 옮겨,
+                    더 이상 엑셀과 수기 기록에 시간을 쏟지 않아도 되게 해줍니다.
+                </p>
+                <p>
+                    고객 상담부터 제공인력 배정, 계약서 작성, 요금 안내까지.
+                    하나의 플랫폼에서 모든 업무를 연결합니다.
+                </p>
+                <a href="/login" class="btn btn-primary">지금 시작하기</a>
+            </div>
+            <div class="story-visual">
+                <div class="story-box">
+                    <span class="emoji">📋</span>
+                    <h3>체계적 관리</h3>
+                    <p>고객과 인력 정보를 한 곳에</p>
+                </div>
+                <div class="story-box">
+                    <span class="emoji">🤖</span>
+                    <h3>AI 자동화</h3>
+                    <p>요금표 이미지 자동 분석</p>
+                </div>
+                <div class="story-box">
+                    <span class="emoji">🔔</span>
+                    <h3>실시간 알림</h3>
+                    <p>중요한 변화를 즉시 전달</p>
+                </div>
+                <div class="story-box">
+                    <span class="emoji">🔒</span>
+                    <h3>안전한 보관</h3>
+                    <p>계약서와 문서 클라우드 저장</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="testimonials" id="testimonials">
+        <div class="container">
+            <h2>운영팀의 실제 이야기</h2>
+            <div class="testi-grid">
+                <div class="testi-card">
+                    <p class="testi-text">
+                        예전에는 고객 정보를 엑셀로 관리하고 문자도 일일이 썼는데,
+                        이제는 템플릿만 선택하면 돼서 업무 시간이 반으로 줄었어요.
+                    </p>
+                    <div class="testi-author">
+                        <div class="testi-avatar">김</div>
+                        <div class="testi-info">
+                            <h4>김지영 매니저</h4>
+                            <p>인천 아이미래로 남동구점</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="testi-card">
+                    <p class="testi-text">
+                        전자계약서 기능이 정말 편리해요. 계약서 작성부터 서명까지
+                        플랫폼 안에서 끝나니까 따로 이메일 보낼 필요가 없어요.
+                    </p>
+                    <div class="testi-author">
+                        <div class="testi-avatar">박</div>
+                        <div class="testi-info">
+                            <h4>박서연 팀장</h4>
+                            <p>인천 아이미래로 부평구점</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="testi-card">
+                    <p class="testi-text">
+                        제공인력 근무 현황을 실시간으로 확인할 수 있어서
+                        갑작스러운 예약 변경에도 빠르게 대응할 수 있게 됐습니다.
+                    </p>
+                    <div class="testi-author">
+                        <div class="testi-avatar">이</div>
+                        <div class="testi-info">
+                            <h4>이민호 실장</h4>
+                            <p>인천 아이미래로 서구점</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta">
+        <h2>더 나은 케어를 위해 준비되셨나요?</h2>
+        <p>아날로그에서 디지털로의 전환, 지금 바로 경험해보세요.</p>
+        <a href="/login" class="btn btn-lg">로그인 후 시작하기</a>
+    </section>
+
+    <footer>
+        <p>© 2025 인천 아이미래로. All rights reserved.</p>
+    </footer>
+
+    <script>
+        // Smooth reveal on scroll for story boxes
+        const storyBoxes = document.querySelectorAll('.story-box');
+        const storyObserver = new IntersectionObserver((entries) => {
+            entries.forEach((entry, index) => {
+                if (entry.isIntersecting) {
+                    setTimeout(() => {
+                        entry.target.style.opacity = '1';
+                        entry.target.style.transform = 'scale(1)';
+                    }, index * 150);
+                    storyObserver.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.2 });
+
+        storyBoxes.forEach(box => {
+            box.style.opacity = '0';
+            box.style.transform = 'scale(0.9)';
+            box.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            storyObserver.observe(box);
+        });
+
+        // Testimonial cards staggered reveal
+        const testiCards = document.querySelectorAll('.testi-card');
+        const testiObserver = new IntersectionObserver((entries) => {
+            entries.forEach((entry, index) => {
+                if (entry.isIntersecting) {
+                    setTimeout(() => {
+                        entry.target.style.opacity = '1';
+                        entry.target.style.transform = 'translateY(0)';
+                    }, index * 200);
+                    testiObserver.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.2 });
+
+        testiCards.forEach(card => {
+            card.style.opacity = '0';
+            card.style.transform = 'translateY(30px)';
+            card.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+            testiObserver.observe(card);
+        });
+
+        // Floating cards gentle parallax on mouse move
+        document.querySelector('.hero').addEventListener('mousemove', (e) => {
+            const cards = document.querySelectorAll('.float-card');
+            const x = (e.clientX / window.innerWidth - 0.5) * 20;
+            const y = (e.clientY / window.innerHeight - 0.5) * 20;
+            
+            cards.forEach((card, i) => {
+                const factor = (i + 1) * 0.3;
+                card.style.transform = `translate(${x * factor}px, ${y * factor}px)`;
+            });
+        });
+    </script>
+</body>
+</html>
