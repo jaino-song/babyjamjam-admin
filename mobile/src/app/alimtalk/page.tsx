@@ -85,12 +85,14 @@ const NAV_SECTIONS = [
 
 type SectionId = (typeof NAV_SECTIONS)[number]["id"];
 
-const STATS = [
-  { label: "총 발송", value: "0건", icon: Send, color: "text-v3-primary", bg: "bg-v3-primary/10" },
-  { label: "성공", value: "0건", icon: CheckCircle2, color: "text-emerald-500", bg: "bg-emerald-500/10" },
-  { label: "실패", value: "0건", icon: XCircle, color: "text-red-500", bg: "bg-red-500/10" },
-  { label: "대기", value: "0건", icon: Clock, color: "text-amber-500", bg: "bg-amber-500/10" },
+const STAT_DEFS = [
+  { key: "total", label: "총 발송", icon: Send, color: "text-v3-primary", bg: "bg-v3-primary/10" },
+  { key: "sent", label: "성공", icon: CheckCircle2, color: "text-emerald-500", bg: "bg-emerald-500/10" },
+  { key: "failed", label: "실패", icon: XCircle, color: "text-red-500", bg: "bg-red-500/10" },
+  { key: "pending", label: "대기", icon: Clock, color: "text-amber-500", bg: "bg-amber-500/10" },
 ] as const;
+
+type StatKey = (typeof STAT_DEFS)[number]["key"];
 
 type TplType = "BA" | "EX" | "AD" | "MI";
 type TplEmType = "NONE" | "TEXT" | "IMAGE";
@@ -571,6 +573,16 @@ export default function AlimtalkPage() {
     },
   });
 
+  const statCounts = useMemo<Record<StatKey, number>>(() => {
+    const counts: Record<StatKey, number> = { total: logs.length, sent: 0, failed: 0, pending: 0 };
+    for (const log of logs) {
+      if (log.status === "sent" || log.status === "failed" || log.status === "pending") {
+        counts[log.status] += 1;
+      }
+    }
+    return counts;
+  }, [logs]);
+
   return (
     <section data-component="alimtalk" className="space-y-6">
       <SectionNav
@@ -595,11 +607,13 @@ export default function AlimtalkPage() {
               <Separator className="mb-6" />
 
               <div className="grid grid-cols-2 gap-3 mb-8">
-                {STATS.map((stat) => {
+                {STAT_DEFS.map((stat) => {
                   const Icon = stat.icon;
+                  const value = isLogsLoading ? "—" : `${statCounts[stat.key]}건`;
                   return (
                     <div
-                      key={stat.label}
+                      key={stat.key}
+                      data-component={`alimtalk-stat-${stat.key}`}
                       className="flex items-center gap-3 p-3 rounded-2xl border border-v3-border/50 bg-white"
                     >
                       <div className={`w-9 h-9 rounded-xl ${stat.bg} flex items-center justify-center shrink-0`}>
@@ -607,18 +621,38 @@ export default function AlimtalkPage() {
                       </div>
                       <div>
                         <p className="text-[0.7rem] text-v3-text-muted">{stat.label}</p>
-                        <p className="text-base font-bold text-v3-dark">{stat.value}</p>
+                        <p className="text-base font-bold text-v3-dark">{value}</p>
                       </div>
                     </div>
                   );
                 })}
               </div>
 
-              <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                <MessageCircle className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
-                <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 현황이 없습니다</p>
-                <p className="text-[0.75rem] text-v3-text-muted">알림톡을 발송하면 여기에 현황이 표시됩니다.</p>
-              </div>
+              {isLogsLoading ? (
+                <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
+                  <MessageCircle className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30 animate-pulse" />
+                  <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 현황 불러오는 중…</p>
+                </div>
+              ) : isLogsError ? (
+                <div className="rounded-2xl border border-dashed border-red-300 p-8 text-center">
+                  <XCircle className="w-10 h-10 mx-auto mb-3 text-red-500 opacity-50" />
+                  <p className="text-[0.85rem] font-semibold text-red-600 mb-1">발송 현황을 불러오지 못했습니다</p>
+                  <p className="text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
+                </div>
+              ) : logs.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
+                  <MessageCircle className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
+                  <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 현황이 없습니다</p>
+                  <p className="text-[0.75rem] text-v3-text-muted">알림톡을 발송하면 여기에 현황이 표시됩니다.</p>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-v3-border/60 bg-white p-4">
+                  <p className="text-[0.78rem] text-v3-text-muted">
+                    최근 발송 {logs.length}건 기준 ·{" "}
+                    <span className="font-semibold text-emerald-600">성공률 {logs.length > 0 ? Math.round((statCounts.sent / logs.length) * 100) : 0}%</span>
+                  </p>
+                </div>
+              )}
             </ContentPaper>
           </section>
         ) : null}
