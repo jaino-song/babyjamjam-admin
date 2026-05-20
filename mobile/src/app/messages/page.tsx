@@ -41,6 +41,41 @@ import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManag
 import { MessageSenderApprovalSettings } from "@/components/app/messages/MessageSenderApprovalSettings";
 import { MessagingFeatureGate } from "@/components/app/messages/MessagingFeatureGate";
 import { settingsApi } from "@/services/api";
+import { api } from "@/lib/api/client";
+import { cn } from "@/lib/utils";
+
+interface UpcomingAlimtalkJob {
+  id: string;
+  ruleId: string;
+  ruleName: string;
+  eventType: string | null;
+  recipientType: string;
+  recipientPhone: string | null;
+  templateKey: string;
+  status: string;
+  scheduledFor: string;
+  clientId: number | null;
+  employeeScheduleId: number | null;
+  payload: Record<string, unknown> | null;
+}
+
+const RECIPIENT_TYPE_LABEL: Record<string, string> = {
+  CLIENT: "고객",
+  PRIMARY_EMPLOYEE: "제공인력 1",
+  SECONDARY_EMPLOYEE: "제공인력 2",
+};
+
+function formatScheduledFor(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 type BuiltinTemplateType = "greeting" | "service-info" | "price-info" | "reminder" | "thanks" | "survey" | "info";
 
@@ -169,6 +204,19 @@ export default function MessagesPage() {
   const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
   const userTemplates = userTemplatesData?.data || [];
 
+  const {
+    data: upcomingJobs = [],
+    isLoading: isUpcomingLoading,
+    isError: isUpcomingError,
+  } = useQuery<UpcomingAlimtalkJob[]>({
+    queryKey: ["alimtalk", "upcoming", 100],
+    queryFn: async () => {
+      const res = await api.get<UpcomingAlimtalkJob[]>("/alimtalk-trigger-jobs/upcoming", { params: { limit: 100 } });
+      return res.data;
+    },
+    enabled: activeSection === "scheduled",
+  });
+
   const isBuiltin = selectedValue.startsWith("builtin:");
   const builtinType = isBuiltin ? (selectedValue.replace("builtin:", "") as BuiltinTemplateType) : null;
   const userTemplateId = !isBuiltin && selectedValue.startsWith("user:") ? selectedValue.replace("user:", "") : null;
@@ -293,6 +341,82 @@ export default function MessagesPage() {
                   errorMessage={approvalErrorMessage}
                   onSubmit={handleRequestApproval}
                 />
+              </section>
+            ) : activeSection === "scheduled" ? (
+              <section data-component="messages-scheduled-section">
+                <MessagingFeatureGate
+                  isEnabled={isMessagingApproved}
+                  isLoading={isLoadingMessageSenderApproval}
+                  title={lockedFeatureCopy.title}
+                  description={lockedFeatureCopy.description}
+                >
+                  <ContentPaper variant="v3">
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-v3-primary/10">
+                        <Clock3 size={20} className="text-v3-primary" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-foreground">발송 예정</h2>
+                        <p className="text-sm text-muted-foreground">
+                          예약된 알림톡 트리거 발송 일정을 확인합니다.
+                        </p>
+                      </div>
+                    </div>
+                    <Separator className="mb-6" />
+
+                    {isUpcomingLoading ? (
+                      <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
+                        <Clock3 className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30 animate-pulse" />
+                        <p className="text-[0.85rem] font-semibold text-v3-text-muted">발송 예정 불러오는 중…</p>
+                      </div>
+                    ) : isUpcomingError ? (
+                      <div className="rounded-2xl border border-dashed border-red-300 p-8 text-center">
+                        <p className="text-[0.85rem] font-semibold text-red-600">발송 예정을 불러오지 못했습니다</p>
+                        <p className="text-[0.75rem] text-v3-text-muted mt-1">잠시 후 다시 시도해 주세요.</p>
+                      </div>
+                    ) : upcomingJobs.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
+                        <Clock3 className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
+                        <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">예약된 발송이 없습니다</p>
+                        <p className="text-[0.75rem] text-v3-text-muted">
+                          트리거 규칙을 활성화하면 예정된 알림톡이 이곳에 표시됩니다.
+                        </p>
+                      </div>
+                    ) : (
+                      <ul data-component="messages-scheduled-list" className="space-y-2">
+                        {upcomingJobs.map((job) => (
+                          <li
+                            key={job.id}
+                            data-component="messages-scheduled-item"
+                            className="rounded-2xl border border-v3-border/60 bg-white p-3"
+                          >
+                            <div className="flex items-start justify-between gap-2 mb-1">
+                              <span className="text-[0.85rem] font-semibold text-v3-dark truncate">
+                                {job.ruleName}
+                              </span>
+                              <span
+                                className={cn(
+                                  "shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-bold",
+                                  "bg-v3-primary/10 text-v3-primary",
+                                )}
+                              >
+                                {RECIPIENT_TYPE_LABEL[job.recipientType] ?? job.recipientType}
+                              </span>
+                            </div>
+                            <p className="text-[0.72rem] text-v3-text-muted truncate">
+                              {job.templateKey}
+                              {job.eventType ? ` · ${job.eventType}` : ""}
+                            </p>
+                            <p className="text-[0.68rem] text-v3-text-muted mt-1">
+                              {formatScheduledFor(job.scheduledFor)}
+                              {job.recipientPhone ? ` · ${job.recipientPhone}` : ""}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </ContentPaper>
+                </MessagingFeatureGate>
               </section>
             ) : (
               <section data-component={`messages-${activeSection}-section`}>
