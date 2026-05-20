@@ -44,6 +44,36 @@ import { settingsApi } from "@/services/api";
 import { api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
+interface AlimtalkLogRecord {
+  id: number;
+  provider: string;
+  templateKey: string;
+  receiver: string;
+  clientId: number | null;
+  messageBody: string;
+  status: "pending" | "sent" | "failed";
+  errorMessage: string | null;
+  attempts: number;
+  createdAt: string;
+  ruleName: string | null;
+  eventType: string | null;
+  recipientName: string | null;
+  clientName: string | null;
+  employeeName: string | null;
+}
+
+const LOG_STATUS_LABEL: Record<AlimtalkLogRecord["status"], string> = {
+  pending: "대기",
+  sent: "성공",
+  failed: "실패",
+};
+
+const LOG_STATUS_STYLE: Record<AlimtalkLogRecord["status"], string> = {
+  pending: "bg-amber-500/10 text-amber-600",
+  sent: "bg-emerald-500/10 text-emerald-600",
+  failed: "bg-red-500/10 text-red-600",
+};
+
 interface UpcomingAlimtalkJob {
   id: string;
   ruleId: string;
@@ -215,6 +245,19 @@ export default function MessagesPage() {
       return res.data;
     },
     enabled: activeSection === "scheduled",
+  });
+
+  const {
+    data: historyLogs = [],
+    isLoading: isHistoryLoading,
+    isError: isHistoryError,
+  } = useQuery<AlimtalkLogRecord[]>({
+    queryKey: ["alimtalk", "logs", 200],
+    queryFn: async () => {
+      const res = await api.get<AlimtalkLogRecord[]>("/alimtalk-logs", { params: { limit: 200 } });
+      return res.data;
+    },
+    enabled: activeSection === "history",
   });
 
   const isBuiltin = selectedValue.startsWith("builtin:");
@@ -413,6 +456,83 @@ export default function MessagesPage() {
                             </p>
                           </li>
                         ))}
+                      </ul>
+                    )}
+                  </ContentPaper>
+                </MessagingFeatureGate>
+              </section>
+            ) : activeSection === "history" ? (
+              <section data-component="messages-history-section">
+                <MessagingFeatureGate
+                  isEnabled={isMessagingApproved}
+                  isLoading={isLoadingMessageSenderApproval}
+                  title={lockedFeatureCopy.title}
+                  description={lockedFeatureCopy.description}
+                >
+                  <ContentPaper variant="v3">
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-500/10">
+                        <History size={20} className="text-amber-500" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-foreground">발송 기록</h2>
+                        <p className="text-sm text-muted-foreground">실제 발송된 알림톡 메시지 기록입니다.</p>
+                      </div>
+                    </div>
+                    <Separator className="mb-6" />
+
+                    {isHistoryLoading ? (
+                      <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
+                        <History className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30 animate-pulse" />
+                        <p className="text-[0.85rem] font-semibold text-v3-text-muted">발송 기록 불러오는 중…</p>
+                      </div>
+                    ) : isHistoryError ? (
+                      <div className="rounded-2xl border border-dashed border-red-300 p-8 text-center">
+                        <p className="text-[0.85rem] font-semibold text-red-600">발송 기록을 불러오지 못했습니다</p>
+                        <p className="text-[0.75rem] text-v3-text-muted mt-1">잠시 후 다시 시도해 주세요.</p>
+                      </div>
+                    ) : historyLogs.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
+                        <History className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
+                        <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 기록이 없습니다</p>
+                        <p className="text-[0.75rem] text-v3-text-muted">메시지를 발송하면 여기에 기록이 표시됩니다.</p>
+                      </div>
+                    ) : (
+                      <ul data-component="messages-history-list" className="space-y-2">
+                        {historyLogs.map((log) => {
+                          const recipient = log.recipientName ?? log.clientName ?? log.employeeName ?? log.receiver;
+                          return (
+                            <li
+                              key={log.id}
+                              data-component="messages-history-item"
+                              className="rounded-2xl border border-v3-border/60 bg-white p-3"
+                            >
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[0.85rem] font-semibold text-v3-dark truncate flex-1">
+                                  {recipient}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-bold",
+                                    LOG_STATUS_STYLE[log.status],
+                                  )}
+                                >
+                                  {LOG_STATUS_LABEL[log.status]}
+                                </span>
+                              </div>
+                              <p className="text-[0.72rem] text-v3-text-muted truncate">
+                                {log.ruleName ?? log.templateKey}
+                                {log.eventType ? ` · ${log.eventType}` : ""}
+                              </p>
+                              <p className="text-[0.68rem] text-v3-text-muted mt-1">
+                                {formatScheduledFor(log.createdAt)} · {log.receiver}
+                              </p>
+                              {log.errorMessage ? (
+                                <p className="text-[0.68rem] text-red-600 mt-1 break-words">{log.errorMessage}</p>
+                              ) : null}
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </ContentPaper>
