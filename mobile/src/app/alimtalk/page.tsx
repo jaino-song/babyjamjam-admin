@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Battery,
   CheckCircle2,
@@ -28,7 +29,51 @@ import {
 } from "@/components/app/v3";
 import { Separator } from "@/components/ui/separator";
 import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
+import { api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
+
+interface AlimtalkLogRecord {
+  id: number;
+  provider: string;
+  templateKey: string;
+  receiver: string;
+  clientId: number | null;
+  messageBody: string;
+  status: "pending" | "sent" | "failed";
+  errorMessage: string | null;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  ruleName: string | null;
+  eventType: string | null;
+  recipientName: string | null;
+  clientName: string | null;
+  employeeName: string | null;
+}
+
+const STATUS_LABEL: Record<AlimtalkLogRecord["status"], string> = {
+  pending: "대기",
+  sent: "성공",
+  failed: "실패",
+};
+
+const STATUS_STYLE: Record<AlimtalkLogRecord["status"], string> = {
+  pending: "bg-amber-500/10 text-amber-600",
+  sent: "bg-emerald-500/10 text-emerald-600",
+  failed: "bg-red-500/10 text-red-600",
+};
+
+function formatLogTimestamp(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 const NAV_SECTIONS = [
   { id: "overview", label: "발송 현황", icon: Send },
@@ -514,6 +559,18 @@ function TemplatesSection() {
 export default function AlimtalkPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("overview");
 
+  const {
+    data: logs = [],
+    isLoading: isLogsLoading,
+    isError: isLogsError,
+  } = useQuery<AlimtalkLogRecord[]>({
+    queryKey: ["alimtalk", "logs", 200],
+    queryFn: async () => {
+      const res = await api.get<AlimtalkLogRecord[]>("/alimtalk-logs", { params: { limit: 200 } });
+      return res.data;
+    },
+  });
+
   return (
     <section data-component="alimtalk" className="space-y-6">
       <SectionNav
@@ -580,11 +637,65 @@ export default function AlimtalkPage() {
               </div>
               <Separator className="mb-6" />
 
-              <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                <History className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
-                <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 내역이 없습니다</p>
-                <p className="text-[0.75rem] text-v3-text-muted">알림톡을 발송하면 여기에 내역이 표시됩니다.</p>
-              </div>
+              {isLogsLoading ? (
+                <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
+                  <History className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30 animate-pulse" />
+                  <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 내역 불러오는 중…</p>
+                </div>
+              ) : isLogsError ? (
+                <div className="rounded-2xl border border-dashed border-red-300 p-8 text-center">
+                  <XCircle className="w-10 h-10 mx-auto mb-3 text-red-500 opacity-50" />
+                  <p className="text-[0.85rem] font-semibold text-red-600 mb-1">발송 내역을 불러오지 못했습니다</p>
+                  <p className="text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
+                </div>
+              ) : logs.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
+                  <History className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
+                  <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 내역이 없습니다</p>
+                  <p className="text-[0.75rem] text-v3-text-muted">알림톡을 발송하면 여기에 내역이 표시됩니다.</p>
+                </div>
+              ) : (
+                <ul data-component="alimtalk-history-list" className="space-y-2">
+                  {logs.map((log) => {
+                    const recipientLabel = log.recipientName ?? log.clientName ?? log.employeeName ?? log.receiver;
+                    return (
+                      <li
+                        key={log.id}
+                        data-component="alimtalk-history-item"
+                        className="rounded-2xl border border-v3-border/60 bg-white p-3"
+                      >
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-[0.85rem] font-semibold text-v3-dark truncate">
+                                {recipientLabel}
+                              </span>
+                              <span
+                                className={cn(
+                                  "shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-bold",
+                                  STATUS_STYLE[log.status],
+                                )}
+                              >
+                                {STATUS_LABEL[log.status]}
+                              </span>
+                            </div>
+                            <p className="text-[0.72rem] text-v3-text-muted truncate">
+                              {log.ruleName ?? log.templateKey}
+                              {log.eventType ? ` · ${log.eventType}` : ""}
+                            </p>
+                            <p className="text-[0.68rem] text-v3-text-muted mt-1">
+                              {formatLogTimestamp(log.createdAt)} · {log.receiver}
+                            </p>
+                            {log.errorMessage ? (
+                              <p className="text-[0.68rem] text-red-600 mt-1 break-words">{log.errorMessage}</p>
+                            ) : null}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </ContentPaper>
           </section>
         ) : null}
