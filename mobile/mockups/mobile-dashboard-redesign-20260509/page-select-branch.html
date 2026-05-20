@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>지점 선택 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css" />
+<style>
+.branch-page {
+  min-height: 100%;
+  background: var(--v3-dim-white);
+  padding: 56px 20px 24px;
+  display: flex;
+  flex-direction: column;
+}
+.branch-header {
+  margin-bottom: 24px;
+}
+.branch-title {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--v3-dark);
+  margin-bottom: 6px;
+}
+.branch-sub {
+  font-size: 0.78rem;
+  color: var(--v3-text-muted);
+  line-height: 1.45;
+}
+.branch-user {
+  display: flex; align-items: center; gap: 10px;
+  background: white;
+  border-radius: 14px;
+  padding: 10px 12px;
+  margin-bottom: 18px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.branch-user-avatar {
+  width: 36px; height: 36px;
+  border-radius: 11px;
+  background: var(--v3-primary);
+  color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.92rem; font-weight: 800;
+  flex-shrink: 0;
+}
+.branch-user-info { flex: 1; min-width: 0; line-height: 1.2; }
+.branch-user-name { font-size: 0.85rem; font-weight: 700; color: var(--v3-dark); }
+.branch-user-email { font-size: 0.66rem; color: var(--v3-text-muted); margin-top: 2px; }
+
+.branch-list {
+  display: flex; flex-direction: column;
+  gap: 10px;
+  margin-bottom: auto;
+}
+.branch-card {
+  background: white;
+  border-radius: 16px;
+  padding: 14px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  display: flex; align-items: center; gap: 12px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+}
+.branch-card.selected {
+  border-color: var(--v3-primary);
+  background: var(--v3-primary-light);
+}
+.branch-card-icon {
+  width: 42px; height: 42px;
+  border-radius: 12px;
+  background: var(--v3-primary);
+  color: white;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.branch-card-info { flex: 1; min-width: 0; line-height: 1.25; }
+.branch-card-name {
+  font-size: 0.95rem; font-weight: 700; color: var(--v3-dark);
+  display: flex; align-items: center; gap: 8px;
+}
+.branch-card-name .role-pill {
+  background: var(--v3-primary-light);
+  color: var(--v3-primary);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 800;
+}
+.branch-card.selected .role-pill { background: white; }
+.branch-card-check {
+  width: 24px; height: 24px;
+  flex-shrink: 0;
+  color: var(--v3-primary);
+  display: none;
+}
+.branch-card.selected .branch-card-check { display: block; }
+
+.branch-actions {
+  margin-top: 16px;
+  display: flex; flex-direction: column;
+  gap: 10px;
+}
+.branch-btn {
+  width: 100%;
+  padding: 14px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--v3-primary);
+  color: white;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.branch-btn:disabled { background: var(--v3-border); color: var(--v3-text-muted); cursor: not-allowed; }
+.logout-link {
+  text-align: center;
+  font-size: 0.74rem;
+  color: var(--v3-text-muted);
+  padding: 8px;
+  cursor: pointer;
+}
+.logout-link span { color: var(--v3-burgundy); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="branch-page">
+      <div class="branch-header">
+        <div class="branch-title">지점 선택</div>
+      </div>
+
+      <div class="branch-user">
+        <div class="branch-user-avatar">송</div>
+        <div class="branch-user-info">
+          <div class="branch-user-name">송진호</div>
+          <div class="branch-user-email">songjinho@babyjamjam.kr</div>
+        </div>
+      </div>
+
+      <div class="branch-list">
+        <div class="branch-card selected">
+          <div class="branch-card-icon">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </div>
+          <div class="branch-card-info">
+            <div class="branch-card-name">인천점<span class="role-pill">지점장</span></div>
+          </div>
+          <svg class="branch-card-check" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+
+        <div class="branch-card">
+          <div class="branch-card-icon" style="background: hsl(267, 50%, 46%);">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </div>
+          <div class="branch-card-info">
+            <div class="branch-card-name">서울 강동점<span class="role-pill">매니저</span></div>
+          </div>
+          <svg class="branch-card-check" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+
+        <div class="branch-card">
+          <div class="branch-card-icon" style="background: var(--v3-orange);">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </div>
+          <div class="branch-card-info">
+            <div class="branch-card-name">부천점<span class="role-pill">매니저</span></div>
+          </div>
+          <svg class="branch-card-check" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+      </div>
+
+      <div class="branch-actions">
+        <button class="branch-btn">인천점으로 이동</button>
+        <div class="logout-link"><span>로그아웃</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="variant-label">지점 선택 · /select-branch</div>
+<script>
+document.querySelectorAll('.branch-card').forEach(c=>c.addEventListener('click',()=>{document.querySelectorAll('.branch-card').forEach(x=>x.classList.remove('selected'));c.classList.add('selected');const name=c.querySelector('.branch-card-name').firstChild.textContent.trim();document.querySelector('.branch-btn').textContent=name+'으로 이동';}));
+</script>
+</body>
+</html>

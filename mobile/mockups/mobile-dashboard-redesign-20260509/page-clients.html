@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>고객 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.list-card {
+  background: white;
+  border-radius: 22px;
+  box-shadow: var(--shadow-v3);
+}
+
+/* === Detail panel — mirrors frontend structure === */
+/* Prevent flex-col children from shrinking — keeps natural heights with overflow scroll */
+.detail-body > * { flex-shrink: 0; }
+/* Hide native scrollbar while keeping scroll functional */
+.detail-body { scrollbar-width: none; }
+.detail-body::-webkit-scrollbar { display: none; }
+
+.client-detail-header {
+  display: flex; align-items: center;
+  gap: 12px;
+  padding: 0 4px;
+}
+.client-detail-avatar-lg {
+  width: 56px; height: 56px;
+  border-radius: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem; font-weight: 800;
+  color: white;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, hsl(137,34%,31%), hsl(137,34%,25%));
+  box-shadow: 0 4px 12px rgba(20,40,30,0.15);
+}
+.client-detail-title {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 6px;
+  height: 56px;
+  justify-content: center;
+}
+.client-detail-name {
+  font-size: 1.15rem; font-weight: 800;
+  color: var(--v3-dark);
+  line-height: 1.2;
+}
+.client-detail-badges {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  min-height: 28px;
+  align-items: center;
+}
+.badge-mini {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  font-size: 0.68rem;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  border: 1px solid;
+  line-height: 1;
+  white-space: nowrap;
+}
+.badge-mini.muted { background: var(--v3-dim-white); color: var(--v3-text-muted); border-color: var(--v3-border); }
+.badge-mini.burgundy { background: hsl(355, 40%, 94%); color: var(--v3-burgundy); border-color: hsla(355,36%,45%,0.2); }
+.badge-mini.primary { background: var(--v3-primary-light); color: var(--v3-primary); border-color: hsl(214, 70%, 85%); }
+.client-detail-subtitle {
+  font-size: 0.72rem;
+  color: var(--v3-text-muted);
+}
+
+/* Info cards (frontend gray cards) */
+.info-card {
+  background: var(--v3-dim-white);
+  border-radius: 18px;
+  padding: 14px 16px;
+}
+.info-card-title {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--v3-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+.info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--v3-border);
+  font-size: 0.78rem;
+}
+.info-row:last-child { border-bottom: 0; }
+.info-row-label {
+  color: var(--v3-text-muted);
+  flex-shrink: 0;
+}
+.info-row-value {
+  margin-left: auto;
+  text-align: right;
+  font-weight: 600;
+  color: var(--v3-dark);
+  word-break: keep-all;
+}
+
+/* Secondary button — outline style with primary accent */
+.detail-actions .btn-secondary {
+  background: white;
+  border: 1px solid var(--v3-primary);
+  color: var(--v3-primary);
+}
+.detail-tabs .filter-pill {
+  background: transparent;
+}
+.detail-tabs .filter-pill.active {
+  background: transparent;
+  color: var(--v3-primary);
+}
+
+/* Tab content panels — only one visible at a time */
+.tab-content { display: none; flex-direction: column; gap: 12px; }
+.tab-content.active { display: flex; }
+.tab-content > * { flex-shrink: 0; }
+
+/* Document/event row inside info-card (계약서/알림톡 tabs) */
+.doc-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--v3-border);
+}
+.doc-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.doc-row:first-of-type { padding-top: 0; }
+.doc-icon {
+  width: 34px; height: 34px;
+  border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.doc-info { flex: 1; min-width: 0; }
+.doc-title {
+  font-size: 0.82rem; font-weight: 700;
+  color: var(--v3-dark);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.doc-meta {
+  font-size: 0.66rem; color: var(--v3-text-muted);
+  margin-top: 2px;
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <!-- Top nav bar -->
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Page content: search + filter + list card -->
+        <div class="shell-content">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="list-title">
+              <span class="list-title-text">고객 <span class="list-count">42명</span></span>
+              <button class="list-action">+ 추가</button>
+            </div>
+            <div class="search-bar" style="margin: 4px 12px 8px;">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" placeholder="고객 이름, 매니저 검색" />
+            </div>
+            <div class="filter-row">
+              <button class="filter-pill active">전체 <span class="count">42</span></button>
+              <button class="filter-pill">교체 요청 <span class="count" style="background: var(--v3-burgundy-light); color: var(--v3-burgundy);">1</span></button>
+              <button class="filter-pill">진행중 <span class="count">8</span></button>
+              <button class="filter-pill">대기 <span class="count">2</span></button>
+              <button class="filter-pill">완료 <span class="count">31</span></button>
+            </div>
+
+            <div class="list-card-scroll">
+              <!-- Section: 교체 요청 -->
+              <div class="section-block">
+                <div class="section-header">교체 요청 · 1명</div>
+              <div class="list-item" onclick="openDetail(this)" data-name="[더미] 정유진" data-type="A라1형" data-manager="미배정" data-avatar="av-burgundy" data-initial="[">
+                <div class="list-avatar av-burgundy">[</div>
+                <div class="list-info">
+                  <div class="list-name">[더미] 정유진</div>
+                  <div class="list-meta">A라1형 · 제공인력 미배정</div>
+                </div>
+                <div class="list-right"><span class="badge badge-burgundy">교체 요청</span></div>
+              </div>
+              </div>
+
+              <!-- Section: 진행중 -->
+              <div class="section-block">
+                <div class="section-header">진행중 · 8명</div>
+              <div class="list-item" onclick="openDetail(this)" data-name="박서연" data-type="A라1형" data-manager="김민지" data-avatar="av-green" data-initial="박">
+                <div class="list-avatar av-green">박</div>
+                <div class="list-info">
+                  <div class="list-name">박서연</div>
+                  <div class="list-meta">A라1형 · 김민지</div>
+                </div>
+                <div class="list-right"><span class="badge badge-primary">진행중</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)" data-name="김도윤" data-type="B가1형" data-manager="박지민" data-avatar="av-primary" data-initial="김">
+                <div class="list-avatar av-primary">김</div>
+                <div class="list-info">
+                  <div class="list-name">김도윤</div>
+                  <div class="list-meta">B가1형 · 박지민</div>
+                </div>
+                <div class="list-right"><span class="badge badge-primary">진행중</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)" data-name="최예린" data-type="A가2형" data-manager="윤서아" data-avatar="av-burgundy" data-initial="최">
+                <div class="list-avatar av-burgundy">최</div>
+                <div class="list-info">
+                  <div class="list-name">최예린</div>
+                  <div class="list-meta">A가2형 · 윤서아</div>
+                </div>
+                <div class="list-right"><span class="badge badge-primary">진행중</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)" data-name="장하늘" data-type="A통합1형" data-manager="이지은" data-avatar="av-orange" data-initial="장">
+                <div class="list-avatar av-orange">장</div>
+                <div class="list-info">
+                  <div class="list-name">장하늘</div>
+                  <div class="list-meta">A통합1형 · 이지은</div>
+                </div>
+                <div class="list-right"><span class="badge badge-primary">진행중</span></div>
+              </div>
+              </div>
+
+              <!-- Section: 대기 -->
+              <div class="section-block">
+                <div class="section-header">대기 · 2명</div>
+              <div class="list-item" onclick="openDetail(this)" data-name="송진호" data-type="A통합1형" data-manager="미배정" data-avatar="av-orange" data-initial="송">
+                <div class="list-avatar av-orange">송</div>
+                <div class="list-info">
+                  <div class="list-name">송진호</div>
+                  <div class="list-meta">A통합1형 · 제공인력 미배정</div>
+                </div>
+                <div class="list-right"><span class="badge badge-orange">대기</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)" data-name="윤지아" data-type="B가1형" data-manager="미배정" data-avatar="av-purple" data-initial="윤">
+                <div class="list-avatar av-purple">윤</div>
+                <div class="list-info">
+                  <div class="list-name">윤지아</div>
+                  <div class="list-meta">B가1형 · 제공인력 미배정</div>
+                </div>
+                <div class="list-right"><span class="badge badge-orange">대기</span></div>
+              </div>
+              </div>
+
+              <!-- Section: 완료 -->
+              <div class="section-block">
+                <div class="section-header">완료 · 31명</div>
+              <div class="list-item" onclick="openDetail(this)" data-name="이수현" data-type="일반형" data-manager="박지영" data-avatar="av-green" data-initial="이">
+                <div class="list-avatar av-green">이</div>
+                <div class="list-info">
+                  <div class="list-name">이수현</div>
+                  <div class="list-meta">일반형 · 박지영</div>
+                </div>
+                <div class="list-right"><span class="badge badge-green">완료</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)" data-name="강민서" data-type="D가2형" data-manager="윤서아" data-avatar="av-primary" data-initial="강">
+                <div class="list-avatar av-primary">강</div>
+                <div class="list-info">
+                  <div class="list-name">강민서</div>
+                  <div class="list-meta">D가2형 · 윤서아</div>
+                </div>
+                <div class="list-right"><span class="badge badge-green">완료</span></div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <!-- Bottom sheet detail -->
+      <div class="nav-page detail">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <button class="sheet-close" onclick="closeDetail()" style="margin-left: auto;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" style="display: flex; flex-direction: column; gap: 12px;">
+          <!-- Header: avatar + name + multi-badge + subtitle -->
+          <div class="client-detail-header pop-up">
+            <div class="client-detail-avatar-lg" id="d-avatar">박</div>
+            <div class="client-detail-title">
+              <div class="client-detail-name" id="d-name">박서연</div>
+              <div class="client-detail-badges">
+                <span class="badge-mini primary">진행중</span>
+                <span class="badge-mini burgundy">유축기 대여</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions (moved between header and tabs) -->
+          <div class="detail-actions" style="margin-top: 0; padding: 14px 16px;">
+            <button class="btn btn-secondary">메시지</button>
+            <button class="btn btn-primary">계약서 발급</button>
+          </div>
+
+          <!-- Tabs (pill style, matches list filter-row pattern) -->
+          <div class="filter-row detail-tabs" style="padding: 0;">
+            <button class="filter-pill active" data-tab="basic">기본 정보</button>
+            <button class="filter-pill" data-tab="contracts">계약서 정보</button>
+            <button class="filter-pill" data-tab="alimtalk">알림톡 발송 현황</button>
+          </div>
+
+          <!-- Tab: 기본 정보 -->
+          <div class="tab-content active" data-tab-content="basic">
+            <!-- Card 1: 고객 정보 -->
+            <div class="info-card pop-up">
+              <div class="info-card-title">고객 정보</div>
+              <div class="info-row"><span class="info-row-label">이름</span><span class="info-row-value">박서연</span></div>
+              <div class="info-row"><span class="info-row-label">생년월일</span><span class="info-row-value">921108</span></div>
+              <div class="info-row"><span class="info-row-label">출산 예정일</span><span class="info-row-value">2025. 4. 25.</span></div>
+              <div class="info-row"><span class="info-row-label">연락처</span><span class="info-row-value">010-1234-5678</span></div>
+              <div class="info-row"><span class="info-row-label">주소</span><span class="info-row-value">인천시 부평구 부평대로 123</span></div>
+            </div>
+
+            <!-- Card 2: 제공인력 -->
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">제공인력</div>
+              <div class="info-row"><span class="info-row-label">제공인력 1</span><span class="info-row-value">김민지</span></div>
+              <div class="info-row"><span class="info-row-label">제공인력 2</span><span class="info-row-value">-</span></div>
+            </div>
+
+            <!-- Card 3: 서비스 정보 -->
+            <div class="info-card pop-up" style="animation-delay: 120ms;">
+              <div class="info-card-title">서비스 정보</div>
+              <div class="info-row"><span class="info-row-label">바우처 유형</span><span class="info-row-value">A라1형</span></div>
+              <div class="info-row"><span class="info-row-label">서비스 기간</span><span class="info-row-value">14일</span></div>
+              <div class="info-row"><span class="info-row-label">시작일</span><span class="info-row-value">2025. 4. 27.</span></div>
+              <div class="info-row"><span class="info-row-label">종료일</span><span class="info-row-value">2025. 5. 15.</span></div>
+              <div class="info-row"><span class="info-row-label">총 서비스 금액</span><span class="info-row-value">1,792,000원</span></div>
+              <div class="info-row"><span class="info-row-label">정부지원금</span><span class="info-row-value">1,254,000원</span></div>
+              <div class="info-row"><span class="info-row-label">본인부담금</span><span class="info-row-value">538,000원</span></div>
+            </div>
+          </div>
+
+          <!-- Tab: 계약서 정보 -->
+          <div class="tab-content" data-tab-content="contracts">
+            <div class="info-card pop-up">
+              <div class="info-card-title">계약서 · 2건</div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-orange-light); color: var(--v3-orange);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13l2 2 4-4"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">A라1형 계약서</div>
+                  <div class="doc-meta">C-2025-0426-022 · 4월 26일 작성</div>
+                </div>
+                <span class="badge-mini primary">검토 필요</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-green-light); color: var(--v3-green);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15l2 2 4-4"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">개인정보 동의서</div>
+                  <div class="doc-meta">C-2025-0420-005 · 4월 20일 완료</div>
+                </div>
+                <span class="badge-mini" style="background: var(--v3-green-light); color: var(--v3-green); border-color: hsla(137,34%,31%,0.25);">완료</span>
+              </div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">최근 진행 상황</div>
+              <div class="info-row"><span class="info-row-label">현재 단계</span><span class="info-row-value" style="color: var(--v3-primary);">검토 필요 (서명 대기)</span></div>
+              <div class="info-row"><span class="info-row-label">서명 대기자</span><span class="info-row-value">고객 (박서연)</span></div>
+              <div class="info-row"><span class="info-row-label">발송일</span><span class="info-row-value">2025. 4. 26.</span></div>
+              <div class="info-row"><span class="info-row-label">마감일</span><span class="info-row-value" style="color: var(--v3-orange);">2025. 5. 10. (D-1)</span></div>
+            </div>
+          </div>
+
+          <!-- Tab: 알림톡 발송 현황 -->
+          <div class="tab-content" data-tab-content="alimtalk">
+            <div class="info-card pop-up">
+              <div class="info-card-title">알림톡 · 4건</div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-primary-light); color: var(--v3-primary);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">고객 등록 환영</div>
+                  <div class="doc-meta">4월 20일 오전 10:14</div>
+                </div>
+                <span class="badge-mini" style="background: var(--v3-green-light); color: var(--v3-green); border-color: hsla(137,34%,31%,0.25);">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: hsl(267, 50%, 92%); color: hsl(267, 50%, 46%);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">제공인력 배정 안내</div>
+                  <div class="doc-meta">4월 26일 오후 2:30 · 김민지 매니저</div>
+                </div>
+                <span class="badge-mini" style="background: var(--v3-green-light); color: var(--v3-green); border-color: hsla(137,34%,31%,0.25);">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-orange-light); color: var(--v3-orange);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">서비스 시작 D-1 안내</div>
+                  <div class="doc-meta">4월 26일 오후 6:00</div>
+                </div>
+                <span class="badge-mini" style="background: var(--v3-green-light); color: var(--v3-green); border-color: hsla(137,34%,31%,0.25);">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-dim-white); color: var(--v3-text-muted);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">서비스 종료 안내</div>
+                  <div class="doc-meta">5월 15일 오후 4:00 · 발송 예정</div>
+                </div>
+                <span class="badge-mini muted">대기</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notification overlay -->
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-burgundy-light);"><svg width="15" height="15" fill="none" stroke="hsl(355,36%,45%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg></div><div class="notif-body"><div class="notif-title">매니저 배정 요청</div><div class="notif-snippet">[더미] 정유진 고객님의 서비스에 매니저 배정이 필요합니다.</div><div class="notif-time">방금 전</div></div></div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-primary-light);"><svg width="15" height="15" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div class="notif-body"><div class="notif-title">새 메시지 · 박지민 매니저</div><div class="notif-snippet">"오늘 김도윤 고객 방문 후 보고 드릴게요."</div><div class="notif-time">5분 전</div></div></div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-orange-light);"><svg width="15" height="15" fill="none" stroke="hsl(34,100%,55%)" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg></div><div class="notif-body"><div class="notif-title">일정 변경 요청</div><div class="notif-snippet">송진호 고객님의 시작일이 5/14 → 5/16으로 변경 요청되었습니다.</div><div class="notif-time">23분 전</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 고객) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item active">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">고객 · Clients page</div>
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+function openDetail(el){
+  document.getElementById('stack').classList.add('show-detail');
+}
+function closeDetail(){document.getElementById('stack').classList.remove('show-detail');}
+document.querySelectorAll('.filter-pill').forEach(p=>p.addEventListener('click',()=>{
+  const row=p.closest('.filter-row');
+  row.querySelectorAll('.filter-pill').forEach(x=>x.classList.remove('active'));
+  p.classList.add('active');
+  // Tab content swap (only for pills with data-tab in detail panel)
+  if(p.dataset.tab){
+    document.querySelectorAll('.tab-content').forEach(c=>c.classList.toggle('active',c.dataset.tabContent===p.dataset.tab));
+  }
+}));
+</script>
+</body>
+</html>

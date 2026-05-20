@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>Variant D — Pure List + Bottom Sheet</title>
+<link rel="stylesheet" href="_shared.css" />
+<style>
+/* Variant D specific — full-bleed list, bottom sheet detail */
+.compact-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, var(--v3-primary), hsl(267, 50%, 46%));
+  color: white;
+}
+.compact-header h1 { font-size: 1.05rem; font-weight: 700; }
+.compact-header h4 { font-size: 0.7rem; opacity: 0.85; font-weight: 500; margin-top: 2px; }
+.stats-toggle {
+  background: rgba(255,255,255,0.2);
+  border: 1px solid rgba(255,255,255,0.3);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* Pull-down stats panel */
+.stats-pulldown {
+  background: linear-gradient(180deg, hsl(267, 50%, 40%), var(--v3-primary));
+  color: white;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.stats-pulldown.open { max-height: 240px; }
+.stats-pulldown-inner {
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.pd-stat {
+  background: rgba(255,255,255,0.13);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex; align-items: center; gap: 10px;
+}
+.pd-stat-icon {
+  width: 36px; height: 36px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.25);
+  display: flex; align-items: center; justify-content: center;
+}
+.pd-stat-num { font-size: 1.3rem; font-weight: 800; line-height: 1; }
+.pd-stat-label { font-size: 0.65rem; opacity: 0.9; margin-top: 4px; font-weight: 500; }
+
+/* Bottom sheet (overrides nav-stack push) */
+.nav-page.detail {
+  transform: translateY(100%) !important;
+  transition: transform 0.4s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -10px 40px rgba(0,0,0,0.2);
+}
+.nav-stack.show-detail .nav-page.list { transform: translateX(0) !important; }
+.nav-stack.show-detail .nav-page.detail { transform: translateY(0) !important; }
+.scrim {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0);
+  pointer-events: none;
+  transition: background 0.4s ease;
+  z-index: 1;
+}
+.nav-stack.show-detail .scrim { background: rgba(0,0,0,0.4); pointer-events: all; }
+.sheet-handle {
+  width: 40px; height: 4px;
+  background: var(--v3-border);
+  border-radius: 999px;
+  margin: 8px auto 0;
+}
+.sheet-header {
+  padding: 8px 16px 12px;
+  border-bottom: 1px solid var(--v3-border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.sheet-close {
+  background: transparent; border: 0;
+  color: var(--v3-text-muted); cursor: pointer;
+  padding: 4px;
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="compact-header">
+          <div>
+            <h4>인천점</h4>
+            <h1>송진호 님</h1>
+          </div>
+          <button class="stats-toggle" onclick="togglePulldown()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="9" y2="18"/></svg>
+            현황 3
+          </button>
+        </div>
+
+        <div class="stats-pulldown" id="pulldown">
+          <div class="stats-pulldown-inner">
+            <div class="pd-stat">
+              <div class="pd-stat-icon"><svg width="18" height="18" fill="none" stroke="white" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/></svg></div>
+              <div><div class="pd-stat-num">0</div><div class="pd-stat-label">진행 중</div></div>
+            </div>
+            <div class="pd-stat">
+              <div class="pd-stat-icon"><svg width="18" height="18" fill="none" stroke="white" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg></div>
+              <div><div class="pd-stat-num">1</div><div class="pd-stat-label">시작 예정</div></div>
+            </div>
+            <div class="pd-stat">
+              <div class="pd-stat-icon"><svg width="18" height="18" fill="none" stroke="white" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div>
+              <div><div class="pd-stat-num">2</div><div class="pd-stat-label">서명 대기</div></div>
+            </div>
+            <div class="pd-stat">
+              <div class="pd-stat-icon"><svg width="18" height="18" fill="none" stroke="white" stroke-width="2.5" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/></svg></div>
+              <div><div class="pd-stat-num">0</div><div class="pd-stat-label">발송 대기</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="list-section">
+          <div class="list-card pop-up">
+            <div class="list-title">최근 현황</div>
+            <div class="list-tabs">
+              <button class="list-tab active">전체</button>
+              <button class="list-tab">곧 시작</button>
+              <button class="list-tab">조치 필요</button>
+            </div>
+            <div style="padding: 8px;">
+              <div class="list-item" onclick="openDetail(this)" data-name="[더미] 정유진" data-type="A라2형" data-status="교체 요청" data-status-class="badge-burgundy" data-avatar="av-burgundy" data-initial="[">
+                <div class="list-avatar av-burgundy">[</div>
+                <div class="list-info">
+                  <div class="list-name">[더미] 정유진 <span class="badge badge-burgundy">교체 요청</span></div>
+                  <div class="list-meta">A라2형 · -</div>
+                </div>
+                <svg class="list-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+              <div class="list-item" onclick="openDetail(this)" data-name="송진호" data-type="A통합2형" data-status="곧 시작" data-status-class="badge-primary" data-avatar="av-orange" data-initial="송">
+                <div class="list-avatar av-orange">송</div>
+                <div class="list-info">
+                  <div class="list-name">송진호 <span class="badge badge-primary">곧 시작</span></div>
+                  <div class="list-meta">A통합2형 · - · 5일 후</div>
+                </div>
+                <svg class="list-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+              <div class="list-item" onclick="openDetail(this)" data-name="박서연" data-type="A라2형" data-status="진행중" data-status-class="badge-green" data-avatar="av-green" data-initial="박">
+                <div class="list-avatar av-green">박</div>
+                <div class="list-info">
+                  <div class="list-name">박서연 <span class="badge badge-green">진행중</span></div>
+                  <div class="list-meta">A라2형 · 김민지 · D+12</div>
+                </div>
+                <svg class="list-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+              <div class="list-item" onclick="openDetail(this)" data-name="이수현" data-type="A통합2형" data-status="서명 대기" data-status-class="badge-orange" data-avatar="av-purple" data-initial="이">
+                <div class="list-avatar av-purple">이</div>
+                <div class="list-info">
+                  <div class="list-name">이수현 <span class="badge badge-orange">서명 대기</span></div>
+                  <div class="list-meta">A통합2형 · - · 2025-05-15</div>
+                </div>
+                <svg class="list-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <div class="nav-page detail">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <div style="font-size: 1rem; font-weight: 700; color: var(--v3-dark);" id="d-title">상세 정보</div>
+          <button class="sheet-close" onclick="closeDetail()">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body">
+          <div class="detail-card pop-up">
+            <div style="display:flex; align-items:center; gap: 14px; margin-bottom: 16px;">
+              <div class="list-avatar" id="d-avatar" style="width: 56px; height: 56px; border-radius: 18px; font-size: 1.3rem;">송</div>
+              <div>
+                <div style="font-size: 1.05rem; font-weight: 700; color: var(--v3-dark);" id="d-name">송진호</div>
+                <div style="margin-top: 6px;"><span class="badge" id="d-status">곧 시작</span></div>
+              </div>
+            </div>
+            <h3>서비스 정보</h3>
+            <div class="detail-row"><span class="detail-label">서비스 유형</span><span class="detail-value" id="d-type">A통합2형</span></div>
+            <div class="detail-row"><span class="detail-label">담당 매니저</span><span class="detail-value">미배정</span></div>
+            <div class="detail-row"><span class="detail-label">서비스 시작일</span><span class="detail-value">2025-05-14</span></div>
+          </div>
+          <div class="detail-card pop-up" style="animation-delay: 80ms;">
+            <h3>다음 조치</h3>
+            <div class="detail-row"><span class="detail-label">매니저 배정</span><span class="detail-value" style="color: var(--v3-burgundy);">필요</span></div>
+            <div class="detail-actions">
+              <button class="btn btn-secondary">매니저 배정</button>
+              <button class="btn btn-primary">상세 보기</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">D · Pure List + Bottom Sheet</div>
+<script>
+function togglePulldown() { document.getElementById('pulldown').classList.toggle('open'); }
+function openDetail(el) {
+  document.getElementById('d-name').textContent = el.dataset.name;
+  document.getElementById('d-type').textContent = el.dataset.type;
+  document.getElementById('d-title').textContent = el.dataset.name;
+  const statusEl = document.getElementById('d-status');
+  statusEl.textContent = el.dataset.status;
+  statusEl.className = 'badge ' + el.dataset.statusClass;
+  const avEl = document.getElementById('d-avatar');
+  avEl.className = 'list-avatar ' + el.dataset.avatar;
+  avEl.style.cssText = 'width: 56px; height: 56px; border-radius: 18px; font-size: 1.3rem;';
+  avEl.textContent = el.dataset.initial;
+  document.getElementById('stack').classList.add('show-detail');
+}
+function closeDetail() { document.getElementById('stack').classList.remove('show-detail'); }
+</script>
+</body>
+</html>

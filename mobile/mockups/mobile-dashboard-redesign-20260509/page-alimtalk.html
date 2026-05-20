@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>알림톡 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.list-card { background: white; border-radius: 22px; box-shadow: var(--shadow-v3); }
+
+/* iOS-style toggle switch */
+.toggle {
+  position: relative;
+  width: 38px; height: 22px;
+  background: var(--v3-border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: left 0.2s ease;
+}
+.toggle.on { background: var(--v3-green); }
+.toggle.on::after { left: 18px; }
+
+.trigger-icon {
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.trigger-info { flex: 1; min-width: 0; }
+.trigger-title {
+  font-size: 0.86rem; font-weight: 700;
+  color: var(--v3-dark);
+}
+.trigger-meta {
+  font-size: 0.66rem;
+  color: var(--v3-text-muted);
+  margin-top: 3px;
+  display: flex; align-items: center; gap: 6px;
+}
+.trigger-meta .sep { color: var(--v3-border); }
+.send-stat {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--v3-primary-light);
+  color: var(--v3-primary);
+  font-size: 0.6rem; font-weight: 700;
+}
+.send-stat.fail { background: var(--v3-burgundy-light); color: var(--v3-burgundy); }
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="shell-content">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="list-title">
+              <span class="list-title-text">알림톡 자동 발송</span>
+              <button class="list-action">템플릿 관리</button>
+            </div>
+
+            <div class="list-card-scroll">
+              <div class="section-block">
+                <div class="section-header">자동화</div>
+
+              <div class="list-item" style="padding: 12px 10px;">
+                <div class="trigger-icon" style="background: var(--v3-primary-light); color: var(--v3-primary);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+                </div>
+                <div class="trigger-info">
+                  <div class="trigger-title">고객 등록 환영</div>
+                  <div class="trigger-meta">
+                    <span class="send-stat">5월 12건</span>
+                    <span class="sep">·</span>
+                    <span>고객 신규 등록 즉시</span>
+                  </div>
+                </div>
+                <div class="toggle on"></div>
+              </div>
+
+              <div class="list-item" style="padding: 12px 10px;">
+                <div class="trigger-icon" style="background: var(--v3-orange-light); color: var(--v3-orange);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                </div>
+                <div class="trigger-info">
+                  <div class="trigger-title">서비스 시작 D-1 안내</div>
+                  <div class="trigger-meta">
+                    <span class="send-stat">5월 8건</span>
+                    <span class="sep">·</span>
+                    <span>서비스 시작 1일 전</span>
+                  </div>
+                </div>
+                <div class="toggle on"></div>
+              </div>
+
+              <div class="list-item" style="padding: 12px 10px;">
+                <div class="trigger-icon" style="background: var(--v3-green-light); color: var(--v3-green);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+                </div>
+                <div class="trigger-info">
+                  <div class="trigger-title">서비스 종료 안내</div>
+                  <div class="trigger-meta">
+                    <span class="send-stat">5월 6건</span>
+                    <span class="sep">·</span>
+                    <span>서비스 종료일 당일</span>
+                  </div>
+                </div>
+                <div class="toggle on"></div>
+              </div>
+
+              <div class="list-item" style="padding: 12px 10px;">
+                <div class="trigger-icon" style="background: hsl(267, 50%, 92%); color: hsl(267, 50%, 46%);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>
+                </div>
+                <div class="trigger-info">
+                  <div class="trigger-title">제공인력 배정 안내</div>
+                  <div class="trigger-meta">
+                    <span class="send-stat">5월 7건</span>
+                    <span class="sep">·</span>
+                    <span>제공인력 배정 즉시</span>
+                  </div>
+                </div>
+                <div class="toggle"></div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-burgundy-light);"><svg width="15" height="15" fill="none" stroke="hsl(355,36%,45%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg></div><div class="notif-body"><div class="notif-title">알림톡 발송 실패</div><div class="notif-snippet">[더미] 정유진 고객님의 알림톡 발송에 실패했습니다.</div><div class="notif-time">방금 전</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 전체) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">알림톡 · /alimtalk</div>
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+document.querySelectorAll('.toggle').forEach(t=>t.addEventListener('click',()=>t.classList.toggle('on')));
+</script>
+</body>
+</html>

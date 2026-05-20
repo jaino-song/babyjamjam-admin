@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>Mobile Layout — All Pages (Shell Validation)</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: -apple-system, "Helvetica Neue", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  background: hsl(220, 25%, 12%);
+  color: white;
+  min-height: 100vh;
+}
+header {
+  padding: 24px 32px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+}
+header h1 {
+  font-size: 1.3rem; font-weight: 700;
+  letter-spacing: -0.01em;
+}
+header p { font-size: 0.85rem; color: rgba(255,255,255,0.6); margin-top: 4px; }
+.cta {
+  font-size: 0.78rem;
+  color: rgba(255,255,255,0.7);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  padding: 8px 14px;
+  border-radius: 999px;
+}
+.cta b { color: hsl(34, 100%, 65%); }
+
+.legend {
+  padding: 16px 32px 0;
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.legend-item {
+  font-size: 0.72rem;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+.legend-item b { color: hsl(214, 90%, 70%); margin-right: 6px; }
+
+.section-divider {
+  padding: 28px 32px 8px;
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  margin-top: 24px;
+}
+.section-divider:first-of-type { margin-top: 0; border-top: 0; }
+.section-divider span {
+  color: hsl(34, 100%, 65%);
+  margin-left: 8px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0.01em;
+}
+
+.major-section {
+  padding: 36px 32px 8px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 32px;
+  border-top: 2px solid rgba(255,255,255,0.12);
+}
+.major-section:first-of-type { margin-top: 16px; border-top: 0; padding-top: 12px; }
+.major-section.implemented { color: hsl(137, 60%, 65%); }
+.major-section.partial { color: hsl(45, 100%, 65%); }
+.major-section.not-implemented { color: hsl(20, 100%, 65%); }
+.partial-note {
+  font-size: 0.68rem;
+  color: hsl(45, 100%, 70%);
+  background: rgba(255, 200, 0, 0.08);
+  border: 1px solid rgba(255, 200, 0, 0.18);
+  padding: 6px 10px;
+  border-radius: 8px;
+  margin-top: 8px;
+  text-align: left;
+  line-height: 1.4;
+}
+.partial-note b { color: hsl(45, 100%, 80%); }
+.major-section span {
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: rgba(255,255,255,0.55);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.board {
+  display: flex;
+  gap: 32px;
+  padding: 16px 32px 32px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+}
+.col {
+  flex: 0 0 460px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.col-header {
+  text-align: center;
+  margin-bottom: 16px;
+  padding: 0 8px;
+}
+.col-header h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.col-header h2 .tab {
+  display: inline-block;
+  background: hsl(214, 90%, 60%);
+  color: white;
+  border-radius: 8px;
+  padding: 2px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.col-header h2 .tab.new { background: hsl(34, 100%, 55%); }
+.col-header h2 .tab.auth { background: hsl(267, 50%, 55%); }
+.col-header h2 .tab.wizard { background: hsl(355, 36%, 55%); }
+.col-header p {
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.55);
+  line-height: 1.4;
+}
+
+iframe {
+  width: 414px;
+  height: 920px;
+  border: 0;
+  background: transparent;
+}
+
+.col-footer {
+  margin-top: 12px;
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.5);
+  text-align: center;
+  max-width: 380px;
+  line-height: 1.5;
+}
+.col-footer .uses { color: hsl(137, 50%, 65%); display: block; margin-top: 4px; font-weight: 600; }
+.col-footer .new { color: hsl(34, 100%, 65%); display: block; margin-top: 2px; font-weight: 600; }
+.col-footer .sync { color: hsl(214, 90%, 70%); display: block; margin-top: 2px; font-weight: 600; }
+
+.scroll-hint {
+  text-align: center;
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.35);
+  padding: 8px;
+}
+
+@media (max-width: 768px) {
+  .board { padding: 16px; gap: 16px; }
+  .col { flex: 0 0 360px; }
+  iframe { width: 350px; height: 800px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Mobile Layout — 19 Pages (✅ 완전 14 · ⚠️ 부분 3 · 🚧 미구현 2)</h1>
+    <p>✅ 14 fully implemented · ⚠️ 3 with stubbed sub-sections (contracts, messages, alimtalk) · 🚧 2 mockup-only (file-upload, message-new).</p>
+  </div>
+  <div class="cta">
+    👉 <b>Tap items + bell</b> in any phone — shell behaves identically across all
+  </div>
+</header>
+
+<div class="legend">
+  <div class="legend-item"><b>Sync 적용:</b> 서비스 상태 5종 (대기/진행중/완료/중단/교체 요청) · 계약 상태 4종 (대기/검토 필요/완료/기간 만료) · 서비스 유형 (A가1형/A라1형/A통합1형/B가1형/D가2형/일반형)</div>
+  <div class="legend-item"><b>Shared shell:</b> top navbar with identity + bell · floating bottom nav · notification popover · bottom-sheet primitive</div>
+</div>
+
+<!-- =============================================== -->
+<!-- ✅ 완전 구현 — Frontend가 fully functional (14) -->
+<!-- =============================================== -->
+<div class="major-section implemented">✅ 완전 구현 (14 페이지) <span>Frontend에서 end-to-end 동작하는 페이지</span></div>
+
+<!-- ============ Bottom-nav main pages (계약 제외 - 부분 구현으로) ============ -->
+<div class="section-divider">Bottom Nav 메인 (4) <span>· 핵심 탭 중 완전 구현된 페이지 · 계약은 ⚠️ 부분 구현</span></div>
+<div class="board">
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab">홈</span> Dashboard</h2>
+      <p>Stats grid + 최근 현황 list with sectioned D-day rows.</p>
+    </div>
+    <iframe src="variant-D2.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: list-card stretches · D-day right · sheet detail</span>
+      <span class="sync">Synced: 검토 필요 / 대기 (eformsign) · 진행중 (service status)</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab">고객</span> Clients</h2>
+      <p>Status sections (진행중 / 대기 / 교체 요청 / 완료) + filter pills.</p>
+    </div>
+    <iframe src="page-clients.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: list-card · sheet · contract-item pattern</span>
+      <span class="sync">Synced: 5-status enum + frontend service types</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab">어시스턴트</span> AI Chat <span class="tab new">NEW</span></h2>
+      <p>Streaming AI chat UI with message bubbles, source citations, suggestion chips.</p>
+    </div>
+    <iframe src="page-chat.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: same shell + floating chat input</span>
+      <span class="new">Page-only: msg bubbles · typing indicator · source chips</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab">전체</span> All / Settings</h2>
+      <p>Profile card + grouped iOS-style menu rows + logout.</p>
+    </div>
+    <iframe src="page-all.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: same shell (navbar + bottom-nav + notif)</span>
+      <span class="new">Page-only: gradient profile card + grouped menu rows</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============ Secondary pages (메시지/알림톡 제외 - 부분 구현으로) ============ -->
+<div class="section-divider">Secondary 페이지 (3) <span>· 전체 hub에서 진입 · 메시지/알림톡은 ⚠️ 부분 구현</span></div>
+<div class="board">
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">제공인력</span> Employees</h2>
+      <p>Staff roster with 활동중 / 대기 / 휴직 sections + work area meta.</p>
+    </div>
+    <iframe src="page-employees.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: same list shell as 고객 page</span>
+      <span class="new">Page-only: 활동 지역 + 담당 고객 meta</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">파일</span> Files</h2>
+      <p>Document list with type-coded file icons (PDF/IMG/DOC/XLS) + size meta.</p>
+    </div>
+    <iframe src="page-files.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: list shell + filter pills</span>
+      <span class="new">Page-only: file-type icon swatches + size meta</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">상담 조회</span> Consultations</h2>
+      <p>Inquiry list with read/unread states + channel pills (웹/카카오/전화).</p>
+    </div>
+    <iframe src="page-consultations.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: list shell + filter pills</span>
+      <span class="new">Page-only: unread row tint + 2-line snippet preview</span>
+    </div>
+  </div>
+
+
+</div>
+
+<!-- ============ Workflow + Auth ============ -->
+<div class="section-divider">Workflow + Auth (6) <span>· No bottom-nav</span></div>
+<div class="board">
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab wizard">새 고객</span> Client Wizard</h2>
+      <p>3-step wizard matching frontend workflow + animated progress + summary pills.</p>
+    </div>
+    <iframe src="page-client-new.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: native date picker · select w/ optgroups · auto-fill prices</span>
+      <span class="sync">Synced: 3-step structure (기본/서비스/계약) + voucher.json options</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab wizard">새 제공인력</span> Employee Wizard</h2>
+      <p>2-step wizard · grade chips + multi-select work areas + binary 가능/불가 toggle.</p>
+    </div>
+    <iframe src="page-employee-new.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: grade chips (★) · area multi-select · big binary chips</span>
+      <span class="sync">Synced: 2-step structure (기본/근무) + 인천 8 districts</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab auth">로그인</span> Login</h2>
+      <p>Email/password + Kakao OAuth · pre-auth gradient page.</p>
+    </div>
+    <iframe src="page-login.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: brand colors + design tokens only</span>
+      <span class="new">Links to 비밀번호 찾기 / 회원가입</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab auth">비밀번호 찾기</span> Forgot Password</h2>
+      <p>4 states: email → sent → reset form → done.</p>
+    </div>
+    <iframe src="page-forgot-password.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: auth-page pattern · pw strength indicator</span>
+      <span class="sync">Synced: copy + flow from frontend forgot-password</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab auth">회원가입</span> Register</h2>
+      <p>3-step wizard: 계정 · 개인정보 · 지점/역할 + 가입 완료.</p>
+    </div>
+    <iframe src="page-register.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: step-indicator (dots) · select-wrap chevron</span>
+      <span class="sync">Synced: field list + labels from frontend register-page</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab auth">지점 선택</span> Select Branch</h2>
+      <p>Multi-branch user picks active branch · post-login gate.</p>
+    </div>
+    <iframe src="page-select-branch.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: design tokens · card pattern</span>
+      <span class="new">Page-only: branch cards with role pills + selected state</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============ Sub-pages — 구현 완료 ============ -->
+<div class="section-divider">Sub-pages (1) <span>· 메시지 hub에서 진입</span></div>
+<div class="board">
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">템플릿 관리</span> Templates</h2>
+      <p>알림톡 템플릿 list + 편집 시트 (시스템 자동 / 사용자 작성).</p>
+    </div>
+    <iframe src="page-templates.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: list shell + filter pills + bottom sheet editor</span>
+      <span class="sync">Synced: /messages/templates frontend route</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- =============================================== -->
+<!-- ⚠️ 부분 구현 — Frontend 일부 sub-section이 stub (3) -->
+<!-- =============================================== -->
+<div class="major-section partial">⚠️ 부분 구현 (3 페이지) <span>주요 흐름은 동작 · 일부 sub-section이 stub/placeholder</span></div>
+
+<div class="section-divider">부분 구현 (3) <span>· 메인 기능은 작동하지만 일부 sub-tab/section 미완성</span></div>
+<div class="board">
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab">계약</span> Contracts</h2>
+      <p>Eformsign 4-status filters + contract rows with status badge.</p>
+    </div>
+    <iframe src="page-contracts.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: list-card · sheet · contract-item</span>
+      <span class="sync">Synced: 대기 / 검토 필요 / 완료 / 기간 만료 (eformsign labels)</span>
+      <div class="partial-note">
+        <b>✅ 완전:</b> 산모도우미 계약 (infinite scroll · eformsign auth · webhook · finalize flow)<br/>
+        <b>🚧 stub:</b> 산후도우미(caregiver) 섹션 · 문서 섹션 · 알림 섹션 — 모두 "아직 준비중입니다" placeholder
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">메시지</span> Messages</h2>
+      <p>Hub tiles (알림톡 / 템플릿) + recent message threads with channel badges.</p>
+    </div>
+    <iframe src="page-messages.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: list shell + filter pills</span>
+      <span class="new">Page-only: hub tiles + channel pill (알림톡/SMS)</span>
+      <div class="partial-note">
+        <b>✅ 완전:</b> Upcoming messages + 7개 builtin 템플릿 폼 + trigger rules<br/>
+        <b>🚧 stub:</b> History tab (placeholder data) · Settings tab · Templates tab (MessageSectionPlaceholder)
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">알림톡</span> Alimtalk</h2>
+      <p>4 trigger types (frontend canonical) + iOS toggle + recent send log.</p>
+    </div>
+    <iframe src="page-alimtalk.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: list shell + section headers</span>
+      <span class="sync">Synced: 4 alimtalk triggers (CLIENT_CREATED / SERVICE_START/END / EMPLOYEE_ASSIGNED)</span>
+      <div class="partial-note">
+        <b>✅ 완전:</b> History · upcoming jobs · 템플릿 생성 폼 · 이미지 업로드 · 버튼 관리<br/>
+        <b>🚧 stub:</b> Templates 목록 탭 (mock data · API 미연결) · Settings 탭
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- =============================================== -->
+<!-- 🚧 미구현 — Mockup 전용 (frontend 라우트 없음, 2) -->
+<!-- =============================================== -->
+<div class="major-section not-implemented">🚧 미구현 (2 페이지) <span>Mockup만 존재 · frontend 라우트 없음</span></div>
+
+<div class="section-divider">Mockup 전용 (2) <span>· 추후 frontend 구현 대상</span></div>
+<div class="board">
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">파일 업로드</span> File Upload</h2>
+      <p>드롭존 + 카테고리/관련 고객/태그 메타데이터 폼.</p>
+    </div>
+    <iframe src="page-file-upload.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: form-card · progress bar · category chips</span>
+      <span class="new">Page-only: 파일 미리보기 + 태그 입력 chip</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">새 메시지</span> New Message</h2>
+      <p>수신자 chip 선택 + 채널 + 템플릿 선택 + 본문 + 미리보기.</p>
+    </div>
+    <iframe src="page-message-new.html"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: recipient chips · 템플릿 radio list · 변수 치환 preview</span>
+      <span class="new">Page-only: 알림톡 미리보기 카드 (노란 카카오톡 스타일)</span>
+    </div>
+  </div>
+
+</div>
+
+<div class="scroll-hint">← scroll horizontally within each section · scroll page down for more sections →</div>
+
+</body>
+</html>

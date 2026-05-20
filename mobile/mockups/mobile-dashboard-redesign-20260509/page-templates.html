@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>템플릿 관리 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.list-card { background: white; border-radius: 22px; box-shadow: var(--shadow-v3); }
+
+.template-icon {
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.template-icon.kakao { background: hsl(50, 100%, 88%); color: hsl(45, 70%, 30%); }
+.template-icon.sms { background: var(--v3-primary-light); color: var(--v3-primary); }
+
+.tpl-meta {
+  font-size: 0.66rem;
+  color: var(--v3-text-muted);
+  margin-top: 2px;
+  display: flex; align-items: center; gap: 5px;
+}
+.tpl-meta .sep { color: var(--v3-border); }
+
+.thread-channel {
+  font-size: 0.55rem; font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.thread-channel.kakao { background: hsl(50, 100%, 88%); color: hsl(45, 70%, 30%); }
+.thread-channel.sms { background: var(--v3-primary-light); color: var(--v3-primary); }
+
+/* Edit sheet form */
+.form-card {
+  background: white;
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.form-row { margin-bottom: 12px; }
+.form-row:last-child { margin-bottom: 0; }
+.form-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--v3-text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.form-input, .form-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--v3-border);
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--v3-dark);
+  background: white;
+  outline: none;
+  box-sizing: border-box;
+}
+.form-textarea { min-height: 140px; resize: vertical; line-height: 1.55; font-size: 0.82rem; }
+.form-input:focus, .form-textarea:focus { border-color: var(--v3-primary); }
+.form-helper {
+  font-size: 0.65rem;
+  color: var(--v3-text-muted);
+  margin-top: 4px;
+}
+
+.chan-toggle-row { display: flex; gap: 6px; }
+.chan-toggle {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--v3-border);
+  border-radius: 10px;
+  background: white;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--v3-text);
+  cursor: pointer;
+  font-family: inherit;
+}
+.chan-toggle.selected {
+  background: var(--v3-primary);
+  color: white;
+  border-color: var(--v3-primary);
+}
+
+.var-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.var-chip {
+  font-size: 0.66rem;
+  font-weight: 600;
+  background: var(--v3-primary-light);
+  color: var(--v3-primary);
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-family: 'SF Mono', monospace;
+  cursor: pointer;
+  border: 0;
+}
+.var-chip:hover { opacity: 0.85; }
+
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 0;
+}
+.toggle-row .toggle-label {
+  font-size: 0.82rem; font-weight: 600;
+  color: var(--v3-dark);
+}
+.toggle-row .toggle-sub {
+  font-size: 0.66rem; color: var(--v3-text-muted);
+  margin-top: 2px;
+}
+.toggle {
+  width: 40px; height: 22px; flex-shrink: 0;
+  background: var(--v3-border);
+  border-radius: 999px; position: relative;
+  cursor: pointer; transition: background 0.2s;
+}
+.toggle::after {
+  content: '';
+  position: absolute;
+  width: 18px; height: 18px;
+  background: white;
+  border-radius: 50%;
+  top: 2px; left: 2px;
+  transition: left 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle.on { background: var(--v3-green); }
+.toggle.on::after { left: 20px; }
+
+.tpl-sheet-actions {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: white;
+  border-top: 1px solid var(--v3-border);
+  padding: 10px 14px 16px;
+  display: flex; gap: 8px;
+}
+.tpl-btn {
+  flex: 1;
+  padding: 13px;
+  border-radius: 14px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: 0;
+}
+.tpl-btn.secondary {
+  background: var(--v3-burgundy-light);
+  color: var(--v3-burgundy);
+  flex: 0 0 110px;
+}
+.tpl-btn.primary {
+  background: var(--v3-primary);
+  color: white;
+  flex: 2;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  height: 52px;
+  padding: 0 4px;
+  background: white;
+  border-bottom: 1px solid var(--v3-border);
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
+}
+.detail-header-right {
+  margin-left: auto;
+  padding-right: 12px;
+}
+.detail-header-action {
+  background: transparent; border: 0;
+  color: var(--v3-primary);
+  font-size: 0.85rem; font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 8px 4px;
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="detail-header">
+          <button class="detail-back">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+            <span>메시지</span>
+          </button>
+          <div class="detail-title">템플릿 관리</div>
+          <div class="detail-header-right">
+            <button class="detail-header-action">+ 새 템플릿</button>
+          </div>
+        </div>
+
+        <div class="shell-content" style="padding-bottom: 16px;">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="search-bar" style="margin: 12px 12px 8px;">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" placeholder="템플릿명, 이벤트 검색" />
+            </div>
+            <div class="filter-row">
+              <button class="filter-pill active">전체 <span class="count">12</span></button>
+              <button class="filter-pill">시스템 자동 <span class="count">4</span></button>
+              <button class="filter-pill">사용자 작성 <span class="count">8</span></button>
+              <button class="filter-pill">사용 안 함 <span class="count">2</span></button>
+            </div>
+
+            <div class="list-card-scroll">
+              <div class="section-block">
+                <div class="section-header">시스템 자동 · 4개</div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="template-icon kakao">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">고객 등록 환영 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="tpl-meta">고객 등록 <span class="sep">·</span> 5월 12건 발송</div>
+                </div>
+                <div class="toggle on"></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="template-icon kakao">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">서비스 시작 D-1 안내 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="tpl-meta">서비스 시작 (D-1) <span class="sep">·</span> 5월 8건 발송</div>
+                </div>
+                <div class="toggle on"></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="template-icon kakao">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">서비스 종료 안내 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="tpl-meta">서비스 종료 <span class="sep">·</span> 5월 6건 발송</div>
+                </div>
+                <div class="toggle on"></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="template-icon kakao">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">제공인력 배정 안내 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="tpl-meta">직원 배정 <span class="sep">·</span> 5월 7건 발송</div>
+                </div>
+                <div class="toggle"></div>
+              </div>
+              </div>
+
+              <div class="section-block">
+                <div class="section-header">사용자 작성 · 8개</div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="template-icon kakao">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">방문 일정 변경 안내 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="tpl-meta">사용자 작성 <span class="sep">·</span> 4월 23건 발송</div>
+                </div>
+                <div class="toggle on"></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="template-icon sms">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">상담 예약 확정 <span class="thread-channel sms">SMS</span></div>
+                  <div class="tpl-meta">사용자 작성 <span class="sep">·</span> 5월 4건 발송</div>
+                </div>
+                <div class="toggle on"></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="template-icon kakao">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">서비스 만족도 조사 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="tpl-meta">사용자 작성 <span class="sep">·</span> 5월 11건 발송</div>
+                </div>
+                <div class="toggle on"></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="template-icon kakao">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">월별 정산 안내 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="tpl-meta">사용자 작성 <span class="sep">·</span> 4월 1건 발송</div>
+                </div>
+                <div class="toggle"></div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <!-- Bottom sheet detail (template editor) -->
+      <div class="nav-page detail">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <div style="font-size: 0.92rem; font-weight: 700; color: var(--v3-dark);">템플릿 편집</div>
+          <button class="sheet-close" onclick="closeDetail()">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" style="display: flex; flex-direction: column; gap: 10px; padding: 14px; padding-bottom: 96px;">
+          <div class="form-card pop-up">
+            <div class="form-row">
+              <label class="form-label">템플릿명 <span style="color: var(--v3-burgundy);">*</span></label>
+              <input class="form-input" value="서비스 시작 D-1 안내" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">채널</label>
+              <div class="chan-toggle-row">
+                <button class="chan-toggle selected">알림톡 (Kakao)</button>
+                <button class="chan-toggle">SMS</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <label class="form-label">발송 트리거</label>
+              <input class="form-input" value="서비스 시작 (D-1)" readonly />
+              <div class="form-helper">시스템 템플릿의 트리거는 변경할 수 없습니다.</div>
+            </div>
+          </div>
+
+          <div class="form-card pop-up" style="animation-delay: 60ms;">
+            <div class="form-row">
+              <label class="form-label">메시지 본문</label>
+              <textarea class="form-textarea">안녕하세요 #{clientName} 고객님,
+
+내일 오전 9시 #{employeeName} 매니저가 방문 예정입니다. 준비물은 별도로 안내드린 사항을 참고해 주세요.
+
+문의사항이 있으시면 언제든지 연락 주세요.
+
+아가잼잼 #{branchName}</textarea>
+              <div class="form-helper">변수는 #{} 형식으로 삽입할 수 있습니다. 위 칩을 탭하면 본문에 추가됩니다.</div>
+              <div class="var-chips">
+                <button class="var-chip">#{clientName}</button>
+                <button class="var-chip">#{employeeName}</button>
+                <button class="var-chip">#{serviceStartDate}</button>
+                <button class="var-chip">#{branchName}</button>
+                <button class="var-chip">#{voucherType}</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-card pop-up" style="animation-delay: 120ms;">
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-label">자동 발송 활성화</div>
+                <div class="toggle-sub">서비스 시작 1일 전 자동으로 발송됩니다.</div>
+              </div>
+              <div class="toggle on"></div>
+            </div>
+          </div>
+
+          <div class="form-card pop-up" style="animation-delay: 180ms;">
+            <div class="info-card-title" style="margin-bottom: 10px;">발송 통계</div>
+            <div class="info-row"><span class="info-row-label">5월 발송</span><span class="info-row-value">8건</span></div>
+            <div class="info-row"><span class="info-row-label">성공률</span><span class="info-row-value" style="color: var(--v3-green);">100%</span></div>
+            <div class="info-row"><span class="info-row-label">최근 발송</span><span class="info-row-value">2025. 5. 10.</span></div>
+          </div>
+        </div>
+
+        <div class="tpl-sheet-actions">
+          <button class="tpl-btn secondary">삭제</button>
+          <button class="tpl-btn primary">저장</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">템플릿 관리 · /messages/templates</div>
+<script>
+function openDetail(el){document.getElementById('stack').classList.add('show-detail');}
+function closeDetail(){document.getElementById('stack').classList.remove('show-detail');}
+document.querySelectorAll('.filter-pill').forEach(p=>p.addEventListener('click',(e)=>{
+  const row=p.closest('.filter-row');
+  if(!row)return;
+  row.querySelectorAll('.filter-pill').forEach(x=>x.classList.remove('active'));
+  p.classList.add('active');
+}));
+document.querySelectorAll('.toggle').forEach(t=>t.addEventListener('click',(e)=>{
+  e.stopPropagation();
+  t.classList.toggle('on');
+}));
+document.querySelectorAll('.chan-toggle').forEach(c=>c.addEventListener('click',()=>{
+  c.parentElement.querySelectorAll('.chan-toggle').forEach(x=>x.classList.remove('selected'));
+  c.classList.add('selected');
+}));
+document.querySelectorAll('.var-chip').forEach(v=>v.addEventListener('click',()=>{
+  const ta=document.querySelector('.form-textarea');
+  if(!ta)return;
+  const text=v.textContent;
+  const start=ta.selectionStart, end=ta.selectionEnd;
+  ta.value=ta.value.slice(0,start)+text+ta.value.slice(end);
+  ta.focus();
+  ta.selectionStart=ta.selectionEnd=start+text.length;
+}));
+</script>
+</body>
+</html>

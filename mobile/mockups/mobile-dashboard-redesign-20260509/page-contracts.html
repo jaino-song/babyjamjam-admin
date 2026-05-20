@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>계약 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.list-card { background: white; border-radius: 22px; box-shadow: var(--shadow-v3); }
+
+/* Contract row layout */
+.contract-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.contract-item:hover { background: var(--v3-primary-light); }
+.contract-icon {
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  background: var(--v3-primary-light);
+  color: var(--v3-primary);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.contract-info { flex: 1; min-width: 0; }
+.contract-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.83rem;
+  font-weight: 700;
+  color: var(--v3-dark);
+}
+.contract-meta {
+  font-size: 0.66rem;
+  color: var(--v3-text-muted);
+  margin-top: 2px;
+  display: flex; align-items: center; gap: 5px;
+}
+.contract-meta .sep { color: var(--v3-border); }
+.contract-num {
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 0.6rem;
+  color: var(--v3-text-muted);
+  font-weight: 600;
+}
+
+/* Document workflow stepper (4 stages: 작성 → 발송 → 서명 → 완료) */
+.stepper {
+  display: flex; gap: 3px; align-items: center;
+  flex-shrink: 0;
+}
+.step {
+  width: 14px; height: 4px;
+  border-radius: 2px;
+  background: var(--v3-border);
+}
+.step.done { background: var(--v3-green); }
+.step.active { background: var(--v3-primary); }
+.step-label {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--v3-text);
+}
+.step-label.muted { color: var(--v3-text-muted); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="shell-content">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="list-title">
+              <span class="list-title-text">계약서 <span class="list-count">128건</span></span>
+              <button class="list-action">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                계약 작성
+              </button>
+            </div>
+            <div class="filter-row" style="padding-top: 6px;">
+              <button class="filter-pill active">전체 <span class="count">128</span></button>
+              <button class="filter-pill">대기 <span class="count">3</span></button>
+              <button class="filter-pill">검토 필요 <span class="count" style="background: var(--v3-primary-light); color: var(--v3-primary);">2</span></button>
+              <button class="filter-pill">완료 <span class="count">123</span></button>
+              <button class="filter-pill">기간 만료 <span class="count">0</span></button>
+            </div>
+
+            <div class="list-card-scroll">
+              <!-- Section: 조치 필요 -->
+              <div class="section-block">
+                <div class="section-header">조치 필요 · 5건</div>
+              <div class="contract-item" onclick="openDetail(this)" data-name="이수현 · A통합1형 계약서" data-status="검토 필요" data-status-class="badge-primary" data-num="C-2025-0427-008" data-progress="검토 필요">
+                <div class="contract-icon" style="background: var(--v3-primary-light); color: var(--v3-primary);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13l2 2 4-4"/></svg>
+                </div>
+                <div class="contract-info">
+                  <div class="contract-title">이수현 · A통합1형</div>
+                  <div class="contract-meta">
+                    <span class="step-label">서명 진행 · 2/3</span>
+                  </div>
+                </div>
+                <div class="list-right"><span class="badge badge-primary">검토 필요</span></div>
+              </div>
+              <div class="contract-item" onclick="openDetail(this)" data-name="[더미] 정유진 · A라1형 계약서" data-status="대기" data-status-class="badge-default" data-num="C-2025-0509-001" data-progress="대기">
+                <div class="contract-icon" style="background: var(--v3-dim-white); color: var(--v3-text-muted);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M11.5 14.5h2"/><path d="M14 16.5V12.5L18 8l3 3-4.5 4.5h-2zM6 22h6a2 2 0 0 0 2-2v-2"/><path d="M14 14V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2"/></svg>
+                </div>
+                <div class="contract-info">
+                  <div class="contract-title">[더미] 정유진 · A라1형</div>
+                  <div class="contract-meta">
+                    <span class="step-label">작성 진행 · 1/4</span>
+                  </div>
+                </div>
+                <div class="list-right"><span class="badge" style="background: var(--v3-dim-white); color: var(--v3-text-muted); border-color: var(--v3-border);">대기</span></div>
+              </div>
+              <div class="contract-item" onclick="openDetail(this)" data-name="송진호 · A통합1형 계약서" data-status="대기" data-status-class="badge-default" data-num="C-2025-0508-014" data-progress="대기">
+                <div class="contract-icon" style="background: var(--v3-dim-white); color: var(--v3-text-muted);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M11.5 14.5h2M14 16.5V12.5L18 8l3 3-4.5 4.5h-2z"/><path d="M14 14V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>
+                </div>
+                <div class="contract-info">
+                  <div class="contract-title">송진호 · A통합1형</div>
+                  <div class="contract-meta">
+                    <span class="step-label">작성 진행 · 2/4</span>
+                  </div>
+                </div>
+                <div class="list-right"><span class="badge" style="background: var(--v3-dim-white); color: var(--v3-text-muted); border-color: var(--v3-border);">대기</span></div>
+              </div>
+              </div>
+
+              <!-- Section: 진행 중 -->
+              <div class="section-block">
+                <div class="section-header">진행 중</div>
+              <div class="contract-item" onclick="openDetail(this)" data-name="박서연 · A라1형 계약서" data-status="검토 필요" data-status-class="badge-primary" data-num="C-2025-0426-022" data-progress="검토 필요">
+                <div class="contract-icon" style="background: var(--v3-primary-light); color: var(--v3-primary);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                </div>
+                <div class="contract-info">
+                  <div class="contract-title">박서연 · A라1형</div>
+                  <div class="contract-meta">
+                    <span class="step-label">서명 진행 · 0/1</span>
+                  </div>
+                </div>
+                <div class="list-right"><span class="badge badge-primary">검토 필요</span></div>
+              </div>
+              </div>
+
+              <!-- Section: 완료 · 최근 -->
+              <div class="section-block">
+                <div class="section-header">완료 · 최근</div>
+              <div class="contract-item" onclick="openDetail(this)" data-name="김도윤 · B가1형 계약서" data-status="완료" data-status-class="badge-green" data-num="C-2025-0418-019" data-progress="완료">
+                <div class="contract-icon" style="background: var(--v3-green-light); color: var(--v3-green);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15l2 2 4-4"/></svg>
+                </div>
+                <div class="contract-info">
+                  <div class="contract-title">김도윤 · B가1형</div>
+                  <div class="contract-meta">
+                    <span class="step-label muted">완료 · 4/4</span>
+                  </div>
+                </div>
+                <div class="list-right"><span class="badge badge-green">완료</span></div>
+              </div>
+              <div class="contract-item" onclick="openDetail(this)" data-name="장하늘 · A통합1형 계약서" data-status="완료" data-status-class="badge-green" data-num="C-2025-0506-005" data-progress="완료">
+                <div class="contract-icon" style="background: var(--v3-green-light); color: var(--v3-green);">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15l2 2 4-4"/></svg>
+                </div>
+                <div class="contract-info">
+                  <div class="contract-title">장하늘 · A통합1형</div>
+                  <div class="contract-meta">
+                    <span class="step-label muted">완료 · 4/4</span>
+                  </div>
+                </div>
+                <div class="list-right"><span class="badge badge-green">완료</span></div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <div class="nav-page detail">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <button class="sheet-close" onclick="closeDetail()" style="margin-left: auto;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" style="display: flex; flex-direction: column; gap: 12px;">
+          <!-- Header -->
+          <div class="client-detail-header pop-up">
+            <div class="client-detail-avatar-lg av-primary">
+              <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13l2 2 4-4"/></svg>
+            </div>
+            <div class="client-detail-title">
+              <div class="client-detail-name">이수현 · A통합1형 계약서</div>
+              <div class="client-detail-badges">
+                <span class="badge-mini primary">검토 필요</span>
+                <span class="badge-mini muted" style="font-family: 'SF Mono', monospace;">C-2025-0427-008</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="detail-actions" style="margin-top: 0; padding: 14px 16px;">
+            <button class="btn btn-secondary">미리보기</button>
+            <button class="btn btn-primary">지금 서명</button>
+          </div>
+
+          <!-- Tabs -->
+          <div class="filter-row detail-tabs" style="padding: 0;">
+            <button class="filter-pill active" data-tab="basic">기본 정보</button>
+            <button class="filter-pill" data-tab="signers">서명 진행</button>
+            <button class="filter-pill" data-tab="alimtalk">알림톡 발송 현황</button>
+          </div>
+
+          <!-- Tab: 기본 정보 -->
+          <div class="tab-content active" data-tab-content="basic">
+            <div class="info-card pop-up">
+              <div class="info-card-title">계약 정보</div>
+              <div class="info-row"><span class="info-row-label">계약 번호</span><span class="info-row-value" style="font-family: 'SF Mono', monospace;">C-2025-0427-008</span></div>
+              <div class="info-row"><span class="info-row-label">계약서 유형</span><span class="info-row-value">A통합1형</span></div>
+              <div class="info-row"><span class="info-row-label">현재 단계</span><span class="info-row-value" style="color: var(--v3-primary);">검토 필요</span></div>
+              <div class="info-row"><span class="info-row-label">작성일</span><span class="info-row-value">2025. 4. 27.</span></div>
+              <div class="info-row"><span class="info-row-label">마감일</span><span class="info-row-value" style="color: var(--v3-orange);">2025. 5. 10. (D-1)</span></div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">관련 정보</div>
+              <div class="info-row"><span class="info-row-label">고객</span><span class="info-row-value">이수현</span></div>
+              <div class="info-row"><span class="info-row-label">제공인력</span><span class="info-row-value">박지영</span></div>
+              <div class="info-row"><span class="info-row-label">작성자</span><span class="info-row-value">송진호 (지점장)</span></div>
+              <div class="info-row"><span class="info-row-label">eformsign 코드</span><span class="info-row-value" style="font-family: 'SF Mono', monospace;">043</span></div>
+            </div>
+          </div>
+
+          <!-- Tab: 서명 진행 -->
+          <div class="tab-content" data-tab-content="signers">
+            <div class="info-card pop-up">
+              <div class="info-card-title">서명자 · 3명</div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-green-light); color: var(--v3-green);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">고객 (이수현)</div>
+                  <div class="doc-meta">2025. 4. 29. 오전 11:24 서명 완료</div>
+                </div>
+                <span class="badge-mini green">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-green-light); color: var(--v3-green);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">관리사 (박지영)</div>
+                  <div class="doc-meta">2025. 5. 1. 오후 3:08 서명 완료</div>
+                </div>
+                <span class="badge-mini green">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-orange-light); color: var(--v3-orange);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 8v4M12 16h.01"/><circle cx="12" cy="12" r="10"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">지점장 (송진호)</div>
+                  <div class="doc-meta">서명 대기 중 · 마감 D-1</div>
+                </div>
+                <span class="badge-mini orange">대기</span>
+              </div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">서명 진행률</div>
+              <div class="info-row"><span class="info-row-label">완료</span><span class="info-row-value" style="color: var(--v3-green);">2명 / 3명 (67%)</span></div>
+              <div class="info-row"><span class="info-row-label">잔여 서명자</span><span class="info-row-value">송진호 (지점장)</span></div>
+            </div>
+          </div>
+
+          <!-- Tab: 알림톡 발송 현황 -->
+          <div class="tab-content" data-tab-content="alimtalk">
+            <div class="info-card pop-up">
+              <div class="info-card-title">알림톡 · 3건</div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-primary-light); color: var(--v3-primary);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">계약서 발송 안내 (이수현)</div>
+                  <div class="doc-meta">4월 27일 오전 9:32</div>
+                </div>
+                <span class="badge-mini green">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-primary-light); color: var(--v3-primary);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">서명 요청 안내 (박지영)</div>
+                  <div class="doc-meta">4월 30일 오전 10:00</div>
+                </div>
+                <span class="badge-mini green">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-orange-light); color: var(--v3-orange);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">마감 임박 알림 (송진호)</div>
+                  <div class="doc-meta">5월 9일 오후 6:00 · 자동 발송</div>
+                </div>
+                <span class="badge-mini orange">대기</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-burgundy-light);"><svg width="15" height="15" fill="none" stroke="hsl(355,36%,45%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg></div><div class="notif-body"><div class="notif-title">매니저 배정 요청</div><div class="notif-snippet">[더미] 정유진 고객님의 서비스에 매니저 배정이 필요합니다.</div><div class="notif-time">방금 전</div></div></div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-primary-light);"><svg width="15" height="15" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div class="notif-body"><div class="notif-title">새 메시지 · 박지민 매니저</div><div class="notif-snippet">"오늘 김도윤 고객 방문 후 보고 드릴게요."</div><div class="notif-time">5분 전</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 계약) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item active">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">계약 · Contracts page</div>
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+function openDetail(el){
+  document.getElementById('stack').classList.add('show-detail');
+}
+function closeDetail(){document.getElementById('stack').classList.remove('show-detail');}
+document.querySelectorAll('.filter-pill').forEach(p=>p.addEventListener('click',()=>{
+  const row=p.closest('.filter-row');
+  row.querySelectorAll('.filter-pill').forEach(x=>x.classList.remove('active'));
+  p.classList.add('active');
+  if(p.dataset.tab){
+    document.querySelectorAll('.tab-content').forEach(c=>c.classList.toggle('active',c.dataset.tabContent===p.dataset.tab));
+  }
+}));
+</script>
+</body>
+</html>

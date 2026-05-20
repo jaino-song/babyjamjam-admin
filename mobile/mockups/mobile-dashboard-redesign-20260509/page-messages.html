@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>메시지 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.list-card { background: white; border-radius: 22px; box-shadow: var(--shadow-v3); }
+
+/* Hub tile row at top */
+.hub-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 4px 12px;
+}
+.hub-tile {
+  background: white;
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  cursor: pointer;
+}
+.hub-tile-icon {
+  width: 32px; height: 32px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.hub-tile-text { line-height: 1.2; text-align: left; }
+.hub-tile-label { font-size: 0.75rem; font-weight: 700; color: var(--v3-dark); }
+.hub-tile-sub { font-size: 0.6rem; color: var(--v3-text-muted); margin-top: 2px; }
+
+/* Recent message thread row */
+.thread-channel {
+  font-size: 0.55rem; font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.thread-channel.kakao { background: hsl(50, 100%, 88%); color: hsl(45, 70%, 30%); }
+.thread-channel.sms { background: var(--v3-primary-light); color: var(--v3-primary); }
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="shell-content">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="list-title">
+              <span class="list-title-text">메시지</span>
+              <button class="list-action">+ 새 메시지</button>
+            </div>
+
+            <div style="padding: 0 12px 4px;">
+              <div class="hub-tiles">
+                <div class="hub-tile">
+                  <div class="hub-tile-icon" style="background: hsl(50, 100%, 88%);">
+                    <svg width="16" height="16" fill="none" stroke="hsl(45,70%,30%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  </div>
+                  <div class="hub-tile-text">
+                    <div class="hub-tile-label">알림톡</div>
+                    <div class="hub-tile-sub">자동 발송 4종</div>
+                  </div>
+                </div>
+                <div class="hub-tile">
+                  <div class="hub-tile-icon" style="background: var(--v3-primary-light);">
+                    <svg width="16" height="16" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                  </div>
+                  <div class="hub-tile-text">
+                    <div class="hub-tile-label">템플릿</div>
+                    <div class="hub-tile-sub">12개 등록</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="filter-row">
+              <button class="filter-pill active">전체 <span class="count">36</span></button>
+              <button class="filter-pill">알림톡 <span class="count">28</span></button>
+              <button class="filter-pill">SMS <span class="count">5</span></button>
+              <button class="filter-pill">실패 <span class="count" style="background: var(--v3-burgundy-light); color: var(--v3-burgundy);">3</span></button>
+            </div>
+
+            <div class="list-card-scroll">
+              <div class="section-block">
+                <div class="section-header">오늘</div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-orange">박</div>
+                <div class="list-info">
+                  <div class="list-name">박서연 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="list-meta">서비스 안내</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">방금</span></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-primary">김</div>
+                <div class="list-info">
+                  <div class="list-name">김도윤 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="list-meta">제공인력 배정 안내</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">2시간 전</span></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-burgundy">정</div>
+                <div class="list-info">
+                  <div class="list-name">[더미] 정유진 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="list-meta">서비스 안내</div>
+                </div>
+                <div class="list-right"><span class="badge badge-burgundy">실패</span></div>
+              </div>
+              </div>
+
+              <div class="section-block">
+                <div class="section-header">어제</div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-green">장</div>
+                <div class="list-info">
+                  <div class="list-name">장하늘 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="list-meta">서비스 종료 안내</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">5/9</span></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-purple">윤</div>
+                <div class="list-info">
+                  <div class="list-name">윤지아 <span class="thread-channel sms">SMS</span></div>
+                  <div class="list-meta">고객 등록 환영</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">5/9</span></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-orange">최</div>
+                <div class="list-info">
+                  <div class="list-name">최예린 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="list-meta">서비스 시작 D-1 안내</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">5/9</span></div>
+              </div>
+              </div>
+
+              <div class="section-block">
+                <div class="section-header">이전</div>
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-primary">이</div>
+                <div class="list-info">
+                  <div class="list-name">이수현 <span class="thread-channel kakao">알림톡</span></div>
+                  <div class="list-meta">서비스 종료 안내</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">4/22</span></div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <!-- Bottom sheet detail (message) -->
+      <div class="nav-page detail">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <button class="sheet-close" onclick="closeDetail()" style="margin-left: auto;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="client-detail-header pop-up">
+            <div class="client-detail-avatar-lg av-orange">박</div>
+            <div class="client-detail-title">
+              <div class="client-detail-name">박서연</div>
+              <div class="client-detail-badges">
+                <span class="badge-mini" style="background: hsl(50, 100%, 88%); color: hsl(45, 70%, 30%); border-color: hsla(45,70%,30%,0.2);">알림톡</span>
+                <span class="badge-mini green">발송 성공</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-actions" style="margin-top: 0; padding: 14px 16px;">
+            <button class="btn btn-secondary">재발송</button>
+            <button class="btn btn-primary">고객 보기</button>
+          </div>
+
+          <div class="filter-row detail-tabs" style="padding: 0;">
+            <button class="filter-pill active" data-tab="content">메시지</button>
+            <button class="filter-pill" data-tab="recipient">수신자</button>
+            <button class="filter-pill" data-tab="template">템플릿 정보</button>
+          </div>
+
+          <!-- Tab: 메시지 -->
+          <div class="tab-content active" data-tab-content="content">
+            <div class="info-card pop-up" style="padding: 16px;">
+              <div class="info-card-title">메시지 본문</div>
+              <div style="font-size: 0.84rem; line-height: 1.55; color: var(--v3-dark); white-space: pre-wrap;">안녕하세요 박서연 고객님,
+
+오늘 오전 9시 김민지 매니저가 방문 예정입니다. 준비물은 별도로 안내드린 사항을 참고해 주세요.
+
+문의사항이 있으시면 언제든지 연락 주세요.
+
+아가잼잼 인천점</div>
+            </div>
+          </div>
+
+          <!-- Tab: 수신자 -->
+          <div class="tab-content" data-tab-content="recipient">
+            <div class="info-card pop-up">
+              <div class="info-card-title">수신자 정보</div>
+              <div class="info-row"><span class="info-row-label">수신자</span><span class="info-row-value">박서연</span></div>
+              <div class="info-row"><span class="info-row-label">유형</span><span class="info-row-value">고객</span></div>
+              <div class="info-row"><span class="info-row-label">연락처</span><span class="info-row-value">010-1234-5678</span></div>
+              <div class="info-row"><span class="info-row-label">채널 ID</span><span class="info-row-value" style="font-family: 'SF Mono', monospace;">@babyjamjam_kakao</span></div>
+            </div>
+          </div>
+
+          <!-- Tab: 템플릿 정보 -->
+          <div class="tab-content" data-tab-content="template">
+            <div class="info-card pop-up">
+              <div class="info-card-title">템플릿 정보</div>
+              <div class="info-row"><span class="info-row-label">템플릿</span><span class="info-row-value">서비스 시작 리마인드</span></div>
+              <div class="info-row"><span class="info-row-label">트리거</span><span class="info-row-value">서비스 시작</span></div>
+              <div class="info-row"><span class="info-row-label">채널</span><span class="info-row-value">알림톡 (Kakao)</span></div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">발송 정보</div>
+              <div class="info-row"><span class="info-row-label">상태</span><span class="info-row-value" style="color: var(--v3-green);">성공</span></div>
+              <div class="info-row"><span class="info-row-label">발송 시각</span><span class="info-row-value">2025. 5. 10. 오전 8:32</span></div>
+              <div class="info-row"><span class="info-row-label">트리거</span><span class="info-row-value">자동 (서비스 시작)</span></div>
+              <div class="info-row"><span class="info-row-label">발송 ID</span><span class="info-row-value" style="font-family: 'SF Mono', monospace;">M-2025-05010-3201</span></div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 120ms;">
+              <div class="info-card-title">변수</div>
+              <div class="info-row"><span class="info-row-label">clientName</span><span class="info-row-value">박서연</span></div>
+              <div class="info-row"><span class="info-row-label">employeeName</span><span class="info-row-value">김민지</span></div>
+              <div class="info-row"><span class="info-row-label">serviceStartDate</span><span class="info-row-value">2025-05-10</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-burgundy-light);"><svg width="15" height="15" fill="none" stroke="hsl(355,36%,45%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg></div><div class="notif-body"><div class="notif-title">알림톡 발송 실패</div><div class="notif-snippet">[더미] 정유진 고객님께 알림톡이 발송되지 않았습니다.</div><div class="notif-time">방금 전</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 전체) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">메시지 · /messages</div>
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+function openDetail(el){document.getElementById('stack').classList.add('show-detail');}
+function closeDetail(){document.getElementById('stack').classList.remove('show-detail');}
+document.querySelectorAll('.filter-pill').forEach(p=>p.addEventListener('click',()=>{
+  const row=p.closest('.filter-row');
+  row.querySelectorAll('.filter-pill').forEach(x=>x.classList.remove('active'));
+  p.classList.add('active');
+  if(p.dataset.tab){
+    document.querySelectorAll('.tab-content').forEach(c=>c.classList.toggle('active',c.dataset.tabContent===p.dataset.tab));
+  }
+}));
+</script>
+</body>
+</html>
