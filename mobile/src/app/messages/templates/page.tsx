@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Info, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ContentPaper } from "@/components/app/root/content-paper";
@@ -51,12 +51,8 @@ export default function TemplatesPage() {
     if (template.type === "system") {
       router.push(`/messages/system-templates/${template.displayId}`);
     } else {
-      router.push(`/messages/templates/${template.displayId}/edit`);
+      router.push(`/messages/new?template=${encodeURIComponent(String(template.displayId))}`);
     }
-  };
-
-  const handleCreate = () => {
-    router.push("/messages/templates/new");
   };
 
   return (
@@ -71,18 +67,19 @@ export default function TemplatesPage() {
           </Button>
         </div>
         <ContentPaper
-          title="템플릿 관리"
-          subtitle="시스템 및 사용자 정의 메시지 템플릿을 관리합니다"
+          title="템플릿 목록"
+          subtitle="템플릿을 선택하면 메시지 발송 화면으로 이동합니다"
           className="min-h-[70vh]"
         >
-          <div data-component="messages-templates-header" className="flex items-center justify-end py-2">
-            <Button
-              className="gap-2 w-[100px]"
-              onClick={handleCreate}
-            >
-              <Plus className="h-4 w-4" />
-              추가
-            </Button>
+          <div
+            data-component="messages-templates-desktop-notice"
+            className="mb-3 flex items-start gap-2 rounded-2xl border border-v3-border/60 bg-v3-dim-white px-3 py-2 text-[0.75rem] text-v3-text-muted"
+          >
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-v3-primary" />
+            <p>
+              템플릿 생성·편집은 <span className="font-semibold text-v3-dark">데스크톱</span>에서만 가능합니다.
+              모바일에서는 선택해서 발송할 수 있습니다.
+            </p>
           </div>
 
           <Separator />
