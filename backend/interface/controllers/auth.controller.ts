@@ -96,14 +96,15 @@ export class AuthController {
         const branchPromise = req.user.branchId
             ? this.prisma.branch.findUnique({
                 where: { id: req.user.branchId },
-                select: { name: true },
+                select: { name: true, slug: true },
             })
             : Promise.resolve(null);
 
         const [user, org] = await Promise.all([userPromise, branchPromise]);
         const branchName = org?.name ?? null;
+        const branchSlug = org?.slug ?? null;
 
-        return { ...user, branchName };
+        return { ...user, branchName, branchSlug };
     }
 
     @Post("token")

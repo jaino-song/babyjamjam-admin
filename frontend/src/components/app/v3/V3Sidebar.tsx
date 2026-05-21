@@ -129,7 +129,7 @@ export const V3Sidebar = () => {
               { label: "홈페이지 관리", href: "/website-admin", icon: Globe },
               ...rest,
             ]
-          : section.items,
+          : [{ ...statsItem, href: "/stats/inquiries" }, ...rest],
       };
     }),
     [isOwner]

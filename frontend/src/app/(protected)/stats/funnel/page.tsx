@@ -1,4 +1,7 @@
+import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
+import { getCurrentUser } from "@/lib/auth/cookies";
+import { ROLES } from "@/lib/constants/roles";
 import {
   getEntryPages,
   getExitPages,
@@ -16,6 +19,11 @@ export const metadata = { title: "페이지 이동 통계 · 통계" };
 export const revalidate = 60;
 
 export default async function FunnelDetailPage() {
+  const user = await getCurrentUser();
+  if (user?.role !== ROLES.owner) {
+    redirect("/stats/inquiries");
+  }
+
   const [
     navSummary,
     pages,

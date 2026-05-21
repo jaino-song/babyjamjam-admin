@@ -1,4 +1,7 @@
+import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
+import { getCurrentUser } from "@/lib/auth/cookies";
+import { ROLES } from "@/lib/constants/roles";
 import {
   getSummary as getSentrySummary,
   get24hEventTrend,
@@ -33,6 +36,11 @@ const LEVEL_TEXT_CLASS: Record<string, string> = {
 };
 
 export default async function ErrorsDetailPage() {
+  const user = await getCurrentUser();
+  if (user?.role !== ROLES.owner) {
+    redirect("/stats/inquiries");
+  }
+
   const [summary, trend, issues] = await Promise.all([
     getSentrySummary(),
     get24hEventTrend(),

@@ -1,4 +1,6 @@
 import { Block } from "@/components/app/v3/Block";
+import { getCurrentUser } from "@/lib/auth/cookies";
+import { ROLES } from "@/lib/constants/roles";
 import {
   getInquiriesSummary,
   getInquiriesDailyTrend,
@@ -14,13 +16,17 @@ export const metadata = { title: "상담 신청 · 통계" };
 export const revalidate = 60;
 
 export default async function InquiriesDetailPage() {
-  const [summary, daily, hourly, byBranch, recent] = await Promise.all([
-    getInquiriesSummary(),
-    getInquiriesDailyTrend(30),
-    getInquiriesHourlyToday(),
-    getInquiriesByBranch(7),
-    getRecentInquiries(10),
+  const user = await getCurrentUser();
+  const isOwner = user?.role === ROLES.owner;
+  const branchSlug = isOwner ? null : user?.branchSlug ?? null;
+
+  const [summary, daily, hourly, recent] = await Promise.all([
+    getInquiriesSummary(branchSlug),
+    getInquiriesDailyTrend(30, branchSlug),
+    getInquiriesHourlyToday(branchSlug),
+    getRecentInquiries(10, branchSlug),
   ]);
+  const byBranch = isOwner ? await getInquiriesByBranch(7) : [];
 
   // Build last-30-day bar data
   const dailyMap = new Map(daily.map((p) => [p.day, p.count]));
@@ -40,16 +46,20 @@ export default async function InquiriesDetailPage() {
     <section data-component="stats-inquiries" className="flex flex-col gap-6 pb-10">
       <Block name="stats-inquiries-hero" className="shrink-0">
         <StatsHero
-          title="상담 신청 통계"
-          subtitle="PostHog · 일별/시간대별/지점별/소스별 분석"
+          title={isOwner ? "상담 신청 통계" : `${user?.branchName ?? "내 지점"} 상담 신청 통계`}
+          subtitle={
+            isOwner
+              ? "PostHog · 일별/시간대별/지점별/소스별 분석"
+              : "PostHog · 일별/시간대별/소스별 분석"
+          }
           rightLabel={today.toLocaleDateString("ko-KR", { weekday: "long" })}
           rightValue={today.toLocaleDateString("ko-KR", {
             year: "numeric",
             month: "2-digit",
             day: "2-digit",
           })}
-          backHref="/stats"
-          backLabel="통계 overview로"
+          backHref={isOwner ? "/stats" : undefined}
+          backLabel={isOwner ? "통계 overview로" : undefined}
           dataComponent="stats-inquiries-hero"
         />
       </Block>
@@ -145,7 +155,10 @@ export default async function InquiriesDetailPage() {
         </div>
       </Block>
 
-      <Block name="stats-inquiries-breakdown" className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <Block
+        name="stats-inquiries-breakdown"
+        className={isOwner ? "grid grid-cols-1 lg:grid-cols-2 gap-4" : "grid grid-cols-1 gap-4"}
+      >
         {/* Hourly today */}
         <div
           data-component="stats-inquiries-hourly-card"
@@ -194,42 +207,44 @@ export default async function InquiriesDetailPage() {
           )}
         </div>
 
-        {/* By branch */}
-        <div
-          data-component="stats-inquiries-branch-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
-        >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">지점별 분포 (7일)</h3>
-            <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
-              PostHog
-            </span>
-          </header>
-          {byBranch.length === 0 ? (
-            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
-              지점별 데이터가 아직 없어요.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {byBranch.slice(0, 6).map((b) => (
-                <div key={b.branchSlug} className="flex items-center gap-3">
-                  <span className="w-[120px] truncate text-[0.78rem] font-medium">
-                    {b.branchSlug}
-                  </span>
-                  <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
-                      style={{ width: `${(b.count / maxBranch) * 100}%` }}
-                    />
+        {/* By branch — owner only */}
+        {isOwner && (
+          <div
+            data-component="stats-inquiries-branch-card"
+            className="bg-white rounded-[28px] shadow-v3 p-6"
+          >
+            <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+              <h3 className="text-[0.95rem] font-bold text-v3-text">지점별 분포 (7일)</h3>
+              <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
+                PostHog
+              </span>
+            </header>
+            {byBranch.length === 0 ? (
+              <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
+                지점별 데이터가 아직 없어요.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {byBranch.slice(0, 6).map((b) => (
+                  <div key={b.branchSlug} className="flex items-center gap-3">
+                    <span className="w-[120px] truncate text-[0.78rem] font-medium">
+                      {b.branchSlug}
+                    </span>
+                    <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
+                        style={{ width: `${(b.count / maxBranch) * 100}%` }}
+                      />
+                    </div>
+                    <span className="w-10 text-right text-[0.78rem] font-semibold tabular-nums">
+                      {b.count}
+                    </span>
                   </div>
-                  <span className="w-10 text-right text-[0.78rem] font-semibold tabular-nums">
-                    {b.count}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Block>
 
       <Block name="stats-inquiries-recent">

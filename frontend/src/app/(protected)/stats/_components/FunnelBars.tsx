@@ -39,7 +39,7 @@ export function FunnelBars({
                   {s.label}
                   {isBiggestDrop ? (
                     <span className="ml-1.5 inline-block rounded bg-red-100 px-1.5 py-0.5 text-[0.6rem] font-semibold text-red-600 align-middle">
-                      누수
+                      이탈
                     </span>
                   ) : null}
                 </div>

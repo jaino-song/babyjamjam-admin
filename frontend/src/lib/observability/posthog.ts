@@ -90,11 +90,27 @@ function safeString(v: unknown): string | null {
   return s === "null" || s === "" ? null : s;
 }
 
+// HogQL queries are sent as raw text, so any value injected into a WHERE
+// clause has to be allowlisted. Branch slugs are kebab-case ASCII
+// identifiers (e.g. "incheon-junggu"); anything else is dropped.
+function sanitizeBranchSlug(slug: string | null | undefined): string | null {
+  if (!slug) return null;
+  return /^[a-zA-Z0-9_-]+$/.test(slug) ? slug : null;
+}
+
+function branchFilter(slug: string | null | undefined): string {
+  const s = sanitizeBranchSlug(slug);
+  return s ? `AND properties.branch_slug = '${s}'` : "";
+}
+
 // ============================================================
 // INQUIRIES
 // ============================================================
 
-export async function getInquiriesSummary(): Promise<InquiriesSummary> {
+export async function getInquiriesSummary(
+  branchSlug?: string | null
+): Promise<InquiriesSummary> {
+  const bf = branchFilter(branchSlug);
   const rows = await hogQL<[number, number, number, number, string | null]>(`
     SELECT
       countIf(toDate(timestamp) = today()) AS today,
@@ -105,13 +121,17 @@ export async function getInquiriesSummary(): Promise<InquiriesSummary> {
     FROM events
     WHERE event = 'consultation_submitted'
       AND timestamp >= now() - INTERVAL 30 DAY
+      ${bf}
   `);
 
   const submittedSeven = await hogQL<[number]>(`
     SELECT count() FROM events
     WHERE event = 'consultation_submitted'
       AND timestamp >= now() - INTERVAL 7 DAY
+      ${bf}
   `);
+  // pricing_viewed events don't carry branch_slug — the conversion rate is
+  // site-wide regardless of the user's branch filter.
   const viewedSeven = await hogQL<[number]>(`
     SELECT count() FROM events
     WHERE event = 'pricing_viewed'
@@ -133,23 +153,30 @@ export async function getInquiriesSummary(): Promise<InquiriesSummary> {
   };
 }
 
-export async function getInquiriesDailyTrend(days = 30): Promise<InquiryDailyPoint[]> {
+export async function getInquiriesDailyTrend(
+  days = 30,
+  branchSlug?: string | null
+): Promise<InquiryDailyPoint[]> {
   const rows = await hogQL<[string, number]>(`
     SELECT toDate(timestamp) AS day, count() AS c
     FROM events
     WHERE event = 'consultation_submitted'
       AND timestamp >= now() - INTERVAL ${days} DAY
+      ${branchFilter(branchSlug)}
     GROUP BY day ORDER BY day ASC
   `);
   return rows.map(([day, count]) => ({ day: safeString(day) ?? "", count: safeNumber(count) }));
 }
 
-export async function getInquiriesHourlyToday(): Promise<InquiryHourlyPoint[]> {
+export async function getInquiriesHourlyToday(
+  branchSlug?: string | null
+): Promise<InquiryHourlyPoint[]> {
   const rows = await hogQL<[number, number]>(`
     SELECT toHour(timestamp) AS hour, count() AS c
     FROM events
     WHERE event = 'consultation_submitted'
       AND toDate(timestamp) = today()
+      ${branchFilter(branchSlug)}
     GROUP BY hour ORDER BY hour ASC
   `);
   const map = new Map<number, number>();
@@ -172,7 +199,10 @@ export async function getInquiriesByBranch(days = 1): Promise<InquiryByBranchRow
   }));
 }
 
-export async function getRecentInquiries(limit = 10): Promise<RecentInquiry[]> {
+export async function getRecentInquiries(
+  limit = 10,
+  branchSlug?: string | null
+): Promise<RecentInquiry[]> {
   const rows = await hogQL<[string, string | null, string | null, string | null, string | null, string]>(`
     SELECT
       distinct_id,
@@ -184,6 +214,7 @@ export async function getRecentInquiries(limit = 10): Promise<RecentInquiry[]> {
     FROM events
     WHERE event = 'consultation_submitted'
       AND timestamp >= now() - INTERVAL 7 DAY
+      ${branchFilter(branchSlug)}
     ORDER BY timestamp DESC
     LIMIT ${limit}
   `);
@@ -461,16 +492,138 @@ export async function getSourceBreakdown(days = 7): Promise<SourceShareRow[]> {
   }));
 }
 
+// MaxMind GeoIP returns English names. Translate the common Korean
+// subdivisions + cities/districts for readability. Falls back to raw
+// English when the name isn't in the map.
+const KOR_PROVINCE_MAP: Record<string, string> = {
+  Seoul: "서울특별시",
+  Busan: "부산광역시",
+  Daegu: "대구광역시",
+  Incheon: "인천광역시",
+  Gwangju: "광주광역시",
+  Daejeon: "대전광역시",
+  Ulsan: "울산광역시",
+  Sejong: "세종특별자치시",
+  "Gyeonggi-do": "경기도",
+  Gyeonggi: "경기도",
+  "Gangwon-do": "강원특별자치도",
+  Gangwon: "강원특별자치도",
+  "Chungcheongbuk-do": "충청북도",
+  "North Chungcheong": "충청북도",
+  "Chungcheongnam-do": "충청남도",
+  "South Chungcheong": "충청남도",
+  "Jeollabuk-do": "전북특별자치도",
+  "North Jeolla": "전북특별자치도",
+  "Jeollanam-do": "전라남도",
+  "South Jeolla": "전라남도",
+  "Gyeongsangbuk-do": "경상북도",
+  "North Gyeongsang": "경상북도",
+  "Gyeongsangnam-do": "경상남도",
+  "South Gyeongsang": "경상남도",
+  "Jeju-do": "제주특별자치도",
+  Jeju: "제주특별자치도",
+};
+
+const KOR_CITY_MAP: Record<string, string> = {
+  // Seoul 25 districts
+  "Gangnam-gu": "강남구", Gangnam: "강남구",
+  "Gangdong-gu": "강동구", Gangdong: "강동구",
+  "Gangbuk-gu": "강북구", Gangbuk: "강북구",
+  "Gangseo-gu": "강서구", Gangseo: "강서구",
+  "Geumcheon-gu": "금천구", Geumcheon: "금천구",
+  "Guro-gu": "구로구", Guro: "구로구",
+  "Gwanak-gu": "관악구", Gwanak: "관악구",
+  "Gwangjin-gu": "광진구", Gwangjin: "광진구",
+  "Mapo-gu": "마포구", Mapo: "마포구",
+  "Nowon-gu": "노원구", Nowon: "노원구",
+  "Dobong-gu": "도봉구", Dobong: "도봉구",
+  "Dongdaemun-gu": "동대문구", Dongdaemun: "동대문구",
+  "Dongjak-gu": "동작구", Dongjak: "동작구",
+  "Eunpyeong-gu": "은평구", Eunpyeong: "은평구",
+  "Jongno-gu": "종로구", Jongno: "종로구",
+  "Jungnang-gu": "중랑구", Jungnang: "중랑구",
+  "Seocho-gu": "서초구", Seocho: "서초구",
+  "Seodaemun-gu": "서대문구", Seodaemun: "서대문구",
+  "Seongbuk-gu": "성북구", Seongbuk: "성북구",
+  "Seongdong-gu": "성동구", Seongdong: "성동구",
+  "Songpa-gu": "송파구", Songpa: "송파구",
+  "Yangcheon-gu": "양천구", Yangcheon: "양천구",
+  "Yeongdeungpo-gu": "영등포구", Yeongdeungpo: "영등포구",
+  "Yongsan-gu": "용산구", Yongsan: "용산구",
+  // Incheon districts
+  "Bupyeong-gu": "부평구", Bupyeong: "부평구",
+  "Namdong-gu": "남동구", Namdong: "남동구",
+  "Yeonsu-gu": "연수구", Yeonsu: "연수구",
+  "Michuhol-gu": "미추홀구", Michuhol: "미추홀구",
+  "Gyeyang-gu": "계양구", Gyeyang: "계양구",
+  "Ganghwa-gun": "강화군", Ganghwa: "강화군",
+  "Ongjin-gun": "옹진군", Ongjin: "옹진군",
+  // Directional gus (shared across metros — Seoul/Busan/Daegu/Incheon/Daejeon/Gwangju)
+  "Jung-gu": "중구",
+  "Dong-gu": "동구",
+  "Seo-gu": "서구",
+  "Nam-gu": "남구",
+  "Buk-gu": "북구",
+  // Gyeonggi-do cities
+  "Goyang-si": "고양시", Goyang: "고양시",
+  "Suwon-si": "수원시", Suwon: "수원시",
+  "Seongnam-si": "성남시", Seongnam: "성남시",
+  "Yongin-si": "용인시", Yongin: "용인시",
+  "Bucheon-si": "부천시", Bucheon: "부천시",
+  "Ansan-si": "안산시", Ansan: "안산시",
+  "Anyang-si": "안양시", Anyang: "안양시",
+  "Namyangju-si": "남양주시", Namyangju: "남양주시",
+  "Hwaseong-si": "화성시", Hwaseong: "화성시",
+  "Pyeongtaek-si": "평택시", Pyeongtaek: "평택시",
+  "Uijeongbu-si": "의정부시", Uijeongbu: "의정부시",
+  "Siheung-si": "시흥시", Siheung: "시흥시",
+  "Paju-si": "파주시", Paju: "파주시",
+  "Gimpo-si": "김포시", Gimpo: "김포시",
+  "Gwangmyeong-si": "광명시", Gwangmyeong: "광명시",
+  "Gunpo-si": "군포시", Gunpo: "군포시",
+  "Osan-si": "오산시", Osan: "오산시",
+  "Icheon-si": "이천시", Icheon: "이천시",
+  "Yangju-si": "양주시", Yangju: "양주시",
+  "Hanam-si": "하남시", Hanam: "하남시",
+  "Anseong-si": "안성시", Anseong: "안성시",
+  "Pocheon-si": "포천시", Pocheon: "포천시",
+  "Yeoju-si": "여주시", Yeoju: "여주시",
+  "Yangpyeong-gun": "양평군", Yangpyeong: "양평군",
+  "Gapyeong-gun": "가평군", Gapyeong: "가평군",
+  "Yeoncheon-gun": "연천군", Yeoncheon: "연천군",
+  // Busan / Daegu / Daejeon / Jeju standouts
+  "Haeundae-gu": "해운대구", Haeundae: "해운대구",
+  "Saha-gu": "사하구", Saha: "사하구",
+  "Suseong-gu": "수성구", Suseong: "수성구",
+  "Yuseong-gu": "유성구", Yuseong: "유성구",
+  "Jeju-si": "제주시",
+  "Seogwipo-si": "서귀포시", Seogwipo: "서귀포시",
+};
+
+function translateKorRegion(province: string | null, city: string | null): string {
+  const p = province?.trim() || null;
+  const c = city?.trim() || null;
+  const pK = p ? KOR_PROVINCE_MAP[p] ?? p : null;
+  const cK = c ? KOR_CITY_MAP[c] ?? c : null;
+  if (pK && cK) return `${pK} / ${cK}`;
+  if (pK) return pK;
+  if (cK) return cK;
+  return "Unknown";
+}
+
 export async function getRegionBreakdown(days = 7): Promise<RegionShareRow[]> {
-  const rows = await hogQL<[string, number]>(`
-    SELECT coalesce(properties.$geoip_subdivision_1_name, 'Unknown') AS region, count() AS c
+  const rows = await hogQL<[string | null, string | null, number]>(`
+    SELECT
+      properties.$geoip_subdivision_1_name AS province,
+      properties.$geoip_city_name AS city,
+      count() AS c
     FROM events
     WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY
-    GROUP BY region ORDER BY c DESC LIMIT 8
+    GROUP BY province, city ORDER BY c DESC LIMIT 10
   `);
-  const total = rows.reduce((s, [, c]) => s + safeNumber(c), 0);
-  return rows.map(([region, count]) => ({
-    region: safeString(region) ?? "Unknown",
+  const total = rows.reduce((s, [, , c]) => s + safeNumber(c), 0);
+  return rows.map(([province, city, count]) => ({
+    region: translateKorRegion(safeString(province), safeString(city)),
     count: safeNumber(count),
     pct: total > 0 ? (safeNumber(count) / total) * 100 : 0,
   }));

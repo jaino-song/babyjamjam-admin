@@ -1,4 +1,7 @@
+import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
+import { getCurrentUser } from "@/lib/auth/cookies";
+import { ROLES } from "@/lib/constants/roles";
 import {
   getSummary as getSentrySummary,
   formatSentryRelativeTime,
@@ -43,6 +46,11 @@ function formatDelta(today: number, yesterday: number): { label: string; tone: "
 }
 
 export default async function StatsPage() {
+  const user = await getCurrentUser();
+  if (user?.role !== ROLES.owner) {
+    redirect("/stats/inquiries");
+  }
+
   const [sentry, inquiries, inquiriesTrend, funnel, traffic, topPages, devices] =
     await Promise.all([
       getSentrySummary(),
@@ -207,7 +215,7 @@ export default async function StatsPage() {
                 <strong>
                   −{funnel.steps[funnel.biggestDropStep - 1].dropFromPrevPct.toFixed(0)}%
                 </strong>{" "}
-                감소 · 가장 큰 누수
+                감소 · 가장 큰 이탈
               </div>
             ) : funnel.totalEntries === 0 ? (
               <div className="text-[0.78rem] text-v3-text-muted">
@@ -215,7 +223,7 @@ export default async function StatsPage() {
               </div>
             ) : (
               <div className="rounded-md border-l-[3px] border-green-500 bg-green-50 px-3 py-2 text-[0.78rem] text-green-700">
-                ✓ 전환율 {formatPct(funnel.conversionRate, 1)} · 단계별 누수 안정적
+                ✓ 전환율 {formatPct(funnel.conversionRate, 1)} · 단계별 이탈 안정적
               </div>
             )}
           </PanelCard>

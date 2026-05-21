@@ -1,4 +1,7 @@
+import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
+import { getCurrentUser } from "@/lib/auth/cookies";
+import { ROLES } from "@/lib/constants/roles";
 import {
   getTrafficSummary,
   getTrafficTrend,
@@ -26,6 +29,11 @@ function formatDelta(today: number, yesterday: number) {
 }
 
 export default async function TrafficDetailPage() {
+  const user = await getCurrentUser();
+  if (user?.role !== ROLES.owner) {
+    redirect("/stats/inquiries");
+  }
+
   const [summary, trend, topPages, devices, browsers, sources, regions] =
     await Promise.all([
       getTrafficSummary(),
@@ -393,7 +401,7 @@ export default async function TrafficDetailPage() {
             <div className="space-y-2.5">
               {regions.slice(0, 8).map((r) => (
                 <div key={r.region} className="flex items-center gap-3">
-                  <span className="w-[110px] truncate text-[0.78rem] font-medium">{r.region}</span>
+                  <span className="w-[180px] truncate text-[0.78rem] font-medium">{r.region}</span>
                   <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-v3-primary to-blue-700"

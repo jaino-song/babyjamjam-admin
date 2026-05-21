@@ -17,6 +17,7 @@ interface TokenPayload {
 
 type CurrentUserResponse = AuthUser & {
   branchName?: string | null;
+  branchSlug?: string | null;
   organizationName?: string | null;
 };
 
@@ -78,6 +79,7 @@ export const getCurrentUser = cache(async () => {
     return {
       ...user,
       branchName: user.branchName ?? user.organizationName ?? null,
+      branchSlug: user.branchSlug ?? null,
     };
   } catch (error: unknown) {
     if (error instanceof Error) {
