@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import {
   Battery,
   CheckCircle2,
@@ -9,7 +10,9 @@ import {
   Clock,
   FileText,
   History,
+  Info,
   MessageCircle,
+  Monitor,
   Plus,
   Send,
   Settings,
@@ -400,10 +403,19 @@ function TemplateDetails({ template }: { template: TemplateRecord }) {
 }
 
 function TemplatesSection() {
+  const router = useRouter();
   const [customTemplates] = useState<TemplateRecord[]>(CUSTOM_TEMPLATES);
   const [activeGroup, setActiveGroup] = useState<TemplateGroup>("builtin");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(BUILTIN_TEMPLATES[0]?.id ?? "");
   const [activeDetailTab, setActiveDetailTab] = useState<TemplateDetailTab>("details");
+
+  const handleSendWithTemplate = useCallback(
+    (template: TemplateRecord) => {
+      const params = new URLSearchParams({ body: template.content });
+      router.push(`/messages/new?${params.toString()}`);
+    },
+    [router],
+  );
 
   const visibleTemplates = useMemo(
     () => (activeGroup === "builtin" ? BUILTIN_TEMPLATES : customTemplates),
@@ -441,7 +453,18 @@ function TemplatesSection() {
   }, []);
 
   return (
-    <section data-component="alimtalk-templates-browser">
+    <section data-component="alimtalk-templates-browser" className="space-y-3">
+      <div
+        data-component="alimtalk-templates-desktop-notice"
+        className="flex items-start gap-2 rounded-2xl border border-v3-border/60 bg-v3-dim-white px-3 py-2 text-[0.75rem] text-v3-text-muted"
+      >
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-v3-primary" />
+        <p>
+          알림톡 템플릿 생성·편집은 <span className="font-semibold text-v3-dark">데스크톱</span>에서만 가능합니다.
+          모바일에서는 선택해서 발송할 수 있습니다.
+        </p>
+      </div>
+
       <SplitLayout hasSelection={!!selectedTemplate} onBack={() => setSelectedTemplateId("")}>
         <ListPanel
           title="알림톡 템플릿"
@@ -541,15 +564,38 @@ function TemplatesSection() {
             <div className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
               목록에서 템플릿을 선택해 주세요.
             </div>
-          ) : activeDetailTab === "details" ? (
-            <TemplateDetails template={selectedTemplate} />
           ) : (
-            <div className="flex justify-center py-2">
-              <TemplatePhonePreview
-                templateName={selectedTemplate.name}
-                content={selectedTemplate.content}
-                buttons={selectedTemplate.buttons}
-              />
+            <div className="space-y-4">
+              {activeDetailTab === "details" ? (
+                <TemplateDetails template={selectedTemplate} />
+              ) : (
+                <div className="flex justify-center py-2">
+                  <TemplatePhonePreview
+                    templateName={selectedTemplate.name}
+                    content={selectedTemplate.content}
+                    buttons={selectedTemplate.buttons}
+                  />
+                </div>
+              )}
+
+              <button
+                type="button"
+                data-component="alimtalk-template-send-cta"
+                onClick={() => handleSendWithTemplate(selectedTemplate)}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-v3-primary px-4 py-3 text-sm font-bold text-white shadow-v3-hover transition hover:bg-v3-primary/90"
+              >
+                <Send className="h-4 w-4" />이 템플릿으로 보내기
+              </button>
+
+              <div
+                data-component="alimtalk-template-edit-notice"
+                className="flex items-start gap-2 rounded-2xl border border-dashed border-v3-border bg-v3-dim-white px-3 py-2 text-[0.72rem] text-v3-text-muted"
+              >
+                <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-v3-primary" />
+                <p>
+                  내용·버튼·이미지 수정은 <span className="font-semibold text-v3-dark">데스크톱</span>에서 해 주세요.
+                </p>
+              </div>
             </div>
           )}
         </DetailPanel>
