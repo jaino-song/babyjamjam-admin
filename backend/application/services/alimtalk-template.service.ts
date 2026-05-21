@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
 import {
     ALIGO_API_PORT,
     AligoCreateTemplateParams,
@@ -47,7 +47,14 @@ export class AlimtalkTemplateService {
     ) {}
 
     async list(): Promise<AlimtalkTemplateListItemDto[]> {
-        const result = await this.aligoApi.listTemplates();
+        let result;
+        try {
+            result = await this.aligoApi.listTemplates();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "알리고 템플릿 호출에 실패했습니다.";
+            this.logger.error(`[AlimtalkTemplate] list failed: ${message}`);
+            throw new BadGatewayException(message);
+        }
         if (result.code !== 0) {
             throw new BadRequestException(result.message || "알리고 템플릿 목록 조회에 실패했습니다.");
         }

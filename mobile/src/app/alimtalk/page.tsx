@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { isAxiosError } from "axios";
 import {
   Battery,
   CheckCircle2,
@@ -150,6 +151,28 @@ interface ApiAlimtalkTemplate {
   updatedAt?: string;
 }
 
+const VALID_LINK_TYPES: ButtonLinkType[] = ["WL", "AL", "BK", "MD", "DS", "AC"];
+
+function safeLinkType(value: string | undefined): ButtonLinkType {
+  if (value && VALID_LINK_TYPES.includes(value as ButtonLinkType)) {
+    return value as ButtonLinkType;
+  }
+  return "WL";
+}
+
+function extractErrorMessage(error: unknown): string | null {
+  if (isAxiosError<{ error?: string; message?: string }>(error)) {
+    return (
+      error.response?.data?.error
+      || error.response?.data?.message
+      || error.message
+      || null
+    );
+  }
+  if (error instanceof Error) return error.message;
+  return null;
+}
+
 function mapApiTemplate(item: ApiAlimtalkTemplate): TemplateRecord {
   return {
     id: item.templateCode,
@@ -165,7 +188,7 @@ function mapApiTemplate(item: ApiAlimtalkTemplate): TemplateRecord {
     advert: item.advert,
     buttons: item.buttons.map((button) => ({
       name: button.name,
-      linkType: (button.linkType as ButtonLinkType) ?? "WL",
+      linkType: safeLinkType(button.linkType),
       linkM: button.linkM ?? "",
       linkP: button.linkP ?? "",
       linkI: button.linkI ?? "",
@@ -372,14 +395,20 @@ function TemplatesSection() {
   const {
     data: apiTemplates = [],
     isLoading: isTemplatesLoading,
-    isError: isTemplatesError,
+    error: templatesError,
   } = useQuery<ApiAlimtalkTemplate[]>({
     queryKey: ["alimtalk", "templates"],
     queryFn: async () => {
       const res = await api.get<ApiAlimtalkTemplate[]>("/alimtalk-templates");
       return res.data;
     },
+    retry: false,
   });
+
+  const templatesErrorMessage = useMemo(
+    () => extractErrorMessage(templatesError),
+    [templatesError]
+  );
 
   const templates = useMemo(() => apiTemplates.map(mapApiTemplate), [apiTemplates]);
 
@@ -458,11 +487,13 @@ function TemplatesSection() {
             <FileText className="mb-3 h-9 w-9 opacity-30 animate-pulse" />
             <p className="text-[0.85rem] font-semibold">템플릿 불러오는 중…</p>
           </div>
-        ) : isTemplatesError ? (
-          <div className="flex flex-col items-center py-10">
+        ) : templatesError ? (
+          <div className="flex flex-col items-center py-10 px-6">
             <XCircle className="mb-3 h-9 w-9 text-v3-burgundy opacity-50" />
             <p className="text-[0.85rem] font-semibold text-v3-burgundy">템플릿을 불러오지 못했습니다</p>
-            <p className="mt-1 text-[0.75rem] text-v3-text-muted">알리고 연동 설정을 확인해 주세요.</p>
+            <p className="mt-2 text-[0.75rem] text-v3-text-muted text-center break-words">
+              {templatesErrorMessage ?? "알리고 연동 설정을 확인해 주세요."}
+            </p>
           </div>
         ) : visibleTemplates.length === 0 ? (
           <div className="flex flex-col items-center py-10 text-v3-text-muted">
