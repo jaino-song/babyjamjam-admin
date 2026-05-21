@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { InfoTooltip } from "./InfoTooltip";
 
 interface KpiCardProps {
   icon?: LucideIcon;
@@ -12,6 +13,9 @@ interface KpiCardProps {
   tone?: "default" | "warn" | "success";
   dataComponent: string;
   valueSize?: "lg" | "md" | "sm";
+  /** When provided, shows an info (?) icon next to the label that reveals
+   *  this text on hover. */
+  infoText?: string;
 }
 
 const TONE_CLASSES = {
@@ -37,6 +41,7 @@ export function KpiCard({
   tone = "default",
   dataComponent,
   valueSize = "md",
+  infoText,
 }: KpiCardProps) {
   return (
     <div
@@ -50,6 +55,14 @@ export function KpiCard({
           <span className="text-base leading-none">{iconEmoji}</span>
         ) : null}
         <span className="text-[0.7rem] font-medium text-v3-text-muted truncate">{label}</span>
+        {infoText ? (
+          <InfoTooltip
+            text={infoText}
+            ariaLabel={`${label} 도움말`}
+            dataComponent={`${dataComponent}-info`}
+            className="-ml-0.5"
+          />
+        ) : null}
       </div>
       <div className="flex items-baseline gap-1.5">
         <span

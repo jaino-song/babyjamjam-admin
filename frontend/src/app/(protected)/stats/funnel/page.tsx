@@ -8,6 +8,7 @@ import {
 import { StatsHero } from "../_components/StatsHero";
 import { KpiCard } from "../_components/KpiCard";
 import { FunnelBars } from "../_components/FunnelBars";
+import { InfoTooltip } from "../_components/InfoTooltip";
 
 export const metadata = { title: "페이지 이동 통계 · 통계" };
 export const revalidate = 60;
@@ -62,6 +63,9 @@ export default async function FunnelDetailPage() {
             unit="%"
             meta={`100 진입 중 ${summary.completedConversions} 제출`}
             dataComponent="stats-funnel-kpi-conversion"
+            infoText={
+              "가격 페이지에 진입한 사용자 중 상담 신청까지 완료한 비율 (지난 7일).\n공식: 상담 제출 ÷ 가격 페이지 진입 × 100"
+            }
           />
           <KpiCard
             iconEmoji="▼"
@@ -75,6 +79,9 @@ export default async function FunnelDetailPage() {
             }
             dataComponent="stats-funnel-kpi-drop"
             valueSize="sm"
+            infoText={
+              "직전 단계 대비 사용자가 가장 많이 이탈한 단계.\n운영팀이 가장 먼저 점검해야 할 transition 지점을 표시합니다."
+            }
           />
           <KpiCard
             iconEmoji="📥"
@@ -82,6 +89,9 @@ export default async function FunnelDetailPage() {
             value={summary.totalEntries}
             unit="명"
             dataComponent="stats-funnel-kpi-entries"
+            infoText={
+              "지난 7일 동안 가격 페이지(/pricing)에 진입한 이벤트 수.\n펀널의 시작 지점 (Step 1)입니다."
+            }
           />
           <KpiCard
             iconEmoji="✓"
@@ -90,6 +100,9 @@ export default async function FunnelDetailPage() {
             unit="건"
             tone="success"
             dataComponent="stats-funnel-kpi-completions"
+            infoText={
+              "지난 7일 동안 상담 신청 폼 제출까지 완료한 건 수.\n펀널의 끝 지점 (Step 5)입니다."
+            }
           />
         </div>
       </Block>
@@ -103,6 +116,12 @@ export default async function FunnelDetailPage() {
             <h3 className="text-[0.95rem] font-bold text-v3-text">
               5단계 페이지 이동 (지난 7일)
             </h3>
+            <InfoTooltip
+              text={
+                "가격 페이지 진입부터 상담 제출까지 5단계의 사용자 흐름.\n각 단계의 절대 수 + Step 1 대비 비율 + 직전 단계 대비 drop%를 함께 표시합니다."
+              }
+              dataComponent="stats-funnel-main-info"
+            />
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -126,6 +145,12 @@ export default async function FunnelDetailPage() {
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
             <h3 className="text-[0.95rem] font-bold text-v3-text">전환율 추이 (30일)</h3>
+            <InfoTooltip
+              text={
+                "일별 전환율(상담 제출 ÷ 가격 페이지 진입)의 30일 변화.\n전체 트래픽과 별개로 펀널 자체의 quality 추이를 봅니다."
+              }
+              dataComponent="stats-funnel-trend-info"
+            />
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -184,6 +209,12 @@ export default async function FunnelDetailPage() {
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
             <h3 className="text-[0.95rem] font-bold text-v3-text">디바이스별 전환율</h3>
+            <InfoTooltip
+              text={
+                "Mobile vs Desktop 사용자의 펀널 완주율 비교 (지난 7일).\n디바이스 특성이 전환에 영향을 주는지 확인할 때 봅니다."
+              }
+              dataComponent="stats-funnel-device-info"
+            />
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -240,6 +271,12 @@ export default async function FunnelDetailPage() {
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">유입 소스별 전환율</h3>
+            <InfoTooltip
+              text={
+                "유입 채널(direct, 네이버, 인스타그램 등)별 5단계 진행 + 최종 전환율 (지난 7일).\n어느 채널이 quality 높은 trafic을 보내는지 비교합니다."
+              }
+              dataComponent="stats-funnel-source-info"
+            />
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
