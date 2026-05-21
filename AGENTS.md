@@ -1,0 +1,1 @@
+@~/.agents/playbook/AGENTS.md
