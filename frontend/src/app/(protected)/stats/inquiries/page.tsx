@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
@@ -19,6 +20,13 @@ export default async function InquiriesDetailPage() {
   const user = await getCurrentUser();
   const isOwner = user?.role === ROLES.owner;
   const branchSlug = isOwner ? null : user?.branchSlug ?? null;
+
+  // Fail-closed: a non-owner without a usable branchSlug would otherwise
+  // run PostHog queries with an empty branch filter and see cross-branch
+  // inquiries. Block before any fetch.
+  if (!isOwner && !branchSlug) {
+    redirect("/dashboard");
+  }
 
   const [summary, daily, hourly, recent] = await Promise.all([
     getInquiriesSummary(branchSlug),
