@@ -17,6 +17,7 @@ import {
   Calculator,
   Headset,
   MessageCircle,
+  BarChart3,
 } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
@@ -75,6 +76,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
   {
     title: "시스템 관리",
     items: [
+      { label: "통계", href: "/stats", icon: BarChart3 },
       { label: "설정", href: "/settings", icon: Settings },
     ],
   },
@@ -117,15 +119,17 @@ export const V3Sidebar = () => {
         return section;
       }
 
+      const [statsItem, ...rest] = section.items;
       return {
         ...section,
         items: isOwner
           ? [
+              statsItem,
               { label: "관리자", href: "/system-admin", icon: UserKey },
               { label: "홈페이지 관리", href: "/website-admin", icon: Globe },
-              ...section.items,
+              ...rest,
             ]
-          : section.items,
+          : [{ ...statsItem, href: "/stats/inquiries" }, ...rest],
       };
     }),
     [isOwner]
