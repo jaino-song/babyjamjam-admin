@@ -17,23 +17,13 @@ import {
   Send,
   Settings,
   Signal,
-  Users,
   Wifi,
   Workflow,
   XCircle,
 } from "lucide-react";
-import { ContentPaper } from "@/components/app/root/content-paper";
-import {
-  DetailPanel,
-  DetailTabs,
-  ListPanel,
-  SectionNav,
-  SplitLayout,
-} from "@/components/app/v3";
-import { Separator } from "@/components/ui/separator";
 import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
 import { api } from "@/lib/api/client";
-import { cn } from "@/lib/utils";
+import "@/components/app/mobile-redesign/redesign.css";
 
 interface AlimtalkLogRecord {
   id: number;
@@ -60,10 +50,16 @@ const STATUS_LABEL: Record<AlimtalkLogRecord["status"], string> = {
   failed: "실패",
 };
 
-const STATUS_STYLE: Record<AlimtalkLogRecord["status"], string> = {
-  pending: "bg-amber-500/10 text-amber-600",
-  sent: "bg-emerald-500/10 text-emerald-600",
-  failed: "bg-red-500/10 text-red-600",
+const STATUS_TONE: Record<AlimtalkLogRecord["status"], "green" | "orange" | "burgundy"> = {
+  pending: "orange",
+  sent: "green",
+  failed: "burgundy",
+};
+
+const STATUS_AVATAR_BG: Record<AlimtalkLogRecord["status"], string> = {
+  pending: "bg-v3-orange",
+  sent: "bg-v3-green",
+  failed: "bg-v3-burgundy",
 };
 
 function formatLogTimestamp(iso: string) {
@@ -82,17 +78,17 @@ const NAV_SECTIONS = [
   { id: "overview", label: "발송 현황", icon: Send },
   { id: "history", label: "발송 내역", icon: History },
   { id: "templates", label: "템플릿", icon: FileText },
-  { id: "triggers", label: "발송 트리거 설정", icon: Workflow },
+  { id: "triggers", label: "트리거", icon: Workflow },
   { id: "settings", label: "설정", icon: Settings },
 ] as const;
 
 type SectionId = (typeof NAV_SECTIONS)[number]["id"];
 
 const STAT_DEFS = [
-  { key: "total", label: "총 발송", icon: Send, color: "text-v3-primary", bg: "bg-v3-primary/10" },
-  { key: "sent", label: "성공", icon: CheckCircle2, color: "text-emerald-500", bg: "bg-emerald-500/10" },
-  { key: "failed", label: "실패", icon: XCircle, color: "text-red-500", bg: "bg-red-500/10" },
-  { key: "pending", label: "대기", icon: Clock, color: "text-amber-500", bg: "bg-amber-500/10" },
+  { key: "total", label: "총 발송", icon: Send, bg: "bg-v3-primary-light", color: "text-v3-primary" },
+  { key: "sent", label: "성공", icon: CheckCircle2, bg: "bg-v3-green-light", color: "text-v3-green" },
+  { key: "failed", label: "실패", icon: XCircle, bg: "bg-v3-burgundy-light", color: "text-v3-burgundy" },
+  { key: "pending", label: "대기", icon: Clock, bg: "bg-v3-orange-light", color: "text-v3-orange" },
 ] as const;
 
 type StatKey = (typeof STAT_DEFS)[number]["key"];
@@ -347,15 +343,15 @@ function TemplateDetails({ template }: { template: TemplateRecord }) {
   const variables = extractVariables(template.content);
 
   return (
-    <div data-component="alimtalk-template-details" className="space-y-4">
-      <div className="rounded-[20px] border border-v3-border bg-white p-4">
+    <div data-component="alimtalk-template-details" className="space-y-3">
+      <div className="rounded-[16px] border border-v3-border bg-white p-4">
         <h3 className="text-[0.85rem] font-bold text-v3-dark mb-3">메시지 내용</h3>
-        <pre className="whitespace-pre-wrap text-[0.78rem] leading-relaxed text-v3-text font-[Pretendard] bg-v3-dim-white/50 rounded-[14px] p-3">
+        <pre className="whitespace-pre-wrap text-[0.78rem] leading-relaxed text-v3-text font-[Pretendard] bg-v3-dim-white rounded-[14px] p-3">
           {template.content}
         </pre>
       </div>
 
-      <div className="rounded-[20px] border border-v3-border bg-white p-4">
+      <div className="rounded-[16px] border border-v3-border bg-white p-4">
         <h3 className="text-[0.85rem] font-bold text-v3-dark mb-3">템플릿 정보</h3>
         <div className="space-y-2.5">
           <div className="flex items-center justify-between gap-3 text-[0.78rem]">
@@ -384,7 +380,7 @@ function TemplateDetails({ template }: { template: TemplateRecord }) {
       </div>
 
       {variables.length > 0 && (
-        <div className="rounded-[20px] border border-v3-border bg-white p-4">
+        <div className="rounded-[16px] border border-v3-border bg-white p-4">
           <h3 className="text-[0.85rem] font-bold text-v3-dark mb-3">치환 변수</h3>
           <div className="flex flex-wrap gap-2">
             {variables.map((variable) => (
@@ -432,175 +428,155 @@ function TemplatesSection() {
     [selectedTemplateId, templateLibrary]
   );
 
-  const handleGroupChange = useCallback((value: string) => {
-    if (value !== "builtin" && value !== "custom") return;
-
-    const nextGroup = value as TemplateGroup;
-    const nextTemplates = nextGroup === "builtin" ? BUILTIN_TEMPLATES : customTemplates;
-
-    setActiveGroup(nextGroup);
-    setSelectedTemplateId((previous) => {
-      const previousTemplate = templateLibrary.find((template) => template.id === previous);
-      if (previousTemplate?.group === nextGroup) return previous;
-      return nextTemplates[0]?.id ?? "";
-    });
-    setActiveDetailTab("details");
-  }, [customTemplates, templateLibrary]);
-
   const handleSelectTemplate = useCallback((templateId: string) => {
-    setSelectedTemplateId(templateId);
+    setSelectedTemplateId((previous) => (previous === templateId ? "" : templateId));
     setActiveDetailTab("details");
   }, []);
 
+  const groupCounts = useMemo(() => ({
+    builtin: BUILTIN_TEMPLATES.length,
+    custom: customTemplates.length,
+  }), [customTemplates]);
+
   return (
-    <section data-component="alimtalk-templates-browser" className="space-y-3">
+    <div className="list-card flex-1 min-h-0 flex flex-col" data-component="alimtalk-templates-card">
+      <div className="list-title">
+        <span className="list-title-text">
+          알림톡 템플릿
+          <span className="list-count">{visibleTemplates.length}건</span>
+        </span>
+      </div>
+
+      <div className="filter-row" data-component="alimtalk-templates-group-row">
+        {TEMPLATE_GROUP_TABS.map((tab) => {
+          const isActive = tab.value === activeGroup;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              className={`filter-pill ${isActive ? "active" : ""}`}
+              aria-pressed={isActive}
+              onClick={() => {
+                setActiveGroup(tab.value);
+                setActiveDetailTab("details");
+              }}
+              data-component="alimtalk-templates-group-pill"
+            >
+              {tab.label}
+              <span className="count">{groupCounts[tab.value]}</span>
+            </button>
+          );
+        })}
+      </div>
+
       <div
         data-component="alimtalk-templates-desktop-notice"
-        className="flex items-start gap-2 rounded-2xl border border-v3-border/60 bg-v3-dim-white px-3 py-2 text-[0.75rem] text-v3-text-muted"
+        className="flex items-start gap-2 mx-3 mb-2 rounded-2xl border border-v3-border/60 bg-v3-dim-white px-3 py-2 text-[0.72rem] text-v3-text-muted"
       >
         <Info className="mt-0.5 h-4 w-4 shrink-0 text-v3-primary" />
         <p>
-          알림톡 템플릿 생성·편집은 <span className="font-semibold text-v3-dark">데스크톱</span>에서만 가능합니다.
-          모바일에서는 선택해서 발송할 수 있습니다.
+          템플릿 생성·편집은 <span className="font-semibold text-v3-dark">데스크톱</span>에서, 모바일에서는 선택 후 발송할 수 있습니다.
         </p>
       </div>
 
-      <SplitLayout hasSelection={!!selectedTemplate} onBack={() => setSelectedTemplateId("")}>
-        <ListPanel
-          title="알림톡 템플릿"
-          tabs={TEMPLATE_GROUP_TABS.map((tab) => ({ value: tab.value, label: tab.label }))}
-          activeTab={activeGroup}
-          onTabChange={handleGroupChange}
-        >
-          <div className="space-y-2 pb-2">
-            {visibleTemplates.length === 0 ? (
-              <div className="rounded-[16px] border border-dashed border-v3-border p-5 text-center text-[0.8rem] text-v3-text-muted">
-                등록된 템플릿이 없습니다.
-              </div>
-            ) : (
-              visibleTemplates.map((template) => {
-                const isSelected = template.id === selectedTemplateId;
-
-                return (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => handleSelectTemplate(template.id)}
-                    className={cn(
-                      "w-full rounded-[18px] border p-4 text-left transition-all duration-200",
-                      isSelected
-                        ? "border-v3-primary bg-[hsl(var(--v3-primary-light))] shadow-[0_12px_32px_hsla(214,50%,20%,0.08)]"
-                        : "border-v3-border bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/40"
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 shrink-0">
-                        <FileText className="h-4 w-4 text-violet-500" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{template.name}</p>
-                          <span
-                            className={cn(
-                              "shrink-0 rounded-full px-2.5 py-1 text-[0.65rem] font-semibold",
-                              template.status === "승인완료"
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-amber-500/10 text-amber-600"
-                            )}
-                          >
-                            {template.status}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-[0.73rem] text-v3-text-muted">{template.description}</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <span className="rounded-full bg-v3-dim-white px-2.5 py-1 text-[0.68rem] font-medium text-v3-text-muted">
-                            {getTplTypeLabel(template.tplType)}
-                          </span>
-                          <span className="rounded-full bg-v3-dim-white px-2.5 py-1 text-[0.68rem] font-medium text-v3-text-muted">
-                            {getTplEmTypeLabel(template.tplEmType)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })
-            )}
+      <div className="list-card-scroll">
+        {visibleTemplates.length === 0 ? (
+          <div className="flex flex-col items-center py-10 text-v3-text-muted">
+            <FileText className="mb-3 h-9 w-9 opacity-30" />
+            <p className="text-[0.85rem] font-semibold">등록된 템플릿이 없습니다</p>
           </div>
-        </ListPanel>
+        ) : (
+          visibleTemplates.map((template) => {
+            const isSelected = template.id === selectedTemplateId;
+            const tone = template.status === "승인완료" ? "green" : "orange";
+            return (
+              <div key={template.id} data-component="alimtalk-template-block">
+                <button
+                  type="button"
+                  onClick={() => handleSelectTemplate(template.id)}
+                  className="list-item w-full text-left"
+                  aria-pressed={isSelected}
+                  data-component="alimtalk-template-row"
+                  data-selected={isSelected || undefined}
+                  style={isSelected ? { background: "hsl(var(--v3-primary-light))" } : undefined}
+                >
+                  <div className="list-avatar bg-v3-purple">
+                    <FileText size={16} strokeWidth={2.5} />
+                  </div>
+                  <div className="list-info">
+                    <div className="list-name">{template.name}</div>
+                    <div className="list-meta">
+                      {template.description}
+                      {` · ${getTplTypeLabel(template.tplType)}`}
+                      {` · ${getTplEmTypeLabel(template.tplEmType)}`}
+                    </div>
+                  </div>
+                  <div className="list-right">
+                    <span className={`badge badge-${tone}`}>{template.status}</span>
+                  </div>
+                </button>
 
-        <DetailPanel
-          title={selectedTemplate?.name ?? "템플릿 상세"}
-          subtitle={
-            selectedTemplate
-              ? `${selectedTemplate.group === "builtin" ? "기본 템플릿" : "등록 템플릿"} · ${selectedTemplate.provider}`
-              : "목록에서 템플릿을 선택해 주세요."
-          }
-          badges={
-            selectedTemplate ? (
-              <span
-                className={cn(
-                  "rounded-full px-3 py-1 text-[0.7rem] font-semibold",
-                  selectedTemplate.status === "승인완료"
-                    ? "bg-emerald-500/10 text-emerald-600"
-                    : "bg-amber-500/10 text-amber-600"
-                )}
-              >
-                {selectedTemplate.status}
-              </span>
-            ) : null
-          }
-          tabs={
-            selectedTemplate ? (
-              <DetailTabs
-                tabs={TEMPLATE_DETAIL_TABS.map((tab) => ({ key: tab.key, label: tab.label }))}
-                activeTab={activeDetailTab}
-                onTabChange={(key) => setActiveDetailTab(key as TemplateDetailTab)}
-              />
-            ) : null
-          }
-        >
-          {!selectedTemplate ? (
-            <div className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
-              목록에서 템플릿을 선택해 주세요.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {activeDetailTab === "details" ? (
-                <TemplateDetails template={selectedTemplate} />
-              ) : (
-                <div className="flex justify-center py-2">
-                  <TemplatePhonePreview
-                    templateName={selectedTemplate.name}
-                    content={selectedTemplate.content}
-                    buttons={selectedTemplate.buttons}
-                  />
-                </div>
-              )}
+                {isSelected && selectedTemplate ? (
+                  <div
+                    className="mx-3 my-2 space-y-3"
+                    data-component="alimtalk-template-detail-inline"
+                  >
+                    <div className="filter-row !px-0" data-component="alimtalk-template-detail-tabs">
+                      {TEMPLATE_DETAIL_TABS.map((tab) => {
+                        const isTabActive = tab.key === activeDetailTab;
+                        return (
+                          <button
+                            key={tab.key}
+                            type="button"
+                            className={`filter-pill ${isTabActive ? "active" : ""}`}
+                            aria-pressed={isTabActive}
+                            onClick={() => setActiveDetailTab(tab.key)}
+                            data-component="alimtalk-template-detail-pill"
+                          >
+                            {tab.label}
+                          </button>
+                        );
+                      })}
+                    </div>
 
-              <button
-                type="button"
-                data-component="alimtalk-template-send-cta"
-                onClick={() => handleSendWithTemplate(selectedTemplate)}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-v3-primary px-4 py-3 text-sm font-bold text-white shadow-v3-hover transition hover:bg-v3-primary/90"
-              >
-                <Send className="h-4 w-4" />이 템플릿으로 보내기
-              </button>
+                    {activeDetailTab === "details" ? (
+                      <TemplateDetails template={selectedTemplate} />
+                    ) : (
+                      <div className="flex justify-center py-2">
+                        <TemplatePhonePreview
+                          templateName={selectedTemplate.name}
+                          content={selectedTemplate.content}
+                          buttons={selectedTemplate.buttons}
+                        />
+                      </div>
+                    )}
 
-              <div
-                data-component="alimtalk-template-edit-notice"
-                className="flex items-start gap-2 rounded-2xl border border-dashed border-v3-border bg-v3-dim-white px-3 py-2 text-[0.72rem] text-v3-text-muted"
-              >
-                <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-v3-primary" />
-                <p>
-                  내용·버튼·이미지 수정은 <span className="font-semibold text-v3-dark">데스크톱</span>에서 해 주세요.
-                </p>
+                    <button
+                      type="button"
+                      data-component="alimtalk-template-send-cta"
+                      onClick={() => handleSendWithTemplate(selectedTemplate)}
+                      className="flex w-full items-center justify-center gap-2 rounded-2xl bg-v3-primary px-4 py-3 text-sm font-bold text-white shadow-v3-hover transition hover:bg-v3-primary/90"
+                    >
+                      <Send className="h-4 w-4" />이 템플릿으로 보내기
+                    </button>
+
+                    <div
+                      data-component="alimtalk-template-edit-notice"
+                      className="flex items-start gap-2 rounded-2xl border border-dashed border-v3-border bg-v3-dim-white px-3 py-2 text-[0.72rem] text-v3-text-muted"
+                    >
+                      <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-v3-primary" />
+                      <p>
+                        내용·버튼·이미지 수정은 <span className="font-semibold text-v3-dark">데스크톱</span>에서 해 주세요.
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-            </div>
-          )}
-        </DetailPanel>
-      </SplitLayout>
-    </section>
+            );
+          })
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -629,200 +605,184 @@ export default function AlimtalkPage() {
     return counts;
   }, [logs]);
 
+  const successRate = logs.length > 0 ? Math.round((statCounts.sent / logs.length) * 100) : 0;
+
   return (
-    <section data-component="alimtalk" className="space-y-6">
-      <SectionNav
-        items={NAV_SECTIONS}
-        activeId={activeSection}
-        onSelect={(id) => setActiveSection(id as SectionId)}
-      />
+    <section data-component="alimtalk" className="flex h-full min-h-0 flex-col">
+      <div className="filter-row pt-3" data-component="alimtalk-section-nav">
+        {NAV_SECTIONS.map((section) => {
+          const Icon = section.icon;
+          const isActive = section.id === activeSection;
+          return (
+            <button
+              key={section.id}
+              type="button"
+              className={`filter-pill ${isActive ? "active" : ""}`}
+              aria-pressed={isActive}
+              onClick={() => setActiveSection(section.id)}
+              data-component="alimtalk-section-pill"
+            >
+              <Icon size={12} strokeWidth={2.5} />
+              {section.label}
+            </button>
+          );
+        })}
+      </div>
 
-      <div data-component="alimtalk-sections" className="min-w-0">
+      <div className="shell-content" data-component="alimtalk-content">
         {activeSection === "overview" ? (
-          <section data-component="alimtalk-overview">
-            <ContentPaper variant="v3">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-v3-primary/10">
-                  <Send size={20} className="text-v3-primary" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-foreground">발송 현황</h2>
-                  <p className="text-sm text-muted-foreground">알림톡 발송 현황을 확인합니다.</p>
-                </div>
-              </div>
-              <Separator className="mb-6" />
-
-              <div className="grid grid-cols-2 gap-3 mb-8">
-                {STAT_DEFS.map((stat) => {
-                  const Icon = stat.icon;
-                  const value = isLogsLoading ? "—" : `${statCounts[stat.key]}건`;
-                  return (
-                    <div
-                      key={stat.key}
-                      data-component={`alimtalk-stat-${stat.key}`}
-                      className="flex items-center gap-3 p-3 rounded-2xl border border-v3-border/50 bg-white"
-                    >
-                      <div className={`w-9 h-9 rounded-xl ${stat.bg} flex items-center justify-center shrink-0`}>
-                        <Icon className={`w-4 h-4 ${stat.color}`} />
-                      </div>
-                      <div>
-                        <p className="text-[0.7rem] text-v3-text-muted">{stat.label}</p>
-                        <p className="text-base font-bold text-v3-dark">{value}</p>
-                      </div>
+          <div className="flex-1 min-h-0 flex flex-col gap-3" data-component="alimtalk-overview">
+            <div className="stats-grid !pt-0">
+              {STAT_DEFS.map((stat) => {
+                const Icon = stat.icon;
+                const value = isLogsLoading ? "—" : `${statCounts[stat.key]}`;
+                return (
+                  <div
+                    key={stat.key}
+                    className="mini-stat"
+                    data-component={`alimtalk-stat-${stat.key}`}
+                  >
+                    <div className={`mini-stat-icon ${stat.bg} ${stat.color}`}>
+                      <Icon size={16} strokeWidth={2.5} />
                     </div>
-                  );
-                })}
-              </div>
+                    <div>
+                      <div className="mini-stat-num">{value}</div>
+                      <div className="mini-stat-label">{stat.label}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
 
-              {isLogsLoading ? (
-                <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                  <MessageCircle className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30 animate-pulse" />
-                  <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 현황 불러오는 중…</p>
-                </div>
-              ) : isLogsError ? (
-                <div className="rounded-2xl border border-dashed border-red-300 p-8 text-center">
-                  <XCircle className="w-10 h-10 mx-auto mb-3 text-red-500 opacity-50" />
-                  <p className="text-[0.85rem] font-semibold text-red-600 mb-1">발송 현황을 불러오지 못했습니다</p>
-                  <p className="text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
-                </div>
-              ) : logs.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                  <MessageCircle className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
-                  <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 현황이 없습니다</p>
-                  <p className="text-[0.75rem] text-v3-text-muted">알림톡을 발송하면 여기에 현황이 표시됩니다.</p>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-v3-border/60 bg-white p-4">
-                  <p className="text-[0.78rem] text-v3-text-muted">
-                    최근 발송 {logs.length}건 기준 ·{" "}
-                    <span className="font-semibold text-emerald-600">성공률 {logs.length > 0 ? Math.round((statCounts.sent / logs.length) * 100) : 0}%</span>
-                  </p>
-                </div>
-              )}
-            </ContentPaper>
-          </section>
+            <div className="list-card flex-1 min-h-0 flex flex-col">
+              <div className="list-title">
+                <span className="list-title-text">
+                  발송 요약
+                  <span className="list-count">
+                    {isLogsLoading ? "불러오는 중" : `${logs.length}건 기준`}
+                  </span>
+                </span>
+              </div>
+              <div className="list-card-scroll">
+                {isLogsLoading ? (
+                  <div className="flex flex-col items-center py-10 text-v3-text-muted">
+                    <MessageCircle className="mb-3 h-9 w-9 opacity-30 animate-pulse" />
+                    <p className="text-[0.85rem] font-semibold">발송 현황 불러오는 중…</p>
+                  </div>
+                ) : isLogsError ? (
+                  <div className="flex flex-col items-center py-10">
+                    <XCircle className="mb-3 h-9 w-9 text-v3-burgundy opacity-50" />
+                    <p className="text-[0.85rem] font-semibold text-v3-burgundy">발송 현황을 불러오지 못했습니다</p>
+                    <p className="mt-1 text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
+                  </div>
+                ) : logs.length === 0 ? (
+                  <div className="flex flex-col items-center py-10 text-v3-text-muted">
+                    <MessageCircle className="mb-3 h-9 w-9 opacity-30" />
+                    <p className="text-[0.85rem] font-semibold">발송 현황이 없습니다</p>
+                    <p className="mt-1 text-[0.75rem]">알림톡을 발송하면 현황이 표시됩니다.</p>
+                  </div>
+                ) : (
+                  <div className="px-4 py-3 text-[0.78rem] text-v3-text-muted">
+                    최근 발송 <span className="font-semibold text-v3-dark">{logs.length}건</span> 기준 ·{" "}
+                    <span className="font-semibold text-v3-green">성공률 {successRate}%</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {activeSection === "history" ? (
-          <section data-component="alimtalk-history">
-            <ContentPaper variant="v3">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-500/10">
-                  <History size={20} className="text-amber-500" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-foreground">발송 내역</h2>
-                  <p className="text-sm text-muted-foreground">알림톡 발송 기록을 확인합니다.</p>
-                </div>
-              </div>
-              <Separator className="mb-6" />
-
+          <div className="list-card flex-1 min-h-0 flex flex-col" data-component="alimtalk-history">
+            <div className="list-title">
+              <span className="list-title-text">
+                발송 내역
+                <span className="list-count">{isLogsLoading ? "불러오는 중" : `${logs.length}건`}</span>
+              </span>
+            </div>
+            <div className="list-card-scroll">
               {isLogsLoading ? (
-                <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                  <History className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30 animate-pulse" />
-                  <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 내역 불러오는 중…</p>
+                <div className="flex flex-col items-center py-10 text-v3-text-muted">
+                  <History className="mb-3 h-9 w-9 opacity-30 animate-pulse" />
+                  <p className="text-[0.85rem] font-semibold">발송 내역 불러오는 중…</p>
                 </div>
               ) : isLogsError ? (
-                <div className="rounded-2xl border border-dashed border-red-300 p-8 text-center">
-                  <XCircle className="w-10 h-10 mx-auto mb-3 text-red-500 opacity-50" />
-                  <p className="text-[0.85rem] font-semibold text-red-600 mb-1">발송 내역을 불러오지 못했습니다</p>
-                  <p className="text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
+                <div className="flex flex-col items-center py-10">
+                  <XCircle className="mb-3 h-9 w-9 text-v3-burgundy opacity-50" />
+                  <p className="text-[0.85rem] font-semibold text-v3-burgundy">발송 내역을 불러오지 못했습니다</p>
+                  <p className="mt-1 text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
                 </div>
               ) : logs.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                  <History className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
-                  <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 내역이 없습니다</p>
-                  <p className="text-[0.75rem] text-v3-text-muted">알림톡을 발송하면 여기에 내역이 표시됩니다.</p>
+                <div className="flex flex-col items-center py-10 text-v3-text-muted">
+                  <History className="mb-3 h-9 w-9 opacity-30" />
+                  <p className="text-[0.85rem] font-semibold">발송 내역이 없습니다</p>
+                  <p className="mt-1 text-[0.75rem]">알림톡을 발송하면 내역이 표시됩니다.</p>
                 </div>
               ) : (
-                <ul data-component="alimtalk-history-list" className="space-y-2">
-                  {logs.map((log) => {
-                    const recipientLabel = log.recipientName ?? log.clientName ?? log.employeeName ?? log.receiver;
-                    return (
-                      <li
-                        key={log.id}
-                        data-component="alimtalk-history-item"
-                        className="rounded-2xl border border-v3-border/60 bg-white p-3"
-                      >
-                        <div className="flex items-start gap-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-[0.85rem] font-semibold text-v3-dark truncate">
-                                {recipientLabel}
-                              </span>
-                              <span
-                                className={cn(
-                                  "shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-bold",
-                                  STATUS_STYLE[log.status],
-                                )}
-                              >
-                                {STATUS_LABEL[log.status]}
-                              </span>
-                            </div>
-                            <p className="text-[0.72rem] text-v3-text-muted truncate">
-                              {log.ruleName ?? log.templateKey}
-                              {log.eventType ? ` · ${log.eventType}` : ""}
-                            </p>
-                            <p className="text-[0.68rem] text-v3-text-muted mt-1">
-                              {formatLogTimestamp(log.createdAt)} · {log.receiver}
-                            </p>
-                            {log.errorMessage ? (
-                              <p className="text-[0.68rem] text-red-600 mt-1 break-words">{log.errorMessage}</p>
-                            ) : null}
-                          </div>
+                logs.map((log) => {
+                  const recipient = log.recipientName ?? log.clientName ?? log.employeeName ?? log.receiver;
+                  const initial = recipient.charAt(0) || "?";
+                  const tone = STATUS_TONE[log.status];
+                  return (
+                    <div
+                      key={log.id}
+                      className="list-item"
+                      data-component="alimtalk-history-row"
+                    >
+                      <div className={`list-avatar ${STATUS_AVATAR_BG[log.status]}`}>{initial}</div>
+                      <div className="list-info">
+                        <div className="list-name">
+                          {recipient}
+                          <span className={`badge badge-${tone}`}>{STATUS_LABEL[log.status]}</span>
                         </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                        <div className="list-meta">
+                          {log.ruleName ?? log.templateKey}
+                          {log.eventType ? ` · ${log.eventType}` : ""}
+                          {` · ${formatLogTimestamp(log.createdAt)}`}
+                        </div>
+                        {log.errorMessage ? (
+                          <div className="list-meta text-v3-burgundy mt-1">{log.errorMessage}</div>
+                        ) : null}
+                      </div>
+                      <div className="list-right">
+                        <span className="dday-sub">{log.receiver}</span>
+                      </div>
+                    </div>
+                  );
+                })
               )}
-            </ContentPaper>
-          </section>
+            </div>
+          </div>
         ) : null}
 
         {activeSection === "templates" ? <TemplatesSection /> : null}
 
         {activeSection === "triggers" ? (
-          <section data-component="alimtalk-triggers">
+          <div className="flex-1 min-h-0 overflow-y-auto" data-component="alimtalk-triggers">
             <TriggerRulesManager />
-          </section>
+          </div>
         ) : null}
 
         {activeSection === "settings" ? (
-          <section data-component="alimtalk-settings">
-            <ContentPaper variant="v3">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gray-500/10">
-                  <Settings size={20} className="text-gray-500" />
+          <div className="list-card flex-1 min-h-0 flex flex-col" data-component="alimtalk-settings">
+            <div className="list-title">
+              <span className="list-title-text">알림톡 설정</span>
+            </div>
+            <div className="list-card-scroll">
+              <a href="/settings" className="list-item" data-component="alimtalk-settings-provider">
+                <div className="list-avatar bg-v3-primary">
+                  <Settings size={16} strokeWidth={2.5} />
                 </div>
-                <div>
-                  <h2 className="text-lg font-bold text-foreground">알림톡 설정</h2>
-                  <p className="text-sm text-muted-foreground">알림톡 발송 서비스를 설정합니다.</p>
+                <div className="list-info">
+                  <div className="list-name">발송 서비스 제공자</div>
+                  <div className="list-meta">설정 &gt; 알림에서 변경할 수 있습니다.</div>
                 </div>
-              </div>
-              <Separator className="mb-6" />
-
-              <div className="space-y-4">
-                <div className="flex items-center gap-3 p-4 rounded-2xl border border-v3-border bg-white">
-                  <div className="w-10 h-10 rounded-xl bg-v3-primary/10 flex items-center justify-center shrink-0">
-                    <Users className="w-5 h-5 text-v3-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[0.85rem] font-semibold text-v3-dark">발송 서비스 제공자</p>
-                    <p className="text-[0.75rem] text-v3-text-muted">
-                      현재 설정은 설정 &gt; 알림 메뉴에서 변경할 수 있습니다.
-                    </p>
-                  </div>
-                  <a
-                    href="/settings"
-                    className="text-[0.8rem] font-semibold text-v3-primary hover:underline shrink-0"
-                  >
-                    이동
-                  </a>
+                <div className="list-right">
+                  <span className="dday-sub text-v3-primary font-bold">이동</span>
                 </div>
-              </div>
-            </ContentPaper>
-          </section>
+              </a>
+            </div>
+          </div>
         ) : null}
       </div>
     </section>

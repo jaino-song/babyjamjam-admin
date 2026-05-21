@@ -3,24 +3,7 @@
 import { useState } from "react";
 import { isAxiosError } from "axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CardContainer } from "@/components/auth/card-container";
-import { ContentPaper } from "@/components/app/root/content-paper";
-import { HeaderActionButton, SectionNav } from "@/components/app/v3";
-import { t } from "@/lib/i18n/translations";
-import { useLocale } from "@/providers/LocaleProvider";
-import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
-import { CustomTemplateForm } from "@/components/app/messages/forms/custom-template-form";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { Spinner } from "@/components/ui/spinner";
+import Link from "next/link";
 import {
   Clock3,
   FilePen,
@@ -30,6 +13,19 @@ import {
   Settings2,
   Workflow,
 } from "lucide-react";
+import { t } from "@/lib/i18n/translations";
+import { useLocale } from "@/providers/LocaleProvider";
+import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { GreetingMessageForm } from "@/components/app/messages/forms/GreetingMessageForm";
 import { ServiceInfoMessageForm } from "@/components/app/messages/forms/service-info-message-form";
 import { PriceInfoMessageForm } from "@/components/app/messages/forms/PriceInfoMessageForm";
@@ -37,12 +33,13 @@ import { ReminderMessageForm } from "@/components/app/messages/forms/ReminderMes
 import { ThanksMessageForm } from "@/components/app/messages/forms/ThanksMessageForm";
 import { SurveyMessageForm } from "@/components/app/messages/forms/SurveyMessageForm";
 import { InfoMessageForm } from "@/components/app/messages/forms/InfoMessageForm";
+import { CustomTemplateForm } from "@/components/app/messages/forms/custom-template-form";
 import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
 import { MessageSenderApprovalSettings } from "@/components/app/messages/MessageSenderApprovalSettings";
 import { MessagingFeatureGate } from "@/components/app/messages/MessagingFeatureGate";
 import { settingsApi } from "@/services/api";
 import { api } from "@/lib/api/client";
-import { cn } from "@/lib/utils";
+import "@/components/app/mobile-redesign/redesign.css";
 
 interface AlimtalkLogRecord {
   id: number;
@@ -68,10 +65,16 @@ const LOG_STATUS_LABEL: Record<AlimtalkLogRecord["status"], string> = {
   failed: "실패",
 };
 
-const LOG_STATUS_STYLE: Record<AlimtalkLogRecord["status"], string> = {
-  pending: "bg-amber-500/10 text-amber-600",
-  sent: "bg-emerald-500/10 text-emerald-600",
-  failed: "bg-red-500/10 text-red-600",
+const LOG_STATUS_TONE: Record<AlimtalkLogRecord["status"], "green" | "orange" | "burgundy"> = {
+  pending: "orange",
+  sent: "green",
+  failed: "burgundy",
+};
+
+const LOG_AVATAR_BG: Record<AlimtalkLogRecord["status"], string> = {
+  pending: "bg-v3-orange",
+  sent: "bg-v3-green",
+  failed: "bg-v3-burgundy",
 };
 
 interface UpcomingAlimtalkJob {
@@ -123,30 +126,11 @@ const MESSAGE_SECTIONS = [
   { id: "scheduled", label: "발송 예정", icon: Clock3 },
   { id: "history", label: "발송 기록", icon: History },
   { id: "templates", label: "템플릿", icon: FileText },
-  { id: "triggers", label: "발송 트리거 설정", icon: Workflow },
+  { id: "triggers", label: "트리거", icon: Workflow },
   { id: "settings", label: "설정", icon: Settings2 },
 ] as const;
 
 type MessageSectionId = (typeof MESSAGE_SECTIONS)[number]["id"];
-type PlaceholderSectionId = Exclude<MessageSectionId, "templates" | "triggers">;
-
-const PLACEHOLDER_COPY: Record<
-  PlaceholderSectionId,
-  { description: string; helper: string }
-> = {
-  scheduled: {
-    description: "예약되었거나 대기 중인 메시지 발송 일정을 모아보는 영역입니다.",
-    helper: "메시지 발송 스케줄 컴포넌트를 연결하면 이곳에 예정 목록이 표시됩니다.",
-  },
-  history: {
-    description: "실제로 발송된 메시지의 이력과 결과를 추적하는 영역입니다.",
-    helper: "발송 로그나 검색 필터 컴포넌트를 연결하면 이 섹션에서 기록을 확인할 수 있습니다.",
-  },
-  settings: {
-    description: "메시지 채널, 기본 옵션, 운영 정책을 조정하는 영역입니다.",
-    helper: "발송 관련 설정 컴포넌트를 추가하면 이 자리에서 한 번에 관리할 수 있습니다.",
-  },
-};
 
 const FormComponents: Record<BuiltinTemplateType, React.ComponentType> = {
   "greeting": GreetingMessageForm,
@@ -157,47 +141,6 @@ const FormComponents: Record<BuiltinTemplateType, React.ComponentType> = {
   "survey": SurveyMessageForm,
   "info": InfoMessageForm,
 };
-
-function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectionId }) {
-  const section = MESSAGE_SECTIONS.find((item) => item.id === sectionId);
-  if (!section) return null;
-
-  const Icon = section.icon;
-  const copy = PLACEHOLDER_COPY[sectionId];
-
-  return (
-    <ContentPaper variant="v3" className="overflow-hidden">
-      <div
-        data-component="messages-section-placeholder-surface"
-        className="rounded-[28px] border border-v3-border/70 bg-gradient-to-br from-white via-white to-v3-primary-light/50 p-6 sm:p-7"
-      >
-        <div data-component="messages-section-placeholder-header" className="mb-4 flex items-center gap-3">
-          <div
-            data-component="messages-section-placeholder-icon"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-v3-primary/10 text-v3-primary"
-          >
-            <Icon className="h-5 w-5" />
-          </div>
-          <div data-component="messages-section-placeholder-copy" className="min-w-0">
-            <h2 className="text-lg font-bold text-v3-dark">{section.label}</h2>
-            <p className="text-sm text-v3-text-muted">{copy.description}</p>
-          </div>
-        </div>
-
-        <Separator className="mb-6" />
-
-        <div
-          data-component="messages-section-placeholder-empty"
-          className="rounded-[22px] border border-dashed border-v3-border bg-white/90 p-6 text-center sm:p-8"
-        >
-          <Icon className="mx-auto mb-3 h-9 w-9 text-v3-text-muted/70" />
-          <p className="text-sm font-semibold text-v3-dark">이 섹션은 아직 비어 있습니다.</p>
-          <p className="mt-1 text-sm leading-6 text-v3-text-muted">{copy.helper}</p>
-        </div>
-      </div>
-    </ContentPaper>
-  );
-}
 
 export default function MessagesPage() {
   const locale = useLocale();
@@ -289,270 +232,242 @@ export default function MessagesPage() {
   };
 
   return (
-    <section data-component="messages" className="flex flex-1 flex-col bg-background">
-      <section
-        data-component="messages-content"
-        className="mx-auto flex w-full max-w-[1280px] flex-1 flex-col gap-4 px-2 py-3 sm:px-3 sm:py-4 md:px-6"
-      >
-        <div data-component="messages-sections" className="flex flex-col gap-4 lg:flex-row lg:items-start">
-          <SectionNav
-            items={MESSAGE_SECTIONS}
-            activeId={activeSection}
-            onSelect={(id) => setActiveSection(id as MessageSectionId)}
-          />
+    <section data-component="messages" className="flex h-full min-h-0 flex-col">
+      <div className="filter-row pt-3" data-component="messages-section-nav">
+        {MESSAGE_SECTIONS.map((section) => {
+          const Icon = section.icon;
+          const isActive = section.id === activeSection;
+          return (
+            <button
+              key={section.id}
+              type="button"
+              className={`filter-pill ${isActive ? "active" : ""}`}
+              aria-pressed={isActive}
+              onClick={() => setActiveSection(section.id)}
+              data-component="messages-section-pill"
+            >
+              <Icon size={12} strokeWidth={2.5} />
+              {section.label}
+            </button>
+          );
+        })}
+      </div>
 
-          <div data-component="messages-section-panel" className="min-w-0 flex-1">
-            {activeSection === "templates" ? (
-              <section data-component="messages-templates-section">
-                <CardContainer
-                  title={t(locale, "msg-form.title")}
-                  subtitle={t(locale, "msg-form.select-msg-type")}
-                  className="flex flex-col"
-                  headerActionsLeft={
-                    <HeaderActionButton
-                      icon={FilePen}
-                      label={t(locale, "msg-form.edit-template")}
-                      href="/messages/templates"
-                      variant="muted"
-                      data-component="messages-header-edit"
-                    />
-                  }
-                  headerActionsRight={
-                    <HeaderActionButton
-                      icon={Plus}
-                      label={t(locale, "msg-form.add-template")}
-                      href="/messages/templates/new"
-                      data-component="messages-header-add"
-                    />
-                  }
-                >
-                  <div data-component="messages-select" className="pb-6">
-                    <Select value={selectedValue} onValueChange={setSelectedValue}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="템플릿 선택" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {templateConfigs.map((config) => (
-                          <SelectItem key={config.id} value={`builtin:${config.id}`}>
-                            {t(locale, config.labelKey)}
+      <div className="shell-content" data-component="messages-content">
+        {activeSection === "templates" ? (
+          <div className="list-card flex-1 min-h-0 flex flex-col" data-component="messages-templates-card">
+            <div className="list-title">
+              <span className="list-title-text">
+                {t(locale, "msg-form.title")}
+                <span className="list-count">{t(locale, "msg-form.select-msg-type")}</span>
+              </span>
+              <div className="flex shrink-0 items-center gap-3">
+                <Link href="/messages/templates" className="list-action" data-component="messages-templates-edit">
+                  <FilePen size={12} strokeWidth={3} />
+                  {t(locale, "msg-form.edit-template")}
+                </Link>
+                <Link href="/messages/templates/new" className="list-action" data-component="messages-templates-add">
+                  <Plus size={12} strokeWidth={3} />
+                  {t(locale, "msg-form.add-template")}
+                </Link>
+              </div>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 pt-2 space-y-4">
+              <div data-component="messages-select">
+                <Select value={selectedValue} onValueChange={setSelectedValue}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="템플릿 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templateConfigs.map((config) => (
+                      <SelectItem key={config.id} value={`builtin:${config.id}`}>
+                        {t(locale, config.labelKey)}
+                      </SelectItem>
+                    ))}
+
+                    {userTemplates.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel className="mt-1 bg-muted font-semibold">사용자 템플릿</SelectLabel>
+                        {userTemplates.map((template) => (
+                          <SelectItem key={template.id} value={`user:${template.id}`}>
+                            {template.name}
                           </SelectItem>
                         ))}
-
-                        {userTemplates.length > 0 && (
-                          <SelectGroup>
-                            <SelectLabel className="mt-1 bg-muted font-semibold">사용자 템플릿</SelectLabel>
-                            {userTemplates.map((template) => (
-                              <SelectItem key={template.id} value={`user:${template.id}`}>
-                                {template.name}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {isLoadingUserTemplates && (
-                    <div data-component="messages-loading" className="flex justify-center py-2">
-                      <Spinner className="h-6 w-6" />
-                    </div>
-                  )}
-
-                  {SelectedBuiltinForm && <SelectedBuiltinForm />}
-
-                  {selectedUserTemplate && <CustomTemplateForm template={selectedUserTemplate as never} />}
-                </CardContainer>
-              </section>
-            ) : activeSection === "triggers" ? (
-              <section data-component="messages-triggers-section">
-                <MessagingFeatureGate
-                  isEnabled={isMessagingApproved}
-                  isLoading={isLoadingMessageSenderApproval}
-                  title="발송 트리거 설정을 사용하려면 관리자 승인이 필요합니다"
-                  description={lockedFeatureCopy.description}
-                >
-                  <TriggerRulesManager />
-                </MessagingFeatureGate>
-              </section>
-            ) : activeSection === "settings" ? (
-              <section data-component="messages-settings-section">
-                <MessageSenderApprovalSettings
-                  key={`${messageSenderApproval?.senderPhone ?? ""}:${messageSenderApproval?.approvalStatus ?? "loading"}:${messageSenderApproval?.requestedAt ?? ""}`}
-                  approval={messageSenderApproval}
-                  isLoading={isLoadingMessageSenderApproval}
-                  isSubmitting={requestApprovalMutation.isPending}
-                  errorMessage={approvalErrorMessage}
-                  onSubmit={handleRequestApproval}
-                />
-              </section>
-            ) : activeSection === "scheduled" ? (
-              <section data-component="messages-scheduled-section">
-                <MessagingFeatureGate
-                  isEnabled={isMessagingApproved}
-                  isLoading={isLoadingMessageSenderApproval}
-                  title={lockedFeatureCopy.title}
-                  description={lockedFeatureCopy.description}
-                >
-                  <ContentPaper variant="v3">
-                    <div className="mb-4 flex items-center gap-3">
-                      <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-v3-primary/10">
-                        <Clock3 size={20} className="text-v3-primary" />
-                      </div>
-                      <div>
-                        <h2 className="text-lg font-bold text-foreground">발송 예정</h2>
-                        <p className="text-sm text-muted-foreground">
-                          예약된 알림톡 트리거 발송 일정을 확인합니다.
-                        </p>
-                      </div>
-                    </div>
-                    <Separator className="mb-6" />
-
-                    {isUpcomingLoading ? (
-                      <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                        <Clock3 className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30 animate-pulse" />
-                        <p className="text-[0.85rem] font-semibold text-v3-text-muted">발송 예정 불러오는 중…</p>
-                      </div>
-                    ) : isUpcomingError ? (
-                      <div className="rounded-2xl border border-dashed border-red-300 p-8 text-center">
-                        <p className="text-[0.85rem] font-semibold text-red-600">발송 예정을 불러오지 못했습니다</p>
-                        <p className="text-[0.75rem] text-v3-text-muted mt-1">잠시 후 다시 시도해 주세요.</p>
-                      </div>
-                    ) : upcomingJobs.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                        <Clock3 className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
-                        <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">예약된 발송이 없습니다</p>
-                        <p className="text-[0.75rem] text-v3-text-muted">
-                          트리거 규칙을 활성화하면 예정된 알림톡이 이곳에 표시됩니다.
-                        </p>
-                      </div>
-                    ) : (
-                      <ul data-component="messages-scheduled-list" className="space-y-2">
-                        {upcomingJobs.map((job) => (
-                          <li
-                            key={job.id}
-                            data-component="messages-scheduled-item"
-                            className="rounded-2xl border border-v3-border/60 bg-white p-3"
-                          >
-                            <div className="flex items-start justify-between gap-2 mb-1">
-                              <span className="text-[0.85rem] font-semibold text-v3-dark truncate">
-                                {job.ruleName}
-                              </span>
-                              <span
-                                className={cn(
-                                  "shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-bold",
-                                  "bg-v3-primary/10 text-v3-primary",
-                                )}
-                              >
-                                {RECIPIENT_TYPE_LABEL[job.recipientType] ?? job.recipientType}
-                              </span>
-                            </div>
-                            <p className="text-[0.72rem] text-v3-text-muted truncate">
-                              {job.templateKey}
-                              {job.eventType ? ` · ${job.eventType}` : ""}
-                            </p>
-                            <p className="text-[0.68rem] text-v3-text-muted mt-1">
-                              {formatScheduledFor(job.scheduledFor)}
-                              {job.recipientPhone ? ` · ${job.recipientPhone}` : ""}
-                            </p>
-                          </li>
-                        ))}
-                      </ul>
+                      </SelectGroup>
                     )}
-                  </ContentPaper>
-                </MessagingFeatureGate>
-              </section>
-            ) : activeSection === "history" ? (
-              <section data-component="messages-history-section">
-                <MessagingFeatureGate
-                  isEnabled={isMessagingApproved}
-                  isLoading={isLoadingMessageSenderApproval}
-                  title={lockedFeatureCopy.title}
-                  description={lockedFeatureCopy.description}
-                >
-                  <ContentPaper variant="v3">
-                    <div className="mb-4 flex items-center gap-3">
-                      <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-500/10">
-                        <History size={20} className="text-amber-500" />
-                      </div>
-                      <div>
-                        <h2 className="text-lg font-bold text-foreground">발송 기록</h2>
-                        <p className="text-sm text-muted-foreground">실제 발송된 알림톡 메시지 기록입니다.</p>
-                      </div>
-                    </div>
-                    <Separator className="mb-6" />
+                  </SelectContent>
+                </Select>
+              </div>
 
-                    {isHistoryLoading ? (
-                      <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                        <History className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30 animate-pulse" />
-                        <p className="text-[0.85rem] font-semibold text-v3-text-muted">발송 기록 불러오는 중…</p>
-                      </div>
-                    ) : isHistoryError ? (
-                      <div className="rounded-2xl border border-dashed border-red-300 p-8 text-center">
-                        <p className="text-[0.85rem] font-semibold text-red-600">발송 기록을 불러오지 못했습니다</p>
-                        <p className="text-[0.75rem] text-v3-text-muted mt-1">잠시 후 다시 시도해 주세요.</p>
-                      </div>
-                    ) : historyLogs.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-v3-border p-8 text-center">
-                        <History className="w-10 h-10 mx-auto mb-3 text-v3-text-muted opacity-30" />
-                        <p className="text-[0.85rem] font-semibold text-v3-text-muted mb-1">발송 기록이 없습니다</p>
-                        <p className="text-[0.75rem] text-v3-text-muted">메시지를 발송하면 여기에 기록이 표시됩니다.</p>
-                      </div>
-                    ) : (
-                      <ul data-component="messages-history-list" className="space-y-2">
-                        {historyLogs.map((log) => {
-                          const recipient = log.recipientName ?? log.clientName ?? log.employeeName ?? log.receiver;
-                          return (
-                            <li
-                              key={log.id}
-                              data-component="messages-history-item"
-                              className="rounded-2xl border border-v3-border/60 bg-white p-3"
-                            >
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-[0.85rem] font-semibold text-v3-dark truncate flex-1">
-                                  {recipient}
-                                </span>
-                                <span
-                                  className={cn(
-                                    "shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-bold",
-                                    LOG_STATUS_STYLE[log.status],
-                                  )}
-                                >
-                                  {LOG_STATUS_LABEL[log.status]}
-                                </span>
-                              </div>
-                              <p className="text-[0.72rem] text-v3-text-muted truncate">
-                                {log.ruleName ?? log.templateKey}
-                                {log.eventType ? ` · ${log.eventType}` : ""}
-                              </p>
-                              <p className="text-[0.68rem] text-v3-text-muted mt-1">
-                                {formatScheduledFor(log.createdAt)} · {log.receiver}
-                              </p>
-                              {log.errorMessage ? (
-                                <p className="text-[0.68rem] text-red-600 mt-1 break-words">{log.errorMessage}</p>
-                              ) : null}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </ContentPaper>
-                </MessagingFeatureGate>
-              </section>
-            ) : (
-              <section data-component={`messages-${activeSection}-section`}>
-                <MessagingFeatureGate
-                  isEnabled={isMessagingApproved}
-                  isLoading={isLoadingMessageSenderApproval}
-                  title={lockedFeatureCopy.title}
-                  description={lockedFeatureCopy.description}
-                >
-                  <MessageSectionPlaceholder sectionId={activeSection} />
-                </MessagingFeatureGate>
-              </section>
-            )}
+              {isLoadingUserTemplates && (
+                <div data-component="messages-loading" className="flex justify-center py-2">
+                  <Spinner className="h-6 w-6" />
+                </div>
+              )}
+
+              {SelectedBuiltinForm && <SelectedBuiltinForm />}
+              {selectedUserTemplate && <CustomTemplateForm template={selectedUserTemplate as never} />}
+            </div>
           </div>
-        </div>
-      </section>
+        ) : activeSection === "triggers" ? (
+          <div className="flex-1 min-h-0 overflow-y-auto" data-component="messages-triggers-area">
+            <MessagingFeatureGate
+              isEnabled={isMessagingApproved}
+              isLoading={isLoadingMessageSenderApproval}
+              title="발송 트리거 설정을 사용하려면 관리자 승인이 필요합니다"
+              description={lockedFeatureCopy.description}
+            >
+              <TriggerRulesManager />
+            </MessagingFeatureGate>
+          </div>
+        ) : activeSection === "settings" ? (
+          <div className="flex-1 min-h-0 overflow-y-auto" data-component="messages-settings-area">
+            <MessageSenderApprovalSettings
+              key={`${messageSenderApproval?.senderPhone ?? ""}:${messageSenderApproval?.approvalStatus ?? "loading"}:${messageSenderApproval?.requestedAt ?? ""}`}
+              approval={messageSenderApproval}
+              isLoading={isLoadingMessageSenderApproval}
+              isSubmitting={requestApprovalMutation.isPending}
+              errorMessage={approvalErrorMessage}
+              onSubmit={handleRequestApproval}
+            />
+          </div>
+        ) : activeSection === "scheduled" ? (
+          <div className="flex-1 min-h-0 flex flex-col" data-component="messages-scheduled-area">
+            <MessagingFeatureGate
+              isEnabled={isMessagingApproved}
+              isLoading={isLoadingMessageSenderApproval}
+              title={lockedFeatureCopy.title}
+              description={lockedFeatureCopy.description}
+            >
+              <div className="list-card flex-1 min-h-0 flex flex-col">
+                <div className="list-title">
+                  <span className="list-title-text">
+                    발송 예정
+                    <span className="list-count">{isUpcomingLoading ? "불러오는 중" : `${upcomingJobs.length}건`}</span>
+                  </span>
+                </div>
+                <div className="list-card-scroll">
+                  {isUpcomingLoading ? (
+                    <div className="flex flex-col items-center py-10 text-v3-text-muted">
+                      <Clock3 className="mb-3 h-9 w-9 opacity-30 animate-pulse" />
+                      <p className="text-[0.85rem] font-semibold">발송 예정 불러오는 중…</p>
+                    </div>
+                  ) : isUpcomingError ? (
+                    <div className="flex flex-col items-center py-10">
+                      <p className="text-[0.85rem] font-semibold text-v3-burgundy">발송 예정을 불러오지 못했습니다</p>
+                      <p className="mt-1 text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
+                    </div>
+                  ) : upcomingJobs.length === 0 ? (
+                    <div className="flex flex-col items-center py-10 text-v3-text-muted">
+                      <Clock3 className="mb-3 h-9 w-9 opacity-30" />
+                      <p className="text-[0.85rem] font-semibold">예약된 발송이 없습니다</p>
+                      <p className="mt-1 text-[0.75rem]">트리거 규칙을 활성화하면 예정된 알림톡이 표시됩니다.</p>
+                    </div>
+                  ) : (
+                    upcomingJobs.map((job) => (
+                      <div
+                        key={job.id}
+                        className="list-item"
+                        data-component="messages-scheduled-row"
+                      >
+                        <div className="list-avatar bg-v3-primary">
+                          <Clock3 size={16} strokeWidth={2.5} />
+                        </div>
+                        <div className="list-info">
+                          <div className="list-name">
+                            {job.ruleName}
+                            <span className="badge badge-primary">
+                              {RECIPIENT_TYPE_LABEL[job.recipientType] ?? job.recipientType}
+                            </span>
+                          </div>
+                          <div className="list-meta">
+                            {job.templateKey}
+                            {job.eventType ? ` · ${job.eventType}` : ""}
+                            {job.recipientPhone ? ` · ${job.recipientPhone}` : ""}
+                          </div>
+                        </div>
+                        <div className="list-right">
+                          <span className="dday-sub">{formatScheduledFor(job.scheduledFor)}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </MessagingFeatureGate>
+          </div>
+        ) : activeSection === "history" ? (
+          <div className="flex-1 min-h-0 flex flex-col" data-component="messages-history-area">
+            <MessagingFeatureGate
+              isEnabled={isMessagingApproved}
+              isLoading={isLoadingMessageSenderApproval}
+              title={lockedFeatureCopy.title}
+              description={lockedFeatureCopy.description}
+            >
+              <div className="list-card flex-1 min-h-0 flex flex-col">
+                <div className="list-title">
+                  <span className="list-title-text">
+                    발송 기록
+                    <span className="list-count">{isHistoryLoading ? "불러오는 중" : `${historyLogs.length}건`}</span>
+                  </span>
+                </div>
+                <div className="list-card-scroll">
+                  {isHistoryLoading ? (
+                    <div className="flex flex-col items-center py-10 text-v3-text-muted">
+                      <History className="mb-3 h-9 w-9 opacity-30 animate-pulse" />
+                      <p className="text-[0.85rem] font-semibold">발송 기록 불러오는 중…</p>
+                    </div>
+                  ) : isHistoryError ? (
+                    <div className="flex flex-col items-center py-10">
+                      <p className="text-[0.85rem] font-semibold text-v3-burgundy">발송 기록을 불러오지 못했습니다</p>
+                      <p className="mt-1 text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
+                    </div>
+                  ) : historyLogs.length === 0 ? (
+                    <div className="flex flex-col items-center py-10 text-v3-text-muted">
+                      <History className="mb-3 h-9 w-9 opacity-30" />
+                      <p className="text-[0.85rem] font-semibold">발송 기록이 없습니다</p>
+                      <p className="mt-1 text-[0.75rem]">메시지를 발송하면 기록이 표시됩니다.</p>
+                    </div>
+                  ) : (
+                    historyLogs.map((log) => {
+                      const recipient = log.recipientName ?? log.clientName ?? log.employeeName ?? log.receiver;
+                      const initial = recipient.charAt(0) || "?";
+                      const tone = LOG_STATUS_TONE[log.status];
+                      return (
+                        <div
+                          key={log.id}
+                          className="list-item"
+                          data-component="messages-history-row"
+                        >
+                          <div className={`list-avatar ${LOG_AVATAR_BG[log.status]}`}>{initial}</div>
+                          <div className="list-info">
+                            <div className="list-name">
+                              {recipient}
+                              <span className={`badge badge-${tone}`}>{LOG_STATUS_LABEL[log.status]}</span>
+                            </div>
+                            <div className="list-meta">
+                              {log.ruleName ?? log.templateKey}
+                              {log.eventType ? ` · ${log.eventType}` : ""}
+                              {` · ${formatScheduledFor(log.createdAt)}`}
+                            </div>
+                            {log.errorMessage ? (
+                              <div className="list-meta text-v3-burgundy mt-1">{log.errorMessage}</div>
+                            ) : null}
+                          </div>
+                          <div className="list-right">
+                            <span className="dday-sub">{log.receiver}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </MessagingFeatureGate>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }

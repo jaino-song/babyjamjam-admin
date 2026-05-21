@@ -9,13 +9,14 @@ import { cn } from "@/lib/utils";
 import { ChatInput } from "@/components/app/chat/ChatInput";
 import { AssistantMessage } from "@/components/app/chat/AssistantMessage";
 import { useChatStream, ChatMessage, ChatState } from "@/hooks/useChatStream";
+import "@/components/app/mobile-redesign/redesign.css";
 
 function UserMessage({ message }: { message: ChatMessage }) {
     return (
         <div className="flex justify-end mb-4">
             <div
                 data-component="chat-message-user"
-                className="max-w-[80%] px-4 py-3 rounded-2xl bg-primary text-primary-foreground"
+                className="max-w-[80%] px-4 py-3 rounded-2xl bg-v3-primary text-white shadow-[0_4px_24px_hsla(214,50%,20%,0.12)]"
             >
                 <p className="text-base whitespace-pre-wrap break-words">
                     {message.content}
@@ -168,7 +169,7 @@ export default function ChatPage() {
             )}
         >
             {/* Header */}
-            <div data-component="chat-header" className="flex items-center justify-between px-4 py-3 border-b border-border bg-card shrink-0">
+            <div data-component="chat-header" className="flex items-center justify-between px-4 py-3 border-b border-v3-border bg-white shrink-0">
                 <div className="flex items-center gap-2">
                     <Button
                         variant="ghost"
@@ -179,8 +180,8 @@ export default function ChatPage() {
                     >
                         <ArrowLeft className="w-5 h-5" />
                     </Button>
-                    <Sparkles className="w-5 h-5 text-primary" />
-                    <h1 className="text-lg font-semibold text-foreground">
+                    <Sparkles className="w-5 h-5 text-v3-primary" />
+                    <h1 className="text-lg font-semibold text-v3-dark">
                         AI 어시스턴트
                     </h1>
                 </div>
@@ -260,20 +261,19 @@ export default function ChatPage() {
             </div>
 
             {/* Input Area */}
-            <div data-component="chat-input-area" className="px-4 sm:px-8 py-4 border-t border-border bg-card shrink-0">
-                <div className="mb-3 flex flex-wrap gap-2">
+            <div data-component="chat-input-area" className="px-4 sm:px-8 py-4 border-t border-v3-border bg-white shrink-0">
+                <div className="mb-3 flex flex-wrap gap-2" data-component="chat-quick-actions">
                     {quickActions.map((label) => (
-                        <Button
+                        <button
                             key={label}
                             type="button"
-                            variant="secondary"
-                            size="sm"
+                            className="filter-pill"
+                            data-component="chat-quick-action-pill"
                             onClick={() => sendMessage(label)}
                             disabled={state === "streaming" || state === "connecting"}
-                            className="rounded-full"
                         >
                             {label}
-                        </Button>
+                        </button>
                     ))}
                 </div>
                 <ChatInput
