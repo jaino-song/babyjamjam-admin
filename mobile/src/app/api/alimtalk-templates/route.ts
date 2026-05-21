@@ -2,6 +2,27 @@ import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
 
+export async function GET(request: NextRequest) {
+  try {
+    const token = getAuthToken(request);
+    if (!token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const response = await serverAPIClient.get("/alimtalk-templates", {
+      headers: getAuthHeaders(token),
+    });
+
+    return NextResponse.json(response.data, { status: response.status });
+  } catch (error) {
+    console.error("[API] Error fetching alimtalk templates:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch alimtalk templates" },
+      { status: 500 },
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const token = getAuthToken(request);

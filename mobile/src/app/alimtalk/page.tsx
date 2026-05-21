@@ -96,9 +96,8 @@ type StatKey = (typeof STAT_DEFS)[number]["key"];
 type TplType = "BA" | "EX" | "AD" | "MI";
 type TplEmType = "NONE" | "TEXT" | "IMAGE";
 type ButtonLinkType = "WL" | "AL" | "BK" | "MD" | "DS" | "AC";
-type TemplateGroup = "builtin" | "custom";
+type TemplateGroup = "approved" | "pending";
 type TemplateDetailTab = "details" | "preview";
-type TemplateStatus = "승인완료" | "심사중";
 
 interface TemplateButton {
   name: string;
@@ -112,8 +111,8 @@ interface TemplateButton {
 interface TemplateRecord {
   id: string;
   name: string;
-  description: string;
-  group: TemplateGroup;
+  description?: string;
+  isApproved: boolean;
   tplType: TplType;
   tplEmType: TplEmType;
   title?: string;
@@ -122,9 +121,59 @@ interface TemplateRecord {
   extra?: string;
   advert?: string;
   buttons: TemplateButton[];
-  updatedAt: string;
-  status: TemplateStatus;
-  provider: string;
+  updatedAt?: string;
+  inspectionStatus?: string;
+}
+
+interface ApiAlimtalkTemplate {
+  templateCode: string;
+  name: string;
+  content: string;
+  title?: string;
+  subtitle?: string;
+  extra?: string;
+  advert?: string;
+  templateType: TplType;
+  emphasisType: TplEmType;
+  inspectionStatus?: string;
+  isApproved: boolean;
+  category?: string;
+  buttons: Array<{
+    name: string;
+    linkType: string;
+    linkM?: string;
+    linkP?: string;
+    linkI?: string;
+    linkA?: string;
+  }>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+function mapApiTemplate(item: ApiAlimtalkTemplate): TemplateRecord {
+  return {
+    id: item.templateCode,
+    name: item.name,
+    description: item.category,
+    isApproved: item.isApproved,
+    tplType: item.templateType,
+    tplEmType: item.emphasisType,
+    title: item.title,
+    subtitle: item.subtitle,
+    content: item.content,
+    extra: item.extra,
+    advert: item.advert,
+    buttons: item.buttons.map((button) => ({
+      name: button.name,
+      linkType: (button.linkType as ButtonLinkType) ?? "WL",
+      linkM: button.linkM ?? "",
+      linkP: button.linkP ?? "",
+      linkI: button.linkI ?? "",
+      linkA: button.linkA ?? "",
+    })),
+    updatedAt: item.updatedAt ?? item.createdAt,
+    inspectionStatus: item.inspectionStatus,
+  };
 }
 
 const TPL_TYPE_OPTIONS: { value: TplType; label: string }[] = [
@@ -141,100 +190,14 @@ const TPL_EMTYPE_OPTIONS: { value: TplEmType; label: string }[] = [
 ];
 
 const TEMPLATE_GROUP_TABS = [
-  { value: "builtin", label: "승인 완료" },
-  { value: "custom", label: "심사중/반려" },
+  { value: "approved", label: "승인 완료" },
+  { value: "pending", label: "심사중/반려" },
 ] as const;
 
 const TEMPLATE_DETAIL_TABS = [
   { key: "details", label: "상세정보" },
   { key: "preview", label: "미리보기" },
 ] as const;
-
-const BUILTIN_TEMPLATES: TemplateRecord[] = [
-  {
-    id: "builtin-client-created",
-    name: "고객 등록 안내",
-    description: "고객 등록 직후 보내는 첫 안내 메시지",
-    group: "builtin",
-    tplType: "BA",
-    tplEmType: "TEXT",
-    title: "등록이 완료되었어요",
-    subtitle: "첫 안내 메시지",
-    content:
-      "#{고객명}님, 안녕하세요.\n아가잼잼 서비스 등록이 완료되었습니다.\n\n담당 매니저가 배정되면 다시 안내드릴게요.\n문의사항은 언제든 편하게 연락 주세요.",
-    buttons: [{ name: "서비스 안내", linkType: "WL", linkM: "https://agajamjam.kr", linkP: "https://agajamjam.kr", linkI: "", linkA: "" }],
-    updatedAt: "2026.03.08",
-    status: "승인완료",
-    provider: "알리고 API",
-  },
-  {
-    id: "builtin-service-reminder",
-    name: "서비스 시작 리마인드",
-    description: "서비스 시작 하루 전 고객 안내",
-    group: "builtin",
-    tplType: "EX",
-    tplEmType: "NONE",
-    content:
-      "#{고객명}님, 내일부터 서비스가 시작됩니다.\n\n■ 서비스 일정\n- 시작일: #{시작일}\n- 담당자: #{담당자명}\n- 방문 시간: #{방문시간}\n\n필요한 준비사항은 앱에서 확인해 주세요.",
-    extra: "방문 전날 오후 6시에 자동 발송",
-    buttons: [{ name: "준비사항 보기", linkType: "WL", linkM: "https://agajamjam.kr/app", linkP: "https://agajamjam.kr/app", linkI: "", linkA: "" }],
-    updatedAt: "2026.03.06",
-    status: "승인완료",
-    provider: "알리고 API",
-  },
-  {
-    id: "builtin-service-end",
-    name: "서비스 종료 안내",
-    description: "서비스 종료 전 고객 재안내 메시지",
-    group: "builtin",
-    tplType: "AD",
-    tplEmType: "NONE",
-    content:
-      "#{고객명}님, 서비스 종료 예정일이 하루 남았습니다.\n\n■ 종료 정보\n- 종료일: #{종료일}\n- 담당자: #{담당자명}\n\n연장이 필요하시면 관리자에게 문의해 주세요.",
-    advert: "(광고) 서비스 연장 상담은 앱 또는 고객센터에서 가능합니다.",
-    buttons: [],
-    updatedAt: "2026.03.05",
-    status: "승인완료",
-    provider: "알리고 API",
-  },
-];
-
-const CUSTOM_TEMPLATES: TemplateRecord[] = [
-  {
-    id: "custom-employee-assigned",
-    name: "관리사 배정 완료",
-    description: "관리사 배정 시 직원에게 발송되는 템플릿",
-    group: "custom",
-    tplType: "BA",
-    tplEmType: "TEXT",
-    title: "새 배정이 도착했어요",
-    subtitle: "#{고객명} 고객",
-    content:
-      "#{직원명}님, 새로운 배정이 등록되었습니다.\n\n■ 배정 정보\n- 고객명: #{고객명}\n- 서비스 시작: #{시작일}\n- 주소: #{서비스주소}\n\n배정 내용을 확인해 주세요.",
-    buttons: [{ name: "배정 상세 보기", linkType: "WL", linkM: "https://agajamjam.kr/staff", linkP: "https://agajamjam.kr/staff", linkI: "", linkA: "" }],
-    updatedAt: "2026.03.07",
-    status: "승인완료",
-    provider: "알리고 API",
-  },
-  {
-    id: "custom-7days-before-start",
-    name: "서비스 7일 전 안내",
-    description: "서비스 시작 7일 전 고객에게 보내는 커스텀 템플릿",
-    group: "custom",
-    tplType: "MI",
-    tplEmType: "TEXT",
-    title: "곧 서비스를 시작해요",
-    subtitle: "7일 전 사전 안내",
-    content:
-      "#{고객명}님, 서비스 시작까지 7일 남았습니다.\n\n필요 서류와 준비사항을 미리 확인해 주세요.\n담당 매니저가 일정에 맞춰 다시 연락드릴 예정입니다.",
-    extra: "필요 서류: 산모수첩, 신분증, 서비스 신청서",
-    advert: "문의는 카카오 채널 또는 앱 1:1 문의로 남겨 주세요.",
-    buttons: [{ name: "준비물 체크", linkType: "WL", linkM: "https://agajamjam.kr/checklist", linkP: "https://agajamjam.kr/checklist", linkI: "", linkA: "" }],
-    updatedAt: "2026.03.08",
-    status: "심사중",
-    provider: "알리고 API",
-  },
-];
 
 function extractVariables(content: string) {
   const matches = content.match(/#\{[^}]+\}/g);
@@ -355,12 +318,6 @@ function TemplateDetails({ template }: { template: TemplateRecord }) {
         <h3 className="text-[0.85rem] font-bold text-v3-dark mb-3">템플릿 정보</h3>
         <div className="space-y-2.5">
           <div className="flex items-center justify-between gap-3 text-[0.78rem]">
-            <span className="text-v3-text-muted">분류</span>
-            <span className="font-semibold text-v3-dark">
-              {template.group === "builtin" ? "기본 템플릿" : "등록 템플릿"}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-3 text-[0.78rem]">
             <span className="text-v3-text-muted">메시지 유형</span>
             <span className="font-semibold text-v3-dark">{getTplTypeLabel(template.tplType)}</span>
           </div>
@@ -368,10 +325,18 @@ function TemplateDetails({ template }: { template: TemplateRecord }) {
             <span className="text-v3-text-muted">강조 유형</span>
             <span className="font-semibold text-v3-dark">{getTplEmTypeLabel(template.tplEmType)}</span>
           </div>
-          <div className="flex items-center justify-between gap-3 text-[0.78rem]">
-            <span className="text-v3-text-muted">최근 수정</span>
-            <span className="font-semibold text-v3-dark">{template.updatedAt}</span>
-          </div>
+          {template.inspectionStatus ? (
+            <div className="flex items-center justify-between gap-3 text-[0.78rem]">
+              <span className="text-v3-text-muted">심사 상태</span>
+              <span className="font-semibold text-v3-dark">{template.inspectionStatus}</span>
+            </div>
+          ) : null}
+          {template.updatedAt ? (
+            <div className="flex items-center justify-between gap-3 text-[0.78rem]">
+              <span className="text-v3-text-muted">최근 수정</span>
+              <span className="font-semibold text-v3-dark">{template.updatedAt}</span>
+            </div>
+          ) : null}
           <div className="flex items-center justify-between gap-3 text-[0.78rem]">
             <span className="text-v3-text-muted">버튼 수</span>
             <span className="font-semibold text-v3-dark">{template.buttons.length}개</span>
@@ -400,10 +365,23 @@ function TemplateDetails({ template }: { template: TemplateRecord }) {
 
 function TemplatesSection() {
   const router = useRouter();
-  const [customTemplates] = useState<TemplateRecord[]>(CUSTOM_TEMPLATES);
-  const [activeGroup, setActiveGroup] = useState<TemplateGroup>("builtin");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(BUILTIN_TEMPLATES[0]?.id ?? "");
+  const [activeGroup, setActiveGroup] = useState<TemplateGroup>("approved");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [activeDetailTab, setActiveDetailTab] = useState<TemplateDetailTab>("details");
+
+  const {
+    data: apiTemplates = [],
+    isLoading: isTemplatesLoading,
+    isError: isTemplatesError,
+  } = useQuery<ApiAlimtalkTemplate[]>({
+    queryKey: ["alimtalk", "templates"],
+    queryFn: async () => {
+      const res = await api.get<ApiAlimtalkTemplate[]>("/alimtalk-templates");
+      return res.data;
+    },
+  });
+
+  const templates = useMemo(() => apiTemplates.map(mapApiTemplate), [apiTemplates]);
 
   const handleSendWithTemplate = useCallback(
     (template: TemplateRecord) => {
@@ -414,18 +392,13 @@ function TemplatesSection() {
   );
 
   const visibleTemplates = useMemo(
-    () => (activeGroup === "builtin" ? BUILTIN_TEMPLATES : customTemplates),
-    [activeGroup, customTemplates]
-  );
-
-  const templateLibrary = useMemo(
-    () => [...BUILTIN_TEMPLATES, ...customTemplates],
-    [customTemplates]
+    () => templates.filter((t) => (activeGroup === "approved" ? t.isApproved : !t.isApproved)),
+    [templates, activeGroup]
   );
 
   const selectedTemplate = useMemo(
-    () => templateLibrary.find((template) => template.id === selectedTemplateId) ?? null,
-    [selectedTemplateId, templateLibrary]
+    () => templates.find((template) => template.id === selectedTemplateId) ?? null,
+    [selectedTemplateId, templates]
   );
 
   const handleSelectTemplate = useCallback((templateId: string) => {
@@ -434,9 +407,9 @@ function TemplatesSection() {
   }, []);
 
   const groupCounts = useMemo(() => ({
-    builtin: BUILTIN_TEMPLATES.length,
-    custom: customTemplates.length,
-  }), [customTemplates]);
+    approved: templates.filter((t) => t.isApproved).length,
+    pending: templates.filter((t) => !t.isApproved).length,
+  }), [templates]);
 
   return (
     <div className="list-card flex-1 min-h-0 flex flex-col" data-component="alimtalk-templates-card">
@@ -480,7 +453,18 @@ function TemplatesSection() {
       </div>
 
       <div className="list-card-scroll">
-        {visibleTemplates.length === 0 ? (
+        {isTemplatesLoading ? (
+          <div className="flex flex-col items-center py-10 text-v3-text-muted">
+            <FileText className="mb-3 h-9 w-9 opacity-30 animate-pulse" />
+            <p className="text-[0.85rem] font-semibold">템플릿 불러오는 중…</p>
+          </div>
+        ) : isTemplatesError ? (
+          <div className="flex flex-col items-center py-10">
+            <XCircle className="mb-3 h-9 w-9 text-v3-burgundy opacity-50" />
+            <p className="text-[0.85rem] font-semibold text-v3-burgundy">템플릿을 불러오지 못했습니다</p>
+            <p className="mt-1 text-[0.75rem] text-v3-text-muted">알리고 연동 설정을 확인해 주세요.</p>
+          </div>
+        ) : visibleTemplates.length === 0 ? (
           <div className="flex flex-col items-center py-10 text-v3-text-muted">
             <FileText className="mb-3 h-9 w-9 opacity-30" />
             <p className="text-[0.85rem] font-semibold">등록된 템플릿이 없습니다</p>
@@ -488,7 +472,13 @@ function TemplatesSection() {
         ) : (
           visibleTemplates.map((template) => {
             const isSelected = template.id === selectedTemplateId;
-            const tone = template.status === "승인완료" ? "green" : "orange";
+            const tone = template.isApproved ? "green" : "orange";
+            const statusLabel = template.isApproved ? "승인완료" : "심사중";
+            const metaParts = [
+              template.description,
+              getTplTypeLabel(template.tplType),
+              getTplEmTypeLabel(template.tplEmType),
+            ].filter(Boolean);
             return (
               <div key={template.id} data-component="alimtalk-template-block">
                 <button
@@ -505,14 +495,10 @@ function TemplatesSection() {
                   </div>
                   <div className="list-info">
                     <div className="list-name">{template.name}</div>
-                    <div className="list-meta">
-                      {template.description}
-                      {` · ${getTplTypeLabel(template.tplType)}`}
-                      {` · ${getTplEmTypeLabel(template.tplEmType)}`}
-                    </div>
+                    <div className="list-meta">{metaParts.join(" · ")}</div>
                   </div>
                   <div className="list-right">
-                    <span className={`badge badge-${tone}`}>{template.status}</span>
+                    <span className={`badge badge-${tone}`}>{statusLabel}</span>
                   </div>
                 </button>
 
