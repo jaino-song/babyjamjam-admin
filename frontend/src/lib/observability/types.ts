@@ -147,3 +147,35 @@ export interface RegionShareRow {
   count: number;
   pct: number;
 }
+
+// ============================================================
+// PAGE NAVIGATION (used by /stats/funnel "페이지 이동 통계")
+// ============================================================
+export interface PageDetailRow {
+  path: string;
+  pv: number;
+  unique: number;
+  entries: number;
+  exits: number;
+  bouncePct: number;
+}
+
+export interface PageEntryExitRow {
+  path: string;
+  count: number;
+  pct: number;
+}
+
+export interface PageTransitionRow {
+  fromPath: string;
+  toPath: string;
+  count: number;
+  pct: number;
+}
+
+export interface PageNavSummary {
+  activePages: number;
+  totalPv: number;
+  avgPvPerPage: number;
+  avgBouncePct: number;
+}

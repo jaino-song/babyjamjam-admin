@@ -1,9 +1,11 @@
 import { Block } from "@/components/app/v3/Block";
 import {
+  getEntryPages,
+  getExitPages,
   getFunnelSummary,
-  getFunnelTrend,
-  getFunnelByDevice,
-  getFunnelBySource,
+  getPageNavSummary,
+  getPagesDetail,
+  getPageTransitions,
 } from "@/lib/observability/posthog";
 import { StatsHero } from "../_components/StatsHero";
 import { KpiCard } from "../_components/KpiCard";
@@ -14,37 +16,35 @@ export const metadata = { title: "페이지 이동 통계 · 통계" };
 export const revalidate = 60;
 
 export default async function FunnelDetailPage() {
-  const [summary, trend, byDevice, bySource] = await Promise.all([
+  const [
+    navSummary,
+    pages,
+    entryPages,
+    exitPages,
+    transitions,
+    conversionFunnel,
+  ] = await Promise.all([
+    getPageNavSummary(7),
+    getPagesDetail(7, 20),
+    getEntryPages(7, 8),
+    getExitPages(7, 8),
+    getPageTransitions(7, 12),
     getFunnelSummary(7),
-    getFunnelTrend(30),
-    getFunnelByDevice(7),
-    getFunnelBySource(7),
   ]);
 
-  // Conversion-trend line chart geometry (30 days)
-  const trendValues = trend.map((p) => p.conversionRate);
-  const maxConv = Math.max(1, ...trendValues);
-  const chartW = 500;
-  const chartH = 160;
-  const padL = 36;
-  const padR = 16;
-  const usableW = chartW - padL - padR;
-  const yFor = (v: number) => chartH - 22 - (v / maxConv) * (chartH - 40);
-  const points = trend.map((p, i) => {
-    const x = padL + (trend.length > 1 ? (i / (trend.length - 1)) * usableW : 0);
-    return `${x.toFixed(1)},${yFor(p.conversionRate).toFixed(1)}`;
-  });
-  const linePath = points.length ? `M${points.join(" L")}` : "";
+  const maxPv = Math.max(1, ...pages.map((p) => p.pv));
+  const maxEntry = Math.max(1, ...entryPages.map((p) => p.count));
+  const maxExit = Math.max(1, ...exitPages.map((p) => p.count));
+  const maxTransition = Math.max(1, ...transitions.map((t) => t.count));
 
   return (
     <section data-component="stats-funnel" className="flex flex-col gap-6 pb-10">
       <Block name="stats-funnel-hero" className="shrink-0">
         <StatsHero
           title="페이지 이동 통계"
-          subtitle="PostHog · 5단계 전환 분석 + 단계별 drop-off + 세그멘트"
-          rightLabel="전환율"
-          rightValue={`${summary.conversionRate.toFixed(1)}%`}
-          rightAccent={summary.conversionRate < 5 ? "warn" : "default"}
+          subtitle="PostHog · 각 페이지의 트래픽 + 페이지 간 이동 경로"
+          rightLabel="기간"
+          rightValue="최근 7일"
           backHref="/stats"
           backLabel="통계 overview로"
           dataComponent="stats-funnel-hero"
@@ -57,275 +57,306 @@ export default async function FunnelDetailPage() {
           className="grid grid-cols-2 lg:grid-cols-4 gap-3"
         >
           <KpiCard
-            iconEmoji="🔀"
-            label="전체 전환율"
-            value={summary.conversionRate.toFixed(1)}
+            iconEmoji="📄"
+            label="활성 페이지"
+            value={navSummary.activePages}
+            unit="개"
+            dataComponent="stats-funnel-kpi-pages"
+            infoText={
+              "지난 7일 동안 PV가 1회 이상 기록된 고유 경로(pathname) 수."
+            }
+          />
+          <KpiCard
+            iconEmoji="👁"
+            label="총 PV (7일)"
+            value={navSummary.totalPv.toLocaleString("ko-KR")}
+            dataComponent="stats-funnel-kpi-pv"
+            infoText={
+              "지난 7일간 발생한 전체 페이지뷰 이벤트 수.\n중복 사용자도 모두 포함."
+            }
+          />
+          <KpiCard
+            iconEmoji="∅"
+            label="평균 PV/페이지"
+            value={navSummary.avgPvPerPage.toFixed(1)}
+            dataComponent="stats-funnel-kpi-avg"
+            infoText={
+              "총 PV ÷ 활성 페이지 수.\n페이지당 평균 방문 빈도를 나타냅니다."
+            }
+          />
+          <KpiCard
+            iconEmoji="↩"
+            label="평균 이탈률"
+            value={navSummary.avgBouncePct.toFixed(1)}
             unit="%"
-            meta={`100 진입 중 ${summary.completedConversions} 제출`}
-            dataComponent="stats-funnel-kpi-conversion"
+            tone={navSummary.avgBouncePct > 60 ? "warn" : "default"}
+            dataComponent="stats-funnel-kpi-bounce"
             infoText={
-              "가격 페이지에 진입한 사용자 중 상담 신청까지 완료한 비율 (지난 7일).\n공식: 상담 제출 ÷ 가격 페이지 진입 × 100"
-            }
-          />
-          <KpiCard
-            iconEmoji="▼"
-            label="최대 누수"
-            value={summary.biggestDropStep ? `Step ${summary.biggestDropStep}` : "—"}
-            tone={summary.biggestDropStep ? "warn" : "default"}
-            meta={
-              summary.biggestDropStep && summary.steps[summary.biggestDropStep - 1]
-                ? `${summary.steps[summary.biggestDropStep - 1].label} · −${summary.steps[summary.biggestDropStep - 1].dropFromPrevPct.toFixed(0)}%`
-                : "균등 누수"
-            }
-            dataComponent="stats-funnel-kpi-drop"
-            valueSize="sm"
-            infoText={
-              "직전 단계 대비 사용자가 가장 많이 이탈한 단계.\n운영팀이 가장 먼저 점검해야 할 transition 지점을 표시합니다."
-            }
-          />
-          <KpiCard
-            iconEmoji="📥"
-            label="진입 (7일)"
-            value={summary.totalEntries}
-            unit="명"
-            dataComponent="stats-funnel-kpi-entries"
-            infoText={
-              "지난 7일 동안 가격 페이지(/pricing)에 진입한 이벤트 수.\n펀널의 시작 지점 (Step 1)입니다."
-            }
-          />
-          <KpiCard
-            iconEmoji="✓"
-            label="완료된 전환"
-            value={summary.completedConversions}
-            unit="건"
-            tone="success"
-            dataComponent="stats-funnel-kpi-completions"
-            infoText={
-              "지난 7일 동안 상담 신청 폼 제출까지 완료한 건 수.\n펀널의 끝 지점 (Step 5)입니다."
+              "세션당 페이지뷰가 1회뿐인 경우의 비율.\n사용자가 들어와서 다른 페이지를 보지 않고 떠난 정도."
             }
           />
         </div>
       </Block>
 
-      <Block name="stats-funnel-main">
+      {/* Main: per-page detail table */}
+      <Block name="stats-funnel-pages">
         <div
-          data-component="stats-funnel-main-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
-        >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">
-              5단계 페이지 이동 (지난 7일)
-            </h3>
-            <InfoTooltip
-              text={
-                "가격 페이지 진입부터 상담 제출까지 5단계의 사용자 흐름.\n각 단계의 절대 수 + Step 1 대비 비율 + 직전 단계 대비 drop%를 함께 표시합니다."
-              }
-              dataComponent="stats-funnel-main-info"
-            />
-            <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
-              PostHog
-            </span>
-          </header>
-          <FunnelBars
-            steps={summary.steps}
-            biggestDropStep={summary.biggestDropStep}
-            variant="verbose"
-          />
-        </div>
-      </Block>
-
-      <Block
-        name="stats-funnel-segments"
-        className="grid grid-cols-1 lg:grid-cols-2 gap-4"
-      >
-        {/* Conversion-rate trend */}
-        <div
-          data-component="stats-funnel-trend-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
-        >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">전환율 추이 (30일)</h3>
-            <InfoTooltip
-              text={
-                "일별 전환율(상담 제출 ÷ 가격 페이지 진입)의 30일 변화.\n전체 트래픽과 별개로 펀널 자체의 quality 추이를 봅니다."
-              }
-              dataComponent="stats-funnel-trend-info"
-            />
-            <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
-              PostHog
-            </span>
-          </header>
-          {trend.length === 0 ? (
-            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
-              30일간 펀널 데이터가 없어요.
-            </p>
-          ) : (
-            <svg
-              viewBox={`0 0 ${chartW} ${chartH}`}
-              preserveAspectRatio="none"
-              style={{ width: "100%", height: chartH }}
-            >
-              <line x1={padL} y1={chartH - 22} x2={chartW - padR} y2={chartH - 22} stroke="hsl(214 32% 91%)" />
-              <line x1={padL} y1={yFor(maxConv * 0.5)} x2={chartW - padR} y2={yFor(maxConv * 0.5)} stroke="hsl(214 32% 91%)" strokeDasharray="3,3" />
-              <line x1={padL} y1={yFor(maxConv)} x2={chartW - padR} y2={yFor(maxConv)} stroke="hsl(214 32% 91%)" strokeDasharray="3,3" />
-              <text x={8} y={yFor(maxConv) + 4} fontSize={10} fill="hsl(215 16% 47%)">
-                {maxConv.toFixed(0)}%
-              </text>
-              <text x={8} y={yFor(maxConv * 0.5) + 4} fontSize={10} fill="hsl(215 16% 47%)">
-                {(maxConv * 0.5).toFixed(0)}%
-              </text>
-              <text x={8} y={chartH - 18} fontSize={10} fill="hsl(215 16% 47%)">
-                0%
-              </text>
-              {linePath && <path d={linePath} stroke="hsl(214 100% 34%)" strokeWidth={2} fill="none" />}
-              {trend.length > 0 && (() => {
-                const last = trend[trend.length - 1];
-                const x = padL + usableW;
-                const y = yFor(last.conversionRate);
-                return (
-                  <>
-                    <circle cx={x} cy={y} r={4} fill="hsl(214 100% 34%)" />
-                    <text
-                      x={x}
-                      y={y - 8}
-                      fontSize={11}
-                      fontWeight={600}
-                      fill="hsl(214 100% 34%)"
-                      textAnchor="middle"
-                    >
-                      {last.conversionRate.toFixed(1)}%
-                    </text>
-                  </>
-                );
-              })()}
-            </svg>
-          )}
-        </div>
-
-        {/* By device */}
-        <div
-          data-component="stats-funnel-device-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
-        >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">디바이스별 전환율</h3>
-            <InfoTooltip
-              text={
-                "Mobile vs Desktop 사용자의 펀널 완주율 비교 (지난 7일).\n디바이스 특성이 전환에 영향을 주는지 확인할 때 봅니다."
-              }
-              dataComponent="stats-funnel-device-info"
-            />
-            <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
-              PostHog
-            </span>
-          </header>
-          {byDevice.length === 0 ? (
-            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
-              디바이스별 데이터가 없어요.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-4">
-              {byDevice.slice(0, 4).map((d) => {
-                const isLow = d.conversionRate < 5;
-                return (
-                  <div key={d.device}>
-                    <div className="flex justify-between mb-1.5">
-                      <span className="text-[0.85rem] font-semibold">
-                        {d.device === "Mobile" ? "📱" : d.device === "Desktop" ? "💻" : "📱"}{" "}
-                        {d.device}
-                      </span>
-                      <span
-                        className={`text-[0.85rem] font-bold tabular-nums ${
-                          isLow ? "text-red-600" : "text-green-700"
-                        }`}
-                      >
-                        {d.conversionRate.toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="h-2.5 rounded-full bg-v3-dim-white overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${
-                          isLow
-                            ? "bg-gradient-to-r from-red-500 to-red-600"
-                            : "bg-gradient-to-r from-green-600 to-green-700"
-                        }`}
-                        style={{ width: `${Math.min(d.conversionRate * 5, 100)}%` }}
-                      />
-                    </div>
-                    <div className="text-[0.65rem] text-v3-text-muted mt-1">
-                      진입 {d.entries} · 제출 {d.completions}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </Block>
-
-      {/* By source */}
-      <Block name="stats-funnel-source">
-        <div
-          data-component="stats-funnel-source-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          data-component="stats-funnel-pages-card"
+          className="bg-white rounded-[28px] shadow-v3 p-6 overflow-hidden"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">유입 소스별 전환율</h3>
+            <h3 className="text-[0.95rem] font-bold text-v3-text">페이지별 상세 (지난 7일)</h3>
             <InfoTooltip
               text={
-                "유입 채널(direct, 네이버, 인스타그램 등)별 5단계 진행 + 최종 전환율 (지난 7일).\n어느 채널이 quality 높은 trafic을 보내는지 비교합니다."
+                "각 페이지의 PV, 유니크 방문자, 진입(entry)으로 사용된 횟수, 이탈(exit)으로 사용된 횟수, 그 페이지에서 시작한 세션 중 한 페이지만 보고 나간 비율(bounce %)을 보여줍니다."
               }
-              dataComponent="stats-funnel-source-info"
+              dataComponent="stats-funnel-pages-info"
             />
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
+            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
+              총 {pages.length}개 페이지
+            </span>
           </header>
-          {bySource.length === 0 ? (
-            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
-              유입 소스 데이터가 없어요.
+          {pages.length === 0 ? (
+            <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
+              지난 7일간 트래픽이 없어요.
             </p>
           ) : (
             <table className="w-full text-[0.82rem]">
               <thead>
                 <tr className="bg-v3-dim-white border-b border-v3-border">
-                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">유입 소스</th>
+                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">경로</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">PV</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">유니크</th>
                   <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">진입</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">견적</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">모달</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">시작</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">제출</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">전환율</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">이탈</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">이탈률</th>
+                  <th className="font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">PV 분포</th>
                 </tr>
               </thead>
               <tbody>
-                {bySource.slice(0, 8).map((s, i) => {
-                  const isLow = s.conversionRate < 5;
-                  return (
-                    <tr
-                      key={`${s.source}-${i}`}
-                      data-component="stats-funnel-source-row"
-                      className="border-b border-v3-border last:border-0 hover:bg-v3-dim-white"
+                {pages.map((p, i) => (
+                  <tr
+                    key={`${p.path}-${i}`}
+                    data-component="stats-funnel-page-row"
+                    className="border-b border-v3-border last:border-0 hover:bg-v3-dim-white"
+                  >
+                    <td className="px-3 py-3 font-mono text-v3-text">{p.path}</td>
+                    <td className="px-3 py-3 text-right font-semibold tabular-nums">{p.pv}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{p.unique}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{p.entries}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{p.exits}</td>
+                    <td
+                      className={`px-3 py-3 text-right tabular-nums ${
+                        p.bouncePct > 60 ? "text-red-600 font-semibold" : ""
+                      }`}
                     >
-                      <td className="px-3 py-3 font-semibold">{s.source}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{s.entries}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{s.loaded}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{s.modalOpened}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{s.started}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{s.submitted}</td>
-                      <td
-                        className={`px-3 py-3 text-right font-bold tabular-nums ${
-                          isLow ? "text-red-600" : "text-green-700"
-                        }`}
-                      >
-                        {s.conversionRate.toFixed(1)}%
-                      </td>
-                    </tr>
-                  );
-                })}
+                      {p.entries === 0 ? "—" : `${p.bouncePct.toFixed(0)}%`}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="h-2 rounded-full bg-v3-dim-white overflow-hidden min-w-[80px]">
+                        <div
+                          className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
+                          style={{ width: `${(p.pv / maxPv) * 100}%` }}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
+        </div>
+      </Block>
+
+      {/* Entry & Exit pages */}
+      <Block
+        name="stats-funnel-entry-exit"
+        className="grid grid-cols-1 lg:grid-cols-2 gap-4"
+      >
+        <div
+          data-component="stats-funnel-entry-card"
+          className="bg-white rounded-[28px] shadow-v3 p-6"
+        >
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">진입 페이지 Top</h3>
+            <InfoTooltip
+              text={
+                "각 세션의 첫 페이지뷰(entry page) 통계.\n사용자가 사이트에 들어왔을 때 가장 자주 보는 페이지를 표시합니다."
+              }
+              dataComponent="stats-funnel-entry-info"
+            />
+            <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
+              PostHog
+            </span>
+          </header>
+          {entryPages.length === 0 ? (
+            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
+              세션 데이터가 아직 없어요.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              {entryPages.map((p) => (
+                <div key={p.path} className="flex items-center gap-3">
+                  <span className="w-[130px] truncate text-[0.78rem] font-mono text-v3-text">
+                    {p.path}
+                  </span>
+                  <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
+                      style={{ width: `${(p.count / maxEntry) * 100}%` }}
+                    />
+                  </div>
+                  <span className="w-20 text-right text-[0.78rem] font-semibold tabular-nums">
+                    {p.count}
+                    <span className="ml-1 text-[0.65rem] font-normal text-v3-text-muted">
+                      {p.pct.toFixed(0)}%
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div
+          data-component="stats-funnel-exit-card"
+          className="bg-white rounded-[28px] shadow-v3 p-6"
+        >
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">이탈 페이지 Top</h3>
+            <InfoTooltip
+              text={
+                "각 세션의 마지막 페이지뷰(exit page) 통계.\n사용자가 사이트를 떠나기 직전에 가장 자주 본 페이지를 표시합니다."
+              }
+              dataComponent="stats-funnel-exit-info"
+            />
+            <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
+              PostHog
+            </span>
+          </header>
+          {exitPages.length === 0 ? (
+            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
+              세션 데이터가 아직 없어요.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              {exitPages.map((p) => (
+                <div key={p.path} className="flex items-center gap-3">
+                  <span className="w-[130px] truncate text-[0.78rem] font-mono text-v3-text">
+                    {p.path}
+                  </span>
+                  <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-red-500 to-red-600"
+                      style={{ width: `${(p.count / maxExit) * 100}%` }}
+                    />
+                  </div>
+                  <span className="w-20 text-right text-[0.78rem] font-semibold tabular-nums">
+                    {p.count}
+                    <span className="ml-1 text-[0.65rem] font-normal text-v3-text-muted">
+                      {p.pct.toFixed(0)}%
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Block>
+
+      {/* Page transitions */}
+      <Block name="stats-funnel-transitions">
+        <div
+          data-component="stats-funnel-transitions-card"
+          className="bg-white rounded-[28px] shadow-v3 p-6"
+        >
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">주요 페이지 이동 경로</h3>
+            <InfoTooltip
+              text={
+                "한 세션 안에서 사용자가 페이지 A를 본 직후 페이지 B로 이동한 횟수.\n가장 자주 발생한 이동 경로를 통해 자연스러운 네비게이션 흐름을 파악합니다."
+              }
+              dataComponent="stats-funnel-transitions-info"
+            />
+            <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
+              PostHog
+            </span>
+            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
+              상위 {transitions.length}개
+            </span>
+          </header>
+          {transitions.length === 0 ? (
+            <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
+              연속된 페이지뷰 데이터가 아직 없어요. (세션당 PV가 2회 이상 발생해야 표시됩니다)
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {transitions.map((t, i) => (
+                <div
+                  key={`${t.fromPath}-${t.toPath}-${i}`}
+                  data-component="stats-funnel-transition-row"
+                  className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-v3-dim-white"
+                >
+                  <span className="font-mono text-[0.78rem] text-v3-text shrink-0 max-w-[180px] truncate">
+                    {t.fromPath}
+                  </span>
+                  <span className="text-v3-primary text-base shrink-0">→</span>
+                  <span className="font-mono text-[0.78rem] text-v3-text shrink-0 max-w-[180px] truncate">
+                    {t.toPath}
+                  </span>
+                  <div className="flex-1 h-2 rounded-full bg-v3-dim-white overflow-hidden mx-2 min-w-[60px]">
+                    <div
+                      className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
+                      style={{ width: `${(t.count / maxTransition) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-[0.78rem] font-semibold tabular-nums shrink-0 w-16 text-right">
+                    {t.count}회
+                    <span className="ml-1 text-[0.65rem] font-normal text-v3-text-muted">
+                      {t.pct.toFixed(0)}%
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Block>
+
+      {/* Conversion funnel (kept as a featured "주요 전환 펀널") */}
+      <Block name="stats-funnel-conversion">
+        <div
+          data-component="stats-funnel-conversion-card"
+          className="bg-white rounded-[28px] shadow-v3 p-6"
+        >
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">
+              핵심 전환 펀널 · 가격 → 상담
+            </h3>
+            <InfoTooltip
+              text={
+                "가격 페이지 진입부터 상담 신청 제출까지 5단계의 사용자 흐름 (지난 7일).\n사이트의 핵심 비즈니스 전환 경로를 별도로 추적합니다."
+              }
+              dataComponent="stats-funnel-conversion-info"
+            />
+            <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
+              PostHog
+            </span>
+            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
+              전환율{" "}
+              <strong className="text-v3-text">
+                {conversionFunnel.conversionRate.toFixed(1)}%
+              </strong>
+            </span>
+          </header>
+          <FunnelBars
+            steps={conversionFunnel.steps}
+            biggestDropStep={conversionFunnel.biggestDropStep}
+            variant="verbose"
+          />
         </div>
       </Block>
     </section>

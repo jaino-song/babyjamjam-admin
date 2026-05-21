@@ -10,6 +10,10 @@ import type {
   InquiryByBranchRow,
   InquiryDailyPoint,
   InquiryHourlyPoint,
+  PageDetailRow,
+  PageEntryExitRow,
+  PageNavSummary,
+  PageTransitionRow,
   RecentInquiry,
   RegionShareRow,
   SourceShareRow,
@@ -470,6 +474,197 @@ export async function getRegionBreakdown(days = 7): Promise<RegionShareRow[]> {
     count: safeNumber(count),
     pct: total > 0 ? (safeNumber(count) / total) * 100 : 0,
   }));
+}
+
+// ============================================================
+// PAGE NAVIGATION (per-page traffic + transitions)
+// ============================================================
+
+/** Per-page details: PV, unique, entries, exits, bounce % */
+export async function getPagesDetail(days = 7, limit = 30): Promise<PageDetailRow[]> {
+  // Single CTE-style query: per session, classify each pathname as entry/exit/bounce
+  const rows = await hogQL<[string, number, number, number, number, number]>(`
+    SELECT
+      pages.path,
+      pages.pv,
+      pages.unique,
+      entries.cnt,
+      exits.cnt,
+      bounces.cnt
+    FROM
+      (SELECT properties.$pathname AS path, count() AS pv, uniq(distinct_id) AS unique
+       FROM events
+       WHERE event = '$pageview'
+         AND timestamp >= now() - INTERVAL ${days} DAY
+         AND properties.$pathname IS NOT NULL
+       GROUP BY path) AS pages
+      LEFT JOIN
+      (SELECT first_path AS path, count() AS cnt FROM (
+        SELECT argMin(properties.$pathname, timestamp) AS first_path
+        FROM events
+        WHERE event = '$pageview'
+          AND timestamp >= now() - INTERVAL ${days} DAY
+          AND properties.$session_id IS NOT NULL
+          AND properties.$pathname IS NOT NULL
+        GROUP BY properties.$session_id
+      ) GROUP BY first_path) AS entries ON entries.path = pages.path
+      LEFT JOIN
+      (SELECT last_path AS path, count() AS cnt FROM (
+        SELECT argMax(properties.$pathname, timestamp) AS last_path
+        FROM events
+        WHERE event = '$pageview'
+          AND timestamp >= now() - INTERVAL ${days} DAY
+          AND properties.$session_id IS NOT NULL
+          AND properties.$pathname IS NOT NULL
+        GROUP BY properties.$session_id
+      ) GROUP BY last_path) AS exits ON exits.path = pages.path
+      LEFT JOIN
+      (SELECT first_path AS path, count() AS cnt FROM (
+        SELECT argMin(properties.$pathname, timestamp) AS first_path, count() AS pv_in_session
+        FROM events
+        WHERE event = '$pageview'
+          AND timestamp >= now() - INTERVAL ${days} DAY
+          AND properties.$session_id IS NOT NULL
+          AND properties.$pathname IS NOT NULL
+        GROUP BY properties.$session_id
+        HAVING pv_in_session = 1
+      ) GROUP BY first_path) AS bounces ON bounces.path = pages.path
+    ORDER BY pages.pv DESC
+    LIMIT ${limit}
+  `);
+  return rows.map(([path, pv, unique, entries, exits, bounces]) => {
+    const entryCount = safeNumber(entries);
+    return {
+      path: safeString(path) ?? "(unknown)",
+      pv: safeNumber(pv),
+      unique: safeNumber(unique),
+      entries: entryCount,
+      exits: safeNumber(exits),
+      bouncePct: entryCount > 0 ? (safeNumber(bounces) / entryCount) * 100 : 0,
+    };
+  });
+}
+
+/** Top pages where sessions begin */
+export async function getEntryPages(days = 7, limit = 8): Promise<PageEntryExitRow[]> {
+  const rows = await hogQL<[string, number]>(`
+    SELECT first_path AS path, count() AS c
+    FROM (
+      SELECT argMin(properties.$pathname, timestamp) AS first_path
+      FROM events
+      WHERE event = '$pageview'
+        AND timestamp >= now() - INTERVAL ${days} DAY
+        AND properties.$session_id IS NOT NULL
+        AND properties.$pathname IS NOT NULL
+      GROUP BY properties.$session_id
+    )
+    WHERE first_path IS NOT NULL
+    GROUP BY path
+    ORDER BY c DESC
+    LIMIT ${limit}
+  `);
+  const total = rows.reduce((s, [, c]) => s + safeNumber(c), 0);
+  return rows.map(([path, count]) => ({
+    path: safeString(path) ?? "(unknown)",
+    count: safeNumber(count),
+    pct: total > 0 ? (safeNumber(count) / total) * 100 : 0,
+  }));
+}
+
+/** Top pages where sessions end (last PV in session) */
+export async function getExitPages(days = 7, limit = 8): Promise<PageEntryExitRow[]> {
+  const rows = await hogQL<[string, number]>(`
+    SELECT last_path AS path, count() AS c
+    FROM (
+      SELECT argMax(properties.$pathname, timestamp) AS last_path
+      FROM events
+      WHERE event = '$pageview'
+        AND timestamp >= now() - INTERVAL ${days} DAY
+        AND properties.$session_id IS NOT NULL
+        AND properties.$pathname IS NOT NULL
+      GROUP BY properties.$session_id
+    )
+    WHERE last_path IS NOT NULL
+    GROUP BY path
+    ORDER BY c DESC
+    LIMIT ${limit}
+  `);
+  const total = rows.reduce((s, [, c]) => s + safeNumber(c), 0);
+  return rows.map(([path, count]) => ({
+    path: safeString(path) ?? "(unknown)",
+    count: safeNumber(count),
+    pct: total > 0 ? (safeNumber(count) / total) * 100 : 0,
+  }));
+}
+
+/** Top page transitions: count of times users went from A → B in the same session */
+export async function getPageTransitions(days = 7, limit = 15): Promise<PageTransitionRow[]> {
+  const rows = await hogQL<[string, string, number]>(`
+    SELECT
+      pair.1 AS from_path,
+      pair.2 AS to_path,
+      count() AS c
+    FROM (
+      SELECT arrayJoin(arrayMap(i -> tuple(paths[i], paths[i+1]), range(1, length(paths)))) AS pair
+      FROM (
+        SELECT arrayMap(x -> x.2, arraySort(x -> x.1, groupArray(tuple(timestamp, properties.$pathname)))) AS paths
+        FROM events
+        WHERE event = '$pageview'
+          AND timestamp >= now() - INTERVAL ${days} DAY
+          AND properties.$session_id IS NOT NULL
+          AND properties.$pathname IS NOT NULL
+        GROUP BY properties.$session_id
+        HAVING length(paths) >= 2
+      )
+    )
+    WHERE pair.1 != pair.2
+    GROUP BY from_path, to_path
+    ORDER BY c DESC
+    LIMIT ${limit}
+  `);
+  const total = rows.reduce((s, [, , c]) => s + safeNumber(c), 0);
+  return rows.map(([from, to, count]) => ({
+    fromPath: safeString(from) ?? "(unknown)",
+    toPath: safeString(to) ?? "(unknown)",
+    count: safeNumber(count),
+    pct: total > 0 ? (safeNumber(count) / total) * 100 : 0,
+  }));
+}
+
+/** Site-wide page navigation summary (top-of-page KPIs) */
+export async function getPageNavSummary(days = 7): Promise<PageNavSummary> {
+  const rows = await hogQL<[number, number]>(`
+    SELECT
+      uniq(properties.$pathname) AS active_pages,
+      count() AS total_pv
+    FROM events
+    WHERE event = '$pageview'
+      AND timestamp >= now() - INTERVAL ${days} DAY
+      AND properties.$pathname IS NOT NULL
+  `);
+  const bounceRows = await hogQL<[number, number]>(`
+    SELECT
+      countIf(pv_count = 1) AS bounces,
+      count() AS total
+    FROM (
+      SELECT properties.$session_id AS sid, count() AS pv_count
+      FROM events
+      WHERE event = '$pageview'
+        AND timestamp >= now() - INTERVAL ${days} DAY
+        AND properties.$session_id IS NOT NULL
+      GROUP BY sid
+    )
+  `);
+  const activePages = safeNumber(rows[0]?.[0]);
+  const totalPv = safeNumber(rows[0]?.[1]);
+  const bounces = safeNumber(bounceRows[0]?.[0]);
+  const totalSessions = safeNumber(bounceRows[0]?.[1]);
+  return {
+    activePages,
+    totalPv,
+    avgPvPerPage: activePages > 0 ? totalPv / activePages : 0,
+    avgBouncePct: totalSessions > 0 ? (bounces / totalSessions) * 100 : 0,
+  };
 }
 
 // Helper: format Korean relative time. Guards against epoch-zero / "no data"
