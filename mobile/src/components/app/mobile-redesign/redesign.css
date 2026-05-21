@@ -262,6 +262,82 @@
   border-color: hsl(var(--v3-border));
 }
 
+/* ===== Contracts list (icon + title + meta + status badge) ===== */
+.contract-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.contract-item:hover { background: hsl(var(--v3-primary-light)); }
+.contract-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: hsl(var(--v3-primary-light));
+  color: hsl(var(--v3-primary));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.contract-info {
+  flex: 1;
+  min-width: 0;
+}
+.contract-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.83rem;
+  font-weight: 700;
+  color: hsl(var(--v3-dark));
+}
+.contract-meta {
+  font-size: 0.66rem;
+  color: hsl(var(--v3-text-muted));
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.contract-meta .sep { color: hsl(var(--v3-border)); }
+.step-label {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: hsl(var(--v3-text));
+}
+.step-label.muted {
+  color: hsl(var(--v3-text-muted));
+  font-weight: 500;
+}
+
+/* ===== Inline search bar (rows above filter pills inside list-card) ===== */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: hsl(var(--v3-dim-white));
+  border-radius: 12px;
+  padding: 9px 12px;
+  margin: 0 12px 8px;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.8rem;
+}
+.search-bar input {
+  border: 0;
+  background: transparent;
+  outline: none;
+  flex: 1;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: hsl(var(--v3-dark));
+}
+.search-bar input::placeholder { color: hsl(var(--v3-text-muted)); }
+
 /* ===== Action feedback toast (after list-card action button click) ===== */
 .action-feedback {
   margin: 6px 12px 0;
@@ -271,4 +347,212 @@
   border-radius: 10px;
   font-size: 0.72rem;
   font-weight: 600;
+}
+
+/* ===== /all surface — menu screen ===== */
+.menu-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scrollbar-width: none;
+}
+.menu-content::-webkit-scrollbar { display: none; }
+
+.profile-card {
+  background: linear-gradient(135deg, hsl(var(--v3-primary)), hsl(var(--v3-purple)));
+  color: white;
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.profile-card::after {
+  content: "";
+  position: absolute;
+  right: -30px;
+  bottom: -30px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  filter: blur(20px);
+}
+.profile-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+.profile-info {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+  line-height: 1.1;
+}
+.profile-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.profile-role {
+  font-size: 0.62rem;
+  opacity: 0.85;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+.profile-role .role-dot {
+  width: 3px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+}
+.profile-edit {
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: white;
+  padding: 5px 7px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.menu-group { /* transparent group container */ }
+.menu-group-title {
+  padding: 10px 18px 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: hsl(var(--v3-text-muted));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  border-top: 1px solid hsl(var(--v3-border));
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+}
+.menu-row:first-of-type { border-top: 0; }
+.menu-row:hover { background: rgba(255, 255, 255, 0.6); }
+.menu-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.menu-text {
+  flex: 1;
+  min-width: 0;
+}
+.menu-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: hsl(var(--v3-dark));
+}
+.menu-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: hsl(var(--v3-text-muted));
+}
+.menu-badge {
+  background: hsl(var(--v3-burgundy));
+  color: white;
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.menu-value {
+  font-size: 0.78rem;
+  color: hsl(var(--v3-text-muted));
+  font-weight: 600;
+}
+
+.branch-switch-btn {
+  width: 100%;
+  background: white;
+  border: 1px solid hsl(var(--v3-border));
+  color: hsl(var(--v3-primary));
+  padding: 14px;
+  border-radius: 18px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+}
+.logout-btn {
+  width: 100%;
+  background: white;
+  border: 1px solid hsl(var(--v3-border));
+  color: hsl(var(--v3-burgundy));
+  padding: 14px;
+  border-radius: 18px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+}
+.app-version {
+  text-align: center;
+  font-size: 0.65rem;
+  color: hsl(var(--v3-text-muted));
+  padding: 8px 0;
+}
+
+/* Pop-up entrance for cards (used by .profile-card .pop-up) */
+@keyframes mobile-redesign-pop-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.profile-card.pop-up {
+  animation: mobile-redesign-pop-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }

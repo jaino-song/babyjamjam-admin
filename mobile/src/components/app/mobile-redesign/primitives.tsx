@@ -160,9 +160,26 @@ export function SectionedList({ sections }: { sections: SectionRows[] }) {
 
 export function ClientLikeRow({ row }: { row: ListRow }) {
   const hasDue = Boolean(row.due || row.dueSub);
+  const interactive = typeof row.onClick === "function";
+
+  const handleKey = interactive
+    ? (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          row.onClick?.();
+        }
+      }
+    : undefined;
 
   return (
-    <div className="list-item" data-component="mobile-redesign-list-row">
+    <div
+      className="list-item"
+      data-component="mobile-redesign-list-row"
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={row.onClick}
+      onKeyDown={handleKey}
+    >
       <div className={`list-avatar ${avatarToneClass[row.avatarTone ?? "primary"]}`}>{row.initial}</div>
       <div className="list-info">
         <div className="list-name">
@@ -196,27 +213,43 @@ export function ContractList({ sections }: { sections: Array<{ title: string; ro
       {sections.map((section) => (
         <div className="section-block" key={section.title} data-component="mobile-redesign-contract-section">
           <div className="section-header">{section.title}</div>
-          {section.rows.map((row) => (
-            <div
-              className="contract-item"
-              key={`${section.title}-${row.name}`}
-              data-component="mobile-redesign-contract-row"
-              data-progress={row.badge}
-            >
-              <div className={`contract-icon ${iconToneClass[row.iconTone]}`}>
-                <FileCheck2 size={18} strokeWidth={2.5} />
-              </div>
-              <div className="contract-info">
-                <div className="contract-title">{row.name}</div>
-                <div className="contract-meta">
-                  <span className={row.badgeTone === "green" ? "step-label muted" : "step-label"}>{row.meta}</span>
+          {section.rows.map((row) => {
+            const interactive = typeof row.onClick === "function";
+            return (
+              <div
+                className="contract-item"
+                key={`${section.title}-${row.id ?? row.name}`}
+                data-component="mobile-redesign-contract-row"
+                data-progress={row.badge}
+                role={interactive ? "button" : undefined}
+                tabIndex={interactive ? 0 : undefined}
+                onClick={row.onClick}
+                onKeyDown={
+                  interactive
+                    ? (e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          row.onClick?.();
+                        }
+                      }
+                    : undefined
+                }
+              >
+                <div className={`contract-icon ${iconToneClass[row.iconTone]}`}>
+                  <FileCheck2 size={18} strokeWidth={2.5} />
+                </div>
+                <div className="contract-info">
+                  <div className="contract-title">{row.name}</div>
+                  <div className="contract-meta">
+                    <span className={row.badgeTone === "green" ? "step-label muted" : "step-label"}>{row.meta}</span>
+                  </div>
+                </div>
+                <div className="list-right">
+                  <Badge label={row.badge} tone={row.badgeTone} />
                 </div>
               </div>
-              <div className="list-right">
-                <Badge label={row.badge} tone={row.badgeTone} />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ))}
     </>

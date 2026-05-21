@@ -25,6 +25,7 @@ export interface DashboardStat {
 }
 
 export interface ListRow {
+  id?: string | number;
   name: string;
   meta: string;
   initial: string;
@@ -34,6 +35,7 @@ export interface ListRow {
   dueSub?: string;
   dueTone?: "urgent" | "soon";
   avatarTone?: "primary" | "green" | "burgundy" | "orange" | "purple";
+  onClick?: () => void;
 }
 
 export interface SectionRows {
@@ -42,11 +44,13 @@ export interface SectionRows {
 }
 
 export interface ContractRow {
+  id?: string | number;
   name: string;
   meta: string;
   badge: string;
   badgeTone: "primary" | "green" | "muted";
   iconTone: "primary" | "green" | "muted";
+  onClick?: () => void;
 }
 
 export interface MenuRow {
