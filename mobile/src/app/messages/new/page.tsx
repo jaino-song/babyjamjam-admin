@@ -1,14 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { isAxiosError } from "axios";
 import { useMutation } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
-import { ChevronLeft, Send } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronLeft, FileText, Send } from "lucide-react";
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api/client";
+import { useMessageTemplates, useMessageTemplate } from "@/hooks/use-message-templates";
 
 interface SendResponse {
   result?: string;
@@ -23,14 +24,34 @@ function normalizePhone(raw: string) {
   return raw.replace(/[^0-9\-,]/g, "");
 }
 
+function hasUnreplacedVariables(text: string) {
+  return /#\{[^}]+\}/.test(text);
+}
+
 export default function NewMessagePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialBody = searchParams.get("body") ?? "";
+  const initialTemplateId = searchParams.get("template") ?? "";
+
   const [receiver, setReceiver] = useState("");
   const [recipientName, setRecipientName] = useState("");
   const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(initialBody);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(initialTemplateId);
+
+  const { data: userTemplates = [] } = useMessageTemplates();
+  const { data: prefilledTemplate } = useMessageTemplate(selectedTemplateId);
+
+  useEffect(() => {
+    if (prefilledTemplate?.content) {
+      setBody(prefilledTemplate.content);
+    }
+  }, [prefilledTemplate]);
+
+  const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
 
   const validationError = useMemo(() => {
     if (!receiver.trim()) return "수신자 연락처를 입력해 주세요.";
@@ -98,6 +119,38 @@ export default function NewMessagePage() {
 
       <ContentPaper variant="v3">
         <form data-component="messages-new-form" onSubmit={handleSubmit} className="space-y-4">
+          {userTemplates.length > 0 ? (
+            <div className="space-y-1.5">
+              <label htmlFor="template-select" className="text-[0.78rem] font-semibold text-v3-dark">
+                템플릿 (선택)
+              </label>
+              <div className="relative">
+                <FileText className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-v3-text-muted" />
+                <select
+                  id="template-select"
+                  data-component="messages-new-template-select"
+                  value={selectedTemplateId}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setSelectedTemplateId(next);
+                    if (!next) {
+                      // user cleared selection → wipe prefilled body so they can start fresh
+                      setBody("");
+                    }
+                  }}
+                  className="w-full appearance-none rounded-2xl border border-v3-border/60 bg-white px-9 py-3 text-sm focus:border-v3-primary focus:outline-none"
+                >
+                  <option value="">템플릿을 선택하지 않음 (직접 작성)</option>
+                  {userTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
+
           <div className="space-y-1.5">
             <label htmlFor="receiver" className="text-[0.78rem] font-semibold text-v3-dark">
               수신자 연락처 <span className="text-red-500">*</span>
@@ -165,6 +218,14 @@ export default function NewMessagePage() {
             <p className="text-right text-[0.68rem] text-v3-text-muted">
               {body.length} / {MAX_BODY}
             </p>
+            {showVariableHint ? (
+              <div
+                data-component="messages-new-variable-hint"
+                className="rounded-2xl border border-v3-border/60 bg-v3-dim-white px-3 py-2 text-[0.72rem] text-v3-text-muted"
+              >
+                템플릿 변수 (예: <code className="rounded bg-white px-1 font-mono text-[0.7rem]">#&#123;고객명&#125;</code>)가 본문에 그대로 남아 있습니다. 발송 전에 실제 값으로 직접 바꿔 주세요.
+              </div>
+            ) : null}
           </div>
 
           {validationError ? (
