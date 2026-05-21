@@ -1,536 +1,199 @@
 "use client";
 
-import { useState, useRef, useLayoutEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+
 import {
-    Users,
-    UserCheck,
-    Plus,
-    Phone,
-    CheckCircle,
-    Clock,
-    Briefcase,
-    MoreVertical,
-} from "lucide-react";
-import {
-    Employee,
-    EmployeeStatus,
-    useDeleteEmployee,
+  type Employee,
+  type EmployeeStatus,
+  useDeleteEmployee,
 } from "@/hooks/useEmployees";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
-import {
-    StatsBar,
-    SplitLayout,
-    ListPanel,
-    DetailPanel,
-    InfoCard,
-    InfoRow,
-    AnimatedSlotList,
-    HeaderActionButton,
-    EmptyState,
-    ListEmptyState,
-    DetailTabs,
-} from "@/components/app/v3";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
-import { StatusPill } from "@/components/app/ui/status-badge";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { EmployeeDetailModal } from "@/components/app/employees/EmployeeDetailModal";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
-import { cn } from "@/lib/utils";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
+import { useLocale } from "@/providers/LocaleProvider";
+import { useToast } from "@/hooks/use-toast";
+import { t } from "@/lib/i18n/translations";
+import { EmployeesRedesign } from "@/components/app/mobile-redesign/EmployeesRedesign";
+import type { EmployeesRedesignFilter } from "@/components/app/mobile-redesign/EmployeesRedesign";
+import type { ListRow, SectionRows } from "@/components/app/mobile-redesign/mockup-data";
 
-const filterItems = [
-    { label: "전체", value: "all" },
-    { label: "근무 가능", value: "active" },
-    { label: "근무 불가", value: "inactive" },
+const AVATAR_TONES: NonNullable<ListRow["avatarTone"]>[] = [
+  "primary",
+  "green",
+  "burgundy",
+  "orange",
+  "purple",
 ];
 
-const DETAIL_SECTION_ORDER = ["basic", "work"] as const;
-type DetailSectionKey = (typeof DETAIL_SECTION_ORDER)[number];
-
-const getDetailSectionIndex = (section: DetailSectionKey) =>
-    DETAIL_SECTION_ORDER.indexOf(section);
-
-const isDetailSectionKey = (section: string): section is DetailSectionKey =>
-    DETAIL_SECTION_ORDER.includes(section as DetailSectionKey);
-
-const EMPLOYEE_STATUS_LABEL: Record<EmployeeStatus, string> = {
-    available: "근무 가능",
-    working: "근무중",
-    unavailable: "근무 불가",
-};
-
-function getGradeBadge(grade: string) {
-    const { label, variant } = getEmployeeGradeBadgeStyle(grade);
-
-    return (
-        <StatusPill variant={variant} size="sm">
-            {label}
-        </StatusPill>
-    );
+function pickAvatarTone(name: string, fallback: number): NonNullable<ListRow["avatarTone"]> {
+  const code = name.charCodeAt(0) || fallback;
+  return AVATAR_TONES[code % AVATAR_TONES.length];
 }
 
-function getOpenToNextWorkBadge(openToNextWork: boolean) {
-    return (
-        <StatusPill variant={openToNextWork ? "success" : "neutral"} size="sm">
-            {openToNextWork ? "근무 가능" : "근무 불가"}
-        </StatusPill>
-    );
+function employeeInitial(name: string) {
+  return name.trim().charAt(0) || "?";
 }
 
-function formatDate(dateStr: string | null | undefined): string {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+function employeeMeta(e: Employee) {
+  const area = (e.workArea ?? []).join(" · ") || "근무 지역 미설정";
+  const grade = e.grade ? ` · ${e.grade}등급` : "";
+  return `${area}${grade}`;
 }
 
-function formatPhoneNumber(phone: string | null | undefined): string {
-    if (!phone) return "-";
-
-    const numbers = phone.replace(/[^\d]/g, "");
-    if (numbers.length <= 3) return numbers;
-    if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-
-    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
+interface EmployeeGroup {
+  key: EmployeeStatus;
+  title: string;
+  badge: string;
+  badgeTone: ListRow["badgeTone"];
 }
+
+const GROUPS: EmployeeGroup[] = [
+  { key: "available", title: "근무 가능", badge: "근무 가능", badgeTone: "orange" },
+  { key: "working", title: "근무 중", badge: "근무 중", badgeTone: "green" },
+  { key: "unavailable", title: "근무 불가", badge: "근무 불가", badgeTone: "muted" },
+];
 
 export default function EmployeesPage() {
-    const router = useRouter();
-    const [search, setSearch] = useState("");
-    const [filter, setFilter] = useState("all");
-    const [formDialogOpen, setFormDialogOpen] = useState(false);
-    const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-    const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
-    const [activeSection, setActiveSection] = useState<DetailSectionKey>("basic");
-    const [sectionDirection, setSectionDirection] = useState<-1 | 0 | 1>(0);
-    const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
-    const prefersReducedMotion = useReducedMotion();
-    const detailContentMotionRef = useRef<HTMLDivElement | null>(null);
-    const basicSectionRef = useRef<HTMLDivElement | null>(null);
+  const locale = useLocale();
+  const { toast } = useToast();
 
-    const {
-        employees,
-        allEmployees,
-        isLoading,
-        isFetchingNextPage,
-        hasNextPage,
-        fetchNextPage,
-        isInitialLoad,
-    } = useInfiniteEmployees({ filter, search });
-    const deleteEmployee = useDeleteEmployee();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selected, setSelected] = useState<Employee | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [editing, setEditing] = useState<Employee | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
 
-    const stats = {
-        total: allEmployees.length,
-        active: allEmployees.filter((e: Employee) => e.openToNextWork).length,
-        available: allEmployees.filter((e: Employee) => e.status === "available").length,
-        working: allEmployees.filter((e: Employee) => e.status === "working").length,
+  const { allEmployees } = useInfiniteEmployees({
+    filter: "all",
+    search: searchQuery,
+  });
+
+  const deleteEmployee = useDeleteEmployee();
+
+  const handleSelect = (employee: Employee) => {
+    setSelected(employee);
+    setDetailOpen(true);
+  };
+
+  const handleEdit = (employee: Employee) => {
+    setEditing(employee);
+    setFormOpen(true);
+    setDetailOpen(false);
+  };
+
+  const handleDeleteRequest = async (id: number): Promise<boolean> => {
+    setDeleteTarget(id);
+    return false;
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (deleteTarget == null) return;
+    try {
+      await deleteEmployee.mutateAsync(deleteTarget);
+      if (selected?.id === deleteTarget) {
+        setSelected(null);
+        setDetailOpen(false);
+      }
+      setDeleteTarget(null);
+      toast({
+        title: t(locale, "employees.delete-success"),
+        description: t(locale, "employees.delete-success-description"),
+      });
+    } catch {
+      toast({
+        title: t(locale, "employees.delete-fail"),
+        description: t(locale, "employees.delete-fail-description"),
+        variant: "destructive",
+      });
+    }
+  };
+
+  const { sections, filters, total } = useMemo(() => {
+    const counts: Record<EmployeeStatus, number> = {
+      available: 0,
+      working: 0,
+      unavailable: 0,
     };
+    const groupedRows: Partial<Record<EmployeeStatus, ListRow[]>> = {};
 
-    const handleAddNew = () => {
-        router.push("/employees/new");
-    };
+    let i = 0;
+    for (const employee of allEmployees) {
+      const group = GROUPS.find((g) => g.key === employee.status);
+      if (!group) continue;
+      counts[group.key] = (counts[group.key] ?? 0) + 1;
+      const row: ListRow = {
+        id: employee.id,
+        name: employee.name,
+        meta: employeeMeta(employee),
+        initial: employeeInitial(employee.name),
+        badge: group.badge,
+        badgeTone: group.badgeTone,
+        avatarTone: pickAvatarTone(employee.name, i++),
+        onClick: () => handleSelect(employee),
+      };
+      groupedRows[group.key] = groupedRows[group.key] ?? [];
+      groupedRows[group.key]!.push(row);
+    }
 
-    const handleSelectEmployee = (employee: Employee) => {
-        setSelectedEmployee(employee);
-    };
+    const builtSections: SectionRows[] = GROUPS.filter((g) => (groupedRows[g.key]?.length ?? 0) > 0).map((g) => ({
+      title: `${g.title} · ${groupedRows[g.key]!.length}명`,
+      rows: groupedRows[g.key]!,
+    }));
 
-    const handleEdit = (employee: Employee) => {
-        setEditingEmployee(employee);
-        setFormDialogOpen(true);
-    };
+    const builtFilters: EmployeesRedesignFilter[] = [
+      { label: "전체", count: String(allEmployees.length), active: true },
+      ...GROUPS.filter((g) => counts[g.key] > 0).map((g) => ({
+        label: g.title,
+        count: String(counts[g.key]),
+      })),
+    ];
 
-    const handleDeleteRequest = (id: number) => {
-        setDeleteTargetEmployeeId(id);
-    };
+    return { sections: builtSections, filters: builtFilters, total: allEmployees.length };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allEmployees]);
 
-    const handleDeleteConfirm = async () => {
-        if (deleteTargetEmployeeId == null) {
-            return;
-        }
+  return (
+    <>
+      <EmployeesRedesign
+        sections={sections}
+        filters={filters}
+        total={total}
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
 
-        try {
-            await deleteEmployee.mutateAsync(deleteTargetEmployeeId);
-            if (selectedEmployee?.id === deleteTargetEmployeeId) {
-                setSelectedEmployee(null);
-            }
-            setDeleteTargetEmployeeId(null);
-        } catch (err) {
-            console.error("Failed to delete employee:", err);
-        }
-    };
+      <EmployeeDetailModal
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        employee={selected}
+        onEdit={handleEdit}
+        onDelete={handleDeleteRequest}
+      />
 
-    const handleFormDialogClose = () => {
-        setFormDialogOpen(false);
-        setEditingEmployee(null);
-    };
+      <ConfirmActionModal
+        open={deleteTarget != null}
+        title={t(locale, "common.delete")}
+        description={t(locale, "employees.delete-confirm")}
+        cancelLabel={t(locale, "common.cancel")}
+        confirmLabel={t(locale, "common.delete")}
+        loading={deleteEmployee.isPending}
+        onOpenChange={(open) => {
+          if (!open && !deleteEmployee.isPending) setDeleteTarget(null);
+        }}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteConfirm}
+      />
 
-    const handleSectionChange = (nextSection: string) => {
-        if (!isDetailSectionKey(nextSection)) {
-            return;
-        }
-
-        const currentIndex = getDetailSectionIndex(activeSection);
-        const nextIndex = getDetailSectionIndex(nextSection);
-
-        if (nextIndex === currentIndex) {
-            setSectionDirection(0);
-            setActiveSection(nextSection);
-            return;
-        }
-
-        setSectionDirection(nextIndex > currentIndex ? 1 : -1);
-        setActiveSection(nextSection);
-    };
-
-    const getDetailContentEnterX = (direction: -1 | 0 | 1) => {
-        if (direction === 0) return 0;
-        return direction > 0 ? "100%" : "-100%";
-    };
-
-    const getDetailContentExitX = (direction: -1 | 0 | 1) => {
-        if (direction === 0) return 0;
-        return direction > 0 ? "-100%" : "100%";
-    };
-
-    const detailContentVariants = {
-        initial: (direction: -1 | 0 | 1) => ({
-            x: prefersReducedMotion ? 0 : getDetailContentEnterX(direction),
-        }),
-        animate: { x: 0 },
-        exit: (direction: -1 | 0 | 1) => ({
-            x: prefersReducedMotion ? 0 : getDetailContentExitX(direction),
-        }),
-    };
-
-    const detailContentTransition = prefersReducedMotion
-        ? { duration: 0 }
-        : {
-              type: "tween" as const,
-              duration: 0.32,
-              ease: [0.22, 1, 0.36, 1] as const,
-          };
-
-    useLayoutEffect(() => {
-        if (activeSection !== "basic") {
-            return;
-        }
-
-        const motionContainer = detailContentMotionRef.current;
-        const basicSectionElement = basicSectionRef.current;
-
-        if (!motionContainer || !basicSectionElement) {
-            return;
-        }
-
-        const updateMinHeight = () => {
-            motionContainer.style.minHeight = `${Math.ceil(
-                basicSectionElement.getBoundingClientRect().height
-            )}px`;
-        };
-
-        updateMinHeight();
-
-        const resizeObserver = new ResizeObserver(() => {
-            updateMinHeight();
-        });
-
-        resizeObserver.observe(basicSectionElement);
-
-        return () => {
-            resizeObserver.disconnect();
-        };
-    }, [activeSection, selectedEmployee?.id]);
-
-    return (
-        <section data-component="employees" className="space-y-6">
-            <StatsBar
-                name="employees"
-                items={[
-                    { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
-                    { icon: CheckCircle, value: stats.active, label: "활성", counter: "명", colorIndex: 2 },
-                    { icon: Clock, value: stats.available, label: "근무 가능", counter: "명", colorIndex: 1 },
-                    { icon: Briefcase, value: stats.working, label: "배정됨", counter: "명", colorIndex: 3 },
-                ]}
-            />
-
-            <SplitLayout hasSelection={!!selectedEmployee} onBack={() => setSelectedEmployee(null)} autoHeight>
-                <ListPanel
-                    title="직원 목록"
-                    tabs={filterItems}
-                    activeTab={filter}
-                    onTabChange={setFilter}
-                    searchValue={search}
-                    onSearchChange={setSearch}
-                    searchPlaceholder="이름, 연락처, 지역으로 검색..."
-                    isLoading={isLoading}
-                    headerActions={
-                        <HeaderActionButton
-                            icon={Plus}
-                            label="직원 추가"
-                            onClick={handleAddNew}
-                            data-component="employees-header-add"
-                        />
-                    }
-                >
-                    <div className="space-y-2">
-                        {!isLoading && employees.length === 0 ? (
-                            <ListEmptyState
-                                message={search || filter !== "all" ? "검색 결과가 없습니다" : "등록된 직원이 없습니다"}
-                            />
-                        ) : (
-                            <AnimatedSlotList<Employee>
-                                items={employees}
-                                isLoading={isLoading}
-                                loadingCount={6}
-                                className="space-y-2"
-                                hasMore={hasNextPage}
-                                onLoadMore={fetchNextPage}
-                                isFetchingMore={isFetchingNextPage}
-                                isInitialLoad={isInitialLoad}
-                                slotClassName={({ item, isLoading: slotLoading }) => {
-                                    const isActive = !slotLoading && item && selectedEmployee?.id === item.id;
-                                    return cn(
-                                        "flex items-center gap-3 p-4 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent",
-                                        !slotLoading && "cursor-pointer",
-                                        isActive
-                                            ? "bg-v3-primary-light border-2 border-v3-primary"
-                                            : !slotLoading && "bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                                    );
-                                }}
-                                onSlotClick={(employee) => handleSelectEmployee(employee)}
-                                render={({ item: employee, isLoading: slotLoading }) => {
-                                    if (slotLoading) {
-                                        return (
-                                            <>
-                                                <div className="w-11 h-11 rounded-2xl shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
-                                                    <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
-                                                    <Skeleton className="h-3 w-40 bg-v3-dim-white" />
-                                                </div>
-                                                <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white shrink-0" />
-                                            </>
-                                        );
-                                    }
-
-                                    if (!employee) return null;
-
-                                    return (
-                                        <>
-                                            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center shrink-0 shadow-md">
-                                                <UserCheck className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
-                                            </div>
-
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 mb-0.5">
-                                                    <span className="font-bold text-[0.85rem] text-v3-dark truncate">
-                                                        {employee.name}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center gap-3 text-[0.7rem] text-v3-text-muted">
-                                                    <span className="flex items-center gap-1 truncate">
-                                                        <Phone className="w-3 h-3" />
-                                                        {formatPhoneNumber(employee.phone)}
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            <div className="shrink-0">
-                                                {getOpenToNextWorkBadge(employee.openToNextWork)}
-                                            </div>
-                                        </>
-                                    );
-                                }}
-                            />
-                        )}
-                    </div>
-                </ListPanel>
-
-                {selectedEmployee ? (
-                    <DetailPanel
-                        mobileActions={
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        data-component="employees-detail-mobile-more-trigger"
-                                        className="h-9 w-9 rounded-full text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
-                                        aria-label="상세 액션 더보기"
-                                    >
-                                        <MoreVertical className="h-5 w-5" />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent
-                                    data-component="employees-detail-mobile-more-content"
-                                    align="end"
-                                    sideOffset={8}
-                                    avoidCollisions
-                                    className="min-w-[8.5rem]"
-                                >
-                                    <DropdownMenuItem
-                                        data-component="employees-detail-mobile-more-edit"
-                                        onClick={() => handleEdit(selectedEmployee)}
-                                    >
-                                        수정
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                        data-component="employees-detail-mobile-more-delete"
-                                        variant="destructive"
-                                        onClick={() => handleDeleteRequest(selectedEmployee.id)}
-                                    >
-                                        삭제
-                                    </DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
-                        }
-                        header={
-                            <div>
-                                <div className="flex items-center gap-4">
-                                    <div className="w-20 h-20 shrink-0 rounded-2xl bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white shadow-lg">
-                                        <UserCheck className="w-7 h-7 shrink-0 transition-colors text-white" aria-hidden="true" />
-                                    </div>
-                                    <div>
-                                        <h2 className="text-xl font-bold text-v3-dark">
-                                            {selectedEmployee.name}
-                                        </h2>
-                                        <p className="text-[0.8rem] text-v3-text-muted mt-1">
-                                            {normalizeEmployeeGrade(selectedEmployee.grade)} · {EMPLOYEE_STATUS_LABEL[selectedEmployee.status]}
-                                        </p>
-                                        <div className="mt-2 flex flex-wrap gap-1.5">
-                                            {getGradeBadge(selectedEmployee.grade)}
-                                            {getOpenToNextWorkBadge(selectedEmployee.openToNextWork)}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        }
-                        tabs={
-                            <DetailTabs
-                                tabs={[
-                                    { key: "basic", label: "기본 정보" },
-                                    { key: "work", label: "업무 정보" },
-                                ]}
-                                activeTab={activeSection}
-                                onTabChange={handleSectionChange}
-                            />
-                        }
-                    >
-                        <div
-                            data-component="employees-detail-content-motion"
-                            className="relative overflow-hidden"
-                            ref={detailContentMotionRef}
-                        >
-                            <AnimatePresence mode="popLayout" initial={false} custom={sectionDirection}>
-                                <motion.div
-                                    key={activeSection}
-                                    custom={sectionDirection}
-                                    data-component="employees-detail-content"
-                                    className="space-y-4 transform-gpu will-change-transform"
-                                    ref={activeSection === "basic" ? basicSectionRef : undefined}
-                                    variants={detailContentVariants}
-                                    initial="initial"
-                                    animate="animate"
-                                    exit="exit"
-                                    transition={detailContentTransition}
-                                >
-                                    {activeSection === "basic" && (
-                                        <>
-                                            <InfoCard title="기본 정보">
-                                                <InfoRow label="이름" value={selectedEmployee.name} />
-                                                <InfoRow label="연락처" value={formatPhoneNumber(selectedEmployee.phone)} />
-                                                <InfoRow label="근무 상태" value={EMPLOYEE_STATUS_LABEL[selectedEmployee.status]} />
-                                            </InfoCard>
-
-                                            <InfoCard title="등록 정보">
-                                                <InfoRow label="등록일" value={formatDate(selectedEmployee.registeredDate)} />
-                                            </InfoCard>
-                                        </>
-                                    )}
-
-                                    {activeSection === "work" && (
-                                        <>
-                                            <InfoCard title="업무 정보">
-                                                <InfoRow label="등급" value={normalizeEmployeeGrade(selectedEmployee.grade)} />
-                                                <InfoRow
-                                                    label="다음 업무 가능"
-                                                    value={selectedEmployee.openToNextWork ? "가능" : "불가"}
-                                                />
-                                                <InfoRow
-                                                    label="근무 지역"
-                                                    value={
-                                                        <div className="flex flex-wrap gap-1.5">
-                                                            {selectedEmployee.workArea.map((area) => (
-                                                                <span
-                                                                    key={area}
-                                                                    className="inline-flex items-center rounded-full bg-v3-primary-light text-v3-primary px-2 py-0.5 text-[0.7rem] font-medium"
-                                                                >
-                                                                    {area}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    }
-                                                />
-                                            </InfoCard>
-                                        </>
-                                    )}
-
-                                    <div
-                                        data-component="employees-detail-actions"
-                                        className="hidden lg:flex gap-3 pt-2"
-                                    >
-                                        <Button
-                                            variant="outline"
-                                            className="flex-1 rounded-full"
-                                            onClick={() => handleDeleteRequest(selectedEmployee.id)}
-                                        >
-                                            삭제
-                                        </Button>
-                                        <Button
-                                            variant="v3"
-                                            className="flex-1 rounded-full"
-                                            onClick={() => handleEdit(selectedEmployee)}
-                                        >
-                                            수정
-                                        </Button>
-                                    </div>
-                                </motion.div>
-                            </AnimatePresence>
-                        </div>
-                    </DetailPanel>
-                ) : (
-                    <EmptyState name="employees-empty-state" icon={Users} message="직원을 선택하면 상세 정보가 표시됩니다" className="min-h-[400px]" />
-                )}
-            </SplitLayout>
-
-            <ConfirmActionModal
-                open={deleteTargetEmployeeId != null}
-                title="삭제"
-                description="정말 삭제하시겠습니까?"
-                cancelLabel="취소"
-                confirmLabel="삭제"
-                loading={deleteEmployee.isPending}
-                onOpenChange={(open) => {
-                    if (!open && !deleteEmployee.isPending) {
-                        setDeleteTargetEmployeeId(null);
-                    }
-                }}
-                onCancel={() => setDeleteTargetEmployeeId(null)}
-                onConfirm={handleDeleteConfirm}
-            />
-
-            <EmployeeFormDialog
-                open={formDialogOpen}
-                onClose={handleFormDialogClose}
-                employee={editingEmployee}
-            />
-        </section>
-    );
+      <EmployeeFormDialog
+        open={formOpen}
+        onClose={() => {
+          setFormOpen(false);
+          setEditing(null);
+        }}
+        employee={editing}
+      />
+    </>
+  );
 }
