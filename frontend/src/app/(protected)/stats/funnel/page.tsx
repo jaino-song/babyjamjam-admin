@@ -63,25 +63,25 @@ export default async function FunnelDetailPage() {
             unit="개"
             dataComponent="stats-funnel-kpi-pages"
             infoText={
-              "지난 7일 동안 PV가 1회 이상 기록된 고유 경로(pathname) 수."
+              "지난 7일 동안 조회수가 1회 이상 기록된 페이지 수."
             }
           />
           <KpiCard
             iconEmoji="👁"
-            label="총 PV (7일)"
+            label="총 조회수 (7일)"
             value={navSummary.totalPv.toLocaleString("ko-KR")}
             dataComponent="stats-funnel-kpi-pv"
             infoText={
-              "지난 7일간 발생한 전체 페이지뷰 이벤트 수.\n중복 사용자도 모두 포함."
+              "지난 7일간 발생한 전체 페이지 조회 횟수.\n같은 사용자의 반복 방문도 모두 포함."
             }
           />
           <KpiCard
             iconEmoji="∅"
-            label="평균 PV/페이지"
+            label="평균 조회수/페이지"
             value={navSummary.avgPvPerPage.toFixed(1)}
             dataComponent="stats-funnel-kpi-avg"
             infoText={
-              "총 PV ÷ 활성 페이지 수.\n페이지당 평균 방문 빈도를 나타냅니다."
+              "총 조회수 ÷ 활성 페이지 수.\n페이지당 평균 방문 빈도를 나타냅니다."
             }
           />
           <KpiCard
@@ -92,7 +92,7 @@ export default async function FunnelDetailPage() {
             tone={navSummary.avgBouncePct > 60 ? "warn" : "default"}
             dataComponent="stats-funnel-kpi-bounce"
             infoText={
-              "세션당 페이지뷰가 1회뿐인 경우의 비율.\n사용자가 들어와서 다른 페이지를 보지 않고 떠난 정도."
+              "한 방문에서 한 페이지만 보고 떠난 비율.\n다른 페이지로 이동하지 않고 나간 사용자의 비중을 나타냅니다."
             }
           />
         </div>
@@ -108,7 +108,7 @@ export default async function FunnelDetailPage() {
             <h3 className="text-[0.95rem] font-bold text-v3-text">페이지별 상세 (지난 7일)</h3>
             <InfoTooltip
               text={
-                "각 페이지의 PV, 유니크 방문자, 진입(entry)으로 사용된 횟수, 이탈(exit)으로 사용된 횟수, 그 페이지에서 시작한 세션 중 한 페이지만 보고 나간 비율(bounce %)을 보여줍니다."
+                "각 페이지의 조회수, 방문자, 시작 페이지로 쓰인 횟수, 종료 페이지로 쓰인 횟수, 그 페이지에서 시작한 세션 중 한 페이지만 보고 나간 비율(이탈률)을 보여줍니다."
               }
               dataComponent="stats-funnel-pages-info"
             />
@@ -128,12 +128,12 @@ export default async function FunnelDetailPage() {
               <thead>
                 <tr className="bg-v3-dim-white border-b border-v3-border">
                   <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">경로</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">PV</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">유니크</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">진입</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">이탈</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">조회수</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">방문자</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">시작</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">종료</th>
                   <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">이탈률</th>
-                  <th className="font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">PV 분포</th>
+                  <th className="font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">조회수 분포</th>
                 </tr>
               </thead>
               <tbody>
@@ -181,7 +181,7 @@ export default async function FunnelDetailPage() {
           className="bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">진입 페이지 Top</h3>
+            <h3 className="text-[0.95rem] font-bold text-v3-text">주요 시작 페이지</h3>
             <InfoTooltip
               text={
                 "각 세션의 첫 페이지뷰(entry page) 통계.\n사용자가 사이트에 들어왔을 때 가장 자주 보는 페이지를 표시합니다."
@@ -226,7 +226,7 @@ export default async function FunnelDetailPage() {
           className="bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">이탈 페이지 Top</h3>
+            <h3 className="text-[0.95rem] font-bold text-v3-text">주요 종료 페이지</h3>
             <InfoTooltip
               text={
                 "각 세션의 마지막 페이지뷰(exit page) 통계.\n사용자가 사이트를 떠나기 직전에 가장 자주 본 페이지를 표시합니다."
@@ -290,7 +290,7 @@ export default async function FunnelDetailPage() {
           </header>
           {transitions.length === 0 ? (
             <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
-              연속된 페이지뷰 데이터가 아직 없어요. (세션당 PV가 2회 이상 발생해야 표시됩니다)
+              연속된 페이지뷰 데이터가 아직 없어요. (한 방문에서 페이지를 2개 이상 발생해야 표시됩니다)
             </p>
           ) : (
             <div className="space-y-2">

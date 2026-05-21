@@ -104,20 +104,20 @@ export default async function ErrorsDetailPage() {
           />
           <KpiCard
             iconEmoji="∑"
-            label="7일 events"
+            label="7일 발생"
             value={summary.totalEvents7d.toLocaleString("ko-KR")}
             dataComponent="stats-errors-kpi-events"
           />
           <KpiCard
             iconEmoji="👤"
-            label="영향 유저"
+            label="영향받은 사용자"
             value={`~${summary.affectedUsers}`}
             unit="명"
             dataComponent="stats-errors-kpi-users"
           />
           <KpiCard
             iconEmoji="⏱"
-            label="Last error"
+            label="마지막 오류"
             value={formatSentryRelativeTime(summary.lastErrorAt)}
             dataComponent="stats-errors-kpi-last"
             valueSize="sm"
@@ -136,7 +136,7 @@ export default async function ErrorsDetailPage() {
               Sentry
             </span>
             <span className="ml-auto text-[0.7rem] text-v3-text-muted">
-              총 {trend.reduce((s, p) => s + p.count, 0).toLocaleString("ko-KR")} events
+              총 {trend.reduce((s, p) => s + p.count, 0).toLocaleString("ko-KR")}건
             </span>
           </header>
           {trend.length === 0 ? (
@@ -249,9 +249,9 @@ export default async function ErrorsDetailPage() {
                 <tr className="bg-v3-dim-white border-b border-v3-border">
                   <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">레벨</th>
                   <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">이슈</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">Events</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">유저</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">Last seen</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">발생 건수</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">영향 사용자</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">최근 발생</th>
                 </tr>
               </thead>
               <tbody>

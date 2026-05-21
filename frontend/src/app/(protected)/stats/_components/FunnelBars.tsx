@@ -75,7 +75,7 @@ export function FunnelBars({
                   isBiggestDrop ? "text-red-600 font-semibold" : "text-v3-text-muted"
                 )}
               >
-                ↓ {Math.round(steps[i - 1].count - s.count)} drop ({s.dropFromPrevPct.toFixed(0)}%)
+                ↓ {Math.round(steps[i - 1].count - s.count)}명 감소 ({s.dropFromPrevPct.toFixed(0)}%)
               </div>
             ) : null}
           </div>

@@ -122,14 +122,14 @@ export default async function StatsPage() {
                     : "bg-green-100 text-green-700"
                 }`}
               >
-                {sentry.newIn24h > 0 ? `↑ ${sentry.newIn24h} (24h)` : "신규 없음"}
+                {sentry.newIn24h > 0 ? `↑ ${sentry.newIn24h}건 (24시간)` : "신규 없음"}
               </span>
             </div>
             <Sparkline values={sentry.sparkline7d} color="hsl(0 84% 55%)" />
             {sentry.topIssue ? (
               <div className="rounded-2xl bg-v3-dim-white p-3.5">
                 <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-1.5">
-                  Top issue
+                  주요 오류
                 </div>
                 <div className="text-[0.82rem] font-semibold text-v3-text truncate">
                   {sentry.topIssue.title}
@@ -137,7 +137,7 @@ export default async function StatsPage() {
                 <div className="text-[0.65rem] font-mono text-v3-text-muted truncate">
                   {sentry.topIssue.culprit ?? sentry.topIssue.filename ?? "—"}
                   {" · "}
-                  {sentry.topIssue.count} events · {formatSentryRelativeTime(sentry.topIssue.lastSeen)}
+                  {sentry.topIssue.count}건 · {formatSentryRelativeTime(sentry.topIssue.lastSeen)}
                 </div>
               </div>
             ) : (
@@ -203,11 +203,11 @@ export default async function StatsPage() {
             />
             {funnel.biggestDropStep && funnel.steps[funnel.biggestDropStep - 1] ? (
               <div className="rounded-md border-l-[3px] border-red-500 bg-red-50 px-3 py-2 text-[0.78rem] text-red-700">
-                ⚠ Step {funnel.biggestDropStep}에서{" "}
+                ⚠ {funnel.biggestDropStep}단계에서{" "}
                 <strong>
                   −{funnel.steps[funnel.biggestDropStep - 1].dropFromPrevPct.toFixed(0)}%
                 </strong>{" "}
-                drop · 가장 큰 누수
+                감소 · 가장 큰 누수
               </div>
             ) : funnel.totalEntries === 0 ? (
               <div className="text-[0.78rem] text-v3-text-muted">
@@ -242,7 +242,7 @@ export default async function StatsPage() {
                 </div>
               </div>
               <div data-component="stats-panel-traffic-session">
-                <div className="text-[0.65rem] font-medium text-v3-text-muted">평균 세션</div>
+                <div className="text-[0.65rem] font-medium text-v3-text-muted">평균 방문 시간</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
                   {traffic.today.pv === 0
                     ? "—"
@@ -252,7 +252,7 @@ export default async function StatsPage() {
             </div>
             <div>
               <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-1.5">
-                Top pages
+                인기 페이지
               </div>
               <div data-component="stats-panel-traffic-top-pages">
                 {topPages.length === 0 ? (

@@ -102,7 +102,7 @@ export default async function TrafficDetailPage() {
         >
           <KpiCard
             iconEmoji="🌐"
-            label="PV (오늘)"
+            label="조회수 (오늘)"
             value={summary.today.pv.toLocaleString("ko-KR")}
             delta={pvDelta}
             dataComponent="stats-traffic-kpi-pv"
@@ -116,7 +116,7 @@ export default async function TrafficDetailPage() {
           />
           <KpiCard
             iconEmoji="⏱"
-            label="평균 세션"
+            label="평균 방문 시간"
             value={
               summary.sevenDayTotal.pv === 0
                 ? "—"
@@ -137,8 +137,8 @@ export default async function TrafficDetailPage() {
             iconEmoji="✨"
             label="7일 합계"
             value={summary.sevenDayTotal.pv.toLocaleString("ko-KR")}
-            unit="PV"
-            meta={`${summary.sevenDayTotal.unique} 방문자`}
+            unit="조회"
+            meta={`방문자 ${summary.sevenDayTotal.unique}명`}
             dataComponent="stats-traffic-kpi-week"
             valueSize="sm"
           />
@@ -151,18 +151,18 @@ export default async function TrafficDetailPage() {
           className="bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">PV · 유니크 추이 (7일)</h3>
+            <h3 className="text-[0.95rem] font-bold text-v3-text">조회수 · 방문자 추이 (7일)</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
             <div className="ml-auto flex gap-3 text-[0.7rem]">
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-3 h-0.5 bg-v3-primary" />
-                PV
+                조회수
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-3 h-0.5 bg-purple-500" />
-                유니크
+                방문자
               </span>
             </div>
           </header>
@@ -241,7 +241,7 @@ export default async function TrafficDetailPage() {
           className="bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">Top pages</h3>
+            <h3 className="text-[0.95rem] font-bold text-v3-text">인기 페이지</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -253,8 +253,8 @@ export default async function TrafficDetailPage() {
               <thead>
                 <tr className="bg-v3-dim-white border-b border-v3-border">
                   <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">경로</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">PV</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">유니크</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">조회수</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">방문자</th>
                   <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">비중</th>
                 </tr>
               </thead>
