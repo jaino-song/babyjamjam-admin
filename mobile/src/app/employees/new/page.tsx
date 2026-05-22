@@ -116,7 +116,7 @@ export default function NewEmployeePage() {
     : phoneInlineMessage
       ? phoneInlineMessage
       : phoneDigits.length === 11 && lastCheckedPhoneDigits === phoneDigits
-        ? "사용 가능한 번호입니다."
+        ? "등록 가능한 번호입니다."
         : null;
 
   const returnTo = useMemo(

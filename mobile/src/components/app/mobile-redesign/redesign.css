@@ -2,6 +2,16 @@
    variant-D2 specific (stats-grid + mini-stat) plus shared list/card/filter/badge primitives.
    v3 color tokens already defined in globals.css. */
 
+/* ===== Mobile shell stacking tokens =====
+   Hierarchy: list < nav < scrim < detail.
+   Use these instead of hard-coded z-index values so every route layers consistently. */
+:root {
+  --mobile-z-list: 1;
+  --mobile-z-nav: 30;
+  --mobile-z-scrim: 60;
+  --mobile-z-detail: 70;
+}
+
 /* ===== Existing top navbar (user identity + bell) ===== */
 .existing-navbar {
   height: 64px;
@@ -218,7 +228,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   --tw-translate-x: 0px !important;
   translate: 0 0 !important;
   transform: none !important;
-  z-index: 40;
+  z-index: var(--mobile-z-nav);
 }
 
 [data-component="app-root"]:has([data-component="dashboard"]) [data-component="mobile-bottom-nav"] > div[aria-hidden="true"] {
@@ -856,7 +866,7 @@ body.mobile-all-route [data-component="mobile-bottom-nav"] {
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   color: hsl(var(--v3-text));
-  z-index: 1000;
+  z-index: var(--mobile-z-nav);
 }
 
 body.mobile-all-route [data-component="mobile-bottom-nav"] > [aria-hidden="true"] {
@@ -874,11 +884,6 @@ body.mobile-all-route [data-component^="mobile-bottom-nav-"] {
   border-radius: 14px !important;
   color: hsl(var(--v3-text-muted)) !important;
   text-decoration: none;
-  transition: all 0.2s ease;
-}
-
-body.mobile-all-route [data-component^="mobile-bottom-nav-"]:hover {
-  background: hsl(var(--v3-primary-light));
 }
 
 body.mobile-all-route [data-component="mobile-bottom-nav-chat"] {
@@ -944,7 +949,7 @@ body.mobile-all-route .menu-row {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  z-index: 1;
+  z-index: var(--mobile-z-list);
   transform: translateX(0);
   transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
   background: hsl(var(--v3-dim-white));
@@ -963,7 +968,7 @@ body.mobile-all-route .menu-row {
   border-radius: 24px 24px 0 0;
   box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.22);
   overflow: hidden;
-  z-index: 70;
+  z-index: var(--mobile-z-detail);
   background: hsl(var(--v3-dim-white));
   will-change: transform;
 }
@@ -980,7 +985,7 @@ body.mobile-all-route .menu-row {
   background: rgba(0, 0, 0, 0);
   pointer-events: none;
   transition: background 0.4s ease;
-  z-index: 60;
+  z-index: var(--mobile-z-scrim);
   border: 0;
   padding: 0;
   cursor: pointer;
@@ -1453,19 +1458,15 @@ body.mobile-all-route .menu-row {
 /* ===== Files page — page-files.html fidelity overrides ===== */
 [data-component="files"] {
   position: fixed;
-  inset: 0 auto auto 50%;
+  top: 0;
+  left: 0;
+  right: 0;
   width: min(100vw, 390px);
   height: min(100dvh, 844px);
   min-height: 0 !important;
-  margin: 0 !important;
-  transform: translateX(-50%);
-  z-index: 0;
+  margin: 0 auto !important;
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
   line-height: normal;
-}
-
-[data-component="files"]:has(.nav-stack.show-detail) {
-  z-index: 50;
 }
 
 [data-component="files"] .nav-stack {
@@ -1637,18 +1638,14 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
 /* ===== Clients page — page-clients.html fidelity overrides ===== */
 [data-component="clients"] {
   position: fixed;
-  inset: 0 auto auto 50%;
+  top: 0;
+  left: 0;
+  right: 0;
   width: min(100vw, 390px);
   height: min(100dvh, 844px);
   min-height: 0 !important;
-  margin: 0 !important;
-  transform: translateX(-50%);
-  z-index: 0;
+  margin: 0 auto !important;
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
-}
-
-[data-component="clients"]:has(.nav-stack.show-detail) {
-  z-index: 50;
 }
 
 [data-component="clients"] .nav-stack {
@@ -1675,7 +1672,7 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
 }
 
 [data-component="clients"] [data-component="mobile-clients-content"] {
-  padding: 76px 14px 76px;
+  padding: 12px 14px 76px;
   overflow-y: auto;
 }
 
@@ -1852,9 +1849,24 @@ body:has([data-component="clients"] .nav-stack.show-detail) [data-component="mob
 }
 
 body:has([data-component="clients"]) [data-component="mobile-header"] {
-  max-width: 390px;
-  padding: 0 26px;
-  font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
+  position: absolute !important;
+  top: 0 !important;
+  right: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  --tw-translate-x: 0px !important;
+  translate: 0 0 !important;
+  transform: none !important;
+  z-index: 20;
+  color: hsl(var(--v3-text));
+  font-family:
+    "NanumSquare Neo",
+    "Noto Sans KR",
+    "Apple SD Gothic Neo",
+    "Malgun Gothic",
+    -apple-system,
+    sans-serif;
 }
 
 /* ===== Pop-up entrance animation (shared) ===== */
@@ -2117,7 +2129,7 @@ body:has([data-component="consultations"]) [data-component="mobile-bottom-nav"] 
   --tw-translate-x: 0px !important;
   translate: 0 0 !important;
   transform: none !important;
-  z-index: 40;
+  z-index: var(--mobile-z-nav);
 }
 
 body:has([data-component="consultations"]) [data-component="mobile-bottom-nav"] > [aria-hidden="true"] {
@@ -2590,7 +2602,7 @@ body:has([data-component="messages"]) [data-component="mobile-messages-detail-pa
   right: 12px;
   bottom: 12px;
   left: 12px;
-  z-index: 60;
+  z-index: var(--mobile-z-detail);
   width: auto;
   border-radius: 24px 24px 0 0;
   box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.22);
@@ -3947,6 +3959,49 @@ body.mobile-contracts-route {
   line-height: normal;
 }
 
+body.mobile-contracts-route [data-component="mobile-bottom-nav"] {
+  position: absolute !important;
+  left: 14px !important;
+  right: 14px !important;
+  bottom: 12px !important;
+  width: auto !important;
+  max-width: none !important;
+  --tw-translate-x: 0 !important;
+  --tw-translate-y: 0 !important;
+  transform: none !important;
+  translate: none !important;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 20px;
+}
+
+body.mobile-contracts-route [data-component="mobile-bottom-nav"] > div[aria-hidden="true"] {
+  display: none;
+}
+
+body.mobile-contracts-route [data-component="mobile-bottom-nav"] a {
+  gap: 2px;
+  padding: 5px 4px;
+  border-radius: 14px;
+}
+
+body.mobile-contracts-route [data-component="mobile-bottom-nav"] svg {
+  width: 18px;
+  height: 18px;
+}
+
+body.mobile-contracts-route [data-component="mobile-bottom-nav"] span {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+body.mobile-contracts-route [data-component="mobile-bottom-nav-contracts"] {
+  background: hsl(var(--v3-primary));
+  color: white;
+}
+
 body.mobile-contracts-route [data-component="app-root"] {
   width: 390px !important;
   max-width: 390px !important;
@@ -4039,6 +4094,60 @@ body.mobile-contracts-route [data-component="mobile-contracts-detail-page"] {
 }
 
 body.mobile-contracts-route [data-component="mobile-contracts-stack"].show-detail .nav-page.list {
+  transform: translateX(0) !important;
+}
+
+body.mobile-clients-route [data-component="main-content"] {
+  position: absolute !important;
+  inset: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  width: auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 64px 0 0 !important;
+  overflow: hidden !important;
+  background: hsl(var(--v3-dim-white));
+  color: hsl(var(--v3-text));
+}
+
+body.mobile-clients-route [data-component="clients"] {
+  position: relative !important;
+  inset: auto !important;
+  width: auto !important;
+  height: auto !important;
+  transform: none !important;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  margin: 0 !important;
+}
+
+body.mobile-clients-route .mobile-detail-sheet {
+  flex: 1;
+  height: 100%;
+  min-height: 0 !important;
+  margin: 0 !important;
+}
+
+body.mobile-clients-route [data-component="mobile-clients-stack"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+body.mobile-clients-route [data-component="mobile-clients-list-page"],
+body.mobile-clients-route [data-component="mobile-clients-detail-page"] {
+  position: absolute;
+  inset: 0;
+}
+
+body.mobile-clients-route [data-component="mobile-clients-detail-page"] {
+  top: 50px;
+}
+
+body.mobile-clients-route [data-component="mobile-clients-stack"].show-detail .nav-page.list {
   transform: translateX(0) !important;
 }
 
@@ -4158,7 +4267,7 @@ body.mobile-contracts-route [data-component="mobile-bottom-nav"] {
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   color: hsl(var(--v3-text));
-  z-index: 1000;
+  z-index: var(--mobile-z-nav);
 }
 
 body.mobile-contracts-route [data-component="mobile-bottom-nav"] > [aria-hidden="true"] {
@@ -4176,11 +4285,6 @@ body.mobile-contracts-route [data-component^="mobile-bottom-nav-"] {
   border-radius: 14px !important;
   color: hsl(var(--v3-text-muted)) !important;
   text-decoration: none;
-  transition: all 0.2s ease;
-}
-
-body.mobile-contracts-route [data-component^="mobile-bottom-nav-"]:hover {
-  background: hsl(var(--v3-primary-light));
 }
 
 body.mobile-contracts-route [data-component="mobile-bottom-nav-chat"] {
@@ -4216,7 +4320,7 @@ body.mobile-contracts-route nextjs-portal {
 /* Dashboard frame-removal correction: anchor nav to the shell and let the card scroll internally. */
 [data-component="app-root"]:has([data-component="dashboard"]) [data-component="mobile-bottom-nav"] {
   bottom: 12px !important;
-  z-index: 1000 !important;
+  z-index: var(--mobile-z-nav) !important;
 }
 
 [data-component="dashboard"] [data-component="mobile-dashboard-content"] {
@@ -4262,7 +4366,7 @@ body:has([data-component="files"]) [data-component$="-detail-scrim"] {
   right: 0 !important;
   bottom: 0 !important;
   left: 0 !important;
-  z-index: 60;
+  z-index: var(--mobile-z-scrim);
   border-radius: 0 !important;
 }
 

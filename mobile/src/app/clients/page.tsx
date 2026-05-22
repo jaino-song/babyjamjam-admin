@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, Clock3, FileCheck2, Send, UserPlus } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { CheckCircle2, Clock3, FileCheck2, Send, User, UserPlus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useClient, useDeleteClient } from "@/hooks/useClients";
@@ -25,6 +25,7 @@ import {
 } from "@/components/app/mobile-redesign/detail-sheet";
 import "@/components/app/mobile-redesign/redesign.css";
 
+const CLIENTS_ROUTE_BODY_CLASS = "mobile-clients-route";
 const ALL_FILTER = "전체";
 const AVATAR_TONES: AvatarTone[] = ["primary", "green", "burgundy", "orange", "purple"];
 const AVATAR_TONE_BY_INITIAL: Partial<Record<string, AvatarTone>> = {
@@ -39,12 +40,13 @@ const AVATAR_TONE_BY_INITIAL: Partial<Record<string, AvatarTone>> = {
   강: "primary",
 };
 
-function pickAvatarTone(name: string, fallback: number): AvatarTone {
-  const initial = clientInitial(name);
+function pickAvatarTone(client: Client, fallback: number): AvatarTone {
+  if (client.serviceStatus === "completed") return "green";
+  const initial = clientInitial(client.name);
   if (AVATAR_TONE_BY_INITIAL[initial]) {
     return AVATAR_TONE_BY_INITIAL[initial];
   }
-  const code = name.charCodeAt(0) || fallback;
+  const code = client.name.charCodeAt(0) || fallback;
   return AVATAR_TONES[code % AVATAR_TONES.length];
 }
 
@@ -75,7 +77,7 @@ function formatPrice(price: string | null): string {
 
 function clientFeatureLabel(client: Client): string | null {
   if (client.breastPump) return "유축기 대여";
-  if (client.careCenter) return "조리원 연계";
+  if (client.careCenter) return "조리원 이용";
   if (client.voucherClient) return "바우처";
   return client.type;
 }
@@ -229,10 +231,10 @@ function ClientDetailContent({
     <div className="detail-body detail-column" data-component="mobile-clients-detail">
       <div className="client-detail-header pop-up" data-component="mobile-clients-detail-header">
         <div
-          className={`client-detail-avatar-lg av-${pickAvatarTone(client.name, client.id)}`}
+          className={`client-detail-avatar-lg av-${pickAvatarTone(client, client.id)}`}
           data-component="mobile-clients-detail-avatar"
         >
-          {clientInitial(client.name)}
+          <User size={22} strokeWidth={2} />
         </div>
         <div className="client-detail-title" data-component="mobile-clients-detail-title">
           <div className="client-detail-name" data-component="mobile-clients-detail-name">
@@ -387,11 +389,22 @@ export default function ClientsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
 
-  const { allClients, total } = useInfiniteClients({
+  useEffect(() => {
+    document.body.classList.add(CLIENTS_ROUTE_BODY_CLASS);
+    return () => {
+      document.body.classList.remove(CLIENTS_ROUTE_BODY_CLASS);
+    };
+  }, []);
+
+  const { allClients, allFilteredClients, total } = useInfiniteClients({
     filter: "all",
     search: searchQuery,
     filterFn: () => true,
-    searchFn: (c, query) => matchesKoreanSearch(c.name, query),
+    searchFn: (c, query) =>
+      matchesKoreanSearch(c.name, query) ||
+      (c.primaryEmployee?.name
+        ? matchesKoreanSearch(c.primaryEmployee.name, query)
+        : false),
   });
 
   const deleteClient = useDeleteClient();
@@ -454,12 +467,12 @@ export default function ClientsPage() {
     const counts: Record<string, number> = {};
     const map: Record<string, Client[]> = {};
     for (const g of GROUPS) {
-      const matched = allClients.filter(g.match);
+      const matched = allFilteredClients.filter(g.match);
       counts[g.key] = matched.length;
       map[g.key] = matched;
     }
     return { counts, map };
-  }, [allClients]);
+  }, [allFilteredClients]);
 
   const filterItems = useMemo(() => {
     const items: Array<{ label: string; count: string }> = [
@@ -547,10 +560,10 @@ export default function ClientsPage() {
                         onClick={() => handleSelectClient(c)}
                       >
                         <div
-                          className={`list-avatar av-${pickAvatarTone(c.name, c.id + idx)}`}
+                          className={`list-avatar av-${pickAvatarTone(c, c.id + idx)}`}
                           data-component="mobile-clients-avatar"
                         >
-                          {clientInitial(c.name)}
+                          <User size={16} strokeWidth={2} />
                         </div>
                         <div className="list-info" data-component="mobile-clients-list-info">
                           <div className="list-name" data-component="mobile-clients-list-name">

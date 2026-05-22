@@ -18,6 +18,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
+import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { cn } from "@/lib/utils";
 import styles from "./page.module.css";
 
@@ -94,6 +95,13 @@ const parsePrice = (value: string | null | undefined): string => {
   return value.replace(/,/g, "");
 };
 
+const yymmddToIso = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const v = value.trim();
+  if (!/^\d{6}$/.test(v)) return v;
+  return `20${v.slice(0, 2)}-${v.slice(2, 4)}-${v.slice(4, 6)}`;
+};
+
 export default function NewClientPage() {
   const router = useRouter();
   const locale = useLocale();
@@ -129,7 +137,7 @@ export default function NewClientPage() {
         : isPhoneDuplicate
           ? t(locale, "clients.form.error-phone-duplicate")
           : isPhoneAvailable
-            ? "✓ 사용 가능한 번호입니다."
+            ? "✓ 등록 가능한 번호입니다."
             : null
     : null;
   const phoneHelperTone: HelperTone = isCheckingPhoneDuplicate
@@ -272,6 +280,18 @@ export default function NewClientPage() {
     }
   }, [selectedPriceInfo, pricesManuallyEdited, setField]);
 
+  // 시작일(YYMMDD) + 바우처 기간이 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
+  // 사용자가 종료일을 수동 편집해도 startDate/duration이 다시 바뀌어야만 덮어쓴다.
+  useEffect(() => {
+    if (!store.startDate || !store.duration) return;
+    if (!/^\d{6}$/.test(store.startDate)) return;
+    const startIso = `20${store.startDate.slice(0, 2)}-${store.startDate.slice(2, 4)}-${store.startDate.slice(4, 6)}`;
+    const endIso = calcEndDateBusinessDays(startIso, store.duration);
+    if (!endIso) return;
+    const endYymmdd = `${endIso.slice(2, 4)}${endIso.slice(5, 7)}${endIso.slice(8, 10)}`;
+    setField("endDate", endYymmdd);
+  }, [store.startDate, store.duration, setField]);
+
   const handleTypeChange = (newType: string) => {
     setField("type", newType);
     setField("duration", null);
@@ -355,7 +375,7 @@ export default function NewClientPage() {
       const dto: CreateClientDto = {
         name: store.name,
         birthday: store.birthday || null,
-        dueDate: store.dueDate || null,
+        dueDate: yymmddToIso(store.dueDate),
         address: store.address || null,
         phone: store.phone || null,
         primaryEmployeeId: store.primaryEmployeeId,
@@ -365,15 +385,15 @@ export default function NewClientPage() {
         fullPrice: store.fullPrice || null,
         grant: store.grant || null,
         actualPrice: store.actualPrice || null,
-        startDate: store.startDate || null,
-        endDate: store.endDate || null,
+        startDate: yymmddToIso(store.startDate),
+        endDate: yymmddToIso(store.endDate),
         careCenter: store.careCenter,
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
         serviceStatus: store.serviceStatus || null,
       };
-      const newClient = await createClient.mutateAsync(dto);
-      router.push(`/clients?id=${newClient.id}`);
+      await createClient.mutateAsync(dto);
+      router.push("/clients");
     } catch (err: unknown) {
       showFloatingError(getErrorMessage(err, locale, "clients.form.error-save-failed"));
     }
@@ -392,14 +412,6 @@ export default function NewClientPage() {
   const isLastStep = activeStep === WIZARD_STEPS.length - 1;
   const activeStepMeta = WIZARD_STEPS[activeStep];
   const progress = ((activeStep + 1) / WIZARD_STEPS.length) * 100;
-  const voucherTypeLabel = getVoucherTypeLabel(store.type);
-  const summaryPills = [
-    ...(activeStep >= 1 && store.name.trim() ? [store.name.trim()] : []),
-    ...(activeStep >= 2 && voucherTypeLabel ? [voucherTypeLabel] : []),
-    ...(activeStep >= 2 && store.duration ? [`${store.duration}일`] : []),
-    ...(activeStep >= 2 && store.actualPrice ? [`${formatPrice(store.actualPrice)}원`] : []),
-  ];
-
   const goBackToClients = () => {
     router.push("/clients");
   };
@@ -500,16 +512,6 @@ export default function NewClientPage() {
               <p className={styles.stepDesc}>{activeStepMeta.desc}</p>
             </div>
 
-            {summaryPills.length > 0 ? (
-              <div className={styles.summaryPills} data-component="clients-new-summary-pills">
-                {summaryPills.map((pill) => (
-                  <span key={pill} className={styles.summaryPill}>
-                    {pill}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-
             <div className={styles.formScroll} data-component="clients-new-step-content">
               {activeStep === 0 ? (
                 <>
@@ -551,7 +553,9 @@ export default function NewClientPage() {
                         className={styles.formInput}
                         value={store.dueDate}
                         onChange={(e) => setField("dueDate", e.target.value)}
-                        type="date"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
                       />
                     </Field>
                     <Field label="주소">
@@ -591,7 +595,7 @@ export default function NewClientPage() {
                       </div>
                     </Field>
                     <Field label="기간" helper="바우처 유형에 따라 선택 가능한 기간이 달라집니다.">
-                      <div className={cn(styles.selectWrap, (!store.type || isPriceLoading) && styles.disabledSelect)} data-component="clients-new-duration-select-wrap">
+                      <div className={cn(styles.selectWrap, isPriceLoading ? styles.loadingSelect : !store.type && styles.disabledSelect)} data-component="clients-new-duration-select-wrap">
                         <select
                           className={styles.formInput}
                           value={store.duration?.toString() || ""}
@@ -692,7 +696,7 @@ export default function NewClientPage() {
                     <div className={styles.toggleChipRow} data-component="clients-new-option-chips">
                       {([
                         { key: "voucherClient" as const, label: "바우처 고객" },
-                        { key: "careCenter" as const, label: "산후조리원" },
+                        { key: "careCenter" as const, label: "조리원 이용" },
                         { key: "breastPump" as const, label: "유축기 대여" },
                       ]).map(({ key, label }) => (
                         <button
@@ -713,21 +717,19 @@ export default function NewClientPage() {
                 <>
                   <div className={styles.formCard} data-component="clients-new-contract-status-card">
                     <div className={styles.formCardTitle} data-component="clients-new-form-card-title">계약 상태</div>
-                    <div className={styles.statusRow} data-component="clients-new-status-chips">
-                      {SERVICE_STATUS_OPTIONS.map((status) => (
-                        <button
-                          key={status.value}
-                          type="button"
-                          onClick={() => setField("serviceStatus", status.value)}
-                          className={cn(
-                            styles.statusChip,
-                            status.value === "replacement_requested" && styles.statusChipWide,
-                            store.serviceStatus === status.value && styles.selected
-                          )}
-                        >
-                          {status.label}
-                        </button>
-                      ))}
+                    <div className={styles.selectWrap} data-component="clients-new-status-select-wrap">
+                      <select
+                        className={styles.formInput}
+                        value={store.serviceStatus}
+                        onChange={(e) => setField("serviceStatus", e.target.value as typeof store.serviceStatus)}
+                        data-component="clients-new-status-select"
+                      >
+                        {SERVICE_STATUS_OPTIONS.map((status) => (
+                          <option key={status.value} value={status.value}>
+                            {status.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 
@@ -738,7 +740,9 @@ export default function NewClientPage() {
                         className={styles.formInput}
                         value={store.startDate}
                         onChange={(e) => setField("startDate", e.target.value)}
-                        type="date"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
                       />
                     </Field>
                     <Field label="종료일">
@@ -746,13 +750,11 @@ export default function NewClientPage() {
                         className={styles.formInput}
                         value={store.endDate}
                         onChange={(e) => setField("endDate", e.target.value)}
-                        type="date"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
                       />
                     </Field>
-                  </div>
-
-                  <div className={styles.contractNotice} data-component="clients-new-contract-notice">
-                    등록 시 고객에게 계약서 안내 메시지가 자동으로 전송됩니다.
                   </div>
                 </>
               ) : null}
@@ -773,7 +775,7 @@ export default function NewClientPage() {
                 disabled={isPrimaryDisabled}
                 className={cn(styles.wizardButton, styles.primaryButton)}
               >
-                {createClient.isPending ? "등록 중..." : isLastStep ? "✓ 등록" : "다음 →"}
+                {createClient.isPending ? "등록 중..." : isLastStep ? "등록" : "다음"}
               </button>
             </div>
           </section>

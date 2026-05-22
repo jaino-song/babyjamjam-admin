@@ -124,8 +124,8 @@ export class ClientService {
         breastPump: boolean;
         eDocId?: string | null;
     }): Promise<ClientEntity> {
-        const startDate = params.startDate ? new Date(params.startDate) : new Date();
-        const endDate = params.endDate ? new Date(params.endDate) : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
+        const startDate = params.startDate ? new Date(params.startDate) : null;
+        const endDate = params.endDate ? new Date(params.endDate) : null;
         const dueDate = params.dueDate ? new Date(params.dueDate) : null;
 
         // First create the client
@@ -159,8 +159,8 @@ export class ClientService {
                     primaryEmployeeId: params.primaryEmployeeId,
                     secondaryEmployeeId: params.secondaryEmployeeId ?? null,
                     workAddress: params.address ?? "",
-                    startDate: startDate,
-                    endDate: endDate,
+                    startDate: startDate ?? new Date(),
+                    endDate: endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
                     replaced: false,
                 },
             });

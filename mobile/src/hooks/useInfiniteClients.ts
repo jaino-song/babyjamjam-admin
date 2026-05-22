@@ -83,6 +83,7 @@ export function useInfiniteClients({
   return {
     clients,
     allClients,
+    allFilteredClients,
     total,
     isLoading: query.isLoading,
     isFetchingNextPage: false,

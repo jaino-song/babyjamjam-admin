@@ -104,7 +104,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
 
                 {/* Navigation items */}
                 <nav data-component="nav-bar-nav" className="flex flex-col gap-1">
-                    {navItems.map((item, index) => (
+                    {navItems.map((item) => (
                         <NavButton
                             key={item.href}
                             href={item.href}
@@ -112,21 +112,19 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                             icon={item.icon}
                             active={item.active}
                             onClick={onClose}
-                            index={index}
                         />
                     ))}
 
                     {/* Admin section - only for admin/owner */}
                     {isAdminOrOwner && (
                         <>
-                            <Separator className="my-2 opacity-0 animate-fade-in bg-sidebar-border" style={{ animationDelay: '400ms' }} />
+                            <Separator className="my-2 bg-sidebar-border" />
                             <NavButton
                                 href="/admin/feedback"
                                 label="관리자"
                                 icon={<ShieldCheck className="h-4 w-4" />}
                                 active={isAdmin}
                                 onClick={onClose}
-                                index={navItems.length}
                             />
                         </>
                     )}

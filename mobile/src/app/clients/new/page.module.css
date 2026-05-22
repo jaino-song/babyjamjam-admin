@@ -316,6 +316,32 @@
   opacity: 0.4;
 }
 
+.loadingSelect .formInput:disabled {
+  cursor: progress;
+  background: transparent;
+  opacity: 1;
+  background-image: none;
+}
+
+.loadingSelect::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border: 2px solid hsl(var(--v3-border, 220 13% 91%));
+  border-top-color: hsl(var(--v3-primary));
+  border-radius: 50%;
+  animation: selectSpin 0.7s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes selectSpin {
+  to { transform: rotate(360deg); }
+}
+
 .priceInput {
   position: relative;
 }

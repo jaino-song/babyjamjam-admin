@@ -460,7 +460,7 @@ export default function RegisterPage() {
               onChange={handleProfileChange("phone")}
               disabled={isLoading}
             />
-            {profileData.phone && <div className="auth-helper ok" data-component="auth-register-phone-ok">✓ 사용 가능한 번호입니다.</div>}
+            {profileData.phone && <div className="auth-helper ok" data-component="auth-register-phone-ok">✓ 등록 가능한 번호입니다.</div>}
           </div>
 
           <div className="auth-input-group" data-component="auth-register-birth-field">

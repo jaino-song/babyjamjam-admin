@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo } from "react";
 import {
   BarChart3,
   Bell,
@@ -24,18 +23,10 @@ import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSetting
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
 
 export default function AllMenuPage() {
-  const router = useRouter();
   const { data: clients = [] } = useAllClients();
   const { data: employees = [] } = useEmployees();
   const { isSubscribed } = usePushNotification();
   const { data: unreadNotifCount = 0 } = useUnreadCount(true);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (window.matchMedia("(min-width: 768px)").matches) {
-      router.replace("/dashboard");
-    }
-  }, [router]);
 
   const menuGroups = useMemo<MenuGroup[]>(() => {
     return [

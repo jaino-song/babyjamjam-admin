@@ -176,8 +176,8 @@ iframe {
 <body>
 <header>
   <div>
-    <h1>Mobile Layout — 19 Pages (✅ 완전 14 · ⚠️ 부분 3 · 🚧 미구현 2)</h1>
-    <p>✅ 14 fully implemented · ⚠️ 3 with stubbed sub-sections (contracts, messages, alimtalk) · 🚧 2 mockup-only (file-upload, message-new).</p>
+    <h1>Mobile Layout — 20 Pages (✅ 완전 14 · ⚠️ 부분 3 · 🚧 미구현 3)</h1>
+    <p>✅ 14 fully implemented · ⚠️ 3 with stubbed sub-sections (contracts, messages, alimtalk) · 🚧 3 mockup-only (file-upload, message-new, pricing).</p>
   </div>
   <div class="cta">
     👉 <b>Tap items + bell</b> in any preview — shell behaves identically across all
@@ -292,7 +292,7 @@ iframe {
 </div>
 
 <!-- ============ Workflow + Auth ============ -->
-<div class="section-divider">Workflow + Auth (6) <span>· No bottom-nav</span></div>
+<div class="section-divider">Workflow + Auth (7) <span>· No bottom-nav</span></div>
 <div class="board">
 
   <div class="col">
@@ -316,6 +316,18 @@ iframe {
     <div class="col-footer">
       <span class="uses">Uses: grade chips (★) · area multi-select · big binary chips</span>
       <span class="sync">Synced: 2-step structure (기본/근무) + 인천 8 districts</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab wizard">계약서 생성</span> Contract Wizard</h2>
+      <p>4-step wizard · 이용자/제공인력 picker + 바우처 자동입력 + 결제일 + 최종 확인 카드.</p>
+    </div>
+    <iframe src="page-contract-new.html?v=frame-removal"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: entity-pick cards · toggle switch (제공인력 2) · price-summary footer</span>
+      <span class="sync">Synced: 4-step structure (이용자/제공인력/바우처/계약) from ContractCreationForm</span>
     </div>
   </div>
 
@@ -448,9 +460,9 @@ iframe {
 <!-- =============================================== -->
 <!-- 🚧 미구현 — Mockup 전용 (frontend 라우트 없음, 2) -->
 <!-- =============================================== -->
-<div class="major-section not-implemented">🚧 미구현 (2 페이지) <span>Mockup만 존재 · frontend 라우트 없음</span></div>
+<div class="major-section not-implemented">🚧 미구현 (3 페이지) <span>Mockup만 존재 · frontend 라우트 없음</span></div>
 
-<div class="section-divider">Mockup 전용 (2) <span>· 추후 frontend 구현 대상</span></div>
+<div class="section-divider">Mockup 전용 (3) <span>· 추후 frontend 구현 대상</span></div>
 <div class="board">
 
   <div class="col">
@@ -474,6 +486,18 @@ iframe {
     <div class="col-footer">
       <span class="uses">Uses: recipient chips · 템플릿 radio list · 변수 치환 preview</span>
       <span class="new">Page-only: 알림톡 미리보기 카드 (노란 카카오톡 스타일)</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">가격표</span> Pricing</h2>
+      <p>바우처 요금표 viewer · 연도/유형 필터 · 단축/표준/연장 sections + 업로드 sheet (3-step).</p>
+    </div>
+    <iframe src="page-pricing.html?v=frame-removal"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: list shell + filter pills + bottom sheet + dropzone</span>
+      <span class="sync">Synced: VoucherPriceInfo entity (type/duration/fullPrice/grant/actualPrice/year) + 검증 (fullPrice = grant + actualPrice)</span>
     </div>
   </div>
 

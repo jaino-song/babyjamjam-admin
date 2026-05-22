@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { Home, Users, FileText, Sparkles, Menu } from "lucide-react";
+import { Home, User, FileText, Sparkles, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 
@@ -22,7 +22,7 @@ export function MobileBottomNav() {
     kind?: "normal" | "chat";
   }> = [
       { href: "/dashboard", label: "홈", icon: Home, kind: "normal" },
-      { href: "/clients", label: "고객", icon: Users, kind: "normal" },
+      { href: "/clients", label: "고객", icon: User, kind: "normal" },
       { href: "/chat", label: "어시스턴트", icon: Sparkles, kind: "chat" },
       { href: "/contracts", label: "계약", icon: FileText, kind: "normal" },
       { href: "/all", label: "전체", icon: Menu, kind: "normal" },
@@ -41,7 +41,7 @@ export function MobileBottomNav() {
     <nav
       data-component="mobile-bottom-nav"
       className={cn(
-        "fixed left-1/2 z-40 w-[calc(100%-2rem)] max-w-[398px] -translate-x-1/2",
+        "fixed left-1/2 z-[var(--mobile-z-nav,30)] w-[calc(100%-2rem)] max-w-[398px] -translate-x-1/2",
         "grid grid-cols-5 items-end gap-1 p-2",
         "bg-white/80 backdrop-blur-xl rounded-2xl",
         "shadow-v3-hover",
@@ -55,7 +55,6 @@ export function MobileBottomNav() {
           aria-hidden="true"
           className={cn(
             "absolute top-2 bottom-2 rounded-2xl",
-            "transition-[transform,background-color] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]",
             activeItem?.kind === "chat"
               ? "bg-v3-primary-light"
               : "bg-v3-primary"
@@ -87,7 +86,7 @@ export function MobileBottomNav() {
                 : `mobile-bottom-nav-${item.href.replace("/", "")}`
             }
             className={cn(
-              "relative z-10 flex flex-col items-center gap-1 p-2 rounded-2xl transition-colors duration-300",
+              "relative z-10 flex flex-col items-center gap-1 p-2 rounded-2xl",
               item.kind === "chat"
                 ? "text-v3-primary"
                 : isActive
