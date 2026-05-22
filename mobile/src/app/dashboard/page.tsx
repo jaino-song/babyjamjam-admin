@@ -106,7 +106,7 @@ export default function DashboardPage() {
         urgent: pendingReview > 0,
       },
       {
-        label: "발송 대기 문서",
+        label: "대기 문서",
         value: String(pendingSend),
         tone: "burgundy",
         icon: Send,

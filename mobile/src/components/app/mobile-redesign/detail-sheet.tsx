@@ -6,7 +6,7 @@ import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type AvatarTone = "primary" | "green" | "burgundy" | "orange" | "purple";
-export type InfoTone = "green" | "burgundy" | "muted" | "primary";
+export type InfoTone = "green" | "burgundy" | "muted" | "primary" | "orange";
 export type DocRowTone = "green" | "muted" | "primary" | "burgundy" | "orange";
 export type DetailTab = { id: string; label: string };
 
@@ -26,8 +26,8 @@ export function MobileDetailSheet({
   return (
     <section
       data-component={name}
-      className="relative flex flex-col flex-1 min-h-0 overflow-hidden -mx-4 -mb-24"
-      style={{ minHeight: "calc(100dvh - 80px)" }}
+      className="mobile-detail-sheet relative flex flex-col flex-1 min-h-0 overflow-hidden -mx-4 -mb-24"
+      style={{ minHeight: "var(--mobile-detail-sheet-min-height, calc(100dvh - 80px))" }}
     >
       <div className={cn("nav-stack", isOpen && "show-detail")} data-component={`mobile-${name}-stack`}>
         <div className="nav-page list" data-component={`mobile-${name}-list-page`}>

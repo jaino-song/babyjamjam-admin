@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Check } from "lucide-react";
-import { SteppedWizard } from "@/components/app/v3";
-import type { WizardStep } from "@/components/app/v3";
+import { Check, ChevronLeft, X } from "lucide-react";
+
 import { formatWorkAreaLabel, GRADES, WORK_AREAS } from "@/components/app/employees/employee-form.constants";
 import { useCreateEmployee } from "@/hooks/useEmployees";
 import { api } from "@/lib/api/client";
@@ -15,21 +14,32 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
 import { useEmployeeWizardStore } from "@/stores/employee-wizard-store";
 
-const INPUT_CLS =
-  "w-full px-4 py-3 rounded-[14px] border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
-
-const SELECT_CLS =
-  "w-full px-4 py-3 rounded-[14px] border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
-
-const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
-
-const GRID_CLS = "grid grid-cols-1 gap-4";
-
-const COMPLETED_PILL =
-  "inline-flex items-center gap-1.5 px-3 py-2 rounded-[14px] bg-v3-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-v3-dark";
+import styles from "./page.module.css";
 
 const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
 const PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS = 1000;
+const TOTAL_STEPS = 2;
+
+const GRADE_STARS: Record<string, string> = {
+  "프리미엄": "★★★",
+  "베스트": "★★",
+  "스탠다드": "★",
+};
+
+const WORK_AREA_DISPLAY_ORDER = [
+  "인천 부평구",
+  "인천 계양구",
+  "인천 연수구",
+  "인천 남동구",
+  "인천 미추홀구",
+  "인천 서구",
+  "인천 중구",
+  "인천 동구",
+] as const;
+
+const ORDERED_WORK_AREAS = WORK_AREA_DISPLAY_ORDER.filter((area) =>
+  (WORK_AREAS as readonly string[]).includes(area)
+);
 
 function formatPhoneNumber(value: string): string {
   const digits = value.replace(/\D/g, "");
@@ -94,6 +104,20 @@ export default function NewEmployeePage() {
         ? t(locale, "employees.form.error-phone-duplicate")
         : null
     : null;
+  const phoneHelperTone = hasPhoneDuplicateCheckFailed || isPhoneDuplicate
+    ? "err"
+    : isCheckingPhoneDuplicate
+      ? "pending"
+      : phoneDigits.length === 11 && lastCheckedPhoneDigits === phoneDigits
+        ? "ok"
+        : "default";
+  const phoneHelperMessage = isCheckingPhoneDuplicate
+    ? getPhoneDuplicateCheckPendingMessage(locale)
+    : phoneInlineMessage
+      ? phoneInlineMessage
+      : phoneDigits.length === 11 && lastCheckedPhoneDigits === phoneDigits
+        ? "사용 가능한 번호입니다."
+        : null;
 
   const returnTo = useMemo(
     () => sanitizeReturnTo(searchParams.get("returnTo")),
@@ -230,6 +254,30 @@ export default function NewEmployeePage() {
     }
   };
 
+  const activeStep = Math.min(Math.max(currentStep, 0), TOTAL_STEPS - 1);
+  const isFirstStep = activeStep === 0;
+  const isLastStep = activeStep === TOTAL_STEPS - 1;
+  const progress = ((activeStep + 1) / TOTAL_STEPS) * 100;
+  const activeStepTitle = activeStep === 0 ? "기본 정보" : "근무 정보";
+  const activeStepDescription =
+    activeStep === 0
+      ? "제공인력님의 기본 정보를 입력해주세요."
+      : "근무 지역과 근무 가능 여부를 선택해주세요.";
+  const selectedSummary = [store.name.trim(), store.grade].filter(Boolean);
+  const isNextButtonDisabled =
+    createEmployee.isPending ||
+    (
+      activeStep === 0 &&
+      (
+        !store.name.trim() ||
+        phoneDigits.length !== 11 ||
+        isCheckingPhoneDuplicate ||
+        hasPhoneDuplicateCheckFailed ||
+        isPhoneDuplicate ||
+        lastCheckedPhoneDigits !== phoneDigits
+      )
+    );
+
   const handleStepChange = (nextStep: number) => {
     if (nextStep > currentStep && !validateStep(currentStep)) {
       return;
@@ -274,126 +322,179 @@ export default function NewEmployeePage() {
     }
   };
 
-  const steps: WizardStep[] = [
-    {
-      label: t(locale, "employees.form.section-basic"),
-      content: (
-        <div className={GRID_CLS} data-component="employees-new-basic-step">
-          <div className="flex flex-col gap-1.5" data-component="employees-new-basic-name-field">
-            <label htmlFor="employee-name" className={LABEL_CLS}>
-              {t(locale, "employees.form.name")} <span className="text-v3-burgundy">*</span>
-            </label>
-            <input
-              id="employee-name"
-              className={INPUT_CLS}
-              value={store.name}
-              onChange={(event) => {
-                setField("name", event.target.value);
-                setError(null);
-              }}
-              placeholder="홍길동"
-            />
-          </div>
+  const handleExit = () => {
+    reset();
+    router.push(returnTo ?? "/employees");
+  };
 
-          <div className="flex flex-col gap-1.5" data-component="employees-new-basic-phone-field">
-            <div data-component="employees-new-basic-phone-label-row" className="flex items-center gap-2">
-              <label htmlFor="employee-phone" className={LABEL_CLS}>
-                {t(locale, "employees.form.phone")} <span className="text-v3-burgundy">*</span>
+  const handleNext = () => {
+    if (isLastStep) {
+      void handleComplete();
+      return;
+    }
+
+    handleStepChange(activeStep + 1);
+  };
+
+  const handlePrev = () => {
+    if (!isFirstStep) {
+      handleStepChange(activeStep - 1);
+    }
+  };
+
+  return (
+    <div className={styles.page} data-component="employees-new-redesign">
+      <div className={styles.navbar} data-component="employees-new-navbar">
+        <button
+          className={styles.navbarIconButton}
+          type="button"
+          onClick={handleExit}
+          aria-label={returnTo ? "이전 화면으로 돌아가기" : "직원 목록으로 돌아가기"}
+        >
+          <ChevronLeft aria-hidden="true" size={20} strokeWidth={2.5} />
+        </button>
+        <div className={styles.navbarTitle} data-component="employees-new-navbar-title">
+          {t(locale, "employees.form.create-title")}
+        </div>
+        <button
+          className={styles.navbarIconButton}
+          type="button"
+          onClick={handleExit}
+          aria-label="닫기"
+        >
+          <X aria-hidden="true" size={20} strokeWidth={2.5} />
+        </button>
+      </div>
+
+      <div className={styles.wizardContent} data-component="employees-new-wizard-content">
+        <div className={styles.wizardHeader} data-component="employees-new-wizard-header">
+          <div className={styles.progressRow} data-component="employees-new-progress-row">
+            <div className={styles.progressTrack} data-component="employees-new-progress-track">
+              <div
+                className={styles.progressFill}
+                data-component="employees-new-progress-fill"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <div className={styles.stepCount} data-component="employees-new-step-count">
+              <span>{activeStep + 1}</span> / {TOTAL_STEPS} 단계
+            </div>
+          </div>
+          <div className={styles.stepTitle} data-component="employees-new-step-title">{activeStepTitle}</div>
+          <div className={styles.stepDescription} data-component="employees-new-step-description">
+            {activeStepDescription}
+          </div>
+        </div>
+
+        {activeStep === 1 && selectedSummary.length > 0 && (
+          <div className={styles.summaryPills} data-component="employees-new-summary-pills">
+            {selectedSummary.map((summary) => (
+              <span className={styles.summaryPill} key={summary}>
+                {summary}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div
+          className={cn(styles.formScroll, activeStep === 0 ? styles.activeStep : styles.hiddenStep)}
+          data-component="employees-new-basic-step"
+        >
+          <div className={styles.formCard} data-component="employees-new-basic-card">
+            <div className={styles.formRow} data-component="employees-new-basic-name-field">
+              <label htmlFor="employee-name" className={styles.formLabel}>
+                {t(locale, "employees.form.name")} <span className={styles.required}>*</span>
               </label>
-              {phoneInlineMessage && (
-                <p
-                  data-component="employees-new-basic-phone-message"
-                  className="text-[0.72rem] font-medium text-v3-burgundy"
+              <input
+                id="employee-name"
+                className={styles.formInput}
+                value={store.name}
+                onChange={(event) => {
+                  setField("name", event.target.value);
+                  setError(null);
+                }}
+                placeholder="홍길동"
+                aria-required="true"
+                required
+              />
+            </div>
+
+            <div className={styles.formRow} data-component="employees-new-basic-phone-field">
+              <label htmlFor="employee-phone" className={styles.formLabel}>
+                {t(locale, "employees.form.phone")} <span className={styles.required}>*</span>
+              </label>
+              <input
+                id="employee-phone"
+                className={cn(styles.formInput, showPhoneValidationError && styles.formInputError)}
+                value={store.phone}
+                onChange={(event) => {
+                  setField("phone", formatPhoneNumber(event.target.value));
+                  setError(null);
+                }}
+                placeholder="010-1234-5678"
+                type="tel"
+                inputMode="numeric"
+                maxLength={13}
+                aria-invalid={showPhoneValidationError}
+                aria-required="true"
+                required
+              />
+              {phoneHelperMessage && (
+                <div
+                  className={cn(styles.formHelper, styles[phoneHelperTone])}
+                  data-component="employees-new-basic-phone-helper"
                 >
-                  {phoneInlineMessage}
-                </p>
+                  {phoneHelperTone === "ok" ? "✓ " : ""}
+                  {phoneHelperMessage}
+                </div>
               )}
             </div>
-            <input
-              id="employee-phone"
-              className={cn(
-                INPUT_CLS,
-                showPhoneValidationError &&
-                  "border-v3-burgundy focus:border-v3-burgundy focus:shadow-[0_0_0_3px_hsla(349,65%,45%,0.08)]"
-              )}
-              value={store.phone}
-              onChange={(event) => {
-                setField("phone", formatPhoneNumber(event.target.value));
-                setError(null);
-              }}
-              placeholder="010-1234-5678"
-              maxLength={13}
-              aria-invalid={showPhoneValidationError}
-              aria-required="true"
-              required
-            />
           </div>
 
-          <div className="flex flex-col gap-1.5" data-component="employees-new-basic-grade-field">
-            <label htmlFor="employee-grade" className={LABEL_CLS}>
-              {t(locale, "employees.form.grade")} <span className="text-v3-burgundy">*</span>
-            </label>
-            <select
-              id="employee-grade"
-              className={SELECT_CLS}
-              value={store.grade}
-              onChange={(event) => {
-                setField("grade", event.target.value);
-                setError(null);
-              }}
-            >
-              {GRADES.map((grade) => (
-                <option key={grade} value={grade}>
-                  {grade}
-                </option>
-              ))}
-            </select>
+          <div className={styles.formCard} data-component="employees-new-grade-card">
+            <div className={styles.cardTitle} data-component="employees-new-grade-title">
+              {t(locale, "employees.form.grade")} <span className={styles.required}>*</span>
+            </div>
+            <div className={styles.gradeRow} data-component="employees-new-basic-grade-field">
+              {GRADES.map((grade) => {
+                const isSelected = store.grade === grade;
+
+                return (
+                  <button
+                    className={cn(styles.gradeChip, isSelected && styles.selected)}
+                    type="button"
+                    key={grade}
+                    onClick={() => {
+                      setField("grade", grade);
+                      setError(null);
+                    }}
+                    aria-pressed={isSelected}
+                  >
+                    <span className={styles.gradeName}>{grade}</span>
+                    <span className={styles.gradeSub}>{GRADE_STARS[grade] ?? "★"}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {error && (
-            <div
-              data-component="employees-new-basic-error"
-              className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3"
-            >
+          {error && activeStep === 0 && (
+            <div className={styles.errorBox} data-component="employees-new-basic-error">
               {error}
             </div>
           )}
         </div>
-      ),
-      summary: (
-        <div className="flex gap-3 flex-wrap" data-component="employees-new-basic-summary">
-          {store.name && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.name}
-            </span>
-          )}
-          {store.phone && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.phone}
-            </span>
-          )}
-          {store.grade && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.grade}
-            </span>
-          )}
-        </div>
-      ),
-    },
-    {
-      label: t(locale, "employees.form.section-work"),
-      content: (
-        <div className="space-y-6" data-component="employees-new-work-step">
-          <div className="flex flex-col gap-2" data-component="employees-new-work-area-field">
-            <span className={LABEL_CLS}>
-              {t(locale, "employees.form.work-area")} <span className="text-v3-burgundy">*</span>
-            </span>
 
-            <div data-component="employees-new-work-area-options" className="flex flex-wrap gap-3">
-              {WORK_AREAS.map((area) => {
+        <div
+          className={cn(styles.formScroll, activeStep === 1 ? styles.activeStep : styles.hiddenStep)}
+          data-component="employees-new-work-step"
+        >
+          <div className={styles.formCard} data-component="employees-new-work-area-card">
+            <div className={styles.cardTitle} data-component="employees-new-work-area-title">
+              {t(locale, "employees.form.work-area")} <span className={styles.required}>*</span>
+            </div>
+            <div className={styles.areaRow} data-component="employees-new-work-area-options">
+              {ORDERED_WORK_AREAS.map((area) => {
                 const isSelected = store.workArea.includes(area);
 
                 return (
@@ -409,104 +510,88 @@ export default function NewEmployeePage() {
                       );
                       setError(null);
                     }}
-                    className={cn(
-                      "px-4 py-2.5 rounded-[14px] text-[0.8rem] font-semibold transition-all border-[1.5px]",
-                      isSelected
-                        ? "bg-v3-primary-light border-v3-primary text-v3-primary"
-                        : "bg-white border-v3-border text-v3-text-muted hover:border-v3-primary/40"
-                    )}
+                    className={cn(styles.areaChip, isSelected && styles.selected)}
+                    aria-pressed={isSelected}
                   >
-                    {isSelected && <Check className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={2.5} />}
                     {formatWorkAreaLabel(area)}
                   </button>
                 );
               })}
             </div>
-          </div>
-
-          <div data-component="employees-new-open-status-field">
-            <span className={cn(LABEL_CLS, "mb-3 block")}>
-              {t(locale, "employees.form.open-to-next-work")}
-            </span>
-            <div data-component="employees-new-open-status-options" className="flex flex-wrap gap-3">
-              {[
-                { value: true, label: "가능" },
-                { value: false, label: "불가" },
-              ].map((option) => (
-                <button
-                  key={String(option.value)}
-                  type="button"
-                  onClick={() => setField("openToNextWork", option.value)}
-                  className={cn(
-                    "px-4 py-2.5 rounded-[14px] text-[0.8rem] font-semibold transition-all border-[1.5px]",
-                    store.openToNextWork === option.value
-                      ? "bg-v3-primary-light border-v3-primary text-v3-primary"
-                      : "bg-white border-v3-border text-v3-text-muted hover:border-v3-primary/40"
-                  )}
-                >
-                  {store.openToNextWork === option.value && (
-                    <Check className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={2.5} />
-                  )}
-                  {option.label}
-                </button>
-              ))}
+            <div className={styles.formHelper} data-component="employees-new-work-area-helper">
+              {store.workArea.length}개 지역 선택됨 · 복수 선택 가능
             </div>
           </div>
 
-          {error && (
-            <div
-              data-component="employees-new-work-error"
-              className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3"
-            >
+          <div className={styles.formCard} data-component="employees-new-open-status-card">
+            <div className={styles.cardTitle} data-component="employees-new-open-status-title">
+              {t(locale, "employees.form.open-to-next-work")}
+            </div>
+            <div className={styles.openRow} data-component="employees-new-open-status-options">
+              {[
+                { value: true, label: "근무 가능", tone: "ok" },
+                { value: false, label: "근무 불가", tone: "no" },
+              ].map((option) => {
+                const isSelected = store.openToNextWork === option.value;
+
+                return (
+                  <button
+                    className={cn(
+                      styles.openChip,
+                      isSelected && styles.selected,
+                      isSelected && styles[option.tone]
+                    )}
+                    type="button"
+                    key={String(option.value)}
+                    onClick={() => {
+                      setField("openToNextWork", option.value);
+                      setError(null);
+                    }}
+                    aria-pressed={isSelected}
+                  >
+                    <span className={styles.openIcon}>
+                      {option.value ? (
+                        <Check aria-hidden="true" size={16} strokeWidth={2.8} />
+                      ) : (
+                        <X aria-hidden="true" size={16} strokeWidth={2.8} />
+                      )}
+                    </span>
+                    <span className={styles.openLabel}>{option.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className={styles.formHelper} data-component="employees-new-open-status-helper">
+              새로운 고객 매칭에 노출될지 여부입니다. 언제든 변경할 수 있습니다.
+            </div>
+          </div>
+
+          {error && activeStep === 1 && (
+            <div className={styles.errorBox} data-component="employees-new-work-error">
               {error}
             </div>
           )}
         </div>
-      ),
-      summary: (
-        <div className="flex gap-3 flex-wrap" data-component="employees-new-work-summary">
-          {store.workArea.map((area) => (
-            <span key={area} className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {formatWorkAreaLabel(area)}
-            </span>
-          ))}
-          <span className={COMPLETED_PILL}>
-            <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-            {store.openToNextWork ? "근무 가능" : "근무 불가"}
-          </span>
-        </div>
-      ),
-    },
-  ];
 
-  return (
-    <SteppedWizard
-      title={t(locale, "employees.form.create-title")}
-      subtitle="직원 정보를 단계별로 입력해 주세요"
-      steps={steps}
-      currentStep={currentStep}
-      onStepChange={handleStepChange}
-      onComplete={handleComplete}
-      onBack={() => {
-        reset();
-        router.push(returnTo ?? "/employees");
-      }}
-      backLabel={returnTo ? "이전 화면으로 돌아가기" : "직원 목록으로 돌아가기"}
-      completeLabel="등록"
-      isSubmitting={createEmployee.isPending}
-      isNextDisabled={
-        currentStep === 0 &&
-        (
-          !store.name.trim() ||
-          phoneDigits.length !== 11 ||
-          isCheckingPhoneDuplicate ||
-          hasPhoneDuplicateCheckFailed ||
-          isPhoneDuplicate ||
-          lastCheckedPhoneDigits !== phoneDigits
-        )
-      }
-      className="min-h-full"
-    />
+        <div className={styles.actions} data-component="employees-new-actions">
+          <button
+            className={cn(styles.actionButton, styles.secondary)}
+            type="button"
+            onClick={handlePrev}
+            disabled={isFirstStep}
+          >
+            이전
+          </button>
+          <button
+            className={cn(styles.actionButton, styles.primary)}
+            type="button"
+            onClick={handleNext}
+            disabled={isNextButtonDisabled}
+          >
+            {createEmployee.isPending ? "등록 중..." : isLastStep ? "✓ 등록" : "다음 →"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

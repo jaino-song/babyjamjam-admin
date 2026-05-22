@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle, Link2 } from "lucide-react";
+import { CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
 
 import { authApi } from "@/services/api";
 import {
@@ -25,6 +25,9 @@ interface AxiosLikeError {
 }
 
 const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다.";
+const REGISTER_TOTAL_STEPS = 3;
+const BRANCH_OPTIONS = ["인천점", "서울 강동점", "서울 강남점", "부천점", "인천 연수점", "안양점"];
+const ROLE_OPTIONS = ["지점장", "매니저", "상담원"];
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -34,6 +37,13 @@ export default function RegisterPage() {
     confirmPassword: "",
     name: "",
   });
+  const [profileData, setProfileData] = useState({
+    phone: "",
+    birthDate: "",
+    branch: "",
+    role: "",
+  });
+  const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -41,16 +51,41 @@ export default function RegisterPage() {
   const [accountsLinked, setAccountsLinked] = useState(false);
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
   const [isEmailDuplicate, setIsEmailDuplicate] = useState(false);
+  const [isEmailLinkable, setIsEmailLinkable] = useState(false);
   const [emailTouched, setEmailTouched] = useState(false);
 
   const passwordStrength = checkPasswordStrength(formData.password || "");
+  const passwordStrengthRows = [
+    { label: "최소 8자 이상", met: passwordStrength.requirements.some((rule) => rule.label === "최소 8자 이상" && rule.met) },
+    {
+      label: "대/소문자 포함",
+      met:
+        passwordStrength.requirements.some((rule) => rule.label === "대문자 포함" && rule.met) &&
+        passwordStrength.requirements.some((rule) => rule.label === "소문자 포함" && rule.met),
+    },
+    { label: "숫자 포함", met: passwordStrength.requirements.some((rule) => rule.label === "숫자 포함" && rule.met) },
+    {
+      label: "특수문자 1개 이상",
+      met: passwordStrength.requirements.some((rule) => rule.label === "특수문자 포함" && rule.met),
+    },
+  ];
   const normalizedEmail = (formData.email ?? "").trim().toLowerCase();
   const emailFormatError = getEmailFormatError(formData.email ?? "");
+  const canShowEmailTrailing = Boolean(normalizedEmail) && !emailFormatError;
+  const passwordsMatch = Boolean(formData.confirmPassword) && formData.password === formData.confirmPassword;
+  const emailTrailingLabel = isCheckingEmailDuplicate
+    ? "확인 중"
+    : isEmailDuplicate
+      ? "중복 이메일"
+      : isEmailLinkable
+        ? "카카오 연결 가능"
+        : "이메일 확인됨";
 
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
       setIsCheckingEmailDuplicate(false);
       setIsEmailDuplicate(false);
+      setIsEmailLinkable(false);
       setErrors((prev) => {
         if (prev.email !== EMAIL_DUPLICATE_ERROR) return prev;
         const next = { ...prev };
@@ -69,6 +104,7 @@ export default function RegisterPage() {
           if (cancelled) return;
           const dup = exists && !linkable;
           setIsEmailDuplicate(dup);
+          setIsEmailLinkable(exists && linkable);
           setErrors((prev) => {
             const next = { ...prev };
             if (dup) next.email = EMAIL_DUPLICATE_ERROR;
@@ -79,6 +115,7 @@ export default function RegisterPage() {
         .catch(() => {
           if (cancelled) return;
           setIsEmailDuplicate(false);
+          setIsEmailLinkable(false);
           setErrors((prev) => {
             if (prev.email !== EMAIL_DUPLICATE_ERROR) return prev;
             const next = { ...prev };
@@ -117,11 +154,54 @@ export default function RegisterPage() {
     setServerError(null);
   };
 
+  const handleProfileChange =
+    (field: keyof typeof profileData) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      setProfileData((prev) => ({ ...prev, [field]: e.target.value }));
+      setServerError(null);
+    };
+
   const handleEmailBlur = () => {
     setEmailTouched(true);
     const emailError = getEmailFormatError(formData.email ?? "");
     if (!emailError) return;
     setErrors((prev) => ({ ...prev, email: emailError }));
+  };
+
+  const handleAccountStepNext = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setServerError(null);
+
+    if (isCheckingEmailDuplicate) return;
+    if (isEmailDuplicate) {
+      setErrors((prev) => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
+      return;
+    }
+
+    const result = registerSchema.safeParse(formData);
+    if (!result.success) {
+      const fieldErrors: Record<string, string> = {};
+      result.error.issues.forEach((issue) => {
+        const field = issue.path[0] as string;
+        if (!fieldErrors[field]) fieldErrors[field] = issue.message;
+      });
+      setErrors(fieldErrors);
+      return;
+    }
+
+    setErrors({});
+    setCurrentStep(2);
+  };
+
+  const handleProfileStepNext = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setServerError(null);
+    setCurrentStep(3);
+  };
+
+  const handlePreviousStep = () => {
+    setServerError(null);
+    setCurrentStep((step) => Math.max(1, step - 1));
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -131,6 +211,7 @@ export default function RegisterPage() {
     if (isCheckingEmailDuplicate) return;
     if (isEmailDuplicate) {
       setErrors((prev) => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
+      setCurrentStep(1);
       return;
     }
 
@@ -148,6 +229,7 @@ export default function RegisterPage() {
         if (!fieldErrors[field]) fieldErrors[field] = issue.message;
       });
       setErrors(fieldErrors);
+      setCurrentStep(1);
       return;
     }
 
@@ -177,186 +259,303 @@ export default function RegisterPage() {
   if (isSuccess) {
     return (
       <div className="auth-page" data-component="auth-register">
-        <div className="auth-brand">
-          <div className="auth-logo">
+        <div className="auth-brand" data-component="auth-register-brand">
+          <div className="auth-logo" data-component="auth-register-logo">
             <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
           </div>
-          <div className="auth-title">
-            {accountsLinked ? "계정이 연결되었습니다!" : "회원가입 완료!"}
-          </div>
+          <div className="auth-title" data-component="auth-register-title">회원가입</div>
+          <div className="auth-sub" data-component="auth-register-subtitle">필수 정보를 단계별로 입력해 주세요.</div>
         </div>
 
-        <div
-          className="auth-status"
-          data-component="auth-register-success"
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            textAlign: "center",
-            paddingTop: 8,
-          }}
-        >
-          <div
-            className="status-icon success"
-            style={{
-              width: 64,
-              height: 64,
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginBottom: 18,
-              background: accountsLinked
-                ? "hsl(var(--v3-primary-light))"
-                : "hsl(var(--v3-green-light))",
-              color: accountsLinked ? "hsl(var(--v3-primary))" : "hsl(var(--v3-green))",
-            }}
-          >
+        <div className="auth-status" data-component="auth-register-success">
+          <div className={`status-icon success ${accountsLinked ? "linked" : ""}`} data-component="auth-register-success-icon">
             {accountsLinked ? <Link2 size={32} strokeWidth={2.5} /> : <CheckCircle size={32} strokeWidth={2.5} />}
           </div>
-          <p
-            style={{
-              fontSize: "0.86rem",
-              color: "hsl(var(--v3-dark))",
-              lineHeight: 1.55,
-            }}
-          >
+          <div className="status-message" data-component="auth-register-success-title">
+            <strong>{accountsLinked ? "계정이 연결되었습니다!" : "회원가입 완료!"}</strong>
+          </div>
+          <div className="status-message" data-component="auth-register-success-message">
             {accountsLinked ? (
-              <>
+              <span>
                 기존 카카오 계정에 비밀번호가 추가되었습니다.
                 <br />
                 이메일을 확인하여 계정을 활성화하면
                 <br />
                 카카오와 이메일 모두로 로그인할 수 있습니다.
-              </>
+              </span>
             ) : (
-              <>
+              <span>
                 인증 이메일이 발송되었습니다.
                 <br />
                 이메일을 확인하여 계정을 활성화해 주세요.
-              </>
+              </span>
             )}
-          </p>
+          </div>
         </div>
 
-        <button
-          type="button"
-          className="auth-btn"
-          style={{ marginTop: 28 }}
-          onClick={() => router.push("/login")}
-          data-component="auth-register-success-login-btn"
-        >
-          로그인 페이지로 이동
-        </button>
+        <div className="auth-actions auth-success-actions" data-component="auth-register-success-actions">
+          <button
+            type="button"
+            className="auth-btn full"
+            onClick={() => router.push("/login")}
+            data-component="auth-register-success-login-btn"
+          >
+            로그인 페이지로 이동
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="auth-page" data-component="auth-register">
-      <div className="auth-brand">
-        <div className="auth-logo">
+      <div className="auth-brand" data-component="auth-register-brand">
+        <div className="auth-logo" data-component="auth-register-logo">
           <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
         </div>
-        <div className="auth-title">회원가입</div>
-        <div className="auth-sub">아래의 항목들을 작성해 주세요</div>
+        <div className="auth-title" data-component="auth-register-title">회원가입</div>
+        <div className="auth-sub" data-component="auth-register-subtitle">필수 정보를 단계별로 입력해 주세요.</div>
+      </div>
+
+      <div
+        className="step-indicator"
+        aria-label={`회원가입 ${currentStep}단계 / ${REGISTER_TOTAL_STEPS}단계`}
+        data-component="auth-register-step-indicator"
+      >
+        {Array.from({ length: REGISTER_TOTAL_STEPS }, (_, index) => {
+          const step = index + 1;
+          return (
+            <span
+              key={step}
+              className={`step-dot ${step === currentStep ? "active" : ""} ${
+                step < currentStep ? "done" : ""
+              }`}
+              aria-hidden="true"
+            />
+          );
+        })}
+        <span className="step-count">{currentStep} / {REGISTER_TOTAL_STEPS}</span>
       </div>
 
       {serverError && (
-        <div className="auth-server-error" role="alert">
+        <div className="auth-server-error" role="alert" data-component="auth-register-server-error">
           {serverError}
         </div>
       )}
 
-      <form className="auth-form" onSubmit={handleSubmit} data-component="auth-register-form">
-        <input
-          className={`auth-input ${errors.email ? "error" : ""}`}
-          type="email"
-          placeholder="이메일"
-          autoComplete="email"
-          value={formData.email ?? ""}
-          onChange={handleChange("email")}
-          onBlur={handleEmailBlur}
-          disabled={isLoading}
-          aria-invalid={!!errors.email}
-        />
-        {errors.email && <div className="auth-input-error">{errors.email}</div>}
-
-        <input
-          className={`auth-input ${errors.name ? "error" : ""}`}
-          type="text"
-          placeholder="이름"
-          autoComplete="name"
-          value={formData.name ?? ""}
-          onChange={handleChange("name")}
-          disabled={isLoading}
-          aria-invalid={!!errors.name}
-        />
-        {errors.name && <div className="auth-input-error">{errors.name}</div>}
-
-        <input
-          className={`auth-input ${errors.password ? "error" : ""}`}
-          type="password"
-          placeholder="비밀번호 (8자 이상)"
-          autoComplete="new-password"
-          value={formData.password ?? ""}
-          onChange={handleChange("password")}
-          disabled={isLoading}
-          aria-invalid={!!errors.password}
-        />
-        {errors.password && <div className="auth-input-error">{errors.password}</div>}
-
-        {formData.password && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingLeft: 4 }}>
-            {passwordStrength.requirements.map((rule) => (
-              <div
-                key={rule.label}
-                style={{
-                  fontSize: "0.68rem",
-                  color: rule.met ? "hsl(var(--v3-green))" : "hsl(var(--v3-text-muted))",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <span
-                  style={{
-                    width: 4,
-                    height: 4,
-                    borderRadius: "50%",
-                    background: rule.met ? "hsl(var(--v3-green))" : "hsl(var(--v3-border))",
-                  }}
-                />
-                {rule.label}
-              </div>
-            ))}
+      {currentStep === 1 && (
+        <form className="auth-form auth-step-view active" onSubmit={handleAccountStepNext} data-component="auth-register-form">
+          <div className="auth-input-group" data-component="auth-register-email-field">
+            <label className="auth-label" htmlFor="register-email">이메일</label>
+            <div className="auth-input-wrap" data-component="auth-register-email-input-wrap">
+              <input
+                id="register-email"
+                className={`auth-input has-trailing ${errors.email ? "error" : ""}`}
+                type="email"
+                placeholder="example@email.com"
+                autoComplete="email"
+                value={formData.email ?? ""}
+                onChange={handleChange("email")}
+                onBlur={handleEmailBlur}
+                disabled={isLoading}
+                aria-invalid={!!errors.email}
+              />
+              {canShowEmailTrailing && <span className="auth-input-trailing">{emailTrailingLabel}</span>}
+            </div>
+            {errors.email && <div className="auth-helper error" data-component="auth-register-email-error">{errors.email}</div>}
           </div>
-        )}
 
-        <input
-          className={`auth-input ${errors.confirmPassword ? "error" : ""}`}
-          type="password"
-          placeholder="비밀번호 확인"
-          autoComplete="new-password"
-          value={formData.confirmPassword ?? ""}
-          onChange={handleChange("confirmPassword")}
-          disabled={isLoading}
-          aria-invalid={!!errors.confirmPassword}
-        />
-        {errors.confirmPassword && <div className="auth-input-error">{errors.confirmPassword}</div>}
+          <div className="auth-input-group" data-component="auth-register-name-field">
+            <label className="auth-label" htmlFor="register-name">이름</label>
+            <input
+              id="register-name"
+              className={`auth-input ${errors.name ? "error" : ""}`}
+              type="text"
+              placeholder="이름 입력"
+              autoComplete="name"
+              value={formData.name ?? ""}
+              onChange={handleChange("name")}
+              disabled={isLoading}
+              aria-invalid={!!errors.name}
+            />
+            {errors.name && <div className="auth-helper error" data-component="auth-register-name-error">{errors.name}</div>}
+          </div>
 
-        <button
-          type="submit"
-          className="auth-btn"
-          disabled={isLoading || isCheckingEmailDuplicate}
-          data-component="auth-register-submit"
-        >
-          {isLoading ? "처리 중…" : "회원가입"}
-        </button>
-      </form>
+          <div className="auth-input-group" data-component="auth-register-password-field">
+            <label className="auth-label" htmlFor="register-password">비밀번호</label>
+            <input
+              id="register-password"
+              className={`auth-input ${errors.password ? "error" : ""}`}
+              type="password"
+              placeholder="8자 이상"
+              autoComplete="new-password"
+              value={formData.password ?? ""}
+              onChange={handleChange("password")}
+              disabled={isLoading}
+              aria-invalid={!!errors.password}
+            />
+            {errors.password && <div className="auth-helper error" data-component="auth-register-password-error">{errors.password}</div>}
+            <div className="pw-strength" data-component="auth-register-password-strength">
+              {passwordStrengthRows.map((rule) => (
+                <div key={rule.label} className={`pw-strength-row ${rule.met ? "ok" : ""}`} data-component="auth-register-password-strength-row">
+                  <span className="dot" />
+                  {rule.label}
+                </div>
+              ))}
+            </div>
+          </div>
 
-      <div className="auth-links" style={{ justifyContent: "center" }}>
+          <div className="auth-input-group" data-component="auth-register-password-confirm-field">
+            <label className="auth-label" htmlFor="register-password-confirm">비밀번호 확인</label>
+            <input
+              id="register-password-confirm"
+              className={`auth-input ${errors.confirmPassword ? "error" : ""}`}
+              type="password"
+              placeholder="비밀번호 다시 입력"
+              autoComplete="new-password"
+              value={formData.confirmPassword ?? ""}
+              onChange={handleChange("confirmPassword")}
+              disabled={isLoading}
+              aria-invalid={!!errors.confirmPassword}
+            />
+            {errors.confirmPassword ? (
+              <div className="auth-helper error" data-component="auth-register-password-confirm-error">{errors.confirmPassword}</div>
+            ) : (
+              <div
+                className={`auth-helper ${passwordsMatch ? "ok" : "placeholder"}`}
+                data-component="auth-register-password-confirm-ok"
+              >
+                ✓ 비밀번호가 일치합니다.
+              </div>
+            )}
+          </div>
+
+          <div className="auth-actions" data-component="auth-register-step-actions">
+            <button
+              type="submit"
+              className="auth-btn full"
+              disabled={isLoading || isCheckingEmailDuplicate}
+              data-component="auth-register-step-next"
+            >
+              다음
+              <ChevronRight size={14} strokeWidth={2.5} />
+            </button>
+          </div>
+        </form>
+      )}
+
+      {currentStep === 2 && (
+        <form className="auth-form auth-step-view active" onSubmit={handleProfileStepNext} data-component="auth-register-profile-form">
+          <div className="auth-input-group" data-component="auth-register-phone-field">
+            <label className="auth-label" htmlFor="register-phone">전화번호</label>
+            <input
+              id="register-phone"
+              className="auth-input"
+              type="tel"
+              placeholder="010-1234-5678"
+              inputMode="numeric"
+              maxLength={13}
+              autoComplete="tel"
+              value={profileData.phone}
+              onChange={handleProfileChange("phone")}
+              disabled={isLoading}
+            />
+            {profileData.phone && <div className="auth-helper ok" data-component="auth-register-phone-ok">✓ 사용 가능한 번호입니다.</div>}
+          </div>
+
+          <div className="auth-input-group" data-component="auth-register-birth-field">
+            <label className="auth-label" htmlFor="register-birth">생년월일</label>
+            <input
+              id="register-birth"
+              className="auth-input"
+              type="text"
+              placeholder="1990-01-01"
+              inputMode="numeric"
+              maxLength={10}
+              autoComplete="bday"
+              value={profileData.birthDate}
+              onChange={handleProfileChange("birthDate")}
+              disabled={isLoading}
+            />
+            <div className="auth-helper" data-component="auth-register-birth-helper">YYYY-MM-DD 형식으로 입력해 주세요.</div>
+          </div>
+
+          <div className="auth-actions" data-component="auth-register-step-actions">
+            <button type="button" className="auth-btn secondary" onClick={handlePreviousStep} disabled={isLoading}>
+              <ChevronLeft size={14} strokeWidth={2.5} />
+              이전
+            </button>
+            <button type="submit" className="auth-btn" disabled={isLoading}>
+              다음
+              <ChevronRight size={14} strokeWidth={2.5} />
+            </button>
+          </div>
+        </form>
+      )}
+
+      {currentStep === 3 && (
+        <form className="auth-form auth-step-view active" onSubmit={handleSubmit} data-component="auth-register-submit-form">
+          <div className="auth-input-group" data-component="auth-register-branch-field">
+            <label className="auth-label" htmlFor="register-branch">지점명</label>
+            <div className="auth-select-wrap" data-component="auth-register-branch-select-wrap">
+              <select
+                id="register-branch"
+                className="auth-select"
+                value={profileData.branch}
+                onChange={handleProfileChange("branch")}
+                disabled={isLoading}
+              >
+                <option value="">지점을 선택해주세요</option>
+                {BRANCH_OPTIONS.map((branch) => (
+                  <option key={branch} value={branch}>
+                    {branch}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="auth-select-chev" size={16} strokeWidth={2.5} aria-hidden="true" />
+            </div>
+          </div>
+
+          <div className="auth-input-group" data-component="auth-register-role-field">
+            <label className="auth-label" htmlFor="register-role">역할</label>
+            <div className="auth-select-wrap" data-component="auth-register-role-select-wrap">
+              <select
+                id="register-role"
+                className="auth-select"
+                value={profileData.role}
+                onChange={handleProfileChange("role")}
+                disabled={isLoading}
+              >
+                <option value="">역할을 선택해주세요</option>
+                {ROLE_OPTIONS.map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="auth-select-chev" size={16} strokeWidth={2.5} aria-hidden="true" />
+            </div>
+            <div className="auth-helper" data-component="auth-register-role-helper">선택한 지점의 관리자가 가입을 승인해야 합니다.</div>
+          </div>
+
+          <div className="auth-actions" data-component="auth-register-step-actions">
+            <button type="button" className="auth-btn secondary" onClick={handlePreviousStep} disabled={isLoading}>
+              <ChevronLeft size={14} strokeWidth={2.5} />
+              이전
+            </button>
+            <button
+              type="submit"
+              className="auth-btn"
+              disabled={isLoading || isCheckingEmailDuplicate}
+              data-component="auth-register-submit"
+            >
+              {isLoading ? "처리 중…" : "회원가입"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div className="auth-footer-link" data-component="auth-register-footer-link">
         <span>이미 계정이 있으신가요?&nbsp;</span>
         <Link href="/login">로그인</Link>
       </div>

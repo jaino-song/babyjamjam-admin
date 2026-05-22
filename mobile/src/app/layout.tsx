@@ -55,7 +55,7 @@ export default async function RootLayout({
       <body className={`${Pretendard.variable} antialiased min-h-screen bg-v3-dim-white`}>
         <div
           data-component="app-root"
-          className="relative mx-auto h-[min(100dvh,932px)] w-[min(100vw,430px)] max-w-[430px] overflow-x-hidden overflow-y-auto [--mobile-shell-max-height:932px]"
+          className="relative mx-auto h-[min(100dvh,844px)] w-[min(100vw,390px)] max-w-[390px] overflow-x-hidden overflow-y-auto [--mobile-shell-max-height:844px]"
         >
           <div data-component="app-providers" className="min-h-full">
             <QueryProvider>

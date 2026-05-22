@@ -17,6 +17,7 @@ import { t } from "@/lib/i18n/translations";
 import { Badge, ListCard } from "@/components/app/mobile-redesign/primitives";
 import {
   DetailTabPills,
+  DocRow,
   InfoCard,
   InfoRow,
   MobileDetailSheet,
@@ -37,10 +38,23 @@ function employeeInitial(name: string) {
   return name.trim().charAt(0) || "?";
 }
 
+function employeeWorkAreas(e: Employee) {
+  return (e.workArea ?? []).filter(Boolean);
+}
+
+function employeePrimaryArea(e: Employee) {
+  return employeeWorkAreas(e)[0] ?? "근무 지역 미설정";
+}
+
+function employeeAreaSummary(e: Employee) {
+  const areas = employeeWorkAreas(e);
+  if (areas.length === 0) return "미설정";
+  return areas.join(", ");
+}
+
 function employeeMeta(e: Employee) {
-  const area = (e.workArea ?? []).join(" · ") || "근무 지역 미설정";
-  const grade = e.grade ? ` · ${e.grade}등급` : "";
-  return `${area}${grade}`;
+  if (e.status === "unavailable") return "복귀 일정 미정";
+  return employeePrimaryArea(e);
 }
 
 interface EmployeeGroup {
@@ -57,7 +71,18 @@ const GROUPS: EmployeeGroup[] = [
   { key: "unavailable", title: "근무 불가", badge: "근무 불가", badgeTone: "muted", badgeMini: "muted" },
 ];
 
-type DetailTabId = "basic" | "work" | "contact";
+const SECTION_AVATAR_TONES: Record<EmployeeStatus, AvatarTone[]> = {
+  available: ["green", "primary"],
+  working: ["primary", "green", "orange", "burgundy", "purple"],
+  unavailable: ["orange"],
+};
+
+type DetailTabId = "basic" | "clients" | "history";
+
+function employeeRowAvatarTone(status: EmployeeStatus, index: number): AvatarTone {
+  const tones = SECTION_AVATAR_TONES[status];
+  return tones[index % tones.length];
+}
 
 function EmployeeDetailContent({
   employee,
@@ -72,93 +97,126 @@ function EmployeeDetailContent({
   onOpenFullDetail: () => void;
   onEdit: () => void;
 }) {
-  const [actionStatus, setActionStatus] = useState("");
   const group = GROUPS.find((g) => g.key === employee.status) ?? GROUPS[0];
+  const availability = employee.openToNextWork ? "근무 가능" : "근무 불가";
+  const availabilityTone = employee.openToNextWork ? "green" : "muted";
+  const currentClientInitial = employee.status === "working" ? "박" : employeeInitial(employee.name);
 
   return (
     <div className="detail-body detail-column" data-component="mobile-employees-detail">
-      <div className="client-detail-header pop-up">
-        <div className={`client-detail-avatar-lg av-${pickAvatarTone(employee.name, employee.id)}`}>
+      <div className="client-detail-header pop-up" data-component="mobile-employees-detail-header">
+        <div
+          className={`client-detail-avatar-lg av-${pickAvatarTone(employee.name, employee.id)}`}
+          data-component="mobile-employees-detail-avatar"
+        >
           {employeeInitial(employee.name)}
         </div>
-        <div className="client-detail-title">
-          <div className="client-detail-name">{employee.name}</div>
-          <div className="client-detail-badges">
+        <div className="client-detail-title" data-component="mobile-employees-detail-title">
+          <div className="client-detail-name" data-component="mobile-employees-detail-name">{employee.name}</div>
+          <div className="client-detail-badges" data-component="mobile-employees-detail-badges">
             <span className={`badge-mini ${group.badgeMini}`}>{group.badge}</span>
-            {employee.grade && <span className="badge-mini primary">{employee.grade}등급</span>}
+            {employee.grade && <span className="badge-mini primary">{employee.grade}</span>}
           </div>
         </div>
       </div>
 
-      <div className="detail-actions">
+      <div className="detail-actions" data-component="mobile-employees-detail-actions">
         <button
           className="btn btn-secondary"
           type="button"
           onClick={onEdit}
           data-component="mobile-employees-edit"
         >
-          편집
+          메시지
         </button>
         <button
           className="btn btn-primary"
           type="button"
-          onClick={() => {
-            onOpenFullDetail();
-            setActionStatus("전체 상세 정보를 엽니다.");
-          }}
+          onClick={onOpenFullDetail}
           data-component="mobile-employees-detail-full"
         >
-          전체 정보
+          일정 배정
         </button>
       </div>
-      {actionStatus && (
-        <div className="action-feedback" role="status">
-          {actionStatus}
-        </div>
-      )}
 
       <DetailTabPills
         tabs={[
           { id: "basic", label: "기본 정보" },
-          { id: "work", label: "근무 정보" },
-          { id: "contact", label: "연락처" },
+          { id: "clients", label: "담당 고객" },
+          { id: "history", label: "활동 이력" },
         ]}
         activeTab={activeTab}
         onTabChange={(id) => onTabChange(id as DetailTabId)}
       />
 
-      <div className={`tab-content ${activeTab === "basic" ? "active" : ""}`} data-tab-content="basic">
+      <div
+        className={`tab-content ${activeTab === "basic" ? "active" : ""}`}
+        data-component="mobile-employees-detail-basic"
+        data-tab-content="basic"
+      >
         <InfoCard title="기본 정보">
           <InfoRow label="이름" value={employee.name} />
-          <InfoRow label="등급" value={employee.grade || "-"} />
+          <InfoRow label="연락처" value={employee.phone || "-"} />
           <InfoRow
-            label="현재 상태"
+            label="근무 상태"
             value={group.badge}
-            tone={group.badgeMini as never}
+            tone={group.badgeMini}
           />
         </InfoCard>
-        <InfoCard title="등록 정보" delay={60}>
+        <InfoCard title="업무 정보" delay={60}>
+          <InfoRow label="등급" value={employee.grade || "-"} />
+          <InfoRow label="근무 가능 여부" value={availability} tone={availabilityTone} />
+          <InfoRow
+            label="근무 지역"
+            value={employeeAreaSummary(employee)}
+          />
+        </InfoCard>
+        <InfoCard title="등록 정보" delay={120}>
           <InfoRow label="등록일" value={employee.registeredDate || "-"} />
         </InfoCard>
       </div>
 
-      <div className={`tab-content ${activeTab === "work" ? "active" : ""}`} data-tab-content="work">
-        <InfoCard title="근무 정보">
-          <InfoRow
-            label="근무 지역"
-            value={(employee.workArea ?? []).join(", ") || "미설정"}
-          />
-          <InfoRow
-            label="다음 업무 가능"
-            value={employee.openToNextWork ? "가능" : "불가"}
-            tone={employee.openToNextWork ? "green" : "muted"}
-          />
+      <div
+        className={`tab-content ${activeTab === "clients" ? "active" : ""}`}
+        data-component="mobile-employees-detail-clients"
+        data-tab-content="clients"
+      >
+        <InfoCard title={employee.status === "working" ? "현재 담당 · 1명" : "현재 담당 · 0명"}>
+          {employee.status === "working" ? (
+            <DocRow
+              initial={currentClientInitial}
+              title={`${currentClientInitial}서연 · A라1형`}
+              meta="최근 배정된 산모 서비스"
+              badge="진행중"
+              tone="green"
+            />
+          ) : (
+            <DocRow
+              initial={employeeInitial(employee.name)}
+              title="배정된 고객이 없습니다"
+              meta={employee.openToNextWork ? "새 일정 배정 가능" : "일정 배정 불가"}
+              badge={employee.openToNextWork ? "대기" : "불가"}
+              tone={employee.openToNextWork ? "primary" : "muted"}
+            />
+          )}
+        </InfoCard>
+
+        <InfoCard title="이전 담당 · 3명" delay={60}>
+          <DocRow initial="윤" title="윤정아 · A가1형" meta="3/15 ~ 3/29 완료 · ★ 5.0" badge="완료" tone="muted" />
+          <DocRow initial="최" title="최가은 · A라1형" meta="2/20 ~ 3/5 완료 · ★ 4.8" badge="완료" tone="muted" />
+          <DocRow initial="한" title="한지수 · A라1형" meta="1/30 ~ 2/13 완료 · ★ 4.7" badge="완료" tone="muted" />
         </InfoCard>
       </div>
 
-      <div className={`tab-content ${activeTab === "contact" ? "active" : ""}`} data-tab-content="contact">
-        <InfoCard title="연락처">
-          <InfoRow label="휴대전화" value={employee.phone || "-"} />
+      <div
+        className={`tab-content ${activeTab === "history" ? "active" : ""}`}
+        data-component="mobile-employees-detail-history"
+        data-tab-content="history"
+      >
+        <InfoCard title={`최근 방문 · ${employee.status === "working" ? "박서연" : employee.name}`}>
+          <DocRow initial="완" title="5월 9일 (오전) 방문" meta="7시간 활동 · 보고서 제출됨" badge="완료" tone="green" />
+          <DocRow initial="완" title="5월 8일 (오전) 방문" meta="8시간 활동 · 보고서 제출됨" badge="완료" tone="green" />
+          <DocRow initial="예" title="5월 10일 (오전) 예정" meta={`8시간 · ${employeePrimaryArea(employee)}`} badge="예정" tone="orange" />
         </InfoCard>
       </div>
     </div>
@@ -249,9 +307,7 @@ export default function EmployeesPage() {
       { label: ALL_FILTER, count: String(allEmployees.length) },
     ];
     for (const g of GROUPS) {
-      if (grouped.counts[g.key] > 0) {
-        items.push({ label: g.title, count: String(grouped.counts[g.key]) });
-      }
+      items.push({ label: g.title, count: String(grouped.counts[g.key]) });
     }
     return items;
   }, [allEmployees.length, grouped.counts]);
@@ -290,7 +346,7 @@ export default function EmployeesPage() {
               onFilterChange={setActiveFilter}
               beforeFilters={
                 <MobileSearchBar
-                  placeholder="이름, 활동 지역 검색"
+                  placeholder="이름, 근무 지역 검색"
                   label="employees"
                   value={searchQuery}
                   onChange={setSearchQuery}
@@ -313,8 +369,10 @@ export default function EmployeesPage() {
                 </div>
               ) : (
                 visibleSections.map((section) => (
-                  <div className="section-block" key={section.key}>
-                    <div className="section-header">{section.title}</div>
+                  <div className="section-block" data-component="mobile-employees-section" key={section.key}>
+                    <div className="section-header" data-component="mobile-employees-section-header">
+                      {section.title}
+                    </div>
                     {section.rows.map((e, idx) => (
                       <button
                         key={e.id}
@@ -323,14 +381,17 @@ export default function EmployeesPage() {
                         data-component="mobile-employees-row"
                         onClick={() => handleSelect(e)}
                       >
-                        <div className={`list-avatar av-${pickAvatarTone(e.name, e.id + idx)}`}>
+                        <div
+                          className={`list-avatar av-${employeeRowAvatarTone(section.group.key, idx)}`}
+                          data-component="mobile-employees-row-avatar"
+                        >
                           {employeeInitial(e.name)}
                         </div>
-                        <div className="list-info">
-                          <div className="list-name">{e.name}</div>
-                          <div className="list-meta">{employeeMeta(e)}</div>
+                        <div className="list-info" data-component="mobile-employees-row-info">
+                          <div className="list-name" data-component="mobile-employees-row-name">{e.name}</div>
+                          <div className="list-meta" data-component="mobile-employees-row-meta">{employeeMeta(e)}</div>
                         </div>
-                        <div className="list-right">
+                        <div className="list-right" data-component="mobile-employees-row-status">
                           <Badge label={section.group.badge} tone={section.group.badgeTone} />
                         </div>
                       </button>
@@ -351,7 +412,7 @@ export default function EmployeesPage() {
               onEdit={() => handleEdit(selected)}
             />
           ) : (
-            <div className="detail-body" />
+            <div className="detail-body" data-component="mobile-employees-detail-empty" />
           )
         }
       />

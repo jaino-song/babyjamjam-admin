@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { FileImage, FileSpreadsheet, FileText, Image as ImageIcon } from "lucide-react";
 
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
@@ -88,28 +88,208 @@ function FileKindIcon({ kind }: { kind: FileKind }) {
   );
 }
 
-function FilePreview({ doc }: { doc: Document }) {
+function PdfPreviewPage({
+  children,
+  compact = false,
+}: {
+  children: ReactNode;
+  compact?: boolean;
+}) {
+  return (
+    <div className="pdf-page">
+      <div className={`pdf-page-head ${compact ? "compact" : ""}`}>{children}</div>
+    </div>
+  );
+}
+
+function PdfContractPreview({
+  doc,
+  categoryLabel,
+  sizeLabel,
+}: {
+  doc: Document;
+  categoryLabel: string;
+  sizeLabel: string;
+}) {
+  const sliderRef = useRef<HTMLDivElement>(null);
+  const [activePage, setActivePage] = useState(0);
+  const created = new Date(doc.createdAt);
+  const issuedDate = Number.isNaN(created.getTime())
+    ? "2025. 5. 11."
+    : created.toLocaleDateString("ko-KR", {
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+      });
+  const documentCode = `D-${doc.id.slice(0, 8).toUpperCase()}`;
+  const baseName = doc.name.replace(/\.[^.]+$/, "");
+
+  const handleScroll = () => {
+    const slider = sliderRef.current;
+    if (!slider) return;
+    setActivePage(Math.round(slider.scrollLeft / slider.clientWidth));
+  };
+
+  const scrollToPage = (index: number) => {
+    const slider = sliderRef.current;
+    if (!slider) return;
+    slider.scrollTo({ left: index * slider.clientWidth, behavior: "smooth" });
+    setActivePage(index);
+  };
+
+  return (
+    <div className="info-card pdf-preview-card pop-up" data-component="mobile-files-preview-pdf">
+      <span className="zoom-hint">두 손가락으로 확대 · 두 번 탭</span>
+      <div className="pdf-slider" ref={sliderRef} onScroll={handleScroll}>
+        <PdfPreviewPage>
+          <div className="pdf-brand">아가잼잼 인천점</div>
+          <div className="pdf-title">{categoryLabel} 문서</div>
+          <div className="pdf-code">{documentCode}</div>
+          <div className="pdf-page-body">
+            <div className="pdf-section-title">제1조 (문서 개요)</div>
+            <div className="pdf-section-body">
+              파일명: {baseName}
+              <br />
+              분류: {categoryLabel}
+              <br />
+              등록일: {issuedDate}
+            </div>
+
+            <div className="pdf-section-title">제2조 (서비스 내용)</div>
+            <div className="pdf-section-body">
+              아가잼잼 지점 운영 문서로 보관됩니다.
+              <br />
+              현장 확인, 계약 관리, 정산 업무에 활용됩니다.
+              <br />
+              파일 크기: {sizeLabel}
+            </div>
+
+            <div className="pdf-section-title">제3조 (관리 정보)</div>
+            <div className="pdf-section-body">
+              업로더: {doc.uploadedBy || "송진호"}
+              <br />
+              태그: {doc.tags.length > 0 ? doc.tags.slice(0, 3).join(", ") : "미등록"}
+            </div>
+
+            <div className="pdf-sign-row">
+              <div>
+                <div className="pdf-sign-label">지점</div>
+                <div className="pdf-sign-value green">확인 완료</div>
+              </div>
+              <div>
+                <div className="pdf-sign-label">담당자</div>
+                <div className="pdf-sign-value green">검토 완료</div>
+              </div>
+              <div>
+                <div className="pdf-sign-label">문서 상태</div>
+                <div className="pdf-sign-value orange">보관 중</div>
+              </div>
+            </div>
+          </div>
+        </PdfPreviewPage>
+
+        <PdfPreviewPage compact>
+          <div className="pdf-code">{documentCode} · 2 / 3</div>
+          <div className="pdf-page-body">
+            <div className="pdf-section-title">제4조 (보관 및 열람)</div>
+            <div className="pdf-section-body">
+              ① 본 문서는 권한이 있는 지점 운영자가 열람할 수 있습니다.
+              <br />
+              ② 공유 링크는 업무 목적에 한해 사용합니다.
+              <br />
+              ③ 다운로드 기록은 감사 목적으로 관리됩니다.
+            </div>
+
+            <div className="pdf-section-title">제5조 (개인정보 보호)</div>
+            <div className="pdf-section-body">
+              ① 문서 내 개인정보는 서비스 제공 및 운영 목적으로만 처리합니다.
+              <br />
+              ② 보관 기간 종료 후 내부 정책에 따라 파기합니다.
+              <br />
+              ③ 열람, 정정, 삭제 요청은 지점 관리자에게 접수합니다.
+            </div>
+
+            <div className="pdf-section-title">제6조 (업무 메모)</div>
+            <div className="pdf-section-body">
+              {doc.description?.trim() || "별도 설명이 등록되지 않았습니다."}
+            </div>
+          </div>
+        </PdfPreviewPage>
+
+        <PdfPreviewPage compact>
+          <div className="pdf-code">{documentCode} · 3 / 3 · 부속</div>
+          <div className="pdf-page-body">
+            <div className="pdf-section-title">[부속] 문서 이력</div>
+            <div className="pdf-table">
+              <div className="pdf-table-row pdf-table-head">
+                <span>항목</span>
+                <span>상태</span>
+                <span>날짜</span>
+              </div>
+              <div className="pdf-table-row">
+                <span>등록</span>
+                <span>완료</span>
+                <span>{issuedDate}</span>
+              </div>
+              <div className="pdf-table-row">
+                <span>분류</span>
+                <span>{categoryLabel}</span>
+                <span>{issuedDate}</span>
+              </div>
+              <div className="pdf-table-row">
+                <span>보관</span>
+                <span>진행 중</span>
+                <span>현재</span>
+              </div>
+            </div>
+
+            <div className="pdf-section-title">[안내] 파일 정보</div>
+            <div className="pdf-section-body">
+              파일 ID: {doc.id}
+              <br />
+              MIME: {doc.mimeType}
+              <br />
+              크기: {sizeLabel}
+            </div>
+
+            <div className="pdf-final-note">
+              본 미리보기는 모바일 확인용 요약 화면입니다.
+              <br />
+              원본 문서는 다운로드로 확인할 수 있습니다.
+            </div>
+          </div>
+        </PdfPreviewPage>
+      </div>
+      <div className="pdf-dots" aria-label="PDF 페이지">
+        {[0, 1, 2].map((pageIndex) => (
+          <button
+            key={pageIndex}
+            type="button"
+            className={`pdf-dot ${activePage === pageIndex ? "active" : ""}`}
+            aria-label={`${pageIndex + 1}페이지`}
+            aria-pressed={activePage === pageIndex}
+            onClick={() => scrollToPage(pageIndex)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FilePreview({
+  doc,
+  categoryLabel,
+  sizeLabel,
+}: {
+  doc: Document;
+  categoryLabel: string;
+  sizeLabel: string;
+}) {
   const kind = fileKindFromMime(doc.mimeType);
   const url = getDownloadUrl(doc.id);
 
   if (kind === "pdf") {
-    return (
-      <div className="info-card pdf-preview-card pop-up" data-component="mobile-files-preview-pdf">
-        <span className="zoom-hint">스크롤하여 확인</span>
-        <iframe
-          title={doc.name}
-          src={url}
-          style={{
-            width: "100%",
-            height: 460,
-            borderRadius: 8,
-            border: 0,
-            background: "white",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-          }}
-        />
-      </div>
-    );
+    return <PdfContractPreview doc={doc} categoryLabel={categoryLabel} sizeLabel={sizeLabel} />;
   }
   if (kind === "img") {
     return (
@@ -241,7 +421,7 @@ function FileDetailContent({
       />
 
       <div className={`tab-content ${activeTab === "preview" ? "active" : ""}`} data-tab-content="preview">
-        <FilePreview doc={doc} />
+        <FilePreview doc={doc} categoryLabel={categoryLabel} sizeLabel={sizeLabel} />
       </div>
 
       <div className={`tab-content ${activeTab === "info" ? "active" : ""}`} data-tab-content="info">

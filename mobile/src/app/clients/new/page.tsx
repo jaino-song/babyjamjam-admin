@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronLeft } from "lucide-react";
+import { ChevronLeft, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCreateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
@@ -12,8 +12,6 @@ import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import type { Employee } from "@/hooks/useEmployees";
-import type { WizardStep } from "@/components/app/v3";
-import { Input, InputField, SteppedWizard } from "@/components/app/v3";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -21,20 +19,60 @@ import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { cn } from "@/lib/utils";
-
-const SELECT_CLS =
-  "w-full px-4 py-3 rounded-2xl border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
-
-const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
-
-const GRID_CLS = "grid grid-cols-1 md:grid-cols-2 gap-4";
-
-const COMPLETED_PILL =
-  "inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-v3-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-v3-dark";
+import styles from "./page.module.css";
 
 const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
 const PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS = 1000;
 const PHONE_DUPLICATE_CHECK_FAILED_MESSAGE = "문제가 발생했어요. 새로고침 해주세요.";
+
+const WIZARD_STEPS = [
+  { title: "기본 정보", desc: "고객님의 기본 정보를 입력해주세요." },
+  { title: "서비스 설정", desc: "바우처와 제공인력, 요금 정보를 확인해주세요." },
+  { title: "계약 정보", desc: "계약 상태와 서비스 기간을 입력해주세요." },
+] as const;
+
+type HelperTone = "muted" | "ok" | "err" | "pending";
+
+function Field({
+  label,
+  required,
+  children,
+  helper,
+  helperTone = "muted",
+}: {
+  label: ReactNode;
+  required?: boolean;
+  children: ReactNode;
+  helper?: ReactNode;
+  helperTone?: HelperTone;
+}) {
+  return (
+    <div className={styles.formRow} data-component="clients-new-form-row">
+      <label className={styles.formLabel}>
+        {label}
+        {required ? <span className={styles.requiredMark}>*</span> : null}
+      </label>
+      {children}
+      {helper ? (
+        <div className={cn(styles.formHelper, styles[`helper_${helperTone}`])} data-component="clients-new-form-helper">
+          {helper}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function getVoucherTypeLabel(type: string): string {
+  if (!type) return "";
+
+  for (const types of Object.values(voucherOptions.voucherOptions)) {
+    for (const [typeValue, typeData] of Object.entries(types)) {
+      if (typeValue === type) return typeData.label;
+    }
+  }
+
+  return type;
+}
 
 const formatPhoneNumber = (value: string): string => {
   const digits = value.replace(/\D/g, "");
@@ -77,13 +115,30 @@ export default function NewClientPage() {
   const floatingErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
+  const isPhoneAvailable =
+    phoneDigits.length === 11 &&
+    !isCheckingPhoneDuplicate &&
+    !hasPhoneDuplicateCheckFailed &&
+    !isPhoneDuplicate &&
+    lastCheckedPhoneDigits === phoneDigits;
   const phoneInlineMessage = phoneDigits.length === 11
-    ? hasPhoneDuplicateCheckFailed
-    ? PHONE_DUPLICATE_CHECK_FAILED_MESSAGE
-    : isPhoneDuplicate
-      ? t(locale, "clients.form.error-phone-duplicate")
-      : null
+    ? isCheckingPhoneDuplicate
+      ? "번호를 확인하고 있습니다."
+      : hasPhoneDuplicateCheckFailed
+        ? PHONE_DUPLICATE_CHECK_FAILED_MESSAGE
+        : isPhoneDuplicate
+          ? t(locale, "clients.form.error-phone-duplicate")
+          : isPhoneAvailable
+            ? "✓ 사용 가능한 번호입니다."
+            : null
     : null;
+  const phoneHelperTone: HelperTone = isCheckingPhoneDuplicate
+    ? "pending"
+    : hasPhoneDuplicateCheckFailed || isPhoneDuplicate
+      ? "err"
+      : isPhoneAvailable
+        ? "ok"
+        : "muted";
 
   const showFloatingError = (message: string) => {
     setFloatingError(message);
@@ -332,327 +387,38 @@ export default function NewClientPage() {
     }
   };
 
-  const steps: WizardStep[] = [
-    {
-      label: "기본 정보",
-      content: (
-        <div className={GRID_CLS}>
-          <InputField
-            title={
-              <>
-                {t(locale, "clients.form.name")} <span className="text-v3-burgundy">*</span>
-              </>
-            }
-            inputProps={{
-              value: store.name,
-              onChange: (e) => setField("name", e.target.value),
-              placeholder: "홍길동",
-            }}
-          />
-          <InputField
-            title={
-              <>
-                {t(locale, "clients.form.birthday")} <span className="text-v3-burgundy">*</span>
-              </>
-            }
-            inputProps={{
-              value: store.birthday,
-              onChange: (e) => setField("birthday", e.target.value),
-              placeholder: "YYMMDD",
-              maxLength: 6,
-            }}
-          />
-          <InputField
-            title={
-              <>
-                {t(locale, "clients.form.due-date")} <span className="text-v3-burgundy">*</span>
-              </>
-            }
-            inputProps={{
-              type: "date",
-              value: store.dueDate,
-              onChange: (e) => setField("dueDate", e.target.value),
-            }}
-          />
-          <InputField
-            title={
-              <>
-                {t(locale, "clients.form.phone")} <span className="text-v3-burgundy">*</span>
-              </>
-            }
-            message={phoneInlineMessage}
-            messageTone={hasPhoneDuplicateCheckFailed || isPhoneDuplicate ? "error" : "muted"}
-            inputProps={{
-              value: store.phone,
-              onChange: (e) => setField("phone", formatPhoneNumber(e.target.value)),
-              placeholder: "010-1234-5678",
-              maxLength: 13,
-            }}
-          />
-          <InputField
-            className="md:col-span-2"
-            title={t(locale, "clients.form.address")}
-            inputProps={{
-              value: store.address,
-              onChange: (e) => setField("address", e.target.value),
-              placeholder: "서울시 강남구...",
-            }}
-          />
-        </div>
-      ),
-      summary: (
-        <div className="flex gap-3 flex-wrap">
-          {store.name && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.name}
-            </span>
-          )}
-          {store.phone && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.phone}
-            </span>
-          )}
-          {store.address && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.address}
-            </span>
-          )}
-        </div>
-      ),
-    },
-    {
-      label: "담당 관리사",
-      content: (
-        <div className={GRID_CLS}>
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLS}>{t(locale, "clients.form.primary-employee")}</label>
-            <EmployeeAutocomplete
-              value={store.primaryEmployeeId}
-              onChange={(id) => setField("primaryEmployeeId", id)}
-              label=""
-              excludeIds={store.secondaryEmployeeId != null ? [store.secondaryEmployeeId] : []}
-              allowManualEntry
-              onManualEntry={() => {
-                setEmployeeDialogTarget("primary");
-                setIsEmployeeDialogOpen(true);
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLS}>{t(locale, "clients.form.secondary-employee")}</label>
-            <EmployeeAutocomplete
-              value={store.secondaryEmployeeId}
-              onChange={(id) => setField("secondaryEmployeeId", id)}
-              label=""
-              excludeIds={store.primaryEmployeeId != null ? [store.primaryEmployeeId] : []}
-              allowManualEntry
-              onManualEntry={() => {
-                setEmployeeDialogTarget("secondary");
-                setIsEmployeeDialogOpen(true);
-              }}
-            />
-          </div>
-        </div>
-      ),
-    },
-    {
-      label: "서비스 설정",
-      content: (
-        <div className="space-y-6">
-          <div className={GRID_CLS}>
-            <div className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-type")}</label>
-              <select
-                className={SELECT_CLS}
-                value={store.type}
-                onChange={(e) => handleTypeChange(e.target.value)}
-              >
-                <option value="">선택하세요</option>
-                {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) =>
-                  Object.entries(types).map(([typeValue, typeData]) => (
-                    <option key={typeValue} value={typeValue}>
-                      {groupName} — {typeData.label}
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.duration")}</label>
-              <div className="relative">
-                <select
-                  className={cn(SELECT_CLS, (!store.type || isPriceLoading) && "opacity-50")}
-                  value={store.duration?.toString() || ""}
-                  onChange={(e) => {
-                    setField("duration", e.target.value ? Number(e.target.value) : null);
-                    setPricesManuallyEdited(false);
-                  }}
-                  disabled={!store.type || isPriceLoading}
-                >
-                  <option value="">선택하세요</option>
-                  {availableDurations.map((d) => (
-                    <option key={d} value={String(d)}>
-                      {d}일
-                    </option>
-                  ))}
-                </select>
-                {isPriceLoading && (
-                  <div className="absolute right-10 top-1/2 -translate-y-1/2">
-                    <div className="w-4 h-4 border-2 border-v3-primary/30 border-t-v3-primary rounded-full animate-spin" />
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className={LABEL_CLS}>{t(locale, "clients.form.section-pricing")}</span>
-              {selectedPriceInfo && !pricesManuallyEdited && (
-                <span className="text-[0.65rem] font-bold text-v3-primary bg-v3-primary-light px-2 py-0.5 rounded-full">
-                  자동입력
-                </span>
-              )}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <InputField
-                title={t(locale, "clients.form.full-price")}
-                inputProps={{
-                  value: formatPrice(store.fullPrice),
-                  onChange: (e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, "")),
-                  placeholder: "0",
-                }}
-                renderInput={(resolvedInputProps) => (
-                  <div className="relative">
-                    <Input {...resolvedInputProps} className={cn(resolvedInputProps.className, "pr-8")} />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                  </div>
-                )}
-              />
-              <InputField
-                title={t(locale, "clients.form.grant")}
-                inputProps={{
-                  value: formatPrice(store.grant),
-                  onChange: (e) => handlePriceChange("grant", e.target.value.replace(/,/g, "")),
-                  placeholder: "0",
-                }}
-                renderInput={(resolvedInputProps) => (
-                  <div className="relative">
-                    <Input {...resolvedInputProps} className={cn(resolvedInputProps.className, "pr-8")} />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                  </div>
-                )}
-              />
-              <InputField
-                title={t(locale, "clients.form.actual-price")}
-                inputProps={{
-                  value: formatPrice(store.actualPrice),
-                  onChange: (e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, "")),
-                  placeholder: "0",
-                }}
-                renderInput={(resolvedInputProps) => (
-                  <div className="relative">
-                    <Input {...resolvedInputProps} className={cn(resolvedInputProps.className, "pr-8")} />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                  </div>
-                )}
-              />
-            </div>
-          </div>
-
-        </div>
-      ),
-      summary: (
-        <div className="flex gap-3 flex-wrap">
-          {store.type && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.type}
-            </span>
-          )}
-          {store.duration && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.duration}일
-            </span>
-          )}
-          {store.actualPrice && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {formatPrice(store.actualPrice)}원
-            </span>
-          )}
-        </div>
-      ),
-    },
-    {
-      label: "계약 정보",
-      content: (
-        <div className="space-y-6">
-          <div className={GRID_CLS}>
-            <div className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.contract-status")}</label>
-              <select
-                className={SELECT_CLS}
-                value={store.serviceStatus}
-                onChange={(e) => setField("serviceStatus", e.target.value)}
-              >
-                {SERVICE_STATUS_OPTIONS.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <InputField
-              title={t(locale, "clients.form.start-date")}
-              inputProps={{
-                type: "date",
-                value: store.startDate,
-                onChange: (e) => setField("startDate", e.target.value),
-              }}
-            />
-            <InputField
-              title={t(locale, "clients.form.end-date")}
-              inputProps={{
-                type: "date",
-                value: store.endDate,
-                onChange: (e) => setField("endDate", e.target.value),
-              }}
-            />
-            <div className="flex flex-col gap-1.5 md:col-start-2">
-              <span className={cn(LABEL_CLS, "mb-1 block")}>{t(locale, "clients.form.section-flags")}</span>
-              <div className="flex flex-wrap gap-3">
-                {([
-                  { key: "voucherClient" as const, label: t(locale, "clients.form.voucher-client") },
-                  { key: "careCenter" as const, label: t(locale, "clients.form.care-center") },
-                  { key: "breastPump" as const, label: t(locale, "clients.form.breast-pump") },
-                ]).map(({ key, label }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setField(key, !store[key])}
-                    className={cn(
-                      "px-4 py-2.5 rounded-2xl text-[0.8rem] font-semibold transition-all border-[1.5px]",
-                      store[key]
-                        ? "bg-v3-primary-light border-v3-primary text-v3-primary"
-                        : "bg-white border-v3-border text-v3-text-muted hover:border-v3-primary/40"
-                    )}
-                  >
-                    {store[key] && <Check className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={2.5} />}
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      ),
-    },
+  const activeStep = Math.min(currentStep, WIZARD_STEPS.length - 1);
+  const isFirstStep = activeStep === 0;
+  const isLastStep = activeStep === WIZARD_STEPS.length - 1;
+  const activeStepMeta = WIZARD_STEPS[activeStep];
+  const progress = ((activeStep + 1) / WIZARD_STEPS.length) * 100;
+  const voucherTypeLabel = getVoucherTypeLabel(store.type);
+  const summaryPills = [
+    ...(activeStep >= 1 && store.name.trim() ? [store.name.trim()] : []),
+    ...(activeStep >= 2 && voucherTypeLabel ? [voucherTypeLabel] : []),
+    ...(activeStep >= 2 && store.duration ? [`${store.duration}일`] : []),
+    ...(activeStep >= 2 && store.actualPrice ? [`${formatPrice(store.actualPrice)}원`] : []),
   ];
+
+  const goBackToClients = () => {
+    router.push("/clients");
+  };
+
+  const handlePrev = () => {
+    if (isFirstStep) return;
+    setCurrentStep(activeStep - 1);
+  };
+
+  const handleNext = () => {
+    if (isLastStep) {
+      void handleComplete();
+      return;
+    }
+
+    handleStepChange(activeStep + 1);
+  };
+
+  const isPrimaryDisabled = createClient.isPending || !isStepSatisfied(activeStep);
 
   return (
     <>
@@ -696,30 +462,321 @@ export default function NewClientPage() {
         )}
       </AnimatePresence>
 
-      <div data-component="clients-new-main-content" className="flex min-h-[calc(100dvh-6rem)] items-start justify-center py-6 md:py-8">
-        <div data-component="clients-new-main-content-inner" className="flex w-full flex-col">
-          <button
-            type="button"
-            onClick={() => router.push("/clients")}
-            className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
-          >
-            <ChevronLeft className="w-5 h-5 md:w-5 md:h-5 w-[18px] h-[18px]" />
-            고객 목록으로 돌아가기
-          </button>
+      <div className={styles.pageRoot} data-component="clients-new-page-shell">
+        <div className={styles.navPage} data-component="clients-new-nav-page">
+          <header className={styles.navbar} data-component="clients-new-navbar">
+            <button
+              type="button"
+              onClick={goBackToClients}
+              className={styles.navbarIconButton}
+              aria-label="고객 목록으로 돌아가기"
+            >
+              <ChevronLeft aria-hidden="true" size={20} strokeWidth={2.5} />
+            </button>
 
-          <div data-component="clients-new-stepper-shell">
-            <SteppedWizard
-              title={t(locale, "clients.form.add-title")}
-              subtitle="고객 정보를 단계별로 입력해 주세요"
-              steps={steps}
-              currentStep={currentStep}
-              onStepChange={handleStepChange}
-              onComplete={handleComplete}
-              completeLabel="등록"
-              isSubmitting={createClient.isPending}
-              isNextDisabled={!isStepSatisfied(currentStep)}
-            />
-          </div>
+            <div className={styles.navbarTitle} data-component="clients-new-navbar-title">새 고객 추가</div>
+
+            <button
+              type="button"
+              onClick={goBackToClients}
+              className={styles.navbarIconButton}
+              aria-label="새 고객 추가 닫기"
+            >
+              <X aria-hidden="true" size={20} strokeWidth={2.5} />
+            </button>
+          </header>
+
+          <section className={styles.wizardContent} data-component="clients-new-wizard">
+            <div className={styles.wizardHeader} data-component="clients-new-wizard-header">
+              <div className={styles.progressRow} data-component="clients-new-progress-row">
+                <div className={styles.progressTrack} data-component="clients-new-progress-track" aria-hidden="true">
+                  <div className={styles.progressFill} data-component="clients-new-progress-fill" style={{ width: `${progress}%` }} />
+                </div>
+                <div className={styles.stepCount} data-component="clients-new-step-count">
+                  <span>{activeStep + 1}</span> / {WIZARD_STEPS.length} 단계
+                </div>
+              </div>
+              <h1 className={styles.stepTitle}>{activeStepMeta.title}</h1>
+              <p className={styles.stepDesc}>{activeStepMeta.desc}</p>
+            </div>
+
+            {summaryPills.length > 0 ? (
+              <div className={styles.summaryPills} data-component="clients-new-summary-pills">
+                {summaryPills.map((pill) => (
+                  <span key={pill} className={styles.summaryPill}>
+                    {pill}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            <div className={styles.formScroll} data-component="clients-new-step-content">
+              {activeStep === 0 ? (
+                <>
+                  <div className={styles.formCard} data-component="clients-new-basic-contact-card">
+                    <Field label="이름" required>
+                      <input
+                        className={styles.formInput}
+                        value={store.name}
+                        onChange={(e) => setField("name", e.target.value)}
+                        placeholder="홍길동"
+                      />
+                    </Field>
+                    <Field label="연락처" required helper={phoneInlineMessage} helperTone={phoneHelperTone}>
+                      <input
+                        className={styles.formInput}
+                        value={store.phone}
+                        onChange={(e) => setField("phone", formatPhoneNumber(e.target.value))}
+                        type="tel"
+                        inputMode="numeric"
+                        maxLength={13}
+                        placeholder="010-1234-5678"
+                      />
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-basic-details-card">
+                    <Field label="생년월일">
+                      <input
+                        className={styles.formInput}
+                        value={store.birthday}
+                        onChange={(e) => setField("birthday", e.target.value)}
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
+                      />
+                    </Field>
+                    <Field label="출산 예정일" helper="출산 예정일 또는 서비스 시작 희망일">
+                      <input
+                        className={styles.formInput}
+                        value={store.dueDate}
+                        onChange={(e) => setField("dueDate", e.target.value)}
+                        type="date"
+                      />
+                    </Field>
+                    <Field label="주소">
+                      <input
+                        className={styles.formInput}
+                        value={store.address}
+                        onChange={(e) => setField("address", e.target.value)}
+                        placeholder="서울시 강남구..."
+                      />
+                    </Field>
+                  </div>
+                </>
+              ) : null}
+
+              {activeStep === 1 ? (
+                <>
+                  <div className={styles.formCard} data-component="clients-new-voucher-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">바우처</div>
+                    <Field label="바우처 유형">
+                      <div className={styles.selectWrap} data-component="clients-new-voucher-select-wrap">
+                        <select
+                          className={styles.formInput}
+                          value={store.type}
+                          onChange={(e) => handleTypeChange(e.target.value)}
+                        >
+                          <option value="">선택하세요</option>
+                          {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                            <optgroup key={groupName} label={groupName}>
+                              {Object.entries(types).map(([typeValue, typeData]) => (
+                                <option key={typeValue} value={typeValue}>
+                                  {typeData.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                    </Field>
+                    <Field label="기간" helper="바우처 유형에 따라 선택 가능한 기간이 달라집니다.">
+                      <div className={cn(styles.selectWrap, (!store.type || isPriceLoading) && styles.disabledSelect)} data-component="clients-new-duration-select-wrap">
+                        <select
+                          className={styles.formInput}
+                          value={store.duration?.toString() || ""}
+                          onChange={(e) => {
+                            setField("duration", e.target.value ? Number(e.target.value) : null);
+                            setPricesManuallyEdited(false);
+                          }}
+                          disabled={!store.type || isPriceLoading}
+                        >
+                          <option value="">선택하세요</option>
+                          {availableDurations.map((d) => (
+                            <option key={d} value={String(d)}>
+                              {d}일
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-employee-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">제공인력 배정</div>
+                    <Field label="제공인력 1">
+                      <EmployeeAutocomplete
+                        value={store.primaryEmployeeId}
+                        onChange={(id) => setField("primaryEmployeeId", id)}
+                        label=""
+                        excludeIds={store.secondaryEmployeeId != null ? [store.secondaryEmployeeId] : []}
+                        allowManualEntry
+                        onManualEntry={() => {
+                          setEmployeeDialogTarget("primary");
+                          setIsEmployeeDialogOpen(true);
+                        }}
+                      />
+                    </Field>
+                    <Field label="제공인력 2">
+                      <EmployeeAutocomplete
+                        value={store.secondaryEmployeeId}
+                        onChange={(id) => setField("secondaryEmployeeId", id)}
+                        label=""
+                        excludeIds={store.primaryEmployeeId != null ? [store.primaryEmployeeId] : []}
+                        allowManualEntry
+                        onManualEntry={() => {
+                          setEmployeeDialogTarget("secondary");
+                          setIsEmployeeDialogOpen(true);
+                        }}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-pricing-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">
+                      요금 정보
+                      {selectedPriceInfo && !pricesManuallyEdited ? (
+                        <span className={styles.autoBadge}>자동입력</span>
+                      ) : null}
+                    </div>
+                    <Field label="총 서비스 금액">
+                      <div className={styles.priceInput} data-component="clients-new-full-price-input-wrap">
+                        <input
+                          className={styles.formInput}
+                          value={formatPrice(store.fullPrice)}
+                          onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                          inputMode="numeric"
+                          placeholder="0"
+                        />
+                        <span>원</span>
+                      </div>
+                    </Field>
+                    <Field label="정부지원금">
+                      <div className={styles.priceInput} data-component="clients-new-grant-input-wrap">
+                        <input
+                          className={styles.formInput}
+                          value={formatPrice(store.grant)}
+                          onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
+                          inputMode="numeric"
+                          placeholder="0"
+                        />
+                        <span>원</span>
+                      </div>
+                    </Field>
+                    <Field label="본인부담금" helper="총 서비스 금액 - 정부지원금 = 본인부담금. 직접 수정도 가능합니다.">
+                      <div className={styles.priceInput} data-component="clients-new-actual-price-input-wrap">
+                        <input
+                          className={styles.formInput}
+                          value={formatPrice(store.actualPrice)}
+                          onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
+                          inputMode="numeric"
+                          placeholder="0"
+                        />
+                        <span>원</span>
+                      </div>
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-options-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">추가 옵션</div>
+                    <div className={styles.toggleChipRow} data-component="clients-new-option-chips">
+                      {([
+                        { key: "voucherClient" as const, label: "바우처 고객" },
+                        { key: "careCenter" as const, label: "산후조리원" },
+                        { key: "breastPump" as const, label: "유축기 대여" },
+                      ]).map(({ key, label }) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setField(key, !store[key])}
+                          className={cn(styles.toggleChip, store[key] && styles.selected)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {activeStep === 2 ? (
+                <>
+                  <div className={styles.formCard} data-component="clients-new-contract-status-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">계약 상태</div>
+                    <div className={styles.statusRow} data-component="clients-new-status-chips">
+                      {SERVICE_STATUS_OPTIONS.map((status) => (
+                        <button
+                          key={status.value}
+                          type="button"
+                          onClick={() => setField("serviceStatus", status.value)}
+                          className={cn(
+                            styles.statusChip,
+                            status.value === "replacement_requested" && styles.statusChipWide,
+                            store.serviceStatus === status.value && styles.selected
+                          )}
+                        >
+                          {status.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-service-period-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">서비스 기간</div>
+                    <Field label="시작일">
+                      <input
+                        className={styles.formInput}
+                        value={store.startDate}
+                        onChange={(e) => setField("startDate", e.target.value)}
+                        type="date"
+                      />
+                    </Field>
+                    <Field label="종료일">
+                      <input
+                        className={styles.formInput}
+                        value={store.endDate}
+                        onChange={(e) => setField("endDate", e.target.value)}
+                        type="date"
+                      />
+                    </Field>
+                  </div>
+
+                  <div className={styles.contractNotice} data-component="clients-new-contract-notice">
+                    등록 시 고객에게 계약서 안내 메시지가 자동으로 전송됩니다.
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            <div className={styles.wizardActions} data-component="clients-new-actions">
+              <button
+                type="button"
+                onClick={handlePrev}
+                disabled={isFirstStep}
+                className={cn(styles.wizardButton, styles.secondaryButton)}
+              >
+                이전
+              </button>
+              <button
+                type="button"
+                onClick={handleNext}
+                disabled={isPrimaryDisabled}
+                className={cn(styles.wizardButton, styles.primaryButton)}
+              >
+                {createClient.isPending ? "등록 중..." : isLastStep ? "✓ 등록" : "다음 →"}
+              </button>
+            </div>
+          </section>
         </div>
       </div>
 

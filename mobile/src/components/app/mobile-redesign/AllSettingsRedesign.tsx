@@ -2,6 +2,7 @@
 
 import "./redesign.css";
 
+import { useEffect } from "react";
 import { LogOut, PenLine } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -43,6 +44,14 @@ export function AllSettingsRedesign({ menuGroups = defaultMenuGroups }: AllSetti
   const profileName = user?.name ?? DEFAULT_PROFILE_NAME;
   const profileRole = getRoleLabel(user?.role);
   const profileBranch = user?.branchName ?? DEFAULT_PROFILE_BRANCH;
+
+  useEffect(() => {
+    document.body.classList.add("mobile-all-route");
+
+    return () => {
+      document.body.classList.remove("mobile-all-route");
+    };
+  }, []);
 
   return (
     <div data-component="all-menu" className="menu-content">

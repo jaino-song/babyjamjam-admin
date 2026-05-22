@@ -1,44 +1,22 @@
 "use client";
 
-import { useState } from "react";
-import { isAxiosError } from "axios";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import {
-  Clock3,
-  FilePen,
-  FileText,
-  History,
-  Plus,
-  Settings2,
-  Workflow,
-} from "lucide-react";
-import { t } from "@/lib/i18n/translations";
-import { useLocale } from "@/providers/LocaleProvider";
+import { MessageCircle, ThumbsUp } from "lucide-react";
+
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Spinner } from "@/components/ui/spinner";
-import { GreetingMessageForm } from "@/components/app/messages/forms/GreetingMessageForm";
-import { ServiceInfoMessageForm } from "@/components/app/messages/forms/service-info-message-form";
-import { PriceInfoMessageForm } from "@/components/app/messages/forms/PriceInfoMessageForm";
-import { ReminderMessageForm } from "@/components/app/messages/forms/ReminderMessageForm";
-import { ThanksMessageForm } from "@/components/app/messages/forms/ThanksMessageForm";
-import { SurveyMessageForm } from "@/components/app/messages/forms/SurveyMessageForm";
-import { InfoMessageForm } from "@/components/app/messages/forms/InfoMessageForm";
-import { CustomTemplateForm } from "@/components/app/messages/forms/custom-template-form";
-import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
-import { MessageSenderApprovalSettings } from "@/components/app/messages/MessageSenderApprovalSettings";
-import { MessagingFeatureGate } from "@/components/app/messages/MessagingFeatureGate";
-import { settingsApi } from "@/services/api";
 import { api } from "@/lib/api/client";
+import {
+  Avatar,
+  DetailTabPills,
+  InfoCard,
+  InfoRow,
+  MobileDetailSheet,
+  type AvatarTone,
+  type DetailTab,
+  type InfoTone,
+} from "@/components/app/mobile-redesign/detail-sheet";
 import "@/components/app/mobile-redesign/redesign.css";
 
 interface AlimtalkLogRecord {
@@ -59,24 +37,6 @@ interface AlimtalkLogRecord {
   employeeName: string | null;
 }
 
-const LOG_STATUS_LABEL: Record<AlimtalkLogRecord["status"], string> = {
-  pending: "대기",
-  sent: "성공",
-  failed: "실패",
-};
-
-const LOG_STATUS_TONE: Record<AlimtalkLogRecord["status"], "green" | "orange" | "burgundy"> = {
-  pending: "orange",
-  sent: "green",
-  failed: "burgundy",
-};
-
-const LOG_AVATAR_BG: Record<AlimtalkLogRecord["status"], string> = {
-  pending: "bg-v3-orange",
-  sent: "bg-v3-green",
-  failed: "bg-v3-burgundy",
-};
-
 interface UpcomingAlimtalkJob {
   id: string;
   ruleId: string;
@@ -92,382 +52,531 @@ interface UpcomingAlimtalkJob {
   payload: Record<string, unknown> | null;
 }
 
-const RECIPIENT_TYPE_LABEL: Record<string, string> = {
-  CLIENT: "고객",
-  PRIMARY_EMPLOYEE: "제공인력 1",
-  SECONDARY_EMPLOYEE: "제공인력 2",
-};
+type MessageChannel = "kakao" | "sms";
+type MessageStatus = "pending" | "sent" | "failed";
+type MessageFilter = "전체" | "알림톡" | "SMS" | "실패";
+type MessageSection = "오늘" | "어제" | "이전";
+type MessageDetailTab = "content" | "recipient" | "template";
 
-function formatScheduledFor(iso: string) {
+interface MessageThreadRow {
+  id: string;
+  recipient: string;
+  initial: string;
+  avatarTone: AvatarTone;
+  channel: MessageChannel;
+  title: string;
+  timeLabel: string;
+  section: MessageSection;
+  status: MessageStatus;
+  statusLabel: string;
+  receiver: string;
+  messageBody: string;
+  templateName: string;
+  trigger: string;
+  employeeName: string;
+  serviceStartDate: string;
+  clientId: number | null;
+  sentAt: string;
+}
+
+const BUILTIN_TEMPLATE_COUNT = 7;
+
+const MESSAGE_FILTERS: MessageFilter[] = ["전체", "알림톡", "SMS", "실패"];
+const MESSAGE_SECTION_ORDER: MessageSection[] = ["오늘", "어제", "이전"];
+const DETAIL_TABS: DetailTab[] = [
+  { id: "content", label: "메시지" },
+  { id: "recipient", label: "수신자" },
+  { id: "template", label: "템플릿 정보" },
+];
+
+const MOCKUP_MESSAGE_ROWS: MessageThreadRow[] = [
+  {
+    id: "mock-park-seoyeon",
+    recipient: "박서연",
+    initial: "박",
+    avatarTone: "orange",
+    channel: "kakao",
+    title: "서비스 안내",
+    timeLabel: "방금",
+    section: "오늘",
+    status: "sent",
+    statusLabel: "발송 성공",
+    receiver: "010-1234-5678",
+    messageBody:
+      "안녕하세요 박서연 고객님,\n\n오늘 오전 9시 김민지 매니저가 방문 예정입니다. 준비물은 별도로 안내드린 사항을 참고해 주세요.\n\n문의사항이 있으시면 언제든지 연락 주세요.\n\n아가잼잼 인천점",
+    templateName: "서비스 시작 리마인드",
+    trigger: "자동 (서비스 시작)",
+    employeeName: "김민지",
+    serviceStartDate: "2025-05-10",
+    clientId: null,
+    sentAt: "2025. 5. 10. 오전 8:32",
+  },
+  {
+    id: "mock-kim-doyoon",
+    recipient: "김도윤",
+    initial: "김",
+    avatarTone: "primary",
+    channel: "kakao",
+    title: "제공인력 배정 안내",
+    timeLabel: "2시간 전",
+    section: "오늘",
+    status: "sent",
+    statusLabel: "발송 성공",
+    receiver: "010-2345-6789",
+    messageBody: "김도윤 고객님, 담당 제공인력 배정이 완료되었습니다. 방문 일정은 별도 안내드리겠습니다.",
+    templateName: "제공인력 배정 안내",
+    trigger: "자동 (제공인력 배정)",
+    employeeName: "이하은",
+    serviceStartDate: "2025-05-12",
+    clientId: null,
+    sentAt: "2025. 5. 10. 오전 6:41",
+  },
+  {
+    id: "mock-jung-yujin",
+    recipient: "[더미] 정유진",
+    initial: "정",
+    avatarTone: "burgundy",
+    channel: "kakao",
+    title: "서비스 안내",
+    timeLabel: "방금",
+    section: "오늘",
+    status: "failed",
+    statusLabel: "실패",
+    receiver: "010-3456-7890",
+    messageBody: "정유진 고객님, 서비스 안내 메시지 발송에 실패했습니다. 연락처를 확인해 주세요.",
+    templateName: "서비스 안내",
+    trigger: "자동 (서비스 시작)",
+    employeeName: "김민지",
+    serviceStartDate: "2025-05-10",
+    clientId: null,
+    sentAt: "2025. 5. 10. 오전 8:34",
+  },
+  {
+    id: "mock-jang-haneul",
+    recipient: "장하늘",
+    initial: "장",
+    avatarTone: "green",
+    channel: "kakao",
+    title: "서비스 종료 안내",
+    timeLabel: "5/9",
+    section: "어제",
+    status: "sent",
+    statusLabel: "발송 성공",
+    receiver: "010-4567-8901",
+    messageBody: "장하늘 고객님, 예정된 서비스 종료 일정을 안내드립니다. 이용해 주셔서 감사합니다.",
+    templateName: "서비스 종료 안내",
+    trigger: "자동 (서비스 종료)",
+    employeeName: "오서윤",
+    serviceStartDate: "2025-04-09",
+    clientId: null,
+    sentAt: "2025. 5. 9. 오후 6:20",
+  },
+  {
+    id: "mock-yoon-jia",
+    recipient: "윤지아",
+    initial: "윤",
+    avatarTone: "purple",
+    channel: "sms",
+    title: "고객 등록 환영",
+    timeLabel: "5/9",
+    section: "어제",
+    status: "sent",
+    statusLabel: "발송 성공",
+    receiver: "010-5678-9012",
+    messageBody: "윤지아 고객님, 아가잼잼 인천점 등록이 완료되었습니다.",
+    templateName: "고객 등록 환영",
+    trigger: "수동 발송",
+    employeeName: "미배정",
+    serviceStartDate: "미정",
+    clientId: null,
+    sentAt: "2025. 5. 9. 오후 2:15",
+  },
+  {
+    id: "mock-choi-yerin",
+    recipient: "최예린",
+    initial: "최",
+    avatarTone: "orange",
+    channel: "kakao",
+    title: "서비스 시작 D-1 안내",
+    timeLabel: "5/9",
+    section: "어제",
+    status: "sent",
+    statusLabel: "발송 성공",
+    receiver: "010-6789-0123",
+    messageBody: "최예린 고객님, 내일 서비스가 시작됩니다. 방문 전 준비 사항을 확인해 주세요.",
+    templateName: "서비스 시작 D-1 안내",
+    trigger: "자동 (D-1)",
+    employeeName: "한유나",
+    serviceStartDate: "2025-05-10",
+    clientId: null,
+    sentAt: "2025. 5. 9. 오전 9:00",
+  },
+  {
+    id: "mock-lee-suhyun",
+    recipient: "이수현",
+    initial: "이",
+    avatarTone: "primary",
+    channel: "kakao",
+    title: "서비스 종료 안내",
+    timeLabel: "4/22",
+    section: "이전",
+    status: "sent",
+    statusLabel: "발송 성공",
+    receiver: "010-7890-1234",
+    messageBody: "이수현 고객님, 서비스 종료 안내드립니다. 추가 상담이 필요하시면 지점으로 연락해 주세요.",
+    templateName: "서비스 종료 안내",
+    trigger: "자동 (서비스 종료)",
+    employeeName: "정다은",
+    serviceStartDate: "2025-03-22",
+    clientId: null,
+    sentAt: "2025. 4. 22. 오전 10:12",
+  },
+];
+
+const AVATAR_TONES: AvatarTone[] = ["orange", "primary", "burgundy", "green", "purple"];
+
+function getInitial(name: string): string {
+  const trimmed = name.replace("[더미]", "").trim();
+  return trimmed.charAt(0) || "?";
+}
+
+function getChannel(provider: string): MessageChannel {
+  return provider.toLowerCase().includes("sms") ? "sms" : "kakao";
+}
+
+function getStatusLabel(status: MessageStatus): string {
+  if (status === "failed") return "실패";
+  if (status === "pending") return "대기";
+  return "발송 성공";
+}
+
+function getStatusTone(status: MessageStatus): InfoTone {
+  if (status === "failed") return "burgundy";
+  if (status === "pending") return "orange";
+  return "green";
+}
+
+function getDateSection(iso: string): MessageSection {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "이전";
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  if (target.getTime() >= today.getTime()) return "오늘";
+  if (target.getTime() >= yesterday.getTime()) return "어제";
+  return "이전";
+}
+
+function formatRelativeTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "방금";
+
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
+
+  if (diffMinutes < 1) return "방금";
+  if (diffMinutes < 60) return `${diffMinutes}분 전`;
+  if (diffMinutes < 24 * 60 && getDateSection(iso) === "오늘") {
+    return `${Math.floor(diffMinutes / 60)}시간 전`;
+  }
+
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function formatSentAt(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
+
   return date.toLocaleString("ko-KR", {
     year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
     minute: "2-digit",
   });
 }
 
-type BuiltinTemplateType = "greeting" | "service-info" | "price-info" | "reminder" | "thanks" | "survey" | "info";
+function mapLogToThread(log: AlimtalkLogRecord, index: number): MessageThreadRow {
+  const recipient = log.recipientName ?? log.clientName ?? log.employeeName ?? log.receiver;
+  return {
+    id: `log-${log.id}`,
+    recipient,
+    initial: getInitial(recipient),
+    avatarTone: log.status === "failed" ? "burgundy" : AVATAR_TONES[index % AVATAR_TONES.length],
+    channel: getChannel(log.provider),
+    title: log.ruleName ?? log.templateKey,
+    timeLabel: formatRelativeTime(log.createdAt),
+    section: getDateSection(log.createdAt),
+    status: log.status,
+    statusLabel: getStatusLabel(log.status),
+    receiver: log.receiver,
+    messageBody: log.messageBody || "메시지 본문을 불러오지 못했습니다.",
+    templateName: log.ruleName ?? log.templateKey,
+    trigger: log.eventType ?? "수동 발송",
+    employeeName: log.employeeName ?? "미배정",
+    serviceStartDate: "-",
+    clientId: log.clientId,
+    sentAt: formatSentAt(log.createdAt),
+  };
+}
 
-const templateConfigs: { id: BuiltinTemplateType; labelKey: string }[] = [
-  { id: "greeting", labelKey: "msg-type.greeting" },
-  { id: "service-info", labelKey: "msg-type.service-info" },
-  { id: "price-info", labelKey: "msg-type.price-info" },
-  { id: "reminder", labelKey: "msg-type.reminder" },
-  { id: "thanks", labelKey: "msg-type.thanks" },
-  { id: "survey", labelKey: "msg-type.survey" },
-  { id: "info", labelKey: "msg-type.info" },
-];
+function filterRows(rows: MessageThreadRow[], filter: MessageFilter): MessageThreadRow[] {
+  if (filter === "알림톡") return rows.filter((row) => row.channel === "kakao");
+  if (filter === "SMS") return rows.filter((row) => row.channel === "sms");
+  if (filter === "실패") return rows.filter((row) => row.status === "failed");
+  return rows;
+}
 
-const MESSAGE_SECTIONS = [
-  { id: "scheduled", label: "발송 예정", icon: Clock3 },
-  { id: "history", label: "발송 기록", icon: History },
-  { id: "templates", label: "템플릿", icon: FileText },
-  { id: "triggers", label: "트리거", icon: Workflow },
-  { id: "settings", label: "설정", icon: Settings2 },
-] as const;
+function buildSections(rows: MessageThreadRow[]): Array<{ title: MessageSection; rows: MessageThreadRow[] }> {
+  return MESSAGE_SECTION_ORDER.map((title) => ({
+    title,
+    rows: rows.filter((row) => row.section === title),
+  })).filter((section) => section.rows.length > 0);
+}
 
-type MessageSectionId = (typeof MESSAGE_SECTIONS)[number]["id"];
-
-const FormComponents: Record<BuiltinTemplateType, React.ComponentType> = {
-  "greeting": GreetingMessageForm,
-  "service-info": ServiceInfoMessageForm,
-  "price-info": PriceInfoMessageForm,
-  "reminder": ReminderMessageForm,
-  "thanks": ThanksMessageForm,
-  "survey": SurveyMessageForm,
-  "info": InfoMessageForm,
-};
+function getFilterCount(rows: MessageThreadRow[], filter: MessageFilter, hasLiveRows: boolean): string {
+  if (!hasLiveRows) {
+    if (filter === "전체") return "36";
+    if (filter === "알림톡") return "28";
+    if (filter === "SMS") return "5";
+    return "3";
+  }
+  return String(filterRows(rows, filter).length);
+}
 
 export default function MessagesPage() {
-  const locale = useLocale();
-  const [activeSection, setActiveSection] = useState<MessageSectionId>("templates");
-  const [selectedValue, setSelectedValue] = useState<string>("builtin:greeting");
-  const [approvalErrorMessage, setApprovalErrorMessage] = useState<string | null>(null);
-  const queryClient = useQueryClient();
+  const [activeFilter, setActiveFilter] = useState<MessageFilter>("전체");
+  const [selectedMessage, setSelectedMessage] = useState<MessageThreadRow | null>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [activeDetailTab, setActiveDetailTab] = useState<MessageDetailTab>("content");
 
-  const {
-    data: messageSenderApproval,
-    isLoading: isLoadingMessageSenderApproval,
-  } = useQuery({
-    queryKey: ["settings", "message-sender-approval"],
-    queryFn: settingsApi.getMessageSenderApproval,
-  });
+  const { data: userTemplatesData } = useMessageTemplates(1, 100);
+  const userTemplates = Array.isArray(userTemplatesData?.data) ? userTemplatesData.data : [];
 
-  const requestApprovalMutation = useMutation({
-    mutationFn: settingsApi.requestMessageSenderApproval,
-    onSuccess: (data) => {
-      queryClient.setQueryData(["settings", "message-sender-approval"], data);
-      setApprovalErrorMessage(null);
-    },
-    onError: (error) => {
-      if (isAxiosError<{ error?: string }>(error)) {
-        setApprovalErrorMessage(
-          error.response?.data?.error ?? "승인 신청에 실패했습니다. 잠시 후 다시 시도해 주세요.",
-        );
-        return;
-      }
-      setApprovalErrorMessage("승인 신청에 실패했습니다. 잠시 후 다시 시도해 주세요.");
-    },
-  });
-
-  const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
-  const userTemplates = userTemplatesData?.data || [];
-
-  const {
-    data: upcomingJobs = [],
-    isLoading: isUpcomingLoading,
-    isError: isUpcomingError,
-  } = useQuery<UpcomingAlimtalkJob[]>({
+  const { data: upcomingJobsData } = useQuery<UpcomingAlimtalkJob[]>({
     queryKey: ["alimtalk", "upcoming", 100],
     queryFn: async () => {
       const res = await api.get<UpcomingAlimtalkJob[]>("/alimtalk-trigger-jobs/upcoming", { params: { limit: 100 } });
       return res.data;
     },
-    enabled: activeSection === "scheduled",
   });
 
-  const {
-    data: historyLogs = [],
-    isLoading: isHistoryLoading,
-    isError: isHistoryError,
-  } = useQuery<AlimtalkLogRecord[]>({
+  const { data: historyLogsData } = useQuery<AlimtalkLogRecord[]>({
     queryKey: ["alimtalk", "logs", 200],
     queryFn: async () => {
       const res = await api.get<AlimtalkLogRecord[]>("/alimtalk-logs", { params: { limit: 200 } });
       return res.data;
     },
-    enabled: activeSection === "history",
   });
 
-  const isBuiltin = selectedValue.startsWith("builtin:");
-  const builtinType = isBuiltin ? (selectedValue.replace("builtin:", "") as BuiltinTemplateType) : null;
-  const userTemplateId = !isBuiltin && selectedValue.startsWith("user:") ? selectedValue.replace("user:", "") : null;
-  const selectedUserTemplate = userTemplateId ? userTemplates.find((template) => template.id === userTemplateId) : null;
-  const SelectedBuiltinForm = builtinType ? FormComponents[builtinType] : null;
-  const isMessagingApproved = messageSenderApproval?.isApproved ?? false;
+  const upcomingJobs = useMemo(
+    () => (Array.isArray(upcomingJobsData) ? upcomingJobsData : []),
+    [upcomingJobsData],
+  );
+  const historyLogs = useMemo(
+    () => (Array.isArray(historyLogsData) ? historyLogsData : []),
+    [historyLogsData],
+  );
+  const liveRows = useMemo(
+    () => historyLogs.map((log, index) => mapLogToThread(log, index)),
+    [historyLogs],
+  );
+  const hasLiveRows = liveRows.length > 0;
+  const rows = hasLiveRows ? liveRows : MOCKUP_MESSAGE_ROWS;
+  const filteredRows = useMemo(() => filterRows(rows, activeFilter), [activeFilter, rows]);
+  const sections = useMemo(() => buildSections(filteredRows), [filteredRows]);
+  const detailMessage = selectedMessage ?? filteredRows[0] ?? rows[0];
+  const templateCount = Math.max(BUILTIN_TEMPLATE_COUNT + userTemplates.length, 12);
+  const automationSubLabel = upcomingJobs.length > 0 ? `${upcomingJobs.length}건 예정` : "자동 발송 4종";
 
-  const lockedFeatureCopy = isLoadingMessageSenderApproval
-    ? {
-        title: "승인 상태를 확인하는 중입니다",
-        description: "조직의 발신번호 승인 상태를 확인한 뒤 기능 접근 여부를 결정합니다.",
-      }
-    : messageSenderApproval?.approvalStatus === "pending"
-      ? {
-          title: "조직 오너 승인이 완료되면 사용할 수 있습니다",
-          description:
-            "발신번호 승인 요청이 접수되었습니다. 승인 전까지 발송 예정, 발송 기록, 발송 트리거 설정은 잠겨 있습니다.",
-        }
-      : {
-          title: "설정 탭에서 발신번호를 등록하고 승인 신청을 진행해 주세요",
-          description:
-            "문자 발송 기능은 조직 단위 승인 이후에만 활성화됩니다. 등록 번호가 승인되면 같은 조직 계정 전체에 적용됩니다.",
-        };
-
-  const handleRequestApproval = (senderPhone: string) => {
-    requestApprovalMutation.mutate(senderPhone);
+  const openDetail = (message: MessageThreadRow) => {
+    setSelectedMessage(message);
+    setActiveDetailTab("content");
+    setIsDetailOpen(true);
   };
 
   return (
-    <section data-component="messages" className="flex h-full min-h-0 flex-col">
-      <div className="filter-row pt-3" data-component="messages-section-nav">
-        {MESSAGE_SECTIONS.map((section) => {
-          const Icon = section.icon;
-          const isActive = section.id === activeSection;
-          return (
-            <button
-              key={section.id}
-              type="button"
-              className={`filter-pill ${isActive ? "active" : ""}`}
-              aria-pressed={isActive}
-              onClick={() => setActiveSection(section.id)}
-              data-component="messages-section-pill"
-            >
-              <Icon size={12} strokeWidth={2.5} />
-              {section.label}
-            </button>
-          );
-        })}
-      </div>
+    <MobileDetailSheet
+      name="messages"
+      isOpen={isDetailOpen}
+      onClose={() => setIsDetailOpen(false)}
+      list={
+        <div className="shell-content" data-component="mobile-messages-content">
+          <div className="list-card pop-up" data-component="mobile-messages-list-card">
+            <div className="list-title" data-component="mobile-messages-title">
+              <span className="list-title-text">메시지</span>
+              <Link href="/messages/new" className="list-action" data-component="mobile-messages-new">
+                + 새 메시지
+              </Link>
+            </div>
 
-      <div className="shell-content" data-component="messages-content">
-        {activeSection === "templates" ? (
-          <div className="list-card flex-1 min-h-0 flex flex-col" data-component="messages-templates-card">
-            <div className="list-title">
-              <span className="list-title-text">
-                {t(locale, "msg-form.title")}
-                <span className="list-count">{t(locale, "msg-form.select-msg-type")}</span>
-              </span>
-              <div className="flex shrink-0 items-center gap-3">
-                <Link href="/messages/templates" className="list-action" data-component="messages-templates-edit">
-                  <FilePen size={12} strokeWidth={3} />
-                  {t(locale, "msg-form.edit-template")}
-                </Link>
-                <Link href="/messages/templates/new" className="list-action" data-component="messages-templates-add">
-                  <Plus size={12} strokeWidth={3} />
-                  {t(locale, "msg-form.add-template")}
+            <div className="messages-hub-wrap" data-component="mobile-messages-hub-wrap">
+              <div className="hub-tiles" data-component="mobile-messages-hub-tiles">
+                <button type="button" className="hub-tile" onClick={() => setActiveFilter("알림톡")}>
+                  <span className="hub-tile-icon hub-tile-icon-kakao">
+                    <MessageCircle size={16} strokeWidth={2.5} />
+                  </span>
+                  <span className="hub-tile-text">
+                    <span className="hub-tile-label">알림톡</span>
+                    <span className="hub-tile-sub">{automationSubLabel}</span>
+                  </span>
+                </button>
+                <Link href="/messages/templates" className="hub-tile" data-component="mobile-messages-templates">
+                  <span className="hub-tile-icon hub-tile-icon-primary">
+                    <ThumbsUp size={16} strokeWidth={2.5} />
+                  </span>
+                  <span className="hub-tile-text">
+                    <span className="hub-tile-label">템플릿</span>
+                    <span className="hub-tile-sub">{templateCount}개 등록</span>
+                  </span>
                 </Link>
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 pt-2 space-y-4">
-              <div data-component="messages-select">
-                <Select value={selectedValue} onValueChange={setSelectedValue}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="템플릿 선택" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {templateConfigs.map((config) => (
-                      <SelectItem key={config.id} value={`builtin:${config.id}`}>
-                        {t(locale, config.labelKey)}
-                      </SelectItem>
-                    ))}
+            <div className="filter-row" data-component="mobile-messages-filter-row">
+              {MESSAGE_FILTERS.map((filter) => (
+                <button
+                  key={filter}
+                  type="button"
+                  className={`filter-pill ${activeFilter === filter ? "active" : ""}`}
+                  aria-pressed={activeFilter === filter}
+                  onClick={() => setActiveFilter(filter)}
+                >
+                  {filter}
+                  <span className={`count ${filter === "실패" ? "messages-filter-count-danger" : ""}`}>
+                    {getFilterCount(rows, filter, hasLiveRows)}
+                  </span>
+                </button>
+              ))}
+            </div>
 
-                    {userTemplates.length > 0 && (
-                      <SelectGroup>
-                        <SelectLabel className="mt-1 bg-muted font-semibold">사용자 템플릿</SelectLabel>
-                        {userTemplates.map((template) => (
-                          <SelectItem key={template.id} value={`user:${template.id}`}>
-                            {template.name}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {isLoadingUserTemplates && (
-                <div data-component="messages-loading" className="flex justify-center py-2">
-                  <Spinner className="h-6 w-6" />
+            <div className="list-card-scroll" data-component="mobile-messages-scroll">
+              {sections.map((section) => (
+                <div className="section-block" key={section.title} data-component="mobile-messages-section">
+                  <div className="section-header" data-component="mobile-messages-section-header">{section.title}</div>
+                  {section.rows.map((row) => (
+                    <button
+                      key={row.id}
+                      type="button"
+                      className="list-item"
+                      data-component="mobile-messages-row"
+                      onClick={() => openDetail(row)}
+                    >
+                      <Avatar initial={row.initial} tone={row.avatarTone} />
+                      <span className="list-info">
+                        <span className="list-name">
+                          {row.recipient}
+                          <span className={`thread-channel ${row.channel}`}>
+                            {row.channel === "kakao" ? "알림톡" : "SMS"}
+                          </span>
+                        </span>
+                        <span className="list-meta">{row.title}</span>
+                      </span>
+                      <span className="list-right">
+                        {row.status === "failed" ? (
+                          <span className="badge badge-burgundy">실패</span>
+                        ) : (
+                          <span className="dday-sub">{row.timeLabel}</span>
+                        )}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              )}
-
-              {SelectedBuiltinForm && <SelectedBuiltinForm />}
-              {selectedUserTemplate && <CustomTemplateForm template={selectedUserTemplate as never} />}
+              ))}
             </div>
           </div>
-        ) : activeSection === "triggers" ? (
-          <div className="flex-1 min-h-0 overflow-y-auto" data-component="messages-triggers-area">
-            <MessagingFeatureGate
-              isEnabled={isMessagingApproved}
-              isLoading={isLoadingMessageSenderApproval}
-              title="발송 트리거 설정을 사용하려면 관리자 승인이 필요합니다"
-              description={lockedFeatureCopy.description}
-            >
-              <TriggerRulesManager />
-            </MessagingFeatureGate>
-          </div>
-        ) : activeSection === "settings" ? (
-          <div className="flex-1 min-h-0 overflow-y-auto" data-component="messages-settings-area">
-            <MessageSenderApprovalSettings
-              key={`${messageSenderApproval?.senderPhone ?? ""}:${messageSenderApproval?.approvalStatus ?? "loading"}:${messageSenderApproval?.requestedAt ?? ""}`}
-              approval={messageSenderApproval}
-              isLoading={isLoadingMessageSenderApproval}
-              isSubmitting={requestApprovalMutation.isPending}
-              errorMessage={approvalErrorMessage}
-              onSubmit={handleRequestApproval}
+        </div>
+      }
+      detail={
+        detailMessage ? (
+          <div className="detail-body" data-component="mobile-messages-detail-body">
+            <div className="client-detail-header pop-up" data-component="mobile-messages-detail-header">
+              <Avatar initial={detailMessage.initial} tone={detailMessage.avatarTone} large />
+              <div className="client-detail-title" data-component="mobile-messages-detail-title">
+                <div className="client-detail-name" data-component="mobile-messages-detail-name">{detailMessage.recipient}</div>
+                <div className="client-detail-badges" data-component="mobile-messages-detail-badges">
+                  <span className={`badge-mini ${detailMessage.channel === "kakao" ? "kakao" : "primary"}`}>
+                    {detailMessage.channel === "kakao" ? "알림톡" : "SMS"}
+                  </span>
+                  <span className={`badge-mini ${getStatusTone(detailMessage.status)}`}>
+                    {detailMessage.statusLabel}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="detail-actions" data-component="mobile-messages-detail-actions">
+              <button type="button" className="btn btn-secondary">
+                재발송
+              </button>
+              <Link
+                href={detailMessage.clientId ? `/clients/${detailMessage.clientId}` : "/clients"}
+                className="btn btn-primary messages-detail-link"
+              >
+                고객 보기
+              </Link>
+            </div>
+
+            <DetailTabPills
+              tabs={DETAIL_TABS}
+              activeTab={activeDetailTab}
+              onTabChange={(tab) => setActiveDetailTab(tab as MessageDetailTab)}
             />
-          </div>
-        ) : activeSection === "scheduled" ? (
-          <div className="flex-1 min-h-0 flex flex-col" data-component="messages-scheduled-area">
-            <MessagingFeatureGate
-              isEnabled={isMessagingApproved}
-              isLoading={isLoadingMessageSenderApproval}
-              title={lockedFeatureCopy.title}
-              description={lockedFeatureCopy.description}
+
+            <div
+              className={`tab-content ${activeDetailTab === "content" ? "active" : ""}`}
+              data-component="mobile-messages-detail-content-tab"
             >
-              <div className="list-card flex-1 min-h-0 flex flex-col">
-                <div className="list-title">
-                  <span className="list-title-text">
-                    발송 예정
-                    <span className="list-count">{isUpcomingLoading ? "불러오는 중" : `${upcomingJobs.length}건`}</span>
-                  </span>
+              <InfoCard title="메시지 본문" padded>
+                <div className="messages-body-text" data-component="mobile-messages-detail-message-body">
+                  {detailMessage.messageBody}
                 </div>
-                <div className="list-card-scroll">
-                  {isUpcomingLoading ? (
-                    <div className="flex flex-col items-center py-10 text-v3-text-muted">
-                      <Clock3 className="mb-3 h-9 w-9 opacity-30 animate-pulse" />
-                      <p className="text-[0.85rem] font-semibold">발송 예정 불러오는 중…</p>
-                    </div>
-                  ) : isUpcomingError ? (
-                    <div className="flex flex-col items-center py-10">
-                      <p className="text-[0.85rem] font-semibold text-v3-burgundy">발송 예정을 불러오지 못했습니다</p>
-                      <p className="mt-1 text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
-                    </div>
-                  ) : upcomingJobs.length === 0 ? (
-                    <div className="flex flex-col items-center py-10 text-v3-text-muted">
-                      <Clock3 className="mb-3 h-9 w-9 opacity-30" />
-                      <p className="text-[0.85rem] font-semibold">예약된 발송이 없습니다</p>
-                      <p className="mt-1 text-[0.75rem]">트리거 규칙을 활성화하면 예정된 알림톡이 표시됩니다.</p>
-                    </div>
-                  ) : (
-                    upcomingJobs.map((job) => (
-                      <div
-                        key={job.id}
-                        className="list-item"
-                        data-component="messages-scheduled-row"
-                      >
-                        <div className="list-avatar bg-v3-primary">
-                          <Clock3 size={16} strokeWidth={2.5} />
-                        </div>
-                        <div className="list-info">
-                          <div className="list-name">
-                            {job.ruleName}
-                            <span className="badge badge-primary">
-                              {RECIPIENT_TYPE_LABEL[job.recipientType] ?? job.recipientType}
-                            </span>
-                          </div>
-                          <div className="list-meta">
-                            {job.templateKey}
-                            {job.eventType ? ` · ${job.eventType}` : ""}
-                            {job.recipientPhone ? ` · ${job.recipientPhone}` : ""}
-                          </div>
-                        </div>
-                        <div className="list-right">
-                          <span className="dday-sub">{formatScheduledFor(job.scheduledFor)}</span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </MessagingFeatureGate>
-          </div>
-        ) : activeSection === "history" ? (
-          <div className="flex-1 min-h-0 flex flex-col" data-component="messages-history-area">
-            <MessagingFeatureGate
-              isEnabled={isMessagingApproved}
-              isLoading={isLoadingMessageSenderApproval}
-              title={lockedFeatureCopy.title}
-              description={lockedFeatureCopy.description}
+              </InfoCard>
+            </div>
+
+            <div
+              className={`tab-content ${activeDetailTab === "recipient" ? "active" : ""}`}
+              data-component="mobile-messages-detail-recipient-tab"
             >
-              <div className="list-card flex-1 min-h-0 flex flex-col">
-                <div className="list-title">
-                  <span className="list-title-text">
-                    발송 기록
-                    <span className="list-count">{isHistoryLoading ? "불러오는 중" : `${historyLogs.length}건`}</span>
-                  </span>
-                </div>
-                <div className="list-card-scroll">
-                  {isHistoryLoading ? (
-                    <div className="flex flex-col items-center py-10 text-v3-text-muted">
-                      <History className="mb-3 h-9 w-9 opacity-30 animate-pulse" />
-                      <p className="text-[0.85rem] font-semibold">발송 기록 불러오는 중…</p>
-                    </div>
-                  ) : isHistoryError ? (
-                    <div className="flex flex-col items-center py-10">
-                      <p className="text-[0.85rem] font-semibold text-v3-burgundy">발송 기록을 불러오지 못했습니다</p>
-                      <p className="mt-1 text-[0.75rem] text-v3-text-muted">잠시 후 다시 시도해 주세요.</p>
-                    </div>
-                  ) : historyLogs.length === 0 ? (
-                    <div className="flex flex-col items-center py-10 text-v3-text-muted">
-                      <History className="mb-3 h-9 w-9 opacity-30" />
-                      <p className="text-[0.85rem] font-semibold">발송 기록이 없습니다</p>
-                      <p className="mt-1 text-[0.75rem]">메시지를 발송하면 기록이 표시됩니다.</p>
-                    </div>
-                  ) : (
-                    historyLogs.map((log) => {
-                      const recipient = log.recipientName ?? log.clientName ?? log.employeeName ?? log.receiver;
-                      const initial = recipient.charAt(0) || "?";
-                      const tone = LOG_STATUS_TONE[log.status];
-                      return (
-                        <div
-                          key={log.id}
-                          className="list-item"
-                          data-component="messages-history-row"
-                        >
-                          <div className={`list-avatar ${LOG_AVATAR_BG[log.status]}`}>{initial}</div>
-                          <div className="list-info">
-                            <div className="list-name">
-                              {recipient}
-                              <span className={`badge badge-${tone}`}>{LOG_STATUS_LABEL[log.status]}</span>
-                            </div>
-                            <div className="list-meta">
-                              {log.ruleName ?? log.templateKey}
-                              {log.eventType ? ` · ${log.eventType}` : ""}
-                              {` · ${formatScheduledFor(log.createdAt)}`}
-                            </div>
-                            {log.errorMessage ? (
-                              <div className="list-meta text-v3-burgundy mt-1">{log.errorMessage}</div>
-                            ) : null}
-                          </div>
-                          <div className="list-right">
-                            <span className="dday-sub">{log.receiver}</span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </MessagingFeatureGate>
+              <InfoCard title="수신자 정보">
+                <InfoRow label="수신자" value={detailMessage.recipient} />
+                <InfoRow label="유형" value="고객" />
+                <InfoRow label="연락처" value={detailMessage.receiver} />
+                <InfoRow label="채널 ID" value={detailMessage.channel === "kakao" ? "@babyjamjam_kakao" : "SMS"} />
+              </InfoCard>
+            </div>
+
+            <div
+              className={`tab-content ${activeDetailTab === "template" ? "active" : ""}`}
+              data-component="mobile-messages-detail-template-tab"
+            >
+              <InfoCard title="템플릿 정보">
+                <InfoRow label="템플릿" value={detailMessage.templateName} />
+                <InfoRow label="트리거" value={detailMessage.trigger} />
+                <InfoRow label="채널" value={detailMessage.channel === "kakao" ? "알림톡 (Kakao)" : "SMS"} />
+              </InfoCard>
+
+              <InfoCard title="발송 정보" delay={60}>
+                <InfoRow label="상태" value={detailMessage.statusLabel} tone={getStatusTone(detailMessage.status)} />
+                <InfoRow label="발송 시각" value={detailMessage.sentAt} />
+                <InfoRow label="트리거" value={detailMessage.trigger} />
+                <InfoRow label="발송 ID" value={detailMessage.id.replace("log-", "M-")} />
+              </InfoCard>
+
+              <InfoCard title="변수" delay={120}>
+                <InfoRow label="clientName" value={detailMessage.recipient} />
+                <InfoRow label="employeeName" value={detailMessage.employeeName} />
+                <InfoRow label="serviceStartDate" value={detailMessage.serviceStartDate} />
+              </InfoCard>
+            </div>
           </div>
-        ) : null}
-      </div>
-    </section>
+        ) : null
+      }
+    />
   );
 }

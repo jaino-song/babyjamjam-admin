@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { CheckCircle2, Clock3, FileCheck2, Send, UserPlus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useClient, useDeleteClient } from "@/hooks/useClients";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
-import { Client, SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
+import { Client } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { toast } from "@/hooks/use-toast";
@@ -26,8 +27,23 @@ import "@/components/app/mobile-redesign/redesign.css";
 
 const ALL_FILTER = "전체";
 const AVATAR_TONES: AvatarTone[] = ["primary", "green", "burgundy", "orange", "purple"];
+const AVATAR_TONE_BY_INITIAL: Partial<Record<string, AvatarTone>> = {
+  "[": "burgundy",
+  박: "green",
+  김: "primary",
+  최: "burgundy",
+  장: "orange",
+  송: "orange",
+  윤: "purple",
+  이: "green",
+  강: "primary",
+};
 
 function pickAvatarTone(name: string, fallback: number): AvatarTone {
+  const initial = clientInitial(name);
+  if (AVATAR_TONE_BY_INITIAL[initial]) {
+    return AVATAR_TONE_BY_INITIAL[initial];
+  }
   const code = name.charCodeAt(0) || fallback;
   return AVATAR_TONES[code % AVATAR_TONES.length];
 }
@@ -43,17 +59,69 @@ function clientMeta(c: Client) {
     : `${type} · 제공인력 미배정`;
 }
 
-function serviceStatusLabel(status: string | null) {
-  const opt = SERVICE_STATUS_OPTIONS.find((o) => o.value === status);
-  return opt?.label ?? "-";
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return "-";
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return dateStr;
+  return date.toLocaleDateString("ko-KR");
+}
+
+function formatPrice(price: string | null): string {
+  if (!price) return "-";
+  const amount = Number(price.replace(/,/g, ""));
+  if (Number.isNaN(amount)) return price;
+  return `${amount.toLocaleString("ko-KR")}원`;
+}
+
+function clientFeatureLabel(client: Client): string | null {
+  if (client.breastPump) return "유축기 대여";
+  if (client.careCenter) return "조리원 연계";
+  if (client.voucherClient) return "바우처";
+  return client.type;
+}
+
+function documentStatusLabel(status: Client["documentStatus"]): string {
+  switch (status) {
+    case "completed":
+      return "완료";
+    case "opened":
+    case "requested":
+      return "검토 필요";
+    case "created":
+      return "발송 대기";
+    case "rejected":
+    case "revoked":
+    case "deleted":
+      return "확인 필요";
+    default:
+      return "미발급";
+  }
+}
+
+function documentStatusTone(status: Client["documentStatus"]): "green" | "primary" | "orange" | "muted" | "burgundy" {
+  switch (status) {
+    case "completed":
+      return "green";
+    case "opened":
+    case "requested":
+      return "primary";
+    case "created":
+      return "orange";
+    case "rejected":
+    case "revoked":
+    case "deleted":
+      return "burgundy";
+    default:
+      return "muted";
+  }
 }
 
 interface ClientGroup {
   key: string;
   title: string;
   badge: string;
-  badgeTone: "burgundy" | "primary" | "muted" | "green";
-  badgeMini: "burgundy" | "primary" | "muted" | "green";
+  badgeTone: "burgundy" | "primary" | "muted" | "green" | "orange";
+  badgeMini: "burgundy" | "primary" | "muted" | "green" | "orange";
   match: (c: Client) => boolean;
   counter: string;
 }
@@ -66,7 +134,7 @@ const GROUPS: ClientGroup[] = [
     badgeTone: "burgundy",
     badgeMini: "burgundy",
     match: (c) => c.serviceStatus === "replacement_requested",
-    counter: "건",
+    counter: "명",
   },
   {
     key: "active",
@@ -81,8 +149,8 @@ const GROUPS: ClientGroup[] = [
     key: "waiting",
     title: "대기",
     badge: "대기",
-    badgeTone: "muted",
-    badgeMini: "muted",
+    badgeTone: "orange",
+    badgeMini: "orange",
     match: (c) => c.serviceStatus === "waiting" || c.serviceStatus === "pending",
     counter: "명",
   },
@@ -106,71 +174,101 @@ const GROUPS: ClientGroup[] = [
   },
 ];
 
-type DetailTabId = "basic" | "service" | "contact";
+type DetailTabId = "basic" | "contracts" | "alimtalk";
+
+function DetailDocRow({
+  icon,
+  title,
+  meta,
+  badge,
+  tone,
+}: {
+  icon: ReactNode;
+  title: string;
+  meta: string;
+  badge: string;
+  tone: "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
+}) {
+  return (
+    <div className="doc-row" data-component="mobile-clients-doc-row">
+      <div className={`doc-icon doc-icon-${tone}`} data-component="mobile-clients-doc-icon">
+        {icon}
+      </div>
+      <div className="doc-info" data-component="mobile-clients-doc-info">
+        <div className="doc-title" data-component="mobile-clients-doc-title">
+          {title}
+        </div>
+        <div className="doc-meta" data-component="mobile-clients-doc-meta">
+          {meta}
+        </div>
+      </div>
+      <span className={`badge-mini ${tone}`}>{badge}</span>
+    </div>
+  );
+}
 
 function ClientDetailContent({
   client,
   activeTab,
   onTabChange,
-  onOpenFullDetail,
-  onEdit,
+  onMessage,
+  onIssueContract,
 }: {
   client: Client;
   activeTab: DetailTabId;
   onTabChange: (id: DetailTabId) => void;
-  onOpenFullDetail: () => void;
-  onEdit: () => void;
+  onMessage: () => void;
+  onIssueContract: () => void;
 }) {
-  const [actionStatus, setActionStatus] = useState("");
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
+  const featureLabel = clientFeatureLabel(client);
+  const docTone = documentStatusTone(client.documentStatus);
+  const contractCode = client.eDocId ?? `C-${String(client.id).padStart(4, "0")}`;
 
   return (
     <div className="detail-body detail-column" data-component="mobile-clients-detail">
-      <div className="client-detail-header pop-up">
-        <div className={`client-detail-avatar-lg av-${pickAvatarTone(client.name, client.id)}`}>
+      <div className="client-detail-header pop-up" data-component="mobile-clients-detail-header">
+        <div
+          className={`client-detail-avatar-lg av-${pickAvatarTone(client.name, client.id)}`}
+          data-component="mobile-clients-detail-avatar"
+        >
           {clientInitial(client.name)}
         </div>
-        <div className="client-detail-title">
-          <div className="client-detail-name">{client.name}</div>
-          <div className="client-detail-badges">
+        <div className="client-detail-title" data-component="mobile-clients-detail-title">
+          <div className="client-detail-name" data-component="mobile-clients-detail-name">
+            {client.name}
+          </div>
+          <div className="client-detail-badges" data-component="mobile-clients-detail-badges">
             <span className={`badge-mini ${group.badgeMini}`}>{group.badge}</span>
-            {client.type && <span className="badge-mini muted">{client.type}</span>}
+            {featureLabel && <span className="badge-mini burgundy">{featureLabel}</span>}
           </div>
         </div>
       </div>
 
-      <div className="detail-actions">
+      <div className="detail-actions" data-component="mobile-clients-detail-actions">
         <button
           className="btn btn-secondary"
           type="button"
-          onClick={onEdit}
-          data-component="mobile-clients-edit"
+          onClick={onMessage}
+          data-component="mobile-clients-message"
         >
-          편집
+          메시지
         </button>
         <button
           className="btn btn-primary"
           type="button"
-          onClick={() => {
-            onOpenFullDetail();
-            setActionStatus("전체 상세 정보를 엽니다.");
-          }}
-          data-component="mobile-clients-detail-full"
+          onClick={onIssueContract}
+          data-component="mobile-clients-contract-create"
         >
-          전체 정보
+          계약서 발급
         </button>
       </div>
-      {actionStatus && (
-        <div className="action-feedback" role="status">
-          {actionStatus}
-        </div>
-      )}
 
       <DetailTabPills
         tabs={[
           { id: "basic", label: "기본 정보" },
-          { id: "service", label: "서비스" },
-          { id: "contact", label: "연락처" },
+          { id: "contracts", label: "계약서 정보" },
+          { id: "alimtalk", label: "알림톡 발송 현황" },
         ]}
         activeTab={activeTab}
         onTabChange={(id) => onTabChange(id as DetailTabId)}
@@ -179,37 +277,95 @@ function ClientDetailContent({
       <div
         className={`tab-content ${activeTab === "basic" ? "active" : ""}`}
         data-tab-content="basic"
+        data-component="mobile-clients-basic-tab"
       >
-        <InfoCard title="기본 정보">
+        <InfoCard title="고객 정보">
           <InfoRow label="이름" value={client.name} />
-          <InfoRow label="유형" value={client.type ?? "-"} />
-          <InfoRow label="현재 상태" value={serviceStatusLabel(client.serviceStatus)} tone={group.badgeMini as never} />
+          <InfoRow label="생년월일" value={client.birthday ?? "-"} />
+          <InfoRow label="출산 예정일" value={formatDate(client.dueDate)} />
+          <InfoRow label="연락처" value={client.phone ?? "-"} />
+          <InfoRow label="주소" value={client.address ?? "-"} />
         </InfoCard>
-        <InfoCard title="배정 정보" delay={60}>
-          <InfoRow label="주 담당 매니저" value={client.primaryEmployee?.name ?? "미배정"} />
-          {client.secondaryEmployee?.name && (
-            <InfoRow label="보조 담당 매니저" value={client.secondaryEmployee.name} />
+        <InfoCard title="제공인력" delay={60}>
+          <InfoRow label="제공인력 1" value={client.primaryEmployee?.name ?? "-"} />
+          <InfoRow label="제공인력 2" value={client.secondaryEmployee?.name ?? "-"} />
+        </InfoCard>
+        <InfoCard title="서비스 정보" delay={120}>
+          <InfoRow label="바우처 유형" value={client.type ?? "-"} />
+          <InfoRow label="서비스 기간" value={client.duration ? `${client.duration}일` : "-"} />
+          <InfoRow label="시작일" value={formatDate(client.startDate)} />
+          <InfoRow label="종료일" value={formatDate(client.endDate)} />
+          <InfoRow label="총 서비스 금액" value={formatPrice(client.fullPrice)} />
+          <InfoRow label="정부지원금" value={formatPrice(client.grant)} />
+          <InfoRow label="본인부담금" value={formatPrice(client.actualPrice)} />
+        </InfoCard>
+      </div>
+
+      <div
+        className={`tab-content ${activeTab === "contracts" ? "active" : ""}`}
+        data-tab-content="contracts"
+        data-component="mobile-clients-contracts-tab"
+      >
+        <InfoCard title={client.eDocId ? "계약서 · 2건" : "계약서 · 1건"}>
+          <DetailDocRow
+            icon={<FileCheck2 size={16} strokeWidth={2.5} />}
+            title={`${client.type ?? "산모 서비스"} 계약서`}
+            meta={`${contractCode} · ${formatDate(client.startDate)} 작성`}
+            badge={documentStatusLabel(client.documentStatus)}
+            tone={docTone}
+          />
+          {client.eDocId && (
+            <DetailDocRow
+              icon={<CheckCircle2 size={16} strokeWidth={2.5} />}
+              title="개인정보 동의서"
+              meta={`${client.eDocId} · ${formatDate(client.dueDate)} 완료`}
+              badge={client.hasSigned ? "완료" : "대기"}
+              tone={client.hasSigned ? "green" : "muted"}
+            />
           )}
         </InfoCard>
-      </div>
-
-      <div
-        className={`tab-content ${activeTab === "service" ? "active" : ""}`}
-        data-tab-content="service"
-      >
-        <InfoCard title="서비스 정보">
-          <InfoRow label="유형" value={client.type ?? "-"} />
-          <InfoRow label="상태" value={serviceStatusLabel(client.serviceStatus)} />
+        <InfoCard title="최근 진행 상황" delay={60}>
+          <InfoRow label="현재 단계" value={documentStatusLabel(client.documentStatus)} tone={docTone as never} />
+          <InfoRow label="서명 대기자" value={client.hasSigned ? "-" : `고객 (${client.name})`} />
+          <InfoRow label="발송일" value={formatDate(client.startDate)} />
+          <InfoRow label="마감일" value={formatDate(client.endDate)} tone={"orange" as never} />
         </InfoCard>
       </div>
 
       <div
-        className={`tab-content ${activeTab === "contact" ? "active" : ""}`}
-        data-tab-content="contact"
+        className={`tab-content ${activeTab === "alimtalk" ? "active" : ""}`}
+        data-tab-content="alimtalk"
+        data-component="mobile-clients-alimtalk-tab"
       >
-        <InfoCard title="연락처">
-          <InfoRow label="휴대전화" value={client.phone ?? "-"} />
-          {client.address && <InfoRow label="주소" value={client.address} />}
+        <InfoCard title="알림톡 · 4건">
+          <DetailDocRow
+            icon={<UserPlus size={16} strokeWidth={2.5} />}
+            title="고객 등록 환영"
+            meta={`${formatDate(client.dueDate)} 오전 10:14`}
+            badge="완료"
+            tone="green"
+          />
+          <DetailDocRow
+            icon={<CheckCircle2 size={16} strokeWidth={2.5} />}
+            title="제공인력 배정 안내"
+            meta={`${formatDate(client.startDate)} · ${client.primaryEmployee?.name ?? "미배정"}`}
+            badge={client.primaryEmployee ? "완료" : "대기"}
+            tone={client.primaryEmployee ? "green" : "muted"}
+          />
+          <DetailDocRow
+            icon={<Send size={16} strokeWidth={2.5} />}
+            title="서비스 시작 D-1 안내"
+            meta={formatDate(client.startDate)}
+            badge="완료"
+            tone="green"
+          />
+          <DetailDocRow
+            icon={<Clock3 size={16} strokeWidth={2.5} />}
+            title="서비스 종료 안내"
+            meta={`${formatDate(client.endDate)} · 발송 예정`}
+            badge="대기"
+            tone="muted"
+          />
         </InfoCard>
       </div>
     </div>
@@ -240,13 +396,7 @@ export default function ClientsPage() {
 
   const deleteClient = useDeleteClient();
   const { data: clientFromParam } = useClient(clientIdParam ? Number(clientIdParam) : 0);
-
-  useEffect(() => {
-    if (clientIdParam && clientFromParam) {
-      setSelectedClient(clientFromParam);
-      setDetailSheetTab("basic");
-    }
-  }, [clientIdParam, clientFromParam]);
+  const detailClient = selectedClient ?? (clientIdParam ? clientFromParam ?? null : null);
 
   const handleSelectClient = (client: Client) => {
     setSelectedClient(client);
@@ -260,14 +410,18 @@ export default function ClientsPage() {
     }
   };
 
-  const handleOpenFullDetail = () => {
-    setDetailModalOpen(true);
-  };
-
   const handleEdit = (client: Client) => {
     setEditingClient(client);
     setFormDialogOpen(true);
     setDetailModalOpen(false);
+  };
+
+  const handleMessage = (client: Client) => {
+    router.push(`/messages?clientId=${client.id}`);
+  };
+
+  const handleIssueContract = () => {
+    router.push("/contracts/creation");
   };
 
   const handleDeleteRequest = (id: number) => {
@@ -278,7 +432,7 @@ export default function ClientsPage() {
     if (deleteTargetClientId == null) return;
     try {
       await deleteClient.mutateAsync(deleteTargetClientId);
-      if (selectedClient?.id === deleteTargetClientId) {
+      if (detailClient?.id === deleteTargetClientId) {
         setSelectedClient(null);
         setDetailModalOpen(false);
       }
@@ -309,7 +463,7 @@ export default function ClientsPage() {
 
   const filterItems = useMemo(() => {
     const items: Array<{ label: string; count: string }> = [
-      { label: ALL_FILTER, count: String(allClients.length) },
+      { label: ALL_FILTER, count: String(total ?? allClients.length) },
     ];
     for (const g of GROUPS) {
       if (grouped.counts[g.key] > 0) {
@@ -317,7 +471,7 @@ export default function ClientsPage() {
       }
     }
     return items;
-  }, [allClients.length, grouped.counts]);
+  }, [allClients.length, grouped.counts, total]);
 
   const visibleSections = useMemo(() => {
     const sections: Array<{ key: string; title: string; group: ClientGroup; rows: Client[] }> = [];
@@ -339,7 +493,7 @@ export default function ClientsPage() {
     <>
       <MobileDetailSheet
         name="clients"
-        isOpen={Boolean(selectedClient)}
+        isOpen={Boolean(detailClient)}
         onClose={handleCloseDetailSheet}
         list={
           <div className="shell-content" data-component="mobile-clients-content">
@@ -376,8 +530,14 @@ export default function ClientsPage() {
                 </div>
               ) : (
                 visibleSections.map((section) => (
-                  <div className="section-block" key={section.key}>
-                    <div className="section-header">{section.title}</div>
+                  <div
+                    className="section-block"
+                    key={section.key}
+                    data-component="mobile-clients-section"
+                  >
+                    <div className="section-header" data-component="mobile-clients-section-header">
+                      {section.title}
+                    </div>
                     {section.rows.map((c, idx) => (
                       <button
                         key={c.id}
@@ -386,14 +546,21 @@ export default function ClientsPage() {
                         data-component="mobile-clients-row"
                         onClick={() => handleSelectClient(c)}
                       >
-                        <div className={`list-avatar av-${pickAvatarTone(c.name, c.id + idx)}`}>
+                        <div
+                          className={`list-avatar av-${pickAvatarTone(c.name, c.id + idx)}`}
+                          data-component="mobile-clients-avatar"
+                        >
                           {clientInitial(c.name)}
                         </div>
-                        <div className="list-info">
-                          <div className="list-name">{c.name}</div>
-                          <div className="list-meta">{clientMeta(c)}</div>
+                        <div className="list-info" data-component="mobile-clients-list-info">
+                          <div className="list-name" data-component="mobile-clients-list-name">
+                            {c.name}
+                          </div>
+                          <div className="list-meta" data-component="mobile-clients-list-meta">
+                            {clientMeta(c)}
+                          </div>
                         </div>
-                        <div className="list-right">
+                        <div className="list-right" data-component="mobile-clients-list-right">
                           <Badge label={section.group.badge} tone={section.group.badgeTone} />
                         </div>
                       </button>
@@ -405,16 +572,16 @@ export default function ClientsPage() {
           </div>
         }
         detail={
-          selectedClient ? (
+          detailClient ? (
             <ClientDetailContent
-              client={selectedClient}
+              client={detailClient}
               activeTab={detailSheetTab}
               onTabChange={setDetailSheetTab}
-              onOpenFullDetail={handleOpenFullDetail}
-              onEdit={() => handleEdit(selectedClient)}
+              onMessage={() => handleMessage(detailClient)}
+              onIssueContract={handleIssueContract}
             />
           ) : (
-            <div className="detail-body" />
+            <div className="detail-body" data-component="mobile-clients-detail-empty" />
           )
         }
       />
@@ -422,7 +589,7 @@ export default function ClientsPage() {
       <ClientDetailModal
         open={detailModalOpen}
         onClose={() => setDetailModalOpen(false)}
-        client={selectedClient}
+        client={detailClient}
         onEdit={handleEdit}
         onDelete={handleDeleteRequest}
       />

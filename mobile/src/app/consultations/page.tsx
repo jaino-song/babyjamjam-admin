@@ -34,6 +34,7 @@ interface ConsultationRow {
   status: ConsultationStatus;
   contact: string;
   source: string;
+  sourceShort: string;
   region: string;
   address: string;
   birthExperience: string;
@@ -49,11 +50,24 @@ interface ConsultationRow {
 
 const ALL_FILTER = "전체";
 const AVATAR_TONES: AvatarTone[] = ["primary", "green", "burgundy", "orange", "purple"];
+const AVATAR_TONE_BY_INITIAL: Record<string, AvatarTone> = {
+  홍: "burgundy",
+  서: "primary",
+  김: "green",
+  이: "orange",
+  한: "purple",
+  박: "primary",
+  윤: "burgundy",
+  최: "green",
+};
 
-function pickAvatarTone(id: string): AvatarTone {
+function pickAvatarTone(seed: string): AvatarTone {
+  const mappedTone = AVATAR_TONE_BY_INITIAL[seed];
+  if (mappedTone) return mappedTone;
+
   let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
   }
   return AVATAR_TONES[Math.abs(hash) % AVATAR_TONES.length];
 }
@@ -93,6 +107,12 @@ function humanizeSource(source: string): string {
   return source || "-";
 }
 
+function shortSourceLabel(source: string): string {
+  if (source === "website") return "웹";
+  if (source === "phone") return "전화";
+  return source || "-";
+}
+
 function extractRegion(address: string): string {
   const parts = address.trim().split(/\s+/);
   return parts.slice(0, 2).join(" ") || address || "-";
@@ -112,7 +132,7 @@ function toRow(inquiry: ConsultationInquiry): ConsultationRow {
   return {
     id: inquiry.id,
     initial,
-    avatarTone: pickAvatarTone(inquiry.id),
+    avatarTone: pickAvatarTone(initial || inquiry.id),
     name: inquiry.motherName,
     voucher,
     voucherKind: classifyVoucher(inquiry.voucherType),
@@ -121,6 +141,7 @@ function toRow(inquiry: ConsultationInquiry): ConsultationRow {
     status: inquiry.readAt === null ? "unread" : "confirmed",
     contact: inquiry.phone,
     source: humanizeSource(inquiry.source),
+    sourceShort: shortSourceLabel(inquiry.source),
     region: extractRegion(inquiry.address),
     address: inquiry.address,
     birthExperience: inquiry.birthExperience,
@@ -150,6 +171,11 @@ function ConsultationDetail({
   onTabChange: (id: DetailTabId) => void;
 }) {
   const [actionStatus, setActionStatus] = useState("");
+  const inquiryBody = [
+    "안녕하세요, 산후도우미 서비스를 신청하고 싶어 문의드립니다.",
+    `${row.voucher} 유형으로 알아보고 있습니다. 출산 예정일은 ${row.dueDateLabel}이고 ${row.region} 거주합니다.`,
+    "가능한 매니저가 있으면 연락 부탁드려요.",
+  ].join("\n\n");
 
   return (
     <div className="detail-body detail-column" data-component="mobile-consultations-detail">
@@ -162,11 +188,8 @@ function ConsultationDetail({
               {row.status === "unread" ? "미확인" : "확인 완료"}
             </span>
             <span className="badge-mini muted">
-              {row.source} · {row.right}
+              {row.sourceShort} · {row.right}
             </span>
-            {row.inquiryStatus !== "new" && (
-              <span className="badge-mini muted">{inquiryStatusLabel(row.inquiryStatus)}</span>
-            )}
           </div>
         </div>
       </div>
@@ -209,17 +232,23 @@ function ConsultationDetail({
         className={`tab-content ${activeTab === "inquiry" ? "active" : ""}`}
         data-tab-content="inquiry"
       >
-        <InfoCard title="자동 추출 정보">
+        <InfoCard title="문의 본문" padded>
+          <div className="consultation-body-copy" data-component="mobile-consultations-inquiry-body">
+            {inquiryBody}
+          </div>
+        </InfoCard>
+        <InfoCard title="자동 추출 정보" delay={60}>
+          <InfoRow label="희망 시작일" value="-" />
+          <InfoRow
+            label="희망 기간"
+            value={row.selectedDurationDays ? `${row.selectedDurationDays}일` : "-"}
+          />
           <InfoRow label="바우처 유형" value={row.voucher} />
           <InfoRow label="출산 예정일" value={row.dueDateLabel} />
-          <InfoRow label="출산 경험" value={row.birthExperience || "-"} />
-          <InfoRow label="활동 지역" value={row.region} />
-          {row.preferredCaregiverName && (
-            <InfoRow label="선호 매니저" value={row.preferredCaregiverName} />
-          )}
+          <InfoRow label="근무 지역" value={row.region} />
         </InfoCard>
         {(row.selectedPlan || row.selectedAddons.length > 0) && (
-          <InfoCard title="선택한 서비스" delay={60}>
+          <InfoCard title="선택한 서비스" delay={120}>
             {row.selectedPlan && (
               <InfoRow
                 label={
@@ -249,8 +278,12 @@ function ConsultationDetail({
           <InfoRow label="이름" value={row.name} />
           <InfoRow label="연락처" value={row.contact} />
           <InfoRow label="주소" value={row.address || "-"} />
+          <InfoRow label="출산 경험" value={row.birthExperience || "-"} />
           <InfoRow label="출처" value={row.source} />
           <InfoRow label="추천 경로" value={row.referralSource || "-"} />
+          {row.preferredCaregiverName && (
+            <InfoRow label="선호 매니저" value={row.preferredCaregiverName} />
+          )}
         </InfoCard>
         <InfoCard title="문의 상태" delay={60}>
           <InfoRow

@@ -1,24 +1,96 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { isAxiosError } from "axios";
 import { useMutation } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, FileText, Send } from "lucide-react";
-import { ContentPaper } from "@/components/app/root/content-paper";
-import { Separator } from "@/components/ui/separator";
-import { Spinner } from "@/components/ui/spinner";
+import { ChevronLeft, MessageCircle, X } from "lucide-react";
+
+import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { api } from "@/lib/api/client";
-import { useMessageTemplates, useMessageTemplate } from "@/hooks/use-message-templates";
+import { cn } from "@/lib/utils";
+
+import styles from "./page.module.css";
 
 interface SendResponse {
   result?: string;
   message?: string;
 }
 
+interface RecipientChip {
+  id: string;
+  name: string;
+  phone: string;
+  initial: string;
+  tone: "primary" | "orange";
+}
+
+interface TemplateOption {
+  id: string;
+  name: string;
+  meta: string;
+  body: string;
+}
+
+type Channel = "alimtalk" | "sms";
+
 const PHONE_REGEX = /^[0-9,\-\s]+$/;
 const MAX_BODY = 2000;
 const MAX_TITLE = 44;
+
+const DEFAULT_BODY = `안녕하세요 #{clientName} 고객님,
+
+내일 오전 9시 #{employeeName} 매니저가 방문 예정입니다. 준비물은 별도로 안내드린 사항을 참고해 주세요.
+
+문의사항이 있으시면 언제든지 연락 주세요.
+
+아가잼잼 #{branchName}`;
+
+const DEFAULT_RECIPIENTS: RecipientChip[] = [
+  {
+    id: "park-seoyeon",
+    name: "박서연",
+    phone: "010-1234-5678",
+    initial: "박",
+    tone: "primary",
+  },
+  {
+    id: "kim-doyoon",
+    name: "김도윤",
+    phone: "010-2345-6789",
+    initial: "김",
+    tone: "orange",
+  },
+];
+
+const FALLBACK_TEMPLATE_OPTIONS: TemplateOption[] = [
+  {
+    id: "service-start-d-1",
+    name: "서비스 시작 D-1 안내",
+    meta: "서비스 시작 (D-1)",
+    body: DEFAULT_BODY,
+  },
+  {
+    id: "visit-change",
+    name: "방문 일정 변경 안내",
+    meta: "사용자 작성",
+    body: "방문 일정이 변경되어 안내드립니다. 확인 후 문의사항이 있으시면 연락 주세요.",
+  },
+  {
+    id: "satisfaction",
+    name: "서비스 만족도 조사",
+    meta: "사용자 작성",
+    body: "서비스 이용 경험에 대한 만족도 조사를 부탁드립니다. 소중한 의견은 서비스 개선에 반영하겠습니다.",
+  },
+  {
+    id: "custom",
+    name: "직접 작성",
+    meta: "템플릿 없이 작성",
+    body: "",
+  },
+];
+
+const VARIABLE_CHIPS = ["#{clientName}", "#{employeeName}", "#{serviceStartDate}", "#{branchName}"] as const;
 
 function normalizePhone(raw: string) {
   return raw.replace(/[^0-9\-,]/g, "");
@@ -28,13 +100,23 @@ function hasUnreplacedVariables(text: string) {
   return /#\{[^}]+\}/.test(text);
 }
 
+function buildPreview(body: string) {
+  return body
+    .replaceAll("#{clientName}", "박서연")
+    .replaceAll("#{employeeName}", "김민지")
+    .replaceAll("#{serviceStartDate}", "내일")
+    .replaceAll("#{branchName}", "인천점");
+}
+
 export default function NewMessagePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialBody = searchParams.get("body") ?? "";
-  const initialTemplateId = searchParams.get("template") ?? "";
+  const initialBody = searchParams.get("body") ?? DEFAULT_BODY;
+  const initialTemplateId = searchParams.get("template") ?? FALLBACK_TEMPLATE_OPTIONS[0].id;
 
+  const [channel, setChannel] = useState<Channel>("alimtalk");
   const [receiver, setReceiver] = useState("");
+  const [recipients, setRecipients] = useState<RecipientChip[]>(DEFAULT_RECIPIENTS);
   const [recipientName, setRecipientName] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState(initialBody);
@@ -43,29 +125,46 @@ export default function NewMessagePage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(initialTemplateId);
 
   const { data: userTemplates = [] } = useMessageTemplates();
-  const { data: prefilledTemplate } = useMessageTemplate(selectedTemplateId);
 
-  useEffect(() => {
-    if (prefilledTemplate?.content) {
-      setBody(prefilledTemplate.content);
+  const templateOptions = useMemo<TemplateOption[]>(() => {
+    const userOptions = userTemplates.slice(0, 2).map((template) => ({
+      id: template.id,
+      name: template.name,
+      meta: "사용자 작성",
+      body: template.content,
+    }));
+
+    return [
+      FALLBACK_TEMPLATE_OPTIONS[0],
+      userOptions[0] ?? FALLBACK_TEMPLATE_OPTIONS[1],
+      userOptions[1] ?? FALLBACK_TEMPLATE_OPTIONS[2],
+      FALLBACK_TEMPLATE_OPTIONS[3],
+    ];
+  }, [userTemplates]);
+
+  const receiverPayload = useMemo(() => {
+    if (recipients.length > 0) {
+      return recipients.map((recipient) => recipient.phone).join(",");
     }
-  }, [prefilledTemplate]);
+    return receiver.trim();
+  }, [receiver, recipients]);
 
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
+  const previewBody = useMemo(() => buildPreview(body), [body]);
 
   const validationError = useMemo(() => {
-    if (!receiver.trim()) return "수신자 연락처를 입력해 주세요.";
-    if (!PHONE_REGEX.test(receiver.trim())) return "수신자 연락처 형식이 올바르지 않습니다. (숫자, '-', ',' 만 허용)";
+    if (!receiverPayload) return "수신자를 입력해 주세요.";
+    if (!PHONE_REGEX.test(receiverPayload)) return "수신자 연락처 형식이 올바르지 않습니다. (숫자, '-', ',' 만 허용)";
     if (!body.trim()) return "메시지 본문을 입력해 주세요.";
     if (body.length > MAX_BODY) return `본문은 최대 ${MAX_BODY}자까지 입력할 수 있습니다.`;
     if (title.length > MAX_TITLE) return `제목은 최대 ${MAX_TITLE}자까지 입력할 수 있습니다.`;
     return null;
-  }, [receiver, body, title]);
+  }, [receiverPayload, body, title]);
 
   const sendMutation = useMutation<SendResponse, unknown, void>({
     mutationFn: async () => {
       const payload: Record<string, unknown> = {
-        receiver: receiver.trim(),
+        receiver: receiverPayload,
         message: body.trim(),
         triggerType: "immediate",
       };
@@ -78,6 +177,7 @@ export default function NewMessagePage() {
       setErrorMessage(null);
       setSuccessMessage("메시지 발송 요청이 접수되었습니다.");
       setReceiver("");
+      setRecipients([]);
       setRecipientName("");
       setTitle("");
       setBody("");
@@ -94,185 +194,219 @@ export default function NewMessagePage() {
     },
   });
 
+  const addManualRecipient = () => {
+    const normalized = normalizePhone(receiver);
+    if (!normalized || !PHONE_REGEX.test(normalized)) return;
+    setRecipients((current) => [
+      ...current,
+      {
+        id: `manual-${normalized}-${current.length}`,
+        name: recipientName.trim() || normalized,
+        phone: normalized,
+        initial: recipientName.trim().slice(0, 1) || "수",
+        tone: "primary",
+      },
+    ]);
+    setReceiver("");
+    setRecipientName("");
+  };
+
+  const handleTemplateSelect = (option: TemplateOption) => {
+    setSelectedTemplateId(option.id);
+    setBody(option.body);
+  };
+
+  const insertVariable = (variable: string) => {
+    setBody((current) => `${current}${current.endsWith("\n") || !current ? "" : " "}${variable}`);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (validationError || sendMutation.isPending) return;
+    if (validationError || sendMutation.isPending) {
+      if (validationError) setErrorMessage(validationError);
+      return;
+    }
     sendMutation.mutate();
   };
 
-  return (
-    <section data-component="messages-new-page" className="space-y-4 p-4">
-      <header className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          aria-label="뒤로 가기"
-          className="flex h-9 w-9 items-center justify-center rounded-full border border-v3-border/60 bg-white hover:bg-v3-dim-white"
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <div>
-          <h1 className="text-lg font-bold text-v3-dark">새 메시지</h1>
-          <p className="text-[0.78rem] text-v3-text-muted">SMS로 즉시 메시지를 발송합니다.</p>
-        </div>
-      </header>
+  const primaryActionLabel =
+    recipients.length > 0 ? `${recipients.length}명에게 발송` : "즉시 발송";
 
-      <ContentPaper variant="v3">
-        <form data-component="messages-new-form" onSubmit={handleSubmit} className="space-y-4">
-          {userTemplates.length > 0 ? (
-            <div className="space-y-1.5">
-              <label htmlFor="template-select" className="text-[0.78rem] font-semibold text-v3-dark">
-                템플릿 (선택)
-              </label>
-              <div className="relative">
-                <FileText className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-v3-text-muted" />
-                <select
-                  id="template-select"
-                  data-component="messages-new-template-select"
-                  value={selectedTemplateId}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setSelectedTemplateId(next);
-                    if (!next) {
-                      // user cleared selection → wipe prefilled body so they can start fresh
-                      setBody("");
+  return (
+    <section data-component="messages-new-page" className={styles.pageRoot}>
+      <div data-component="messages-new-screen" className={styles.phoneScreen}>
+        <form data-component="messages-new-form" onSubmit={handleSubmit} className={styles.navPage}>
+          <header data-component="messages-new-header" className={styles.detailHeader}>
+            <button
+              type="button"
+              onClick={() => router.back()}
+              aria-label="메시지 목록으로 돌아가기"
+              className={styles.detailBack}
+            >
+              <ChevronLeft aria-hidden="true" size={22} strokeWidth={2.5} />
+              <span>메시지</span>
+            </button>
+            <div data-component="messages-new-title" className={styles.detailTitle}>새 메시지</div>
+          </header>
+
+          <div data-component="messages-new-scroll" className={styles.msgScroll}>
+            <section data-component="messages-new-recipient-card" className={styles.formCard}>
+              <div data-component="messages-new-recipient-row" className={styles.formRow}>
+                <label htmlFor="receiver" className={styles.formLabel}>
+                  수신자 <span className={styles.required}>*</span>
+                </label>
+                <input
+                  id="receiver"
+                  type="tel"
+                  inputMode="numeric"
+                  placeholder="고객 이름, 연락처 검색"
+                  autoComplete="off"
+                  value={receiver}
+                  onBlur={addManualRecipient}
+                  onChange={(e) => setReceiver(normalizePhone(e.target.value))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addManualRecipient();
                     }
                   }}
-                  className="w-full appearance-none rounded-2xl border border-v3-border/60 bg-white px-9 py-3 text-sm focus:border-v3-primary focus:outline-none"
-                >
-                  <option value="">템플릿을 선택하지 않음 (직접 작성)</option>
-                  {userTemplates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
+                  className={styles.formInput}
+                />
+                <div data-component="messages-new-recipient-chips" className={styles.recipientChips}>
+                  {recipients.map((recipient) => (
+                    <span key={recipient.id} className={styles.recipientChip}>
+                      <span className={cn(styles.recipientChipAvatar, styles[`recipient_${recipient.tone}`])}>
+                        {recipient.initial}
+                      </span>
+                      {recipient.name}
+                      <button
+                        type="button"
+                        aria-label={`${recipient.name} 수신자 제거`}
+                        className={styles.recipientChipX}
+                        onClick={() => setRecipients((current) => current.filter((item) => item.id !== recipient.id))}
+                      >
+                        <X aria-hidden="true" size={10} strokeWidth={3} />
+                      </button>
+                    </span>
                   ))}
-                </select>
+                </div>
+                <div data-component="messages-new-recipient-helper" className={styles.formHelper}>총 {recipients.length}명 선택됨 · 한 번에 최대 50명까지 발송 가능</div>
               </div>
-            </div>
-          ) : null}
+            </section>
 
-          <div className="space-y-1.5">
-            <label htmlFor="receiver" className="text-[0.78rem] font-semibold text-v3-dark">
-              수신자 연락처 <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="receiver"
-              type="tel"
-              inputMode="numeric"
-              placeholder="010-1234-5678"
-              autoComplete="off"
-              value={receiver}
-              onChange={(e) => setReceiver(normalizePhone(e.target.value))}
-              className="w-full rounded-2xl border border-v3-border/60 bg-white px-4 py-3 text-sm focus:border-v3-primary focus:outline-none"
-            />
-            <p className="text-[0.68rem] text-v3-text-muted">여러 명에게 발송하려면 쉼표(,)로 구분하세요.</p>
-          </div>
+            <section data-component="messages-new-template-card" className={styles.formCard}>
+              <div data-component="messages-new-channel-row" className={styles.formRow}>
+                <span className={styles.formLabel}>채널</span>
+                <div data-component="messages-new-channel-options" className={styles.channelToggleRow}>
+                  <button
+                    type="button"
+                    className={cn(styles.channelToggle, channel === "alimtalk" && styles.channelSelected)}
+                    onClick={() => setChannel("alimtalk")}
+                  >
+                    <MessageCircle aria-hidden="true" size={14} strokeWidth={2.5} />
+                    알림톡
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(styles.channelToggle, channel === "sms" && styles.channelSelected)}
+                    onClick={() => setChannel("sms")}
+                  >
+                    <MessageCircle aria-hidden="true" size={14} strokeWidth={2.5} />
+                    SMS
+                  </button>
+                </div>
+              </div>
 
-          <div className="space-y-1.5">
-            <label htmlFor="recipientName" className="text-[0.78rem] font-semibold text-v3-dark">
-              수신자 이름 (선택)
-            </label>
-            <input
-              id="recipientName"
-              type="text"
-              placeholder="홍길동"
-              value={recipientName}
-              onChange={(e) => setRecipientName(e.target.value)}
-              className="w-full rounded-2xl border border-v3-border/60 bg-white px-4 py-3 text-sm focus:border-v3-primary focus:outline-none"
-            />
-          </div>
+              <div data-component="messages-new-template-row" className={styles.formRow}>
+                <span className={styles.formLabel}>템플릿 선택</span>
+                <div data-component="messages-new-template-list" className={styles.templatePickList}>
+                  {templateOptions.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={cn(styles.templatePick, selectedTemplateId === option.id && styles.templateSelected)}
+                      onClick={() => handleTemplateSelect(option)}
+                    >
+                      <span className={styles.templatePickRadio} />
+                      <span className={styles.templatePickInfo}>
+                        <span className={styles.templatePickName}>{option.name}</span>
+                        <span className={styles.templatePickMeta}>{option.meta}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
 
-          <div className="space-y-1.5">
-            <label htmlFor="title" className="text-[0.78rem] font-semibold text-v3-dark">
-              제목 (선택, LMS 전환 시 사용)
-            </label>
-            <input
-              id="title"
-              type="text"
-              maxLength={MAX_TITLE}
-              placeholder="(선택) 제목"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full rounded-2xl border border-v3-border/60 bg-white px-4 py-3 text-sm focus:border-v3-primary focus:outline-none"
-            />
-            <p className="text-right text-[0.68rem] text-v3-text-muted">
-              {title.length} / {MAX_TITLE}
-            </p>
-          </div>
+            <section data-component="messages-new-body-card" className={styles.formCard}>
+              <div data-component="messages-new-body-row" className={styles.formRow}>
+                <label htmlFor="body" className={styles.formLabel}>
+                  메시지 본문
+                </label>
+                <textarea
+                  id="body"
+                  maxLength={MAX_BODY}
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  className={styles.formTextarea}
+                />
+                <div data-component="messages-new-body-helper" className={styles.formHelper}>변수는 수신자 정보로 자동 치환됩니다. 칩을 탭하면 본문에 삽입됩니다.</div>
+                <div data-component="messages-new-variable-chips" className={styles.variableChips}>
+                  {VARIABLE_CHIPS.map((variable) => (
+                    <button
+                      key={variable}
+                      type="button"
+                      className={styles.variableChip}
+                      onClick={() => insertVariable(variable)}
+                    >
+                      {variable}
+                    </button>
+                  ))}
+                </div>
+                {showVariableHint ? (
+                  <p data-component="messages-new-variable-hint" className={styles.screenReaderNote}>
+                    템플릿 변수가 포함되어 있습니다.
+                  </p>
+                ) : null}
+              </div>
+            </section>
 
-          <Separator />
+            <section data-component="messages-new-preview-card" className={styles.formCard}>
+              <div data-component="messages-new-preview-title" className={styles.infoCardTitle}>미리보기 · 박서연 기준</div>
+              <div data-component="messages-new-preview-body" className={styles.previewCard}>
+                <div data-component="messages-new-preview-label" className={styles.previewCardLabel}>{channel === "alimtalk" ? "알림톡" : "SMS"} 미리보기</div>
+                {previewBody}
+              </div>
+            </section>
 
-          <div className="space-y-1.5">
-            <label htmlFor="body" className="text-[0.78rem] font-semibold text-v3-dark">
-              메시지 본문 <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              id="body"
-              rows={6}
-              maxLength={MAX_BODY}
-              placeholder="발송할 메시지 내용을 입력하세요."
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              className="w-full rounded-2xl border border-v3-border/60 bg-white px-4 py-3 text-sm focus:border-v3-primary focus:outline-none resize-none"
-            />
-            <p className="text-right text-[0.68rem] text-v3-text-muted">
-              {body.length} / {MAX_BODY}
-            </p>
-            {showVariableHint ? (
-              <div
-                data-component="messages-new-variable-hint"
-                className="rounded-2xl border border-v3-border/60 bg-v3-dim-white px-3 py-2 text-[0.72rem] text-v3-text-muted"
-              >
-                템플릿 변수 (예: <code className="rounded bg-white px-1 font-mono text-[0.7rem]">#&#123;고객명&#125;</code>)가 본문에 그대로 남아 있습니다. 발송 전에 실제 값으로 직접 바꿔 주세요.
+            {errorMessage ? (
+              <div data-component="messages-new-error" className={styles.errorCard}>
+                {errorMessage}
+              </div>
+            ) : null}
+
+            {successMessage ? (
+              <div data-component="messages-new-success" className={styles.successCard}>
+                {successMessage}
               </div>
             ) : null}
           </div>
 
-          {validationError ? (
-            <div
-              data-component="messages-new-validation"
-              className="rounded-2xl border border-amber-300 bg-amber-50 p-3 text-[0.78rem] text-amber-700"
+          <div data-component="messages-new-actions" className={styles.msgActions}>
+            <button type="button" className={cn(styles.msgButton, styles.secondaryButton)}>
+              임시저장
+            </button>
+            <button
+              type="submit"
+              data-component="messages-new-submit"
+              disabled={sendMutation.isPending}
+              className={cn(styles.msgButton, styles.primaryButton)}
             >
-              {validationError}
-            </div>
-          ) : null}
-
-          {errorMessage ? (
-            <div
-              data-component="messages-new-error"
-              className="rounded-2xl border border-red-300 bg-red-50 p-3 text-[0.78rem] text-red-700"
-            >
-              {errorMessage}
-            </div>
-          ) : null}
-
-          {successMessage ? (
-            <div
-              data-component="messages-new-success"
-              className="rounded-2xl border border-emerald-300 bg-emerald-50 p-3 text-[0.78rem] text-emerald-700"
-            >
-              {successMessage}
-            </div>
-          ) : null}
-
-          <button
-            type="submit"
-            data-component="messages-new-submit"
-            disabled={!!validationError || sendMutation.isPending}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-v3-primary px-4 py-3 text-sm font-bold text-white shadow-v3-hover transition disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {sendMutation.isPending ? (
-              <>
-                <Spinner className="h-4 w-4" /> 발송 중…
-              </>
-            ) : (
-              <>
-                <Send size={16} /> 즉시 발송
-              </>
-            )}
-          </button>
+              {sendMutation.isPending ? "발송 중..." : primaryActionLabel}
+            </button>
+          </div>
         </form>
-      </ContentPaper>
+      </div>
     </section>
   );
 }

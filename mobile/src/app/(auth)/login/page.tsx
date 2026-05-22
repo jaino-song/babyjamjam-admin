@@ -233,7 +233,7 @@ const LoginPage = () => {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="rgba(0,0,0,0.85)">
           <path d="M12 3C6.5 3 2 6.5 2 11c0 2.8 1.8 5.3 4.5 6.7L5.4 21l3.5-2.3c1 .2 2 .3 3.1.3 5.5 0 10-3.5 10-8s-4.5-8-10-8z" />
         </svg>
-        카카오로 로그인
+        카카오로 시작하기
       </button>
 
       <div className="auth-links">

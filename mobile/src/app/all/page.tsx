@@ -13,12 +13,10 @@ import {
   MessageCircle,
   MessageSquareText,
   Send,
-  ShieldCheck,
   UserCheck,
   Users,
 } from "lucide-react";
 
-import { useInitialUser } from "@/providers/UserProvider";
 import { useAllClients } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
 import { useUnreadCount, usePushNotification } from "@/hooks/usePushNotification";
@@ -27,11 +25,10 @@ import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
 
 export default function AllMenuPage() {
   const router = useRouter();
-  const user = useInitialUser();
   const { data: clients = [] } = useAllClients();
   const { data: employees = [] } = useEmployees();
   const { isSubscribed } = usePushNotification();
-  const { data: unreadNotifCount = 0 } = useUnreadCount(isSubscribed);
+  const { data: unreadNotifCount = 0 } = useUnreadCount(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -40,10 +37,8 @@ export default function AllMenuPage() {
     }
   }, [router]);
 
-  const isAdminOrOwner = user?.role === "admin" || user?.role === "owner";
-
   const menuGroups = useMemo<MenuGroup[]>(() => {
-    const groups: MenuGroup[] = [
+    return [
       {
         title: "지점 관리",
         rows: [
@@ -86,8 +81,8 @@ export default function AllMenuPage() {
         title: "서비스 관리",
         rows: [
           { label: "가격표", href: "/settings", icon: Calculator, tone: "orange" },
-          { label: "메시지", href: "/messages", icon: MessageSquareText, tone: "primary" },
-          { label: "알림톡", href: "/alimtalk", icon: Send, tone: "gold" },
+          { label: "메시지", href: "/messages", icon: MessageSquareText, tone: "primary", value: "36건" },
+          { label: "알림톡", href: "/alimtalk", icon: Send, tone: "gold", value: "4종" },
         ],
       },
       {
@@ -112,21 +107,10 @@ export default function AllMenuPage() {
         ],
       },
     ];
-
-    if (isAdminOrOwner) {
-      groups.push({
-        title: "관리자",
-        rows: [
-          { label: "피드백 관리", href: "/admin/feedback", icon: ShieldCheck, tone: "burgundy" },
-        ],
-      });
-    }
-
-    return groups;
-  }, [isAdminOrOwner, clients.length, employees.length, unreadNotifCount, isSubscribed]);
+  }, [clients.length, employees.length, unreadNotifCount, isSubscribed]);
 
   return (
-    <div className="md:hidden">
+    <div data-component="all-page" className="md:hidden">
       <AllSettingsRedesign menuGroups={menuGroups} />
     </div>
   );
