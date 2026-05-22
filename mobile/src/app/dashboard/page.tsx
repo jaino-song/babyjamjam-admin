@@ -1,8 +1,10 @@
 "use client";
 
 import { redirect } from "next/navigation";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Calendar, File, Send, User } from "lucide-react";
+
+const ALL_FILTER = "전체";
 
 import { useDashboardStats } from "@/hooks/useDashboardStats";
 import { useClients } from "@/hooks/useClients";
@@ -83,10 +85,11 @@ export default function DashboardPage() {
   const { data: stats } = useDashboardStats();
   const { data: clientsData } = useClients(1, 50);
   const user = useInitialUser();
+  const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
 
   const clients = useMemo<Client[]>(() => clientsData?.data ?? [], [clientsData?.data]);
 
-  const dashboardData = useMemo<DashboardRedesignProps>(() => {
+  const dashboardData = useMemo<Omit<DashboardRedesignProps, "activeFilter" | "onFilterChange">>(() => {
     const active = stats?.activeClients ?? 0;
     const upcoming = stats?.upcomingThisMonth ?? 0;
     const pendingReview = stats?.contractsPendingSignature ?? 0;
@@ -213,7 +216,7 @@ export default function DashboardPage() {
     const upcomingRows = upcomingClients.map(toUpcomingRow);
     const endingRows = endingSoon.map(toEndingRow);
 
-    const sections: SectionRows[] = [
+    const allSections: SectionRows[] = [
       { title: `계약서 처리 필요 · ${actionRows.length}건`, rows: actionRows },
       { title: `시작 예정 · ${upcomingRows.length}명`, rows: upcomingRows },
       { title: `종료 예정 · ${endingRows.length}명`, rows: endingRows },
@@ -221,18 +224,31 @@ export default function DashboardPage() {
 
     const total = actionRows.length + upcomingRows.length + endingRows.length;
     const filters: DashboardRedesignFilter[] = [
-      { label: "전체", count: String(total), active: true },
+      { label: ALL_FILTER, count: String(total) },
       { label: "계약서 처리 필요", count: String(actionRows.length) },
       { label: "시작 예정", count: String(upcomingRows.length) },
       { label: "종료 예정", count: String(endingRows.length) },
     ];
 
-    return { stats: dashboardStats, sections, filters };
+    return { stats: dashboardStats, sections: allSections, filters };
   }, [stats, clients]);
+
+  const visibleSections = useMemo(() => {
+    if (activeFilter === ALL_FILTER) return dashboardData.sections;
+    return dashboardData.sections.filter((s) => s.title.startsWith(activeFilter));
+  }, [dashboardData.sections, activeFilter]);
 
   if (!user) {
     redirect("/logout");
   }
 
-  return <DashboardRedesign {...dashboardData} />;
+  return (
+    <DashboardRedesign
+      stats={dashboardData.stats}
+      sections={visibleSections}
+      filters={dashboardData.filters}
+      activeFilter={activeFilter}
+      onFilterChange={setActiveFilter}
+    />
+  );
 }

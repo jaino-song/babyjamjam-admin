@@ -20,9 +20,17 @@ export interface DashboardRedesignProps {
   stats: DashboardStat[];
   sections: SectionRows[];
   filters: DashboardRedesignFilter[];
+  activeFilter?: string;
+  onFilterChange?: (label: string) => void;
 }
 
-export function DashboardRedesign({ stats, sections, filters }: DashboardRedesignProps) {
+export function DashboardRedesign({
+  stats,
+  sections,
+  filters,
+  activeFilter,
+  onFilterChange,
+}: DashboardRedesignProps) {
   return (
     <section data-component="dashboard" className="flex h-full min-h-0 flex-col">
       <div className="stats-grid" data-component="mobile-dashboard-stats-grid">
@@ -43,7 +51,13 @@ export function DashboardRedesign({ stats, sections, filters }: DashboardRedesig
       </div>
 
       <div className="shell-content" data-component="mobile-dashboard-content">
-        <ListCard title="최근 현황" count="" filters={filters}>
+        <ListCard
+          title="최근 현황"
+          count=""
+          filters={filters}
+          activeFilter={activeFilter}
+          onFilterChange={onFilterChange}
+        >
           <SectionedList sections={sections} />
         </ListCard>
       </div>
