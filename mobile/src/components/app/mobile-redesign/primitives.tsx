@@ -55,11 +55,20 @@ export function Badge({ label, tone }: { label: string; tone: keyof typeof badge
 
 export function FilterPills({
   items,
+  activeLabel: controlledActive,
+  onChange,
 }: {
   items: Array<{ label: string; count: string; active?: boolean }>;
+  activeLabel?: string;
+  onChange?: (label: string) => void;
 }) {
   const initialActive = items.find((item) => item.active)?.label ?? items[0]?.label;
-  const [activeLabel, setActiveLabel] = useState(initialActive);
+  const [uncontrolledActive, setUncontrolledActive] = useState(initialActive);
+  const activeLabel = controlledActive ?? uncontrolledActive;
+  const handleClick = (label: string) => {
+    if (onChange) onChange(label);
+    else setUncontrolledActive(label);
+  };
 
   return (
     <div className="filter-row" data-component="mobile-redesign-filter-row">
@@ -70,7 +79,7 @@ export function FilterPills({
           className={`filter-pill ${item.label === activeLabel ? "active" : ""}`}
           data-component="mobile-redesign-filter-pill"
           aria-pressed={item.label === activeLabel}
-          onClick={() => setActiveLabel(item.label)}
+          onClick={() => handleClick(item.label)}
         >
           {item.label} <span className="count">{item.count}</span>
         </button>
@@ -85,6 +94,8 @@ export function ListCard({
   actionLabel,
   actionHref,
   filters,
+  activeFilter,
+  onFilterChange,
   beforeFilters,
   beforeScroll,
   children,
@@ -94,6 +105,8 @@ export function ListCard({
   actionLabel?: string;
   actionHref?: string;
   filters: Array<{ label: string; count: string; active?: boolean }>;
+  activeFilter?: string;
+  onFilterChange?: (label: string) => void;
   beforeFilters?: ReactNode;
   beforeScroll?: ReactNode;
   children: ReactNode;
@@ -129,7 +142,9 @@ export function ListCard({
         {action}
       </div>
       {beforeFilters}
-      {filters.length > 0 && <FilterPills items={filters} />}
+      {filters.length > 0 && (
+        <FilterPills items={filters} activeLabel={activeFilter} onChange={onFilterChange} />
+      )}
       {actionFeedback && (
         <div className="action-feedback" role="status" data-component="mobile-redesign-action-feedback">
           {actionFeedback}

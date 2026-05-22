@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   BarChart3,
   Bell,
-  Calendar,
   Calculator,
+  Calendar,
   HelpCircle,
   Languages,
   Lock,
@@ -14,18 +14,24 @@ import {
   MessageSquareText,
   Send,
   ShieldCheck,
-  Sparkles,
   UserCheck,
   Users,
 } from "lucide-react";
 
 import { useInitialUser } from "@/providers/UserProvider";
+import { useAllClients } from "@/hooks/useClients";
+import { useEmployees } from "@/hooks/useEmployees";
+import { useUnreadCount, usePushNotification } from "@/hooks/usePushNotification";
 import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSettingsRedesign";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
 
 export default function AllMenuPage() {
   const router = useRouter();
   const user = useInitialUser();
+  const { data: clients = [] } = useAllClients();
+  const { data: employees = [] } = useEmployees();
+  const { isSubscribed } = usePushNotification();
+  const { data: unreadNotifCount = 0 } = useUnreadCount(isSubscribed);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -41,12 +47,39 @@ export default function AllMenuPage() {
       {
         title: "지점 관리",
         rows: [
-          { label: "AI 어시스턴트", href: "/chat", icon: Sparkles, tone: "primary" },
-          { label: "상담", href: "/consultations", icon: MessageCircle, tone: "burgundy" },
-          { label: "고객", href: "/clients", icon: Users, tone: "primary" },
-          { label: "제공인력", href: "/employees", icon: UserCheck, tone: "purple" },
-          { label: "일정 캘린더", href: "/employees/schedule", icon: Calendar, tone: "orange" },
-          { label: "통계 보고서", href: "/dashboard/analytics", icon: BarChart3, tone: "green" },
+          {
+            label: "상담",
+            href: "/consultations",
+            icon: MessageCircle,
+            tone: "burgundy",
+            ...(unreadNotifCount > 0 ? { badge: String(unreadNotifCount) } : {}),
+          },
+          {
+            label: "고객",
+            href: "/clients",
+            icon: Users,
+            tone: "primary",
+            value: `${clients.length}명`,
+          },
+          {
+            label: "제공인력",
+            href: "/employees",
+            icon: UserCheck,
+            tone: "purple",
+            value: `${employees.length}명`,
+          },
+          {
+            label: "일정 캘린더",
+            href: "/employees/schedule",
+            icon: Calendar,
+            tone: "orange",
+          },
+          {
+            label: "통계 보고서",
+            href: "/dashboard/analytics",
+            icon: BarChart3,
+            tone: "green",
+          },
         ],
       },
       {
@@ -60,9 +93,15 @@ export default function AllMenuPage() {
       {
         title: "설정",
         rows: [
-          { label: "알림 설정", href: "/settings", icon: Bell, tone: "muted" },
+          {
+            label: "알림 설정",
+            href: "/settings",
+            icon: Bell,
+            tone: "muted",
+            value: isSubscribed ? "활성" : "비활성",
+          },
           { label: "보안", href: "/settings", icon: Lock, tone: "muted" },
-          { label: "언어", href: "/settings", icon: Languages, tone: "muted" },
+          { label: "언어", href: "/settings", icon: Languages, tone: "muted", value: "한국어" },
         ],
       },
       {
@@ -84,7 +123,7 @@ export default function AllMenuPage() {
     }
 
     return groups;
-  }, [isAdminOrOwner]);
+  }, [isAdminOrOwner, clients.length, employees.length, unreadNotifCount, isSubscribed]);
 
   return (
     <div className="md:hidden">

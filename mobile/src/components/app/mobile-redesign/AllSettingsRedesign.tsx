@@ -2,7 +2,7 @@
 
 import "./redesign.css";
 
-import { Building2, LogOut, PenLine } from "lucide-react";
+import { LogOut, PenLine } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { menuGroups as defaultMenuGroups } from "./mockup-data";
@@ -13,6 +13,7 @@ import { useInitialUser } from "@/providers/UserProvider";
 const DEFAULT_PROFILE_NAME = "사용자";
 const DEFAULT_PROFILE_ROLE = "스태프";
 const DEFAULT_PROFILE_BRANCH = "지점 미선택";
+const APP_VERSION = "아가잼잼 어드민 v2.4.1";
 
 function getRoleLabel(role: string | undefined) {
   switch (role) {
@@ -59,7 +60,7 @@ export function AllSettingsRedesign({ menuGroups = defaultMenuGroups }: AllSetti
           type="button"
           className="profile-edit"
           aria-label="프로필 편집"
-          onClick={() => router.push("/settings")}
+          onClick={() => router.push("/select-branch")}
         >
           <PenLine size={14} strokeWidth={2.5} />
         </button>
@@ -69,15 +70,6 @@ export function AllSettingsRedesign({ menuGroups = defaultMenuGroups }: AllSetti
 
       <button
         type="button"
-        className="branch-switch-btn"
-        data-component="mobile-all-change-branch"
-        onClick={() => router.push("/select-branch")}
-      >
-        <Building2 size={16} strokeWidth={2.5} />
-        지점 변경
-      </button>
-      <button
-        type="button"
         className="logout-btn"
         data-component="mobile-all-logout"
         onClick={() => router.push("/logout")}
@@ -85,7 +77,7 @@ export function AllSettingsRedesign({ menuGroups = defaultMenuGroups }: AllSetti
         <LogOut size={16} strokeWidth={2.5} />
         로그아웃
       </button>
-      <div className="app-version">아가잼잼 어드민</div>
+      <div className="app-version">{APP_VERSION}</div>
     </div>
   );
 }
