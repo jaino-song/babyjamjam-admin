@@ -34,6 +34,23 @@ export interface ContractDataDto {
 import { safeStorageSetItem } from "@/lib/safe-storage";
 
 // Auth API response types
+export interface HeadlessDispatchResponse {
+    ok: boolean;
+    documentId?: string;
+    durationMs: number;
+    reason?: string;
+    failedStep?: string;
+    fallbackHint?: "iframe";
+}
+
+export interface FinalizeHeadlessResponse {
+    ok: boolean;
+    durationMs: number;
+    reason?: string;
+    failedStep?: string;
+    fallbackHint?: "iframe";
+}
+
 export interface AuthResponse {
     success: boolean;
     message?: string;
@@ -130,6 +147,50 @@ export const eformsignApi = {
     },
     generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
         const { data } = await api.post('/generate-document', { contractData, clientId });
+        return data;
+    },
+    // BJJ-90: backend-driven creation dispatch. Drives the eformsign iframe gate sequence
+    // (mode:"01") via headless Chromium so staff don't see the iframe. Returns ok:false
+    // with reason on any failure so the caller can fall back to the legacy iframe modal.
+    dispatchHeadless: async (
+        contractData: ContractDataDto,
+        clientId?: number,
+        progressId?: string,
+    ): Promise<HeadlessDispatchResponse> => {
+        const { data } = await api.post('/eformsign-docs/dispatch-headless', {
+            contractData,
+            clientId,
+            progressId,
+        });
+        return data;
+    },
+    // Staff completion (mode:"02") — builds iframe options for the staff finalize step.
+    generateStaffDocument: async (
+        documentId: string,
+        accessToken?: string,
+        refreshToken?: string,
+        prefillEndDate?: string,
+    ) => {
+        const { data } = await api.post('/generate-staff-document', {
+            documentId,
+            accessToken,
+            refreshToken,
+            prefillEndDate,
+        });
+        return data;
+    },
+    // BJJ-90: backend-driven finalize. Drives the mode:"02" iframe gate sequence
+    // via headless Chromium. Falls back to iframe (generateStaffDocument) on ok:false.
+    finalizeHeadless: async (
+        documentId: string,
+        prefillEndDate?: string,
+        progressId?: string,
+    ): Promise<FinalizeHeadlessResponse> => {
+        const { data } = await api.post('/eformsign-docs/finalize-headless', {
+            documentId,
+            prefillEndDate,
+            progressId,
+        });
         return data;
     },
     // Create eformsign doc record to track document in local DB

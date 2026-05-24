@@ -934,6 +934,19 @@ body.mobile-all-route .menu-row {
   animation: mobile-redesign-pop-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Peek-bounce hint for "탭하여 더보기" — single bounce burst then idle, repeats every 3s */
+@keyframes mobile-redesign-peek-bounce {
+  0%   { transform: translateY(0); }
+  6%   { transform: translateY(-28%); }
+  14%  { transform: translateY(0); }
+  20%  { transform: translateY(-12%); }
+  26%  { transform: translateY(0); }
+  100% { transform: translateY(0); }
+}
+.peek-bounce {
+  animation: mobile-redesign-peek-bounce 3s ease-in-out infinite;
+}
+
 /* ===== Bottom-sheet / detail-stack primitive (ported from _shell.css) ===== */
 .nav-stack {
   position: relative;
