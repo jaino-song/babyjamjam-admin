@@ -19,7 +19,10 @@ interface StatsBarProps {
 
 export function StatsBar({ items, isLoading = false, name = "stats" }: StatsBarProps) {
   return (
-    <div data-component={`${name}-stats`} className="grid grid-cols-2 gap-4">
+    <div
+      data-component={`${name}-stats`}
+      className="grid grid-cols-2 gap-4 [&>*:last-child:nth-child(odd)]:col-span-2"
+    >
       {items.map((item, idx) => (
         <StatMini
           key={item.label}

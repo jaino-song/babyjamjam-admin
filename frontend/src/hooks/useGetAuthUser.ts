@@ -13,6 +13,7 @@ export interface AuthUser {
     profileImage?: string;
     role?: string;
     branchName?: string | null;
+    branchSlug?: string | null;
 }
 
 interface UseGetAuthUserOptions {

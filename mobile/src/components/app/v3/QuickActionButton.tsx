@@ -73,7 +73,7 @@ export function QuickActionButton({
             >
                 <IconComp className={cn("w-5 h-5", color.text)} strokeWidth={2.5} />
             </div>
-            <span className="text-xs font-bold text-v3-dark text-center leading-tight">
+            <span className="text-xs font-bold text-v3-dark text-center leading-tight break-keep">
                 {label}
             </span>
         </Link>

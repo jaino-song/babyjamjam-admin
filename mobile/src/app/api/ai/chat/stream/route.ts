@@ -1,10 +1,8 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
+import { BACKEND_BASE_URL } from "@/lib/api/server";
 
-const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
-const BACKEND_URL = isProduction
-    ? process.env.NEXT_PUBLIC_API_BASE_URL
-    : process.env.DEVELOPMENT_API_BASE_URL;
+const BACKEND_URL = BACKEND_BASE_URL;
 
 export async function POST(request: NextRequest) {
     const cookieStore = await cookies();

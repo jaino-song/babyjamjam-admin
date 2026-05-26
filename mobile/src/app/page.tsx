@@ -26,7 +26,7 @@ export default async function Home() {
             <p className="mb-4 text-lg text-muted-foreground">
                 {t(locale, "common.subtitle")}
             </p>
-            <Button asChild>
+            <Button asChild size="lg" className="min-w-[160px]">
                 <Link href="/login">{t(locale, "common.start")}</Link>
             </Button>
         </section>

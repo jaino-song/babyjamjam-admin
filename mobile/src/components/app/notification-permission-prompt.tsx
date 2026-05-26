@@ -1,9 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { usePathname } from "next/navigation";
+import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 
 export function NotificationPermissionPrompt() {
     const [showBanner, setShowBanner] = useState(false);
+    const pathname = usePathname() ?? "";
+    const hasBottomNav =
+        !isLayoutExcluded(pathname) && !pathname.startsWith("/clients/new");
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -27,7 +32,14 @@ export function NotificationPermissionPrompt() {
     };
 
     return (
-        <div className="fixed bottom-20 left-4 right-4 md:bottom-6 md:left-auto md:right-6 md:w-96 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-lg p-4 flex items-start gap-3 animate-in slide-in-from-bottom-4">
+        <div
+            className="fixed left-4 right-4 md:left-auto md:right-6 md:w-96 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-lg p-4 flex items-start gap-3 animate-in slide-in-from-bottom-4"
+            style={{
+                bottom: hasBottomNav
+                    ? "calc(env(safe-area-inset-bottom) + 5rem)"
+                    : "calc(env(safe-area-inset-bottom) + 1rem)",
+            }}
+        >
             <div className="flex-shrink-0 text-2xl">🔔</div>
             <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-900 dark:text-gray-100">

@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
-import { serverAPIClient } from "@/lib/api/server";
+import { BACKEND_BASE_URL, serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 
@@ -18,7 +18,7 @@ interface APIErrorResponse {
 
 const isProduction = process.env.NODE_ENV === "production";
 const isSecureCookie = isProduction || process.env.VERCEL_ENV === "preview";
-const API_URL = isProduction ? process.env.NEXT_PUBLIC_API_BASE_URL : process.env.DEVELOPMENT_API_BASE_URL;
+const API_URL = BACKEND_BASE_URL;
 
 // 30일 세션을 부여받는 권한 있는 역할들
 const EXTENDED_SESSION_ROLES = ["owner", "creator"] as const;
