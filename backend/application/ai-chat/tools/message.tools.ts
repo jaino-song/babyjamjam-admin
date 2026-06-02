@@ -56,7 +56,7 @@ export const updateMessageSchema: FunctionDeclaration = {
                 description: "Set to true to confirm and execute the update. Set to false to request confirmation first.",
             },
         },
-        required: ["messageId", "confirmed"],
+        required: ["messageId", "title", "text", "confirmed"],
     },
 };
 

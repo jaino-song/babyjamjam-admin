@@ -277,4 +277,38 @@ describe("ToolExecutorService", () => {
             openToNextWork: "true",
         })).resolves.toMatchObject({ success: false, error: expect.stringContaining("openToNextWork") });
     });
+
+    it("should reject missing required strings and invalid enum filters before service calls", async () => {
+        const { executor, mocks } = createExecutor();
+
+        await expect(executor.execute("branch-1", "createEmployee", {
+            confirmed: true,
+            phone: "010-0000-0000",
+            grade: "A",
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("name") });
+        expect(mocks.employeeService.create).not.toHaveBeenCalled();
+
+        await expect(executor.execute("branch-1", "createMessage", {
+            confirmed: true,
+            title: "공지",
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("text") });
+        expect(mocks.messageService.create).not.toHaveBeenCalled();
+
+        await expect(executor.execute("branch-1", "updateMessage", {
+            confirmed: true,
+            messageId: 1,
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("title") });
+        expect(mocks.messageService.update).not.toHaveBeenCalled();
+
+        await expect(executor.execute("branch-1", "createAndSendContract", {
+            confirmed: true,
+            clientId: 1,
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("areaId") });
+        expect(mocks.areaTemplateService.findByArea).not.toHaveBeenCalled();
+
+        await expect(executor.execute("branch-1", "getClientsByFilter", {
+            filter: "everything",
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("filter") });
+        expect(mocks.clientService.findByFilter).not.toHaveBeenCalled();
+    });
 });
