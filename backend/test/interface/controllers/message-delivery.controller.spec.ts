@@ -1,12 +1,14 @@
 import { BadRequestException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
+import { PrismaService } from "infrastructure/database/prisma.service";
 import { MessageDeliveryController } from "interface/controllers/message-delivery.controller";
 
 describe("MessageDeliveryController", () => {
     let controller: MessageDeliveryController;
     let aligoService: jest.Mocked<Pick<AligoService, "sendSms">>;
     let messageSenderApprovalService: jest.Mocked<Pick<MessageSenderApprovalService, "ensureApproved">>;
+    let prismaService: { alimtalk_log: { create: jest.Mock } };
 
     beforeEach(() => {
         aligoService = {
@@ -15,9 +17,15 @@ describe("MessageDeliveryController", () => {
         messageSenderApprovalService = {
             ensureApproved: jest.fn().mockResolvedValue("0212345678"),
         };
+        prismaService = {
+            alimtalk_log: {
+                create: jest.fn().mockResolvedValue({}),
+            },
+        };
         controller = new MessageDeliveryController(
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
+            prismaService as unknown as PrismaService,
         );
     });
 
@@ -42,6 +50,7 @@ describe("MessageDeliveryController", () => {
         ).rejects.toThrow(BadRequestException);
 
         expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(prismaService.alimtalk_log.create).not.toHaveBeenCalled();
     });
 
     it("should normalize scheduled fields for the Aligo request and response payload", async () => {
@@ -107,6 +116,20 @@ describe("MessageDeliveryController", () => {
                 errorCount: 0,
                 msgType: "LMS",
             },
+        });
+        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                branchId: "org-1",
+                provider: "aligo_sms",
+                templateKey: "안내",
+                receiver: "01012345678",
+                clientId: null,
+                messageBody: "장문 테스트 메시지",
+                status: "pending",
+                aligoMid: "321",
+                errorMessage: null,
+                attempts: 1,
+            }),
         });
     });
 });

@@ -2,6 +2,7 @@ import {
     BadRequestException,
     Body,
     Controller,
+    Logger,
     Post,
     UseGuards,
 } from "@nestjs/common";
@@ -10,15 +11,19 @@ import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { AligoService } from "application/services/aligo.service";
 import { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
+import { PrismaService } from "infrastructure/database/prisma.service";
 
 const ALIGO_SCHEDULE_MIN_LEAD_MS = 10 * 60 * 1000;
 
 @Controller("message-deliveries")
 @UseGuards(JwtGuard, TenantGuard)
 export class MessageDeliveryController {
+    private readonly logger = new Logger(MessageDeliveryController.name);
+
     constructor(
         private readonly aligoService: AligoService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
+        private readonly prisma: PrismaService,
     ) {}
 
     @Post("sms")
@@ -55,6 +60,9 @@ export class MessageDeliveryController {
             scheduledTime,
             testMode: dto.testMode,
         });
+        await this.recordSmsLog(tenant.branchId ?? "", dto, result, triggerType).catch((error) => {
+            this.logger.warn(`Failed to record SMS delivery log: ${error instanceof Error ? error.message : String(error)}`);
+        });
 
         return {
             provider: "aligo",
@@ -78,6 +86,43 @@ export class MessageDeliveryController {
                 msgType: result.response.msg_type,
             },
         };
+    }
+
+    private async recordSmsLog(
+        branchId: string,
+        dto: SendSmsMessageDto,
+        result: Awaited<ReturnType<AligoService["sendSms"]>>,
+        triggerType: string,
+    ) {
+        const isAccepted =
+            result.response.result_code === 1 &&
+            (result.response.error_cnt ?? 0) === 0;
+        const status = isAccepted
+            ? triggerType === "scheduled" ? "pending" : "sent"
+            : "failed";
+        await this.prisma.alimtalk_log.create({
+            data: {
+                branchId: branchId || null,
+                provider: "aligo_sms",
+                templateKey: dto.title?.trim() || "manual_sms",
+                receiver: result.request.receiver,
+                clientId: dto.clientId ?? null,
+                messageBody: dto.message,
+                variables: {
+                    recipientName: dto.recipientName ?? null,
+                    title: dto.title ?? null,
+                    triggerType,
+                    msgType: result.request.msgType,
+                    scheduledDate: result.request.scheduledDate ?? null,
+                    scheduledTime: result.request.scheduledTime ?? null,
+                },
+                status,
+                aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
+                errorMessage: isAccepted ? null : result.response.message,
+                attempts: 1,
+                lastAttemptAt: new Date(),
+            },
+        });
     }
 
     private assertScheduledAtLeastTenMinutesAhead(
