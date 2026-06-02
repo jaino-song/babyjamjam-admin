@@ -23,6 +23,7 @@ import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
+import { isStrictIsoDate, isoToYymmdd, normalizeIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import {
   CONTRACT_CREATION_PROGRESS_STEPS,
@@ -113,26 +114,6 @@ const formatPrice = (price: number | string): string => {
 const parsePrice = (value: string | null | undefined): string => {
   if (!value) return "";
   return value.replace(/,/g, "");
-};
-
-const yymmddToIso = (value: string): string => {
-  if (!value) return "";
-  const v = value.trim();
-  if (!/^\d{6}$/.test(v)) return "";
-  return `20${v.slice(0, 2)}-${v.slice(2, 4)}-${v.slice(4, 6)}`;
-};
-
-const isoToYymmdd = (value: string | null | undefined): string => {
-  if (!value) return "";
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!m) return "";
-  return `${m[1].slice(2)}${m[2]}${m[3]}`;
-};
-
-// Client/DB 측 ISO datetime("2026-03-30T00:00:00.000Z")을 YYYY-MM-DD로만 자름.
-const normalizeIsoDate = (value: string | null | undefined): string => {
-  if (!value) return "";
-  return value.slice(0, 10);
 };
 
 export default function ContractCreationPage() {
@@ -364,9 +345,9 @@ export default function ContractCreationPage() {
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
   const isStep4Valid = Boolean(
-    startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) &&
-    endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) &&
-    paymentDate && /^\d{4}-\d{2}-\d{2}$/.test(paymentDate)
+    startDate && isStrictIsoDate(startDate) &&
+    endDate && isStrictIsoDate(endDate) &&
+    paymentDate && isStrictIsoDate(paymentDate)
   );
   const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
 
