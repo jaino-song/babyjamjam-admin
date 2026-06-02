@@ -20,6 +20,10 @@ export const clientQueryKeys = {
     detail: (id: number) => [...clientQueryKeys.details(), id] as const,
 };
 
+function isValidClientId(id: number): boolean {
+    return Number.isInteger(id) && id > 0;
+}
+
 // Fetch all clients (paginated)
 export function useClients(page: number = 1, limit: number = 10, search?: string) {
     return useQuery<PaginatedResponse<Client>>({
@@ -57,7 +61,7 @@ export function useClient(id: number) {
             const { data } = await api.get(`/clients/${id}`);
             return data;
         },
-        enabled: !!id,
+        enabled: isValidClientId(id),
     });
 }
 
@@ -145,4 +149,3 @@ export function useDeleteClient() {
         },
     });
 }
-
