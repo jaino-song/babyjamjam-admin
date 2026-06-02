@@ -1,12 +1,19 @@
-import { Controller, Post, Get, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res } from "@nestjs/common";
+import { BadRequestException, Controller, Post, Get, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
-import { ContractDataDto } from "../../application/dto/contract.dto";
 import { AreaTemplateService } from "../../application/services/area-template.service";
 import { GenerateStaffDocumentRequestDto } from "../dto/staff-document.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { Response } from "express";
 import { parseInteger } from "interface/parse-integer";
+import {
+    AccessTokenRequestDto,
+    DeleteDocumentsRequestDto,
+    GenerateDocumentRequestDto,
+    GenerateSignatureRequestDto,
+    RefreshTokenRequestDto,
+    ReRequestOutsiderDocumentRequestDto,
+} from "interface/dto/eformsign.dto";
 
 function throwHttpOrInternalError(error: unknown): never {
     if (error instanceof HttpException) {
@@ -20,6 +27,33 @@ function throwHttpOrInternalError(error: unknown): never {
     );
 }
 
+function parseBooleanQuery(value: string | undefined, name: string, defaultValue: boolean): boolean {
+    if (value === undefined || value === "") {
+        return defaultValue;
+    }
+    if (value === "true") {
+        return true;
+    }
+    if (value === "false") {
+        return false;
+    }
+
+    throw new BadRequestException(`${name} must be true or false`);
+}
+
+type DownloadFileType = "document" | "audit_trail";
+
+function parseDownloadFileType(value: string | undefined): DownloadFileType {
+    if (value === undefined || value === "") {
+        return "document";
+    }
+    if (value === "document" || value === "audit_trail") {
+        return value;
+    }
+
+    throw new BadRequestException("fileType must be document or audit_trail");
+}
+
 @Controller("api")
 @UseGuards(JwtGuard, TenantGuard)
 export class EformsignController {
@@ -29,7 +63,7 @@ export class EformsignController {
     ) { }
 
     @Post("generate-signature")
-    async generateSignature(@Body() body: { executionTime: number }) {
+    async generateSignature(@Body() body: GenerateSignatureRequestDto) {
         try {
             const signature = this.eformsignService.generateSignature(body.executionTime);
             return { signature };
@@ -43,7 +77,7 @@ export class EformsignController {
     }
 
     @Post("access-token")
-    async getAccessToken(@Body() body: { executionTime: number; memberEmail?: string }) {
+    async getAccessToken(@Body() body: AccessTokenRequestDto) {
         try {
             const result = await this.eformsignService.getAccessToken(
                 body.executionTime,
@@ -60,7 +94,7 @@ export class EformsignController {
     }
 
     @Post("refresh-token")
-    async refreshAccessToken(@Body() body: { executionTime: number; refreshToken: string }) {
+    async refreshAccessToken(@Body() body: RefreshTokenRequestDto) {
         try {
             const result = await this.eformsignService.refreshAccessToken(
                 body.executionTime,
@@ -79,13 +113,7 @@ export class EformsignController {
     @Post("generate-document")
     async generateDocument(
         @CurrentTenant() tenant: { branchId?: string },
-        @Body()
-        body: {
-            contractData: ContractDataDto;
-            accessToken: string;
-            refreshToken: string;
-            clientId?: number; // Optional: link document to existing client
-        }
+        @Body() body: GenerateDocumentRequestDto
     ) {
         try {
             // Look up templateId based on area
@@ -256,7 +284,7 @@ export class EformsignController {
     async deleteDocuments(
         @Query("accessToken") accessToken: string,
         @Query("is_permanent") isPermanent: string,
-        @Body() body: { document_ids: string[] }
+        @Body() body: DeleteDocumentsRequestDto
     ) {
         try {
             if (!accessToken) {
@@ -271,10 +299,11 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
+            const permanent = parseBooleanQuery(isPermanent, "is_permanent", false);
             const result = await this.eformsignService.deleteDocuments(
                 accessToken,
                 body.document_ids,
-                isPermanent === "true"
+                permanent
             );
             return result;
         } catch (error) {
@@ -322,7 +351,7 @@ export class EformsignController {
     async downloadDocumentFile(
         @Param("documentId") documentId: string,
         @Query("accessToken") accessToken: string,
-        @Query("fileType") fileType: "document" | "audit_trail" = "document",
+        @Query("fileType") fileType: string | undefined,
         @Res() res: Response,
     ) {
         try {
@@ -333,7 +362,8 @@ export class EformsignController {
                 );
             }
 
-            const file = await this.eformsignService.downloadDocumentFile(accessToken, documentId, fileType);
+            const parsedFileType = parseDownloadFileType(fileType);
+            const file = await this.eformsignService.downloadDocumentFile(accessToken, documentId, parsedFileType);
 
             res.status(file.status);
             res.set({
@@ -343,11 +373,7 @@ export class EformsignController {
             });
             res.send(file.body);
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error";
-            throw new HttpException(
-                { error: message },
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throwHttpOrInternalError(error);
         }
     }
 
@@ -357,17 +383,7 @@ export class EformsignController {
     @Post("documents/:documentId/re_request_outsider")
     async reRequestOutsiderDocument(
         @Param("documentId") documentId: string,
-        @Body()
-        body: {
-            accessToken: string;
-            stepType: string;
-            stepSeq: string;
-            comment?: string;
-            recipientPhone?: {
-                countryCode?: string;
-                phoneNumber?: string;
-            };
-        }
+        @Body() body: ReRequestOutsiderDocumentRequestDto
     ) {
         try {
             if (!body.accessToken) {
