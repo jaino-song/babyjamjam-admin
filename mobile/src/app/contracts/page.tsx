@@ -1,12 +1,32 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, CircleAlert, FileCheck2, FileText, MessageCircle, SquarePen, X } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import type { ComponentType, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  AlertTriangle,
+  CheckCircle2,
+  CircleAlert,
+  Download,
+  Eye,
+  FileCheck2,
+  FileSignature,
+  FileText,
+  MessageCircle,
+  Send,
+  SquarePen,
+  X,
+} from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
 
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
+import { useEformsignDocumentEvents } from "@/hooks/useEformsignDocumentEvents";
 import { useEformsignDocumentsByType, eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { useEformsign } from "@/hooks/useEformsign";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
+import { useToast } from "@/hooks/use-toast";
+import { api } from "@/lib/api/client";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
@@ -23,14 +43,22 @@ import {
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
-import { eformsignApi } from "@/services/api";
-import { Badge, ListCard } from "@/components/app/mobile-redesign/primitives";
+import { eformsignApi, type EformsignDocClientSummary } from "@/services/api";
+import { Badge, ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import { ActivityTimeline } from "@/components/app/v3";
 import {
   DetailTabPills,
+  type BadgeTone,
   InfoCard,
   InfoRow,
+  MobileDetailActions,
+  MobileDetailHeader,
+  MobileDetailPage,
   MobileDetailSheet,
+  MobileSearchBar,
+  MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
+import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import "@/components/app/mobile-redesign/redesign.css";
 
 const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
@@ -38,12 +66,100 @@ const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
 type ContractCategory = "in-progress" | "drafting" | "completed" | "rejected";
 type FilterKey = "전체" | "대기" | "검토 필요" | "완료" | "기간 만료";
 type DetailTabId = "basic" | "signers" | "alimtalk";
+type NotificationStatus = "pending" | "sent" | "failed";
+type NotificationLogRecord = {
+  id: number;
+  provider: string;
+  templateKey: string;
+  receiver: string;
+  clientId: number | null;
+  messageBody: string;
+  status: NotificationStatus | string;
+  errorMessage: string | null;
+  attempts: number;
+  createdAt: string;
+  updatedAt?: string;
+  ruleName: string | null;
+  eventType: string | null;
+  recipientName: string | null;
+  clientName: string | null;
+  employeeName: string | null;
+};
+type ContractStageItem = {
+  icon: ComponentType<{ className?: string }>;
+  iconVariant: "success" | "warning" | "info" | "danger";
+  text: ReactNode;
+  time: string;
+};
 
 const EXCLUDED_CUSTOMER_NAMES: string[] = [];
 const CONTRACT_ROUTE_BODY_CLASS = "mobile-contracts-route";
 const FILTER_LABELS: FilterKey[] = ["전체", "대기", "검토 필요", "완료", "기간 만료"];
-const INITIAL_VISIBLE_COUNT = 6;
-const LOAD_MORE_PAGE_SIZE = 6;
+const CONTRACT_LIST_INITIAL_VISIBLE_COUNT = 9;
+const CONTRACT_OPEN_CODES = new Set(["034", "064", "074", "076"]);
+const CONTRACT_OPEN_KEYWORDS = ["doc_open", "open_participant", "open_outsider", "open_reviewer", "open_reader", "열람"];
+const CONTRACT_SIGNATURE_CODES = new Set(["032", "062", "092"]);
+const CONTRACT_SIGNATURE_KEYWORDS = [
+  "doc_accept_outsider",
+  "doc_accept_participant",
+  "participant_accept",
+  "outside_accept",
+  "signed",
+  "signature",
+  "서명 완료",
+  "서명완료",
+  "참여자 승인",
+  "외부자 승인",
+];
+const CONTRACT_SEND_FAILURE_KEYWORDS = ["fail", "failed", "failure", "error", "실패", "오류"];
+const CONTRACT_SEND_EVENT_KEYWORDS = [
+  "send",
+  "sent",
+  "delivery",
+  "deliver",
+  "mail",
+  "sms",
+  "kakao",
+  "alimtalk",
+  "발송",
+  "전송",
+  "송신",
+];
+const CONTRACT_EVENT_TYPE_KEYS = [
+  "status_type",
+  "status",
+  "code",
+  "event_type",
+  "action_type",
+  "history_type",
+  "type",
+  "action",
+  "event",
+] as const;
+
+type UnknownRecord = Record<string, unknown>;
+
+function ContractListLoadingRows() {
+  return (
+    <>
+      {Array.from({ length: CONTRACT_LIST_INITIAL_VISIBLE_COUNT }).map((_, index) => (
+        <div
+          className="contracts-loading-row"
+          data-component="mobile-contracts-loading-row"
+          aria-hidden="true"
+          key={`contracts-loading-row-${index}`}
+        >
+          <span className="contracts-loading-avatar" />
+          <span className="contracts-loading-text">
+            <span className="contracts-loading-name" />
+            <span className="contracts-loading-meta" />
+          </span>
+          <span className="contracts-loading-badge" />
+        </div>
+      ))}
+    </>
+  );
+}
 
 function customerName(doc: EformsignDocument): string {
   const recipients = doc.current_status?.step_recipients;
@@ -82,9 +198,7 @@ function yymmddToIsoDate(value: string): string {
 function categoryTones(category: ContractCategory): {
   badge: string;
   badgeTone: "primary" | "green" | "muted" | "orange";
-  iconBg: string;
-  iconColor: string;
-  badgeMini: string;
+  badgeMini: "primary" | "green" | "muted" | "orange";
   infoTone: "primary" | "green" | "muted" | "orange";
 } {
   switch (category) {
@@ -92,8 +206,6 @@ function categoryTones(category: ContractCategory): {
       return {
         badge: "완료",
         badgeTone: "green",
-        iconBg: "bg-v3-green-light",
-        iconColor: "text-v3-green",
         badgeMini: "green",
         infoTone: "green",
       };
@@ -101,8 +213,6 @@ function categoryTones(category: ContractCategory): {
       return {
         badge: "만료",
         badgeTone: "muted",
-        iconBg: "bg-v3-dim-white",
-        iconColor: "text-v3-text-muted",
         badgeMini: "muted",
         infoTone: "muted",
       };
@@ -110,8 +220,6 @@ function categoryTones(category: ContractCategory): {
       return {
         badge: "대기",
         badgeTone: "muted",
-        iconBg: "bg-v3-dim-white",
-        iconColor: "text-v3-text-muted",
         badgeMini: "muted",
         infoTone: "muted",
       };
@@ -119,8 +227,6 @@ function categoryTones(category: ContractCategory): {
       return {
         badge: "검토 필요",
         badgeTone: "primary",
-        iconBg: "bg-v3-primary-light",
-        iconColor: "text-v3-primary",
         badgeMini: "primary",
         infoTone: "primary",
       };
@@ -137,9 +243,7 @@ function templateName(doc: EformsignDocument): string {
 
 function contractDisplayName(doc: EformsignDocument, includeSuffix = false): string {
   const customer = customerName(doc);
-  const template = templateName(doc);
-  const fallback = doc.document_name || customer;
-  const base = customer !== "고객 미지정" && template ? `${customer} · ${template}` : fallback;
+  const base = customer !== "고객 미지정" ? customer : (doc.document_name || customer);
   if (!includeSuffix || base.endsWith("계약서")) return base;
   return `${base} 계약서`;
 }
@@ -151,66 +255,399 @@ function formatDate(value: string | number | undefined | null): string {
   return d.toLocaleDateString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" });
 }
 
-function formatCompactDate(value: string | number | undefined | null): string {
+function formatDateTime(value: string | number | undefined | null): string {
   if (value === undefined || value === null || value === "") return "-";
   const d = typeof value === "number" ? new Date(value) : new Date(value);
   if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
+  return d.toLocaleString("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
-function formatDeadline(value: string | number | undefined | null): string {
-  const formatted = formatDate(value);
-  if (formatted === "-") return formatted;
-  const d = typeof value === "number" ? new Date(value) : new Date(value ?? "");
-  if (Number.isNaN(d.getTime())) return formatted;
-
-  const dayMs = 24 * 60 * 60 * 1000;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(d);
-  target.setHours(0, 0, 0, 0);
-  const diff = Math.ceil((target.getTime() - today.getTime()) / dayMs);
-
-  if (diff < 0) return `${formatted} (만료)`;
-  if (diff === 0) return `${formatted} (D-Day)`;
-  return `${formatted} (D-${diff})`;
+// "최근 활동순" 정렬 키 — 수정일(updated_date) 우선, 없으면 작성일. (epoch/ISO 모두 허용)
+function docRecency(doc: EformsignDocument): number {
+  const v = doc.updated_date ?? doc.created_date;
+  if (v === undefined || v === null) return 0;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : 0;
 }
 
-function recipientTotal(doc: EformsignDocument): number {
-  const recipientCount = doc.current_status?.step_recipients?.length ?? 0;
-  const stepGroup = Number(doc.current_status?.step_group ?? 0);
-  return Math.max(recipientCount, stepGroup, 1);
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null;
 }
 
-function completedStepCount(doc: EformsignDocument, category: ContractCategory): number {
-  const total = recipientTotal(doc);
-  if (category === "completed") return total;
+function stringFromUnknown(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
 
-  const stepIndex = Number(doc.current_status?.step_index ?? 0);
-  if (!Number.isFinite(stepIndex) || stepIndex <= 0) return 0;
-  return Math.min(Math.max(stepIndex - 1, 0), total);
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return null;
+}
+
+function collectRecords(value: unknown, depth = 0): UnknownRecord[] {
+  if (depth > 6 || value == null) return [];
+  if (Array.isArray(value)) return value.flatMap((item) => collectRecords(item, depth + 1));
+  if (!isRecord(value)) return [];
+  return [
+    value,
+    ...Object.values(value).flatMap((item) => collectRecords(item, depth + 1)),
+  ];
+}
+
+function eventTokensFromRecord(record: UnknownRecord): string[] {
+  return [
+    ...CONTRACT_EVENT_TYPE_KEYS.map((key) => stringFromUnknown(record[key])),
+    ...Object.entries(record)
+      .filter(([, value]) => typeof value === "string")
+      .map(([key, value]) => `${key}:${value}`),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.toLowerCase());
+}
+
+function hasOpenEventRecord(record: UnknownRecord): boolean {
+  const eventTokens = eventTokensFromRecord(record);
+
+  return eventTokens.some((token) => {
+    if (CONTRACT_OPEN_CODES.has(normalizeStatusCode(token))) return true;
+    return CONTRACT_OPEN_KEYWORDS.some((keyword) => token.includes(keyword));
+  });
+}
+
+function hasOpenedDocument(doc: EformsignDocument): boolean {
+  for (const source of [doc.histories, doc.previous_status]) {
+    if (collectRecords(source).some(hasOpenEventRecord)) return true;
+  }
+  return CONTRACT_OPEN_CODES.has(normalizeStatusCode(doc.current_status?.status_type));
+}
+
+function hasSignatureEventRecord(record: UnknownRecord): boolean {
+  const eventTokens = eventTokensFromRecord(record);
+
+  return eventTokens.some((token) => {
+    if (CONTRACT_SIGNATURE_CODES.has(normalizeStatusCode(token))) return true;
+    return CONTRACT_SIGNATURE_KEYWORDS.some((keyword) => token.includes(keyword));
+  });
+}
+
+function hasCustomerSignatureDocument(doc: EformsignDocument): boolean {
+  for (const source of [doc.histories, doc.previous_status]) {
+    if (collectRecords(source).some(hasSignatureEventRecord)) return true;
+  }
+  return CONTRACT_SIGNATURE_CODES.has(normalizeStatusCode(doc.current_status?.status_type));
+}
+
+function hasSendFailureEventRecord(record: UnknownRecord): boolean {
+  const eventTokens = eventTokensFromRecord(record);
+  const hasFailure = eventTokens.some((token) =>
+    CONTRACT_SEND_FAILURE_KEYWORDS.some((keyword) => token.includes(keyword)),
+  );
+  if (!hasFailure) return false;
+
+  return eventTokens.some((token) =>
+    CONTRACT_SEND_EVENT_KEYWORDS.some((keyword) => token.includes(keyword)),
+  );
+}
+
+function hasDocumentSendFailure(doc: EformsignDocument): boolean {
+  for (const source of [
+    doc.current_status,
+    doc.histories,
+    doc.previous_status,
+    doc.next_status,
+    doc.recipients,
+  ]) {
+    if (collectRecords(source).some(hasSendFailureEventRecord)) return true;
+  }
+  return false;
+}
+
+function reRequestStepType(doc: EformsignDocument): string {
+  return stringFromUnknown(doc.current_status?.step_type) ?? "05";
+}
+
+function reRequestStepSeq(doc: EformsignDocument): string {
+  return stringFromUnknown(doc.current_status?.step_index) ?? "";
+}
+
+function canReRequestDocument(doc: EformsignDocument): boolean {
+  return (
+    getStatusCategory(doc.current_status?.status_type) === "in-progress" &&
+    reRequestStepType(doc) === "05" &&
+    Boolean(reRequestStepSeq(doc))
+  );
+}
+
+function isDocumentViewPending(doc: EformsignDocument, category: ContractCategory): boolean {
+  return (
+    category !== "completed" &&
+    category !== "rejected" &&
+    !hasDocumentSendFailure(doc) &&
+    !isReviewNeeded(doc) &&
+    !hasOpenedDocument(doc) &&
+    !hasCustomerSignatureDocument(doc)
+  );
 }
 
 function progressLabel(doc: EformsignDocument): string {
   const category = categorize(doc);
-  const total = recipientTotal(doc);
-  const done = completedStepCount(doc, category);
-
-  if (category === "completed") return `완료 · ${total}/${total}`;
+  if (category === "completed") return "6/6 - 계약서 완료";
   if (category === "rejected") return "기간 만료";
-  if (category === "drafting") return `서명 대기 · ${done}/${total}`;
-  return `검토 대기 · ${done}/${total}`;
+  if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
+  if (isReviewNeeded(doc)) return "5/6 - 제공기관 검토 필요";
+  if (hasCustomerSignatureDocument(doc)) return "4/6 - 이용자 서명 완료";
+  if (hasOpenedDocument(doc)) return "4/6 - 이용자 서명 대기";
+  return "3/6 - 이용자 문서 열람 대기";
 }
 
-function providerName(doc: EformsignDocument): string {
+function requestErrorMessage(error: unknown, fallback: string): string {
+  if (isAxiosError<{ error?: string; message?: string | string[] }>(error)) {
+    const data = error.response?.data;
+    const message = Array.isArray(data?.message) ? data.message.join(", ") : data?.message;
+    return message ?? data?.error ?? fallback;
+  }
+
+  return error instanceof Error ? error.message : fallback;
+}
+
+function valueFromFieldRecord(record: UnknownRecord): string | null {
+  const valueKeys = ["value", "field_value", "fieldValue", "data", "text"] as const;
+  for (const key of valueKeys) {
+    const value = stringFromUnknown(record[key]);
+    if (value) return value;
+  }
+  for (const nested of collectRecords(record).slice(1)) {
+    for (const key of valueKeys) {
+      const value = stringFromUnknown(nested[key]);
+      if (value) return value;
+    }
+  }
+  return null;
+}
+
+function documentFieldValue(doc: EformsignDocument, fieldIds: string[]): string | null {
+  const normalizeFieldId = (value: string) => value.replace(/\s+/g, "").toLowerCase();
+  const normalizedIds = fieldIds.map(normalizeFieldId);
+  for (const record of collectRecords(doc.fields)) {
+    const idTokens = [
+      stringFromUnknown(record.id),
+      stringFromUnknown(record.field_id),
+      stringFromUnknown(record.fieldId),
+      stringFromUnknown(record.name),
+      stringFromUnknown(record.label),
+      stringFromUnknown(record.field_name),
+      stringFromUnknown(record.fieldName),
+      stringFromUnknown(record.display_name),
+      stringFromUnknown(record.displayName),
+      stringFromUnknown(record.input_id),
+      stringFromUnknown(record.inputId),
+    ].filter((value): value is string => Boolean(value));
+
+    if (idTokens.some((token) => {
+      const normalizedToken = normalizeFieldId(token);
+      return normalizedIds.some(
+        (id) => normalizedToken === id || normalizedToken.includes(id) || id.includes(normalizedToken),
+      );
+    })) {
+      const value = valueFromFieldRecord(record);
+      if (value) return value;
+    }
+  }
+  return null;
+}
+
+function providerName(doc: EformsignDocument, metadata?: EformsignDocClientSummary): string {
+  const metadataProvider = metadata?.providerName?.trim();
+  if (metadataProvider) return metadataProvider;
+
+  const fieldProvider = documentFieldValue(doc, [
+    "제공인력 1 성명",
+    "제공인력1성명",
+    "제공인력 성명",
+    "제공인력명",
+    "제공인력",
+    "관리사 성명",
+    "관리사",
+    "산후관리사 성명",
+    "제공자 성명",
+    "caretaker1Name",
+    "caretakerName",
+    "employeeName",
+    "providerName",
+  ]);
+  if (fieldProvider) return fieldProvider;
+
+  const customer = customerName(doc);
   const recipients = doc.current_status?.step_recipients ?? [];
-  return recipients[1]?.name || recipients[0]?.name || "-";
+  const providerRecipient = recipients.find((recipient) => {
+    const name = recipient.name?.trim();
+    return Boolean(name && name !== customer);
+  });
+  return providerRecipient?.name || "-";
 }
 
-function roleLabel(index: number): string {
-  if (index === 0) return "고객";
-  if (index === 1) return "관리사";
-  return "지점장";
+function normalizePhone(value: string | null | undefined): string {
+  return (value ?? "").replace(/\D/g, "");
+}
+
+function notificationChannelLabel(log: NotificationLogRecord): "알림톡" | "메시지" {
+  return log.provider.toLowerCase().includes("sms") ? "메시지" : "알림톡";
+}
+
+function notificationTitle(log: NotificationLogRecord): string {
+  if (log.ruleName?.trim()) return log.ruleName;
+  if (log.templateKey === "manual_sms") return "수동 메시지";
+  return log.templateKey || "발송 내역";
+}
+
+function notificationStatusLabel(status: string): string {
+  if (status === "failed") return "실패";
+  if (status === "pending") return "대기";
+  return "완료";
+}
+
+function notificationStatusTone(status: string): "green" | "orange" | "burgundy" {
+  if (status === "failed") return "burgundy";
+  if (status === "pending") return "orange";
+  return "green";
+}
+
+function formatNotificationTime(value: string | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ko-KR", {
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function notificationMatchesDocument(
+  log: NotificationLogRecord,
+  doc: EformsignDocument,
+  metadata?: EformsignDocClientSummary,
+): boolean {
+  if (metadata?.clientId && log.clientId === metadata.clientId) return true;
+
+  const customer = customerName(doc);
+  const names = new Set(
+    [customer, metadata?.clientName]
+      .map((value) => value?.trim())
+      .filter((value): value is string => Boolean(value)),
+  );
+  if (log.clientName && names.has(log.clientName.trim())) return true;
+  if (log.recipientName && names.has(log.recipientName.trim())) return true;
+
+  const phones = new Set(
+    [
+      metadata?.clientPhone,
+      ...((doc.current_status?.step_recipients ?? []).map((recipient) => recipient.sms)),
+    ]
+      .map(normalizePhone)
+      .filter(Boolean),
+  );
+  return Boolean(normalizePhone(log.receiver) && phones.has(normalizePhone(log.receiver)));
+}
+
+function contractStageItems(
+  doc: EformsignDocument,
+  category: ContractCategory,
+): ContractStageItem[] {
+  const createdAt = formatDateTime(doc.created_date);
+  const updatedAt = formatDateTime(doc.updated_date || doc.created_date);
+  const sendFailed = hasDocumentSendFailure(doc);
+  const hasOpened = hasOpenedDocument(doc);
+  const reviewNeeded = isReviewNeeded(doc);
+  const hasCustomerSigned = category === "completed" || reviewNeeded || hasCustomerSignatureDocument(doc);
+  const items: ContractStageItem[] = [
+    {
+      icon: FileText,
+      iconVariant: "info",
+      text: "문서가 생성되었습니다",
+      time: createdAt,
+    },
+    {
+      icon: sendFailed ? X : Send,
+      iconVariant: sendFailed ? "danger" : "info",
+      text: sendFailed
+        ? "이용자에게 문서 전송에 실패했습니다."
+        : "이용자에게 문서가 발송되었습니다.",
+      time: createdAt,
+    },
+  ];
+
+  if (sendFailed) return items;
+
+  if (hasOpened || hasCustomerSigned) {
+    items.push({
+      icon: Eye,
+      iconVariant: "info",
+      text: "이용자가 문서를 열람했습니다",
+      time: updatedAt,
+    });
+  }
+
+  if (hasCustomerSigned) {
+    items.push({
+      icon: FileSignature,
+      iconVariant: "info",
+      text: "이용자가 서명을 완료했습니다",
+      time: updatedAt,
+    });
+  }
+
+  if (category === "completed") {
+    items.push(
+      {
+        icon: FileSignature,
+        iconVariant: "success",
+        text: "제공기관 검토 완료",
+        time: updatedAt,
+      },
+      {
+        icon: CheckCircle2,
+        iconVariant: "success",
+        text: "계약서가 완료되었습니다",
+        time: updatedAt,
+      },
+    );
+    return items;
+  }
+
+  if (category === "rejected") {
+    items.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "문서 기간이 만료되었습니다",
+      time: updatedAt,
+    });
+    return items;
+  }
+
+  items.push({
+    icon: reviewNeeded ? FileSignature : hasOpened ? FileSignature : Eye,
+    iconVariant: "warning",
+    text: reviewNeeded
+      ? "제공기관 검토 필요"
+      : hasOpened
+        ? "이용자 서명 대기중입니다"
+        : "이용자 문서 열람 대기중입니다",
+    time: "현재",
+  });
+
+  return items;
 }
 
 function ContractDocRow({
@@ -220,11 +657,11 @@ function ContractDocRow({
   badge,
   tone,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   title: string;
   meta: string;
   badge: string;
-  tone: "primary" | "green" | "orange" | "muted";
+  tone: "primary" | "green" | "orange" | "muted" | "burgundy";
 }) {
   return (
     <div className="doc-row">
@@ -240,198 +677,307 @@ function ContractDocRow({
 
 function ContractDetailContent({
   doc,
+  metadata,
+  notificationLogs,
   activeTab,
   onTabChange,
   onFinalize,
 }: {
   doc: EformsignDocument;
+  metadata?: EformsignDocClientSummary;
+  notificationLogs: NotificationLogRecord[];
   activeTab: DetailTabId;
   onTabChange: (id: DetailTabId) => void;
   onFinalize?: (doc: EformsignDocument) => void;
 }) {
-  const [actionStatus, setActionStatus] = useState("");
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [previewDocumentId, setPreviewDocumentId] = useState<string | null>(null);
+  const [isReRequesting, setIsReRequesting] = useState(false);
   const category = categorize(doc);
   const tones = categoryTones(category);
+  const reviewNeeded = isReviewNeeded(doc);
+  const shouldReRequest = isDocumentViewPending(doc, category) && canReRequestDocument(doc);
   const contractNum = contractNumber(doc);
   const name = contractDisplayName(doc, true);
+  const downloadUrl = eformsignApi.getDocumentDownloadUrl(doc.id);
+  const receiptDownloadUrl = eformsignApi.getDocumentReceiptDownloadUrl(doc.id);
+  const previewUrl = eformsignApi.getDocumentPreviewUrl(doc.id);
+  const isPreviewOpen = previewDocumentId === doc.id;
   const statusLabel = tones.badge;
-  const recipients = doc.current_status?.step_recipients ?? [];
-  const doneCount = completedStepCount(doc, category);
-  const totalCount = recipientTotal(doc);
+  const stageItems = contractStageItems(doc, category);
+  const receiptFilename = `${name} 영수증.pdf`;
+  const notificationRows = useMemo(
+    () =>
+      notificationLogs
+        .filter((log) => notificationMatchesDocument(log, doc, metadata))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    [doc, metadata, notificationLogs],
+  );
+  const handleDocumentReRequest = async () => {
+    const stepType = reRequestStepType(doc);
+    const stepSeq = reRequestStepSeq(doc);
+
+    if (!stepSeq || stepType !== "05") {
+      toast({
+        variant: "destructive",
+        description: "현재 단계에서는 재알림을 보낼 수 없습니다.",
+      });
+      return;
+    }
+
+    setIsReRequesting(true);
+    try {
+      await eformsignApi.reRequestDocument(doc.id, {
+        stepType,
+        stepSeq,
+        comment: "재요청입니다.",
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() }),
+        queryClient.invalidateQueries({ queryKey: ["eformsign-document-detail", doc.id] }),
+        queryClient.invalidateQueries({ queryKey: ["alimtalk", "logs", 200] }),
+      ]);
+      toast({
+        description: `${customerName(doc)}님에게 전자문서 작성을 재요청했습니다.`,
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        description: requestErrorMessage(error, "재알림 전송 중 오류가 발생했습니다."),
+      });
+    } finally {
+      setIsReRequesting(false);
+    }
+  };
+  const handleReceiptShare = async () => {
+    if (
+      typeof navigator === "undefined" ||
+      typeof navigator.share !== "function" ||
+      typeof navigator.canShare !== "function" ||
+      typeof File === "undefined"
+    ) {
+      window.location.assign(receiptDownloadUrl);
+      return;
+    }
+
+    let canShareReceiptFile = false;
+    try {
+      canShareReceiptFile = navigator.canShare({
+        files: [new File([""], receiptFilename, { type: "application/pdf" })],
+      });
+    } catch {
+      window.location.assign(receiptDownloadUrl);
+      return;
+    }
+
+    if (!canShareReceiptFile) {
+      window.location.assign(receiptDownloadUrl);
+      return;
+    }
+
+    try {
+      const response = await fetch(receiptDownloadUrl, { credentials: "include" });
+      if (!response.ok) {
+        throw new Error(`Receipt PDF request failed with ${response.status}`);
+      }
+
+      const receiptBlob = await response.blob();
+      const receiptFile = new File([receiptBlob], receiptFilename, {
+        type: receiptBlob.type || "application/pdf",
+      });
+
+      if (!navigator.canShare({ files: [receiptFile] })) {
+        throw new Error("Receipt PDF file sharing is not supported.");
+      }
+
+      await navigator.share({ files: [receiptFile] });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      window.location.assign(receiptDownloadUrl);
+    }
+  };
 
   return (
-    <div className="detail-body detail-column" data-component="mobile-contracts-detail">
-      <div className="client-detail-header pop-up">
-        <div className={`client-detail-avatar-lg av-primary`}>
-          <FileCheck2 size={24} strokeWidth={2.5} />
-        </div>
-        <div className="client-detail-title">
-          <div className="client-detail-name" style={{ fontSize: "1rem" }}>
-            {name}
-          </div>
-          <div className="client-detail-badges">
-            <span className={`badge-mini ${tones.badgeMini}`}>{tones.badge}</span>
-            <span
-              className="badge-mini muted"
-              style={{ fontFamily: "'SF Mono', monospace", fontSize: "0.6rem" }}
-            >
-              {contractNum}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div className="detail-actions">
-        <button
-          className="btn btn-secondary"
-          type="button"
-          onClick={() => setActionStatus(`${name} 계약서 미리보기를 준비했습니다.`)}
-          data-component="mobile-contracts-preview"
-        >
-          미리보기
-        </button>
-        {isReviewNeeded(doc) && onFinalize ? (
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() => onFinalize(doc)}
-            data-component="mobile-contracts-finalize"
-          >
-            확인하기
-          </button>
-        ) : (
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() => setActionStatus(`${name} 서명 화면을 엽니다.`)}
-            data-component="mobile-contracts-sign"
-          >
-            지금 서명
-          </button>
-        )}
-      </div>
-      {actionStatus && (
-        <div className="action-feedback" role="status">
-          {actionStatus}
-        </div>
-      )}
-
-      <DetailTabPills
-        tabs={[
-          { id: "basic", label: "기본 정보" },
-          { id: "signers", label: "서명 진행" },
-          { id: "alimtalk", label: "알림톡 발송 현황" },
-        ]}
-        activeTab={activeTab}
-        onTabChange={(id) => onTabChange(id as DetailTabId)}
+    <MobileDetailPage name="contracts">
+      <MobileDetailHeader
+        name="contracts"
+        avatar={<FileCheck2 size={24} strokeWidth={2.5} />}
+        avatarTone="primary"
+        title={name}
+        badges={[{ label: tones.badge, tone: tones.badgeMini as BadgeTone }]}
       />
 
-      <div className={`tab-content ${activeTab === "basic" ? "active" : ""}`} data-tab-content="basic">
-        <InfoCard title="계약 정보">
-          <InfoRow
-            label="계약 번호"
-            value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{contractNum}</span>}
-          />
-          <InfoRow label="계약서 유형" value={templateName(doc) || "-"} />
-          <InfoRow label="현재 단계" value={statusLabel} tone={tones.infoTone} />
-          <InfoRow label="작성일" value={formatDate(doc.created_date)} />
-          <InfoRow label="마감일" value={formatDeadline(doc.current_status?.expired_date)} tone="orange" />
-        </InfoCard>
-        <InfoCard title="관련 정보" delay={60}>
-          <InfoRow label="고객" value={customerName(doc)} />
-          <InfoRow label="제공인력" value={providerName(doc)} />
-          <InfoRow label="작성자" value={doc.creator?.name ?? "-"} />
-          <InfoRow
-            label="eformsign 코드"
-            value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{normalizeStatusCode(doc.current_status?.status_type)}</span>}
-          />
-        </InfoCard>
-      </div>
-
-      <div className={`tab-content ${activeTab === "signers" ? "active" : ""}`} data-tab-content="signers">
-        <InfoCard title={`서명자 · ${totalCount}명`}>
-          {recipients.length > 0 ? (
-            recipients.map((recipient, idx) => {
-              const isDone = category === "completed" || idx < doneCount;
-              const isPending = !isDone && idx === doneCount;
-              return (
-                <ContractDocRow
-                  key={`${recipient.name}-${idx}`}
-                  icon={
-                    isDone ? (
-                      <FileCheck2 size={16} strokeWidth={2.5} />
-                    ) : (
-                      <CircleAlert size={16} strokeWidth={2.5} />
-                    )
-                  }
-                  title={`${roleLabel(idx)} (${recipient.name || `서명자 ${idx + 1}`})`}
-                  meta={
-                    isDone
-                      ? `${formatDate(doc.updated_date || doc.created_date)} 서명 완료`
-                      : `${isPending ? "서명 대기 중" : "서명 예정"} · ${formatDeadline(doc.current_status?.expired_date)}`
-                  }
-                  badge={isDone ? "완료" : "대기"}
-                  tone={isDone ? "green" : "orange"}
-                />
-              );
-            })
-          ) : (
-            <div
-              style={{
-                fontSize: "0.82rem",
-                color: "hsl(var(--v3-text-muted))",
-                padding: "12px 0",
-                textAlign: "center",
-              }}
+      {!isPreviewOpen || (reviewNeeded && onFinalize) ? (
+        <MobileDetailActions
+          name="contracts"
+          actions={[
+            ...(!isPreviewOpen
+              ? [
+                  {
+                    label: "미리보기",
+                    variant: "secondary" as const,
+                    onClick: () => setPreviewDocumentId(doc.id),
+                    dataComponent: "mobile-contracts-preview",
+                  },
+                  {
+                    label: shouldReRequest
+                      ? isReRequesting
+                        ? "재알림 보내는 중"
+                        : "재알림 보내기"
+                      : "영수증 공유",
+                    variant: "primary" as const,
+                    onClick: shouldReRequest ? handleDocumentReRequest : handleReceiptShare,
+                    disabled: shouldReRequest ? isReRequesting : false,
+                    busy: shouldReRequest ? isReRequesting : false,
+                    dataComponent: shouldReRequest
+                      ? "mobile-contracts-rerequest"
+                      : "mobile-contracts-receipt-share",
+                  },
+                ]
+              : []),
+            ...(reviewNeeded && onFinalize
+              ? [
+                  {
+                    label: "지금 서명",
+                    variant: "primary" as const,
+                    onClick: () => onFinalize(doc),
+                    dataComponent: "mobile-contracts-sign",
+                  },
+                ]
+              : []),
+          ]}
+        />
+      ) : null}
+      {isPreviewOpen ? (
+        <section
+          className="contract-preview-panel"
+          data-component="mobile-contracts-pdf-preview"
+          aria-label="계약서 PDF 미리보기"
+        >
+          <div className="contract-preview-header">
+            <button
+              type="button"
+              className="contract-preview-back"
+              data-component="mobile-contracts-pdf-preview-back"
+              aria-label="계약 상세로 돌아가기"
+              onClick={() => setPreviewDocumentId(null)}
             >
-              서명 정보가 없습니다.
-            </div>
-          )}
-        </InfoCard>
-        <InfoCard title="서명 진행률" delay={60}>
-          <InfoRow
-            label="완료"
-            value={`${doneCount}명 / ${totalCount}명 (${Math.round((doneCount / totalCount) * 100)}%)`}
-            tone="green"
+              <ArrowLeft size={18} strokeWidth={2.5} />
+              <span>돌아가기</span>
+            </button>
+            <a
+              className="contract-preview-receipt"
+              data-component="mobile-contracts-receipt-download"
+              href={receiptDownloadUrl}
+              download={receiptFilename}
+              aria-label={`${name} 영수증 PDF 다운로드`}
+            >
+              <Download size={16} strokeWidth={2.5} />
+              <span>영수증</span>
+            </a>
+            <a
+              className="contract-preview-download"
+              data-component="mobile-contracts-pdf-download"
+              href={downloadUrl}
+              download={`${name}.pdf`}
+              aria-label={`${name} PDF 다운로드`}
+            >
+              <Download size={16} strokeWidth={2.5} />
+              <span>다운로드</span>
+            </a>
+          </div>
+          <iframe
+            className="contract-preview-frame"
+            data-component="mobile-contracts-pdf-preview-frame"
+            title={`${name} PDF 미리보기`}
+            src={previewUrl}
           />
-          <InfoRow
-            label="잔여 서명자"
-            value={recipients[doneCount]?.name || (doneCount < totalCount ? "확인 필요" : "-")}
+        </section>
+      ) : (
+        <>
+          <DetailTabPills
+            tabs={[
+              { id: "basic", label: "기본 정보" },
+              { id: "signers", label: "서명 진행" },
+              { id: "alimtalk", label: "알림 발송" },
+            ]}
+            activeTab={activeTab}
+            onTabChange={(id) => onTabChange(id as DetailTabId)}
           />
-        </InfoCard>
-      </div>
 
-      <div className={`tab-content ${activeTab === "alimtalk" ? "active" : ""}`} data-tab-content="alimtalk">
-        <InfoCard title="알림톡 · 3건">
-          <ContractDocRow
-            icon={<MessageCircle size={16} strokeWidth={2.5} />}
-            title={`계약서 발송 안내 (${customerName(doc)})`}
-            meta={`${formatCompactDate(doc.created_date)} 오전 9:32`}
-            badge="완료"
-            tone="green"
-          />
-          <ContractDocRow
-            icon={<MessageCircle size={16} strokeWidth={2.5} />}
-            title={`서명 요청 안내 (${providerName(doc)})`}
-            meta={`${formatCompactDate(doc.updated_date || doc.created_date)} 오전 10:00`}
-            badge={category === "drafting" ? "대기" : "완료"}
-            tone={category === "drafting" ? "orange" : "green"}
-          />
-          <ContractDocRow
-            icon={<CircleAlert size={16} strokeWidth={2.5} />}
-            title={`마감 임박 알림 (${doc.creator?.name ?? "지점장"})`}
-            meta={`${formatCompactDate(doc.current_status?.expired_date)} 오후 6:00 · 자동 발송`}
-            badge="대기"
-            tone="orange"
-          />
-        </InfoCard>
-      </div>
-    </div>
+          <MobileDetailTabPanel name="contracts" tabId="basic" activeTab={activeTab}>
+            <InfoCard title="계약 정보">
+              <InfoRow
+                label="계약서 종류"
+                value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{contractNum}</span>}
+              />
+              <InfoRow label="현재 단계" value={statusLabel} tone={tones.infoTone} />
+              <InfoRow label="생성일" value={formatDate(doc.created_date)} />
+            </InfoCard>
+            <InfoCard title="관련 정보" delay={60}>
+              <InfoRow label="고객" value={customerName(doc)} />
+              <InfoRow label="제공인력" value={providerName(doc, metadata)} />
+              <InfoRow label="작성자" value={doc.creator?.name ?? "-"} />
+              <InfoRow
+                label="문서 ID"
+                value={<span style={{ fontFamily: "'SF Mono', monospace", wordBreak: "break-all" }}>{doc.id || "-"}</span>}
+              />
+            </InfoCard>
+          </MobileDetailTabPanel>
+
+          <MobileDetailTabPanel name="contracts" tabId="signers" activeTab={activeTab}>
+            <InfoCard title="계약서 단계">
+              <ActivityTimeline items={stageItems} maxHeight="360px" />
+            </InfoCard>
+          </MobileDetailTabPanel>
+
+          <MobileDetailTabPanel name="contracts" tabId="alimtalk" activeTab={activeTab}>
+            <InfoCard title="발송 내역">
+              {notificationRows.length > 0 ? (
+                notificationRows.map((log) => {
+                  const tone = notificationStatusTone(log.status);
+                  const channel = notificationChannelLabel(log);
+                  return (
+                    <ContractDocRow
+                      key={`${channel}-${log.id}`}
+                      icon={
+                        tone === "burgundy" ? (
+                          <CircleAlert size={16} strokeWidth={2.5} />
+                        ) : (
+                          <MessageCircle size={16} strokeWidth={2.5} />
+                        )
+                      }
+                      title={`${channel} · ${notificationTitle(log)}`}
+                      meta={`${formatNotificationTime(log.createdAt)} · ${log.receiver}`}
+                      badge={notificationStatusLabel(log.status)}
+                      tone={tone}
+                    />
+                  );
+                })
+              ) : (
+                <div
+                  style={{
+                    fontSize: "0.82rem",
+                    color: "hsl(var(--v3-text-muted))",
+                    padding: "12px 0",
+                    textAlign: "center",
+                  }}
+                >
+                  내역이 없습니다.
+                </div>
+              )}
+            </InfoCard>
+          </MobileDetailTabPanel>
+        </>
+      )}
+    </MobileDetailPage>
   );
 }
 
 export default function ContractsPage() {
   const [activeFilter, setActiveFilter] = useState<FilterKey>("전체");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedDoc, setSelectedDoc] = useState<EformsignDocument | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTabId>("basic");
 
@@ -619,13 +1165,80 @@ export default function ContractsPage() {
     };
   }, []);
 
-  const { isAuthenticated } = useEformsignAuth();
-  const { data: allData } = useEformsignDocumentsByType(isAuthenticated, null);
+  const { isAuthenticated, isLoading: isAuthLoading } = useEformsignAuth();
+  const refreshContractsFromEvent = useCallback(
+    (event: { documentId?: string }) => {
+      void queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+      void queryClient.invalidateQueries({ queryKey: ["eformsign-doc-client-names"] });
+
+      if (event.documentId) {
+        void queryClient.invalidateQueries({ queryKey: ["eformsign-document-detail", event.documentId] });
+      }
+    },
+    [queryClient],
+  );
+
+  useEformsignDocumentEvents({
+    enabled: isAuthenticated,
+    onDocsChanged: refreshContractsFromEvent,
+  });
+
+  const { data: allData, isLoading: isDocumentsLoading } = useEformsignDocumentsByType(isAuthenticated, null);
+  const isContractsLoading = isAuthLoading || (isAuthenticated && isDocumentsLoading && !allData);
+  const { data: documentClientSummaries = [] } = useQuery({
+    queryKey: ["eformsign-doc-client-names"],
+    queryFn: eformsignApi.getDocumentClientNames,
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 5,
+  });
+  const { data: notificationLogsData = [] } = useQuery<NotificationLogRecord[]>({
+    queryKey: ["alimtalk", "logs", 200],
+    queryFn: async () => {
+      const res = await api.get<NotificationLogRecord[]>("/alimtalk-logs", {
+        params: { limit: 200 },
+      });
+      return res.data;
+    },
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60,
+  });
+  const notificationLogs = useMemo(
+    () => (Array.isArray(notificationLogsData) ? notificationLogsData : []),
+    [notificationLogsData],
+  );
+  const { data: selectedDocDetail } = useQuery({
+    queryKey: ["eformsign-document-detail", selectedDoc?.id],
+    queryFn: () => eformsignApi.getDocument(selectedDoc!.id),
+    enabled: isAuthenticated && Boolean(selectedDoc?.id),
+    staleTime: 1000 * 60,
+  });
+  const selectedDetailDoc = useMemo(() => {
+    if (!selectedDoc) return null;
+    if (!selectedDocDetail || selectedDocDetail.id !== selectedDoc.id) return selectedDoc;
+    return { ...selectedDoc, ...selectedDocDetail };
+  }, [selectedDoc, selectedDocDetail]);
 
   const allDocuments = useMemo(
     () => (allData?.documents ?? []).filter((doc) => !EXCLUDED_CUSTOMER_NAMES.includes(customerName(doc))),
     [allData?.documents],
   );
+
+  const documentClientSummaryById = useMemo(
+    () => new Map(documentClientSummaries.map((summary) => [summary.documentId, summary])),
+    [documentClientSummaries],
+  );
+
+  const filteredDocuments = useMemo(() => {
+    const q = searchQuery.trim();
+    if (!q) return allDocuments;
+    return allDocuments.filter(
+      (doc) =>
+        matchesKoreanSearch(customerName(doc), q) ||
+        matchesKoreanSearch(doc.document_name ?? "", q) ||
+        matchesKoreanSearch(templateName(doc), q) ||
+        matchesKoreanSearch(contractNumber(doc), q),
+    );
+  }, [allDocuments, searchQuery]);
 
   const grouped = useMemo(() => {
     const groups: Record<ContractCategory, EformsignDocument[]> = {
@@ -634,116 +1247,98 @@ export default function ContractsPage() {
       completed: [],
       rejected: [],
     };
-    for (const doc of allDocuments) {
+    for (const doc of filteredDocuments) {
       groups[categorize(doc)].push(doc);
     }
     return groups;
-  }, [allDocuments]);
+  }, [filteredDocuments]);
 
   const filterItems = useMemo(() => {
+    if (isContractsLoading) {
+      return FILTER_LABELS.map((label) => ({ label, count: "00", skeleton: true }));
+    }
+
     const counts: Record<FilterKey, number> = {
-      전체: allDocuments.length,
+      전체: filteredDocuments.length,
       대기: grouped.drafting.length,
       "검토 필요": grouped["in-progress"].length,
       완료: grouped.completed.length,
       "기간 만료": grouped.rejected.length,
     };
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
-  }, [allDocuments.length, grouped]);
+  }, [filteredDocuments.length, grouped, isContractsLoading]);
 
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
-  useEffect(() => {
-    setVisibleCount(INITIAL_VISIBLE_COUNT);
-  }, [activeFilter]);
-
-  const visibleSections = useMemo(() => {
-    const sections: Array<{
+  const sectionsFull = useMemo(() => {
+    type Section = {
       key: string;
       title: string;
-      docs: EformsignDocument[];
+      fullDocs: EformsignDocument[];
       fullCount: number;
       category: ContractCategory;
-    }> = [];
+    };
+    const section = (
+      key: string,
+      title: string,
+      docs: EformsignDocument[],
+      category: ContractCategory,
+    ): Section => ({ key, title, fullDocs: docs, fullCount: docs.length, category });
 
-    const includeAll = activeFilter === "전체";
-    const inProgressDocs = grouped["in-progress"];
-    const primaryReviewDocs = includeAll ? inProgressDocs.slice(0, 1) : inProgressDocs;
-    const progressDocs = includeAll ? inProgressDocs.slice(primaryReviewDocs.length) : [];
-    const actionNeededAll = [...primaryReviewDocs, ...grouped.drafting].filter((doc) => {
-      if (activeFilter === "검토 필요") return categorize(doc) === "in-progress";
-      if (activeFilter === "대기") return categorize(doc) === "drafting";
-      return true;
-    });
-
-    if ((includeAll || activeFilter === "검토 필요" || activeFilter === "대기") && actionNeededAll.length > 0) {
-      sections.push({
-        key: "action-needed",
-        title: `조치 필요 · ${actionNeededAll.length}건`,
-        docs: actionNeededAll.slice(0, visibleCount),
-        fullCount: actionNeededAll.length,
-        category: "in-progress",
-      });
+    // 전체: 카테고리 grouping 없이 최신순 단일 리스트 (총 8개부터 teaser → 무한 스크롤).
+    if (activeFilter === "전체") {
+      const flat = [...filteredDocuments].sort((a, b) => docRecency(b) - docRecency(a));
+      return flat.length > 0 ? [section("all", "", flat, "in-progress")] : [];
     }
 
-    if (includeAll && progressDocs.length > 0) {
-      sections.push({
-        key: "in-progress",
-        title: "진행 중",
-        docs: progressDocs.slice(0, visibleCount),
-        fullCount: progressDocs.length,
-        category: "in-progress",
-      });
+    // 개별 필터: 해당 카테고리 단일 섹션.
+    if (activeFilter === "검토 필요") {
+      return grouped["in-progress"].length > 0
+        ? [section("in-progress", "검토 필요", grouped["in-progress"], "in-progress")]
+        : [];
     }
-
-    if ((includeAll || activeFilter === "완료") && grouped.completed.length > 0) {
-      sections.push({
-        key: "completed",
-        title: "완료 · 최근",
-        docs: grouped.completed.slice(0, visibleCount),
-        fullCount: grouped.completed.length,
-        category: "completed",
-      });
+    if (activeFilter === "대기") {
+      return grouped.drafting.length > 0
+        ? [section("drafting", "대기", grouped.drafting, "drafting")]
+        : [];
     }
-
-    if ((includeAll || activeFilter === "기간 만료") && grouped.rejected.length > 0) {
-      sections.push({
-        key: "rejected",
-        title: `기간 만료/반려 · ${grouped.rejected.length}건`,
-        docs: grouped.rejected.slice(0, visibleCount),
-        fullCount: grouped.rejected.length,
-        category: "rejected",
-      });
+    if (activeFilter === "완료") {
+      return grouped.completed.length > 0
+        ? [section("completed", "완료 · 최근", grouped.completed, "completed")]
+        : [];
     }
+    if (activeFilter === "기간 만료") {
+      return grouped.rejected.length > 0
+        ? [section("rejected", "기간 만료/반려", grouped.rejected, "rejected")]
+        : [];
+    }
+    return [];
+  }, [grouped, activeFilter, filteredDocuments]);
 
-    return sections.filter((s) => s.docs.length > 0);
-  }, [grouped, activeFilter, visibleCount]);
-
-  const hasMore = useMemo(
-    () => visibleSections.some((s) => s.fullCount > s.docs.length),
-    [visibleSections],
+  const maxFullCount = useMemo(
+    () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
+    [sectionsFull],
   );
 
-  // 첫 teaser 단계에는 버튼만 노출 — 사용자가 "탭하여 더보기"를 한 번 누른 뒤부터 IntersectionObserver 활성화.
-  const isInitialLoad = visibleCount === INITIAL_VISIBLE_COUNT;
+  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+    useListInfiniteScroll({
+      resetKey: `${activeFilter}::${searchQuery}`,
+      totalItems: maxFullCount,
+      fallbackInitialCount: CONTRACT_LIST_INITIAL_VISIBLE_COUNT,
+    });
 
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!hasMore || isInitialLoad) return;
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          setVisibleCount((current) => current + LOAD_MORE_PAGE_SIZE);
-        }
-      },
-      { rootMargin: "0px 0px 120px 0px", threshold: 0 },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [hasMore, isInitialLoad]);
+  const visibleSections = useMemo(
+    () =>
+      sectionsFull
+        .map((s) => ({ ...s, docs: s.fullDocs.slice(0, visibleCount) }))
+        .filter((s) => s.docs.length > 0),
+    [sectionsFull, visibleCount],
+  );
 
-  const totalDocs = allDocuments.length;
+  const totalDocs = filteredDocuments.length;
+  const listCount = isContractsLoading ? (
+    <span className="contracts-count-placeholder" aria-label="계약서 불러오는 중" />
+  ) : (
+    `${totalDocs}건`
+  );
 
   const mainSheet = (
     <MobileDetailSheet
@@ -754,14 +1349,39 @@ export default function ContractsPage() {
         <div className="shell-content" data-component="mobile-contracts-content">
           <ListCard
             title="계약서"
-            count={`${totalDocs}건`}
+            count={listCount}
             actionLabel="계약 작성"
             actionHref="/contracts/creation"
             filters={filterItems}
             activeFilter={activeFilter}
             onFilterChange={(label) => setActiveFilter(label as FilterKey)}
+            scrollRef={scrollContainerRef}
+            loadMoreFooter={
+              isContractsLoading ? (
+                <div
+                  className="contracts-load-more-placeholder"
+                  data-component="mobile-contracts-load-more-placeholder"
+                  aria-hidden="true"
+                />
+              ) : isInitialLoad && hasMore ? (
+                <ListLoadMoreButton
+                  onLoadMore={loadMore}
+                  dataComponentPrefix="mobile-contracts"
+                />
+              ) : null
+            }
+            beforeFilters={
+              <MobileSearchBar
+                placeholder="고객명, 계약서명, 계약 번호 검색"
+                label="contracts"
+                value={searchQuery}
+                onChange={setSearchQuery}
+              />
+            }
           >
-            {visibleSections.length === 0 ? (
+            {isContractsLoading ? (
+              <ContractListLoadingRows />
+            ) : visibleSections.length === 0 ? (
               <div
                 style={{
                   padding: "32px 16px",
@@ -771,7 +1391,7 @@ export default function ContractsPage() {
                 }}
                 data-component="mobile-contracts-empty"
               >
-                {activeFilter !== "전체"
+                {searchQuery.trim() || activeFilter !== "전체"
                   ? "조건에 맞는 계약서가 없습니다."
                   : "등록된 계약서가 없습니다."}
               </div>
@@ -779,89 +1399,70 @@ export default function ContractsPage() {
               <>
                 {visibleSections.map((section) => (
                 <div className="section-block" key={section.key}>
-                  <div className="section-header">{section.title}</div>
-                  {section.docs.map((doc) => {
+                  {section.docs.map((doc, idx) => {
                     const cat = categorize(doc);
                     const tones = categoryTones(cat);
                     const meta = progressLabel(doc);
                     const name = contractDisplayName(doc);
 
                     return (
-                      <button
+                      <ListItemRow
                         key={doc.id}
-                        type="button"
-                        className="contract-item"
-                        data-component="mobile-contracts-row"
-                        data-progress={tones.badge}
+                        dataComponent="mobile-contracts-row"
+                        left={
+                          <div
+                            className={`list-avatar av-${tones.badgeTone}`}
+                            data-component="mobile-contracts-row-avatar"
+                          >
+                            {cat === "completed" ? (
+                              <FileCheck2 size={16} strokeWidth={2.25} />
+                            ) : cat === "drafting" ? (
+                              <SquarePen size={16} strokeWidth={2.25} />
+                            ) : (
+                              <FileText size={16} strokeWidth={2.25} />
+                            )}
+                          </div>
+                        }
+                        name={name}
+                        style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
+                        meta={
+                          <span
+                            className={
+                              tones.badgeMini === "muted" || cat === "completed"
+                                ? "step-label muted"
+                                : "step-label"
+                            }
+                          >
+                            {meta}
+                          </span>
+                        }
+                        right={<Badge label={tones.badge} tone={tones.badgeTone} />}
                         onClick={() => {
                           setSelectedDoc(doc);
                           setActiveTab("basic");
                         }}
-                      >
-                        <div
-                          className={`contract-icon ${tones.iconBg} ${tones.iconColor}`}
-                        >
-                          {cat === "completed" ? (
-                            <FileCheck2 size={18} strokeWidth={2.5} />
-                          ) : cat === "drafting" ? (
-                            <SquarePen size={18} strokeWidth={2.5} />
-                          ) : (
-                            <FileText size={18} strokeWidth={2.5} />
-                          )}
-                        </div>
-                        <div className="contract-info">
-                          <div className="contract-title">{name}</div>
-                          <div className="contract-meta">
-                            <span
-                              className={
-                                tones.badgeMini === "muted" || cat === "completed"
-                                  ? "step-label muted"
-                                  : "step-label"
-                              }
-                            >
-                              {meta}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="list-right">
-                          <Badge label={tones.badge} tone={tones.badgeTone} />
-                        </div>
-                      </button>
+                      />
                     );
                   })}
                 </div>
                 ))}
-                {hasMore && isInitialLoad ? (
-                  <div className="flex justify-center py-4">
-                    <button
-                      type="button"
-                      onClick={() => setVisibleCount((current) => current + LOAD_MORE_PAGE_SIZE)}
-                      className="peek-bounce flex flex-col items-center gap-0.5 text-v3-primary"
-                      data-component="mobile-contracts-load-more-button"
-                      aria-label="더 많은 계약서 불러오기"
-                    >
-                      <span className="text-[0.78rem] font-bold">탭하여 더보기</span>
-                      <ChevronDown size={20} strokeWidth={2.5} />
-                    </button>
-                  </div>
-                ) : null}
-                {hasMore && !isInitialLoad ? (
-                  <div
-                    ref={sentinelRef}
-                    className="h-1"
-                    aria-hidden="true"
-                    data-component="mobile-contracts-load-sentinel"
+                {!isInitialLoad && hasMore && (
+                  <ListLoadMoreSentinel
+                    sentinelRef={sentinelRef}
+                    dataComponentPrefix="mobile-contracts"
                   />
-                ) : null}
+                )}
               </>
             )}
           </ListCard>
         </div>
       }
       detail={
-        selectedDoc ? (
+        selectedDetailDoc ? (
           <ContractDetailContent
-            doc={selectedDoc}
+            doc={selectedDetailDoc}
+            metadata={documentClientSummaryById.get(selectedDetailDoc.id)}
+            notificationLogs={notificationLogs}
             activeTab={activeTab}
             onTabChange={setActiveTab}
             onFinalize={openFinalize}

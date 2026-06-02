@@ -42,7 +42,10 @@ export function ContractsRedesign({
           filters={filters}
         >
           {hasRows ? (
-            <ContractList sections={sections} />
+            <ContractList
+              sections={sections}
+              rowStyle={(idx) => ({ animationDelay: `${Math.min(idx, 4) * 40}ms` })}
+            />
           ) : (
             <div
               data-component="mobile-contracts-empty"
