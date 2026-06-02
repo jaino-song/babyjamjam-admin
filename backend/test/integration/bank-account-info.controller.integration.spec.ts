@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 import request from "supertest";
 import { BankAccountInfoController } from "interface/controllers/bank-account-info.controller";
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
@@ -27,6 +28,13 @@ describe("BankAccountInfoController (Integration)", () => {
             overrides.bankName ?? "신한은행",
             overrides.accNum ?? "110-123-456789",
         );
+    };
+
+    const getMethodGuards = (methodName: "findAll" | "findByArea") => {
+        return Reflect.getMetadata(
+            GUARDS_METADATA,
+            BankAccountInfoController.prototype[methodName],
+        ) ?? [];
     };
 
     beforeEach(async () => {
@@ -137,6 +145,12 @@ describe("BankAccountInfoController (Integration)", () => {
     // GET /bank-account-infos - List All
     // ============================================
     describe("GET /bank-account-infos", () => {
+        it("should require owner/admin authentication", () => {
+            expect(getMethodGuards("findAll")).toEqual(
+                expect.arrayContaining([JwtGuard, OwnerOrAdminGuard]),
+            );
+        });
+
         describe("given bank account infos exist", () => {
             it("should return all bank account infos", async () => {
                 // Arrange
@@ -178,6 +192,12 @@ describe("BankAccountInfoController (Integration)", () => {
     // GET /bank-account-infos/area - Find By Area
     // ============================================
     describe("GET /bank-account-infos/area", () => {
+        it("should require owner/admin authentication", () => {
+            expect(getMethodGuards("findByArea")).toEqual(
+                expect.arrayContaining([JwtGuard, OwnerOrAdminGuard]),
+            );
+        });
+
         describe("given bank account info exists for area", () => {
             it("should return the bank account info", async () => {
                 // Arrange

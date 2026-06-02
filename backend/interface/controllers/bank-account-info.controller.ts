@@ -15,11 +15,13 @@ export class BankAccountInfoController {
     }
 
     @Get()
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     findAll() {
         return this.bankAccountInfoService.findAll();
     }
 
     @Get("area")
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     async findByArea(@Query("area") area: string) {
         const result = await this.bankAccountInfoService.findByArea(area);
         return result;
