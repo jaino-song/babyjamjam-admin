@@ -201,7 +201,6 @@ describe("SbVoucherPriceInfoRepository", () => {
                 // Assert
                 expect(voucherModel.create).toHaveBeenCalledWith({
                     data: {
-                        id: 0,
                         type: "premium",
                         duration: BigInt(60),
                         fullPrice: "200000",
