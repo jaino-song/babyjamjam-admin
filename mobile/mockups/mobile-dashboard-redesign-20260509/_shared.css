@@ -192,35 +192,36 @@ html, body {
   border-radius: 2px;
 }
 
+/* Sizes mirror src/components/app/mobile-redesign/redesign.css:390-435 — SST aligned */
 .list-item {
   display: flex; align-items: center; gap: 10px;
-  padding: 12px;
-  border-radius: 14px;
+  padding: 8px 10px;
+  border-radius: 12px;
   transition: background 0.15s ease;
   cursor: pointer;
 }
 .list-item:hover, .list-item:active { background: var(--v3-primary-light); }
 .list-item + .list-item { margin-top: 2px; }
 .list-avatar {
-  width: 42px; height: 42px;
-  border-radius: 14px;
+  width: 34px; height: 34px;
+  border-radius: 11px;
   display: flex; align-items: center; justify-content: center;
   color: white; font-weight: 700;
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   flex-shrink: 0;
 }
 .list-info { flex: 1; min-width: 0; }
 .list-name {
-  font-size: 0.88rem;
+  font-size: 0.83rem;
   font-weight: 700;
   color: var(--v3-dark);
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 5px;
 }
 .list-meta {
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   color: var(--v3-text-muted);
-  margin-top: 2px;
+  margin-top: 1px;
 }
 .list-chevron {
   color: var(--v3-text-muted);

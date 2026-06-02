@@ -1,0 +1,1509 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mobile UI Animation Plan — 시각 미리보기</title>
+<style>
+/* ===========================================
+   Motion Design Tokens (플랜 Foundation)
+   =========================================== */
+:root {
+  /* Durations — by intent */
+  --duration-instant: 100ms;
+  --duration-affordance: 150ms;
+  --duration-feedback: 200ms;
+  --duration-pop: 300ms;
+  --duration-spatial: 320ms;
+  --duration-emphasis: 420ms;
+
+  /* Easings — by motion character */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spatial: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-entrance: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-overshoot: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring-soft: cubic-bezier(0.32, 1.4, 0.5, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Palette (mockup tones) */
+  --bg: hsl(218, 23%, 95%);
+  --card: #fff;
+  --text: hsl(214, 25%, 18%);
+  --text-muted: hsl(214, 12%, 45%);
+  --border: hsl(214, 18%, 88%);
+  --primary: hsl(214, 100%, 34%);
+  --primary-light: hsl(214, 80%, 95%);
+  --primary-50: hsla(214, 100%, 34%, 0.06);
+  --green: hsl(137, 34%, 31%);
+  --green-light: hsl(137, 60%, 94%);
+  --burgundy: hsl(355, 36%, 45%);
+  --burgundy-light: hsl(355, 40%, 94%);
+  --warn: hsl(38, 92%, 35%);
+  --warn-light: hsl(47, 100%, 92%);
+  --muted-light: hsl(220, 20%, 97%);
+  --muted-border: hsl(220, 20%, 90%);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; padding: 0;
+  font-family: "Pretendard", "Apple SD Gothic Neo", -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.page-wrap {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 32px 20px 80px;
+}
+
+header.hero {
+  margin-bottom: 36px;
+}
+header.hero h1 {
+  font-size: 1.7rem;
+  font-weight: 800;
+  margin: 0 0 8px;
+  letter-spacing: -0.02em;
+}
+header.hero p {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  margin: 0;
+  max-width: 640px;
+}
+
+/* ===========================================
+   Context · Architecture · Risks · Files · Verification · Timeline
+   =========================================== */
+.callout {
+  background: var(--card);
+  border-radius: 22px;
+  padding: 22px 22px;
+  margin-bottom: 22px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 8px 24px -8px rgba(15,23,42,0.06);
+}
+.callout h2 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.callout .lead {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+.callout .lead strong { color: var(--text); font-weight: 700; }
+
+/* Architecture map */
+.arch-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.arch-card {
+  border-radius: 14px;
+  padding: 16px;
+  border: 1.5px solid var(--border);
+  background: hsl(218, 25%, 99%);
+}
+.arch-card.active {
+  border-color: var(--primary);
+  background: var(--primary-50);
+}
+.arch-card h3 {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  display: flex; align-items: center; gap: 8px;
+}
+.arch-card h3 .tag {
+  font-size: 0.6rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  letter-spacing: 0.05em;
+}
+.arch-card.inactive h3 .tag { background: var(--text-muted); }
+.arch-card .arch-detail {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 8px 0 0;
+  line-height: 1.55;
+}
+.arch-card code {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 0.7rem;
+  background: rgba(15,23,42,0.05);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text);
+}
+.arch-card .arch-uses {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 8px;
+}
+.arch-card .arch-uses .pill {
+  font-size: 0.66rem;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text-muted);
+}
+
+/* Risks table */
+.risk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.risk-table thead th {
+  text-align: left;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.risk-table tbody td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  line-height: 1.5;
+}
+.risk-table tbody tr:last-child td { border-bottom: 0; }
+.risk-table tbody td:first-child {
+  font-weight: 700;
+  color: var(--text);
+  width: 38%;
+}
+.risk-table tbody td:last-child { color: var(--text-muted); }
+
+/* Files map */
+.files-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.file-bucket {
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+}
+.file-bucket.modify { background: hsl(214, 50%, 98%); border-color: hsl(214, 70%, 88%); }
+.file-bucket.delete { background: hsl(355, 50%, 98%); border-color: hsl(355, 40%, 90%); }
+.file-bucket.reuse { background: hsl(137, 40%, 98%); border-color: hsl(137, 34%, 86%); }
+.file-bucket h3 {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  display: flex; align-items: center; gap: 6px;
+}
+.file-bucket.modify h3::before { content: "✎"; color: var(--primary); }
+.file-bucket.delete h3::before { content: "✕"; color: var(--burgundy); }
+.file-bucket.reuse h3::before { content: "↻"; color: var(--green); }
+.file-bucket ul {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.file-bucket li {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 0.68rem;
+  color: var(--text);
+  line-height: 1.45;
+}
+.file-bucket li small {
+  display: block;
+  font-family: "Pretendard", sans-serif;
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+/* Verification list */
+.verify-list {
+  list-style: none; padding: 0; margin: 0;
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.verify-list li {
+  font-size: 0.78rem;
+  background: hsl(218, 30%, 98%);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  line-height: 1.5;
+}
+.verify-list li strong {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--primary);
+  margin-bottom: 4px;
+}
+.verify-list code {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 0.7rem;
+  background: rgba(15,23,42,0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* Timeline */
+.timeline {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+.timeline .stage {
+  flex: 1;
+  border-radius: 14px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--border);
+  background: #fff;
+  position: relative;
+}
+.timeline .stage::after {
+  content: "→";
+  position: absolute;
+  right: -14px; top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  font-weight: 800;
+}
+.timeline .stage:last-child::after { display: none; }
+.timeline .stage h3 {
+  margin: 0 0 4px;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+.timeline .stage .dur {
+  font-size: 0.66rem;
+  color: var(--primary);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+.timeline .stage p {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.timeline .stage.p1 { border-color: hsl(214, 70%, 75%); }
+.timeline .stage.p2 { border-color: hsl(137, 40%, 70%); }
+.timeline .stage.p3 { border-color: hsl(220, 15%, 75%); }
+
+section.phase {
+  background: var(--card);
+  border-radius: 22px;
+  padding: 24px 22px;
+  margin-bottom: 22px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 8px 24px -8px rgba(15,23,42,0.06);
+}
+section.phase .phase-head {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 6px;
+}
+section.phase .phase-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.62rem; font-weight: 800;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--primary-light); color: var(--primary);
+}
+section.phase h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+section.phase .phase-blurb {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: 0 0 18px;
+}
+
+.demo {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px 16px 14px;
+  margin: 14px 0;
+  background: hsl(218, 25%, 99%);
+}
+.demo .demo-title {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.demo .demo-title strong {
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+.demo .demo-title small {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+}
+.demo .demo-desc {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+.compare-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: stretch;
+}
+.compare-col {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex; flex-direction: column;
+  min-height: 140px;
+}
+.compare-col .col-label {
+  font-size: 0.6rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.compare-col.before .col-label::before {
+  content: "✕  "; color: var(--burgundy);
+}
+.compare-col.after .col-label::before {
+  content: "✓  "; color: var(--green);
+}
+
+.actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  margin-top: 12px;
+}
+.btn {
+  border: 0; cursor: pointer;
+  padding: 8px 14px;
+  font-size: 0.78rem; font-weight: 700;
+  border-radius: 10px;
+  background: var(--primary);
+  color: #fff;
+  transition: background-color var(--duration-affordance) var(--ease-standard),
+              transform var(--duration-affordance) var(--ease-standard);
+}
+.btn:active { transform: scale(0.97); background: hsl(214, 100%, 28%); }
+.btn.ghost {
+  background: var(--muted-light);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn.ghost:active { background: hsl(220, 20%, 92%); }
+
+/* ===========================================
+   Demo 1.2 — Bottom nav indicator slide
+   =========================================== */
+.bottom-nav {
+  position: relative;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  gap: 4px; padding: 8px;
+  background: rgba(255,255,255,0.95);
+  backdrop-filter: blur(8px);
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  min-height: 56px;
+}
+.bottom-nav .indicator {
+  position: absolute;
+  top: 8px; bottom: 8px;
+  width: calc((100% - 16px - 16px) / 5);
+  left: 8px;
+  background: var(--primary);
+  border-radius: 14px;
+  z-index: 0;
+}
+.bottom-nav.animated .indicator {
+  transition: transform var(--duration-spatial) var(--ease-spatial);
+}
+.bottom-nav .item {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px;
+  font-size: 0.65rem; font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px 0;
+  border-radius: 12px;
+}
+.bottom-nav .item.active { color: #fff; }
+.bottom-nav .item-dot {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+/* ===========================================
+   Demo 1.3 — .nav-page list↔detail (existing, tune in plan)
+   =========================================== */
+.nav-stack-demo {
+  position: relative;
+  height: 220px;
+  background: var(--muted-light);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.nav-stack-demo .nav-page {
+  position: absolute; inset: 0;
+  padding: 14px;
+  background: #fff;
+  border-radius: 14px;
+  transition: transform var(--duration-spatial) var(--ease-spatial);
+}
+.nav-stack-demo .nav-page.list {
+  transform: translateX(0);
+}
+.nav-stack-demo .nav-page.detail {
+  transform: translateX(100%);
+  background: hsl(218, 22%, 98%);
+}
+.nav-stack-demo.show-detail .nav-page.list {
+  transform: translateX(-14%);
+  filter: brightness(0.92);
+}
+.nav-stack-demo.show-detail .nav-page.detail {
+  transform: translateX(0);
+}
+.nav-stack-demo .scrim {
+  position: absolute; inset: 0;
+  background: rgba(15,23,42,0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-emphasis) var(--ease-standard);
+}
+.nav-stack-demo.show-detail .scrim {
+  opacity: 1;
+  pointer-events: auto;
+}
+.nav-stack-demo .stack-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.nav-stack-demo .stack-row:hover { background: var(--primary-50); }
+.nav-stack-demo .avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--primary-light);
+  color: var(--primary);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 0.8rem;
+}
+.nav-stack-demo .detail-title {
+  font-size: 1rem; font-weight: 800;
+  margin: 4px 0 8px;
+}
+.nav-stack-demo .detail-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.nav-stack-demo .close-btn {
+  position: absolute; top: 10px; right: 10px;
+  width: 28px; height: 28px;
+  border: 0; border-radius: 8px;
+  background: rgba(15,23,42,0.06);
+  cursor: pointer; font-weight: 800;
+  z-index: 2;
+}
+
+/* ===========================================
+   Demo 1.4 — Skeleton → content crossfade
+   =========================================== */
+.skel-stage {
+  position: relative;
+  min-height: 200px;
+}
+.skel-layer, .content-layer {
+  transition: opacity var(--duration-feedback) var(--ease-standard);
+}
+.skel-stage.loading .content-layer { opacity: 0; pointer-events: none; }
+.skel-stage:not(.loading) .skel-layer { opacity: 0; pointer-events: none; position: absolute; inset: 0; }
+.skel-stage.instant .skel-layer,
+.skel-stage.instant .content-layer { transition: none; }
+.skel-bar {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, hsl(220,15%,92%), hsl(220,15%,96%), hsl(220,15%,92%));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  margin-bottom: 10px;
+}
+@keyframes shimmer {
+  0% { background-position: 0 0; }
+  100% { background-position: -200% 0; }
+}
+.list-row-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+
+/* ===========================================
+   Demo 2.1 — List stagger (mobile-list-pop-up + clamped index)
+   =========================================== */
+@keyframes mobile-list-pop-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.list-stage .list-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+.list-stage.animated .list-item {
+  animation: mobile-list-pop-up var(--duration-emphasis) var(--ease-entrance) both;
+}
+.list-stage .list-item .badge {
+  margin-left: auto;
+  font-size: 0.6rem; font-weight: 800;
+  padding: 4px 10px; border-radius: 999px;
+}
+.badge-green { background: var(--green-light); color: var(--green); border: 1px solid hsl(137,34%,84%); }
+.badge-warn { background: var(--warn-light); color: var(--warn); border: 1px solid hsla(38,92%,35%,0.18); }
+.badge-primary { background: var(--primary-light); color: var(--primary); border: 1px solid hsl(214,70%,85%); }
+.badge-muted { background: var(--muted-light); color: var(--text-muted); border: 1px solid var(--muted-border); }
+.badge-burgundy { background: var(--burgundy-light); color: var(--burgundy); border: 1px solid hsla(355,36%,45%,0.20); }
+
+/* ===========================================
+   Demo 2.2 — Badge crossfade
+   =========================================== */
+.badge-stage .badge {
+  display: inline-flex; align-items: center;
+  font-size: 0.7rem; font-weight: 800;
+  padding: 6px 14px; border-radius: 999px;
+  border: 1px solid transparent;
+}
+.badge-stage.animated .badge {
+  transition:
+    background-color var(--duration-pop) var(--ease-standard),
+    color var(--duration-pop) var(--ease-standard),
+    border-color var(--duration-pop) var(--ease-standard);
+}
+
+/* ===========================================
+   Demo 2.3 — DetailTabPills sliding underline + tab content fade
+   =========================================== */
+.tabs-stage .tab-pills {
+  position: relative;                          /* anchor for sliding underline */
+  display: flex; gap: 6px;
+  border-bottom: 1px solid var(--border);      /* the rail */
+  margin-bottom: 12px;
+  padding: 0 4px 8px;                          /* gives the underline a rail to sit on */
+}
+.tabs-stage .tab-pill {
+  border: 0; background: transparent;
+  font-size: 0.78rem; font-weight: 700;
+  padding: 8px 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  position: relative;
+  flex: 0 0 auto;                              /* variable width by content */
+}
+.tabs-stage .tab-pill.active { color: var(--primary); }
+/* Single sliding indicator at the .tab-pills container level (NOT per-pill scaleX) */
+.tabs-stage .tab-pills-indicator {
+  position: absolute;
+  bottom: -1px;
+  height: 2px;
+  background: var(--primary);
+  border-radius: 2px;
+  pointer-events: none;
+  /* left + width set inline by JS to mimic framer's layoutId */
+  transition: left 250ms cubic-bezier(0.32, 0.72, 0, 1),
+              width 250ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.tabs-stage.no-slide .tab-pills-indicator { transition: none; }
+.tabs-stage .tab-body {
+  font-size: 0.82rem; color: var(--text);
+  background: var(--muted-light);
+  padding: 14px;
+  border-radius: 12px;
+  line-height: 1.55;
+  min-height: 76px;
+}
+.tabs-stage.animated .tab-body {
+  animation: tab-fade var(--duration-affordance) var(--ease-standard) both;
+}
+.tabs-stage.no-slide .tab-body { animation: none; }
+@keyframes tab-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ===========================================
+   Demo 2.4 — Form validation message reveal
+   =========================================== */
+.form-stage label {
+  display: block;
+  font-size: 0.72rem; font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.form-stage input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 0.86rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color var(--duration-affordance) var(--ease-standard),
+              background-color var(--duration-affordance) var(--ease-standard);
+}
+.form-stage input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.form-stage.has-error input {
+  border-color: var(--burgundy);
+  background: hsl(355, 65%, 98%);
+}
+.form-stage .err-wrap {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height var(--duration-affordance) var(--ease-standard),
+              opacity var(--duration-affordance) var(--ease-standard);
+}
+.form-stage.has-error .err-wrap {
+  max-height: 32px;
+  opacity: 1;
+}
+.form-stage.has-error .err-wrap .err-text {
+  color: var(--burgundy);
+  font-size: 0.72rem;
+  padding: 4px 2px 0;
+  display: block;
+}
+
+/* ===========================================
+   Token visualization
+   =========================================== */
+.token-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.token-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.token-card .token-name {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--primary);
+  font-weight: 700;
+}
+.token-card .token-detail {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.token-card .token-bar {
+  margin-top: 10px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--muted-light);
+  position: relative;
+  overflow: hidden;
+}
+.token-card .token-bar::after {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; height: 100%; width: 24px;
+  background: var(--primary);
+  border-radius: 3px;
+  animation: token-loop 2s infinite both;
+}
+.token-card[data-ease="standard"] .token-bar::after { animation-timing-function: var(--ease-standard); }
+.token-card[data-ease="spatial"] .token-bar::after { animation-timing-function: var(--ease-spatial); }
+.token-card[data-ease="entrance"] .token-bar::after { animation-timing-function: var(--ease-entrance); }
+.token-card[data-ease="overshoot"] .token-bar::after { animation-timing-function: var(--ease-overshoot); }
+.token-card[data-ease="spring-soft"] .token-bar::after { animation-timing-function: var(--ease-spring-soft); }
+.token-card[data-ease="exit"] .token-bar::after { animation-timing-function: var(--ease-exit); }
+@keyframes token-loop {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(calc(100% - 24px)); }
+  100% { transform: translateX(0); }
+}
+
+/* ===========================================
+   Anti-overdoing veto list
+   =========================================== */
+.veto-list {
+  list-style: none; padding: 0; margin: 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.veto-list li {
+  font-size: 0.78rem;
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: hsl(355, 50%, 97%);
+  border: 1px solid hsl(355, 40%, 90%);
+  line-height: 1.45;
+}
+.veto-list li::before {
+  content: "✕ ";
+  color: var(--burgundy);
+  font-weight: 900;
+  margin-right: 4px;
+}
+
+/* ===========================================
+   Reduced motion respect
+   =========================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+  .skel-bar { animation: none !important; }
+  .token-bar::after { animation: none !important; }
+}
+
+@media (max-width: 560px) {
+  .compare-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+<header class="hero">
+  <h1>Mobile UI Animation Plan — 시각 미리보기</h1>
+  <p>예전 UI에서 잃었던 자연스러운 motion을 복원하되, <strong>과하지 않게</strong> 적용하는 플랜. 모든 예시는 플랜의 모션 토큰(duration·easing)을 그대로 사용해서 구현 후 느낌과 동일합니다. 하단의 버튼으로 직접 재생/비교해보세요.</p>
+</header>
+
+<!-- ============================================== -->
+<!-- Context — 왜 이 작업이 필요한가                -->
+<!-- ============================================== -->
+<div class="callout">
+  <h2>📌 Context — 왜 이 작업이 필요한가</h2>
+  <p class="lead">
+    예전 mockup (<code>mockups/mobile-dashboard-redesign-20260509/</code>)에는 의도된 motion 언어가 있었습니다 — iOS-style 페이지 전환, 절제된 카드 entrance, 명확한 timing system. 현재 redesign은 mockup을 시각적으로 가져왔지만 <strong>일부 animation이 사라졌습니다</strong>: 바텀 nav의 active indicator는 instant, contracts/messages/files 리스트는 한꺼번에 등장, <code>.badge</code> 색 전환은 instant, detail sheet 안 tab content swap도 snap. <code>prefers-reduced-motion</code> 커버리지도 부분적.
+  </p>
+  <p class="lead" style="margin-bottom:0;">
+    <strong>좋은 소식</strong>: 인프라는 이미 갖춰져 있습니다 — <code>framer-motion@12.23.24</code> 설치됨, <code>globals.css</code>에 25+ keyframe, <code>redesign.css</code>에 spatial nav transition. 부족한 건 capability가 아니라 <strong>application + 절제</strong>. 이 플랜은 새 라이브러리·새 추상화 없이 기존 utility를 빠진 자리에 적용합니다.
+  </p>
+</div>
+
+<!-- ============================================== -->
+<!-- Architecture Map                                -->
+<!-- ============================================== -->
+<div class="callout">
+  <h2>🗺️ Architecture — 두 레이어, 각 레이어의 owner를 정확히 타게팅</h2>
+  <p class="lead">이 코드베이스에는 두 motion 아키텍처가 공존합니다. Plan은 각 레이어에서 올바른 file을 수정합니다.</p>
+  <div class="arch-grid">
+    <div class="arch-card active">
+      <h3><span class="tag">PRIMARY</span> mobile-redesign/</h3>
+      <div class="arch-detail">
+        모바일 surface 대부분이 여기서 렌더링. <code>MobileDetailSheet</code> + <code>.nav-stack</code> + <code>.nav-page.list/.detail</code> + <code>.scrim</code>이 list↔detail 모션을 이미 담당. body class 토글 (<code>mobile-*-route</code>)로 shell 모양이 바뀌고 <code>redesign.css:4140+</code>가 그 reshape를 처리.
+      </div>
+      <div class="arch-uses">
+        <span class="pill">ListItemRow</span>
+        <span class="pill">Badge</span>
+        <span class="pill">ContractList</span>
+        <span class="pill">DetailTabPills</span>
+        <span class="pill">.tab-content</span>
+        <span class="pill">.list-item</span>
+      </div>
+    </div>
+    <div class="arch-card inactive">
+      <h3><span class="tag">SECONDARY</span> v3/</h3>
+      <div class="arch-detail">
+        구버전 + 관리자 surface (<code>admin/feedback</code>, <code>TriggerRulesManager</code>), 일부 dashboard slot, 구버전 client detail flow. 모바일 list/detail surface는 여기를 거치지 않음. v3 수정은 mobile-redesign에 영향 없음.
+      </div>
+      <div class="arch-uses">
+        <span class="pill">ListPanel</span>
+        <span class="pill">DetailTabs</span>
+        <span class="pill">InputField</span>
+        <span class="pill">AnimatedSlotList</span>
+        <span class="pill">status-badge.tsx</span>
+      </div>
+    </div>
+  </div>
+  <p class="lead" style="margin: 14px 0 0; padding: 12px 14px; background: hsl(40, 70%, 97%); border-radius: 10px; border: 1px solid hsl(40, 80%, 88%);">
+    ⚠️ 이전 plan에서는 v3/status-badge·DetailTabs·InputField를 modify 대상으로 잘못 잡았습니다 (Codex review로 catch). 수정된 plan은 mobile-redesign의 <code>Badge</code>·<code>DetailTabPills</code>·<code>.list-item</code>·<code>.tab-content</code>를 직접 타게팅.
+  </p>
+</div>
+
+<!-- ============================================== -->
+<!-- Foundation: Motion Tokens                       -->
+<!-- ============================================== -->
+<section class="phase">
+  <div class="phase-head">
+    <span class="phase-chip" style="background: hsl(218,25%,93%); color: var(--text);">Foundation</span>
+    <h2>Motion Design Tokens</h2>
+  </div>
+  <p class="phase-blurb">기존 25+ keyframe들은 그대로 두고, <em>의도 기반(semantic)</em> 토큰만 새로 정의합니다. duration은 "얼마나 빠르냐"가 아니라 "어떤 intent의 모션이냐"로 명명. 이렇게 하면 junior dev나 AI agent도 mechanical 하게 올바른 토큰을 선택합니다.</p>
+
+  <div class="token-grid">
+    <div class="token-card" data-ease="spatial">
+      <div class="token-name">--ease-spatial</div>
+      <div class="token-detail">320ms · 페이지·시트 슬라이드 (iOS feel)</div>
+      <div class="token-bar"></div>
+    </div>
+    <div class="token-card" data-ease="entrance">
+      <div class="token-name">--ease-entrance</div>
+      <div class="token-detail">420ms · 카드 pop-up 엔트런스</div>
+      <div class="token-bar"></div>
+    </div>
+    <div class="token-card" data-ease="standard">
+      <div class="token-name">--ease-standard</div>
+      <div class="token-detail">150–300ms · 호버·뱃지·기본</div>
+      <div class="token-bar"></div>
+    </div>
+    <div class="token-card" data-ease="overshoot">
+      <div class="token-name">--ease-overshoot</div>
+      <div class="token-detail">420ms · 프로그레스 바 (1.56 overshoot)</div>
+      <div class="token-bar"></div>
+    </div>
+    <div class="token-card" data-ease="spring-soft">
+      <div class="token-name">--ease-spring-soft</div>
+      <div class="token-detail">220ms · 노티 팝오버 spring</div>
+      <div class="token-bar"></div>
+    </div>
+    <div class="token-card" data-ease="exit">
+      <div class="token-name">--ease-exit</div>
+      <div class="token-detail">200ms · 닫힘·dismiss</div>
+      <div class="token-bar"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================== -->
+<!-- Phase 1                                         -->
+<!-- ============================================== -->
+<section class="phase">
+  <div class="phase-head">
+    <span class="phase-chip">Phase 1</span>
+    <h2>Foundation + 가장 효과 큰 fix</h2>
+  </div>
+  <p class="phase-blurb">고빈도 인터랙션 + reduced-motion 안전망. 1일 작업, 독립적으로 ship 가능.</p>
+
+  <!-- 1.2 Bottom nav indicator -->
+  <div class="demo">
+    <div class="demo-title">
+      <strong>1.2 — Bottom nav 활성 indicator 슬라이드</strong>
+      <small>transition: transform var(--duration-spatial) var(--ease-spatial)</small>
+    </div>
+    <p class="demo-desc">현재 inline <code>transform: translateX(...)</code>만 있고 transition이 없음 → 탭 변경 시 indicator pill이 순간이동. 한 줄 추가로 iOS 같은 자연스러운 슬라이드.</p>
+    <div class="compare-row">
+      <div class="compare-col before">
+        <div class="col-label">현재 (instant)</div>
+        <div class="bottom-nav" id="navBefore">
+          <span class="indicator" style="transform: translateX(0%);"></span>
+          <div class="item active" data-i="0"><span class="item-dot"></span>홈</div>
+          <div class="item" data-i="1"><span class="item-dot"></span>고객</div>
+          <div class="item" data-i="2"><span class="item-dot"></span>채팅</div>
+          <div class="item" data-i="3"><span class="item-dot"></span>계약</div>
+          <div class="item" data-i="4"><span class="item-dot"></span>전체</div>
+        </div>
+      </div>
+      <div class="compare-col after">
+        <div class="col-label">적용 후 (slide)</div>
+        <div class="bottom-nav animated" id="navAfter">
+          <span class="indicator" style="transform: translateX(0%);"></span>
+          <div class="item active" data-i="0"><span class="item-dot"></span>홈</div>
+          <div class="item" data-i="1"><span class="item-dot"></span>고객</div>
+          <div class="item" data-i="2"><span class="item-dot"></span>채팅</div>
+          <div class="item" data-i="3"><span class="item-dot"></span>계약</div>
+          <div class="item" data-i="4"><span class="item-dot"></span>전체</div>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="navCycle()">자동 순환 재생</button>
+      <button class="btn ghost" onclick="navReset()">처음으로</button>
+    </div>
+  </div>
+
+  <!-- 1.3 nav-page list↔detail -->
+  <div class="demo">
+    <div class="demo-title">
+      <strong>1.3 — list ↔ detail 슬라이드 (기존 유지, 토큰 적용)</strong>
+      <small>이미 redesign.css:1021+ 에서 동작 중 — 토큰 마이그레이션만</small>
+    </div>
+    <p class="demo-desc">현재 <code>.nav-stack.show-detail .nav-page.detail</code> 트랜지션이 정상 작동 중. 새 토큰(<code>var(--ease-spatial)</code>, <code>var(--duration-spatial)</code>)으로 리터럴 값만 교체. 행을 탭하면 detail이 슬라이드인, scrim이 페이드인.</p>
+    <div class="nav-stack-demo" id="navStack">
+      <div class="scrim"></div>
+      <div class="nav-page list">
+        <div class="stack-row" onclick="openDetail()">
+          <span class="avatar">김</span>
+          <span>김민준 · 강남 1지점</span>
+        </div>
+        <div class="stack-row" onclick="openDetail()">
+          <span class="avatar">박</span>
+          <span>박서연 · 강남 1지점</span>
+        </div>
+        <div class="stack-row" onclick="openDetail()">
+          <span class="avatar">이</span>
+          <span>이지우 · 송파 2지점</span>
+        </div>
+        <div class="stack-row" onclick="openDetail()">
+          <span class="avatar">최</span>
+          <span>최민서 · 잠실 1지점</span>
+        </div>
+      </div>
+      <div class="nav-page detail">
+        <button class="close-btn" onclick="closeDetail()">✕</button>
+        <div class="detail-title">김민준</div>
+        <div class="detail-meta">강남 1지점 · 진행 중<br/>관리사: 서지영 (제공인력 1)<br/>2026-04-01 ~ 2026-12-31</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1.4 DROPPED — no skeletons on target surfaces -->
+  <div class="demo" style="background: hsl(40, 70%, 97%); border-color: hsl(40, 80%, 80%);">
+    <div class="demo-title">
+      <strong>1.4 — (드롭됨) Skeleton → content 크로스페이드 N/A</strong>
+      <small>contracts/messages/files에 skeleton 자체가 없음</small>
+    </div>
+    <p class="demo-desc" style="margin: 0;">
+      재검증 결과: <code>contracts/page.tsx</code>·<code>messages/page.tsx</code>·<code>FilesRedesign.tsx</code> 모두 <strong>skeleton이 존재하지 않음</strong>. empty-state ↔ populated 분기만 있음(예: <code>visibleSections.length === 0 ? &lt;empty&gt; : &lt;ListItemRow&gt;</code>). 그래서 "snap"이 일어나지 않음 — 빈 상태가 사라지고 row들이 mount될 때 <strong>Phase 2.1의 stagger 애니메이션</strong>이 그 entrance를 담당. 별도 크로스페이드 불필요. 향후 skeleton 도입 시 같은 opacity-only 패턴 적용 가능.
+    </p>
+  </div>
+
+  <!-- 1.5 / 1.6 notes -->
+  <div class="demo" style="background: hsl(218, 28%, 97%);">
+    <div class="demo-title">
+      <strong>1.5 — animated-container.tsx 삭제 (Dead-code)</strong>
+      <small>caller 0개 확인</small>
+    </div>
+    <p class="demo-desc" style="margin:0;">레포 전체 grep 결과 caller 0건. <code>app/layout.tsx</code>도 children을 직접 <code>V3MainContent</code>로 렌더링. migration이 아닌 단순 dead-code 삭제.</p>
+  </div>
+
+  <div class="demo" style="background: hsl(40, 70%, 97%); border-color: hsl(40, 80%, 80%);">
+    <div class="demo-title">
+      <strong>1.6 — 루트 template.tsx는 이번 롤아웃에서 제외</strong>
+      <small>body-class shell-reshape 충돌</small>
+    </div>
+    <p class="demo-desc" style="margin:0;">dashboard/clients/contracts/prices/all 모두 mount 시 <code>document.body.classList.add(...)</code>로 라우트 body class를 토글하고, <code>redesign.css:4140+</code>에서 shell을 reshape함. 루트 template.tsx로 페이드인을 걸면 shell reshape와 충돌해 flicker. 이미 <code>.nav-stack</code> 트랜지션이 spatial feel을 제공하므로 이번엔 skip.</p>
+  </div>
+</section>
+
+<!-- ============================================== -->
+<!-- Phase 2                                         -->
+<!-- ============================================== -->
+<section class="phase">
+  <div class="phase-head">
+    <span class="phase-chip" style="background: hsl(137,50%,93%); color: var(--green);">Phase 2</span>
+    <h2>리스트 리듬 + state-change 피드백</h2>
+  </div>
+  <p class="phase-blurb">고빈도 surface에 자연스러운 리듬과 의미를 추가. mobile-redesign 오너에 직접 적용.</p>
+
+  <!-- 2.1 List item stagger -->
+  <div class="demo">
+    <div class="demo-title">
+      <strong>2.1 — List 아이템 stagger 엔트런스 (clamped index)</strong>
+      <small>animation: mobile-list-pop-up 420ms var(--ease-entrance) both</small>
+    </div>
+    <p class="demo-desc">현재 contracts/messages/files 리스트가 한꺼번에 등장. mockup의 <code>.pop-up</code> 패턴 부활 + <strong>처음 5개만 stagger</strong> (그 이후는 동시에). 50개 리스트도 visual fatigue 없음. 적용 대상: <code>.list-item</code>(ListItemRow) <strong>+ <code>.contract-item</code>(ContractList — files surface)</strong>. ListItemRow와 ContractList primitive에 <code>style</code>/<code>rowStyle</code> 전달용 plumbing 필수.</p>
+    <div class="list-stage animated" id="listStage" style="background: #fff; border:1px solid var(--border); border-radius: 12px; padding: 8px 12px;">
+      <div class="list-item" style="animation-delay: 0ms"><span class="avatar" style="background: var(--green-light); color: var(--green); width:30px; height:30px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:.78rem;">김</span>김민준 · 강남 1지점<span class="badge badge-green">완료</span></div>
+      <div class="list-item" style="animation-delay: 40ms"><span class="avatar" style="background: var(--primary-light); color: var(--primary); width:30px; height:30px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:.78rem;">박</span>박서연 · 강남 1지점<span class="badge badge-primary">진행 중</span></div>
+      <div class="list-item" style="animation-delay: 80ms"><span class="avatar" style="background: var(--warn-light); color: var(--warn); width:30px; height:30px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:.78rem;">이</span>이지우 · 송파 2지점<span class="badge badge-warn">대기</span></div>
+      <div class="list-item" style="animation-delay: 120ms"><span class="avatar" style="background: var(--burgundy-light); color: var(--burgundy); width:30px; height:30px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:.78rem;">최</span>최민서 · 잠실 1지점<span class="badge badge-burgundy">교체 요청</span></div>
+      <div class="list-item" style="animation-delay: 160ms"><span class="avatar" style="background: var(--muted-light); color: var(--text-muted); width:30px; height:30px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:.78rem;">정</span>정유나 · 강동 1지점<span class="badge badge-muted">취소</span></div>
+      <div class="list-item" style="animation-delay: 160ms"><span class="avatar" style="background: var(--primary-light); color: var(--primary); width:30px; height:30px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:.78rem;">홍</span>홍길동 · 6번째 (delay clamped)<span class="badge badge-primary">진행 중</span></div>
+      <div class="list-item" style="animation-delay: 160ms"><span class="avatar" style="background: var(--green-light); color: var(--green); width:30px; height:30px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:.78rem;">전</span>전영수 · 7번째 (delay clamped)<span class="badge badge-green">완료</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="listReplay()">재생</button>
+      <button class="btn ghost" onclick="listToggleAnimated()">animation ON/OFF</button>
+    </div>
+  </div>
+
+  <!-- 2.2 Badge crossfade -->
+  <div class="demo">
+    <div class="demo-title">
+      <strong>2.2 — Badge 상태 변경 크로스페이드</strong>
+      <small>transition: background-color, color, border-color 300ms standard</small>
+    </div>
+    <p class="demo-desc">badge가 mount된 채로 status가 바뀔 때 (예: 대기 → 진행 중). 300ms는 의도적으로 살짝 느림 — "의미 있는 이벤트"임을 알리기 위해.</p>
+    <div class="compare-row">
+      <div class="compare-col before">
+        <div class="col-label">현재 (instant)</div>
+        <div class="badge-stage">
+          <span class="badge badge-warn" id="badgeBefore">대기 중</span>
+        </div>
+      </div>
+      <div class="compare-col after">
+        <div class="col-label">적용 후 (300ms crossfade)</div>
+        <div class="badge-stage animated">
+          <span class="badge badge-warn" id="badgeAfter">대기 중</span>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="badgeCycle()">상태 순환 (대기→진행→완료→교체)</button>
+    </div>
+  </div>
+
+  <!-- 2.3 DetailTabPills sliding underline + content fade -->
+  <div class="demo">
+    <div class="demo-title">
+      <strong>2.3 — DetailTabPills 슬라이딩 underline + content fade (단일 primitive 수정)</strong>
+      <small>framer-motion layoutId · underline 250ms iOS-spatial · content 150ms fade</small>
+    </div>
+    <p class="demo-desc">
+      상세 시트 안 탭(<code>DetailTabPills</code> in <code>mobile-redesign/detail-sheet.tsx:114</code>) 은 <strong>6개 surface</strong>(messages·contracts·consultations·files·employees·client-detail) 에서 쓰임. 현재 active 표시는 <strong>텍스트 색상 변화만</strong>, content는 <code>display:none↔flex</code> 즉시 전환. <code>DetailTabPills</code> primitive 한 곳만 수정하면 6개 surface가 자동으로 업그레이드. <br/>
+      <strong>리듬</strong>: underline은 250ms로 슬라이드, content는 150ms로 페이드 → 사용자는 "indicator가 먼저 움직이고 panel이 뒤따라 등장"하는 느낌을 받음. tab 라벨을 클릭해서 직접 비교해보세요.
+    </p>
+    <div class="compare-row">
+      <div class="compare-col before">
+        <div class="col-label">현재 (텍스트 색상만, content 즉시 swap)</div>
+        <div class="tabs-stage no-slide" id="tabsStageBefore">
+          <div class="tab-pills">
+            <button class="tab-pill active" data-tab="0" onclick="tabSwitchBefore(0)">기본 정보</button>
+            <button class="tab-pill" data-tab="1" onclick="tabSwitchBefore(1)">계약서 정보</button>
+            <button class="tab-pill" data-tab="2" onclick="tabSwitchBefore(2)">알림 발송 현황</button>
+            <span class="tab-pills-indicator" id="indicatorBefore" style="opacity: 0;"></span>
+          </div>
+          <div class="tab-body" id="tabBodyBefore">
+            김민준 · 010-1234-5678 · 강남 1지점에서 진행 중인 고객. 담당 매니저는 서지영 님 (제공인력 1).
+          </div>
+        </div>
+      </div>
+      <div class="compare-col after">
+        <div class="col-label">적용 후 (underline 슬라이드 + content fade)</div>
+        <div class="tabs-stage animated" id="tabsStageAfter">
+          <div class="tab-pills">
+            <button class="tab-pill active" data-tab="0" onclick="tabSwitchAfter(0)">기본 정보</button>
+            <button class="tab-pill" data-tab="1" onclick="tabSwitchAfter(1)">계약서 정보</button>
+            <button class="tab-pill" data-tab="2" onclick="tabSwitchAfter(2)">알림 발송 현황</button>
+            <span class="tab-pills-indicator" id="indicatorAfter"></span>
+          </div>
+          <div class="tab-body" id="tabBodyAfter">
+            김민준 · 010-1234-5678 · 강남 1지점에서 진행 중인 고객. 담당 매니저는 서지영 님 (제공인력 1).
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="demo-desc" style="margin-top: 12px; padding: 10px 12px; background: hsl(218, 30%, 97%); border-radius: 10px; border: 1px solid var(--border);">
+      💡 <strong>왜 라이브러리로?</strong> 한글 라벨 너비 가변(2~7자) → CSS 등폭 가정 불가. JS-측정 + ResizeObserver는 FLIP 재발명(≈25줄). <code>framer-motion</code> 이미 설치되어 있고 v3/DetailTabs가 같은 패턴 사용 → 7번째 usage 추가 비용 0. tween(스프링 아님) + iOS 곡선으로 2px 슬리버에 어울리는 절제된 슬라이드.
+    </p>
+  </div>
+
+  <!-- 2.4 Form validation reveal -->
+  <div class="demo">
+    <div class="demo-title">
+      <strong>2.4 — Form validation 메시지 reveal</strong>
+      <small>transition: max-height + opacity 150ms standard</small>
+    </div>
+    <p class="demo-desc">현재 에러 메시지가 즉시 등장하며 layout이 점프. 150ms max-height + opacity 동시 전환으로 점프 제거. shake·pulse·jiggle 없음.</p>
+    <div class="form-stage" id="formStage" style="background: #fff; padding: 14px; border-radius: 12px; border: 1px solid var(--border);">
+      <label>휴대전화 번호</label>
+      <input type="text" placeholder="010-0000-0000" id="formInput" oninput="formValidate()">
+      <div class="err-wrap">
+        <span class="err-text">올바른 휴대전화 번호 형식이 아닙니다.</span>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="formToggleError()">에러 ON/OFF</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================== -->
+<!-- Phase 3                                         -->
+<!-- ============================================== -->
+<section class="phase">
+  <div class="phase-head">
+    <span class="phase-chip" style="background: hsl(220,15%,92%); color: var(--text);">Phase 3</span>
+    <h2>Cleanup + admin 폴리시</h2>
+  </div>
+  <p class="phase-blurb">visual change 거의 없음. 안 쓰는 decorative keyframe 제거, 관리자 surface의 ListPanel 크로스페이드, AnimatedSlotList stagger clamp.</p>
+
+  <div class="demo">
+    <div class="demo-title">
+      <strong>3.1 — 안 쓰는 decorative keyframe 제거</strong>
+      <small>globals.css cleanup</small>
+    </div>
+    <p class="demo-desc">mockup이 명시적으로 피한 것들: <code>bounce-subtle</code>, <code>pulse-subtle</code>, <code>glow</code>, <code>v3-float</code>, <code>ball-bounce</code>. grep으로 caller 0개 확인 후 삭제. <strong>유지</strong>: <code>animate-spin</code>, <code>animate-pulse</code>, sheet/dialog keyframes, <code>v3-pop-up/slide-up</code>.</p>
+  </div>
+
+  <div class="demo">
+    <div class="demo-title">
+      <strong>3.2 — v3/ListPanel skeleton crossfade (admin only)</strong>
+      <small>admin/feedback, TriggerRulesManager</small>
+    </div>
+    <p class="demo-desc">Phase 1.4와 동일한 opacity-only 패턴을 admin surface에도 적용. 일관성 유지.</p>
+  </div>
+
+  <div class="demo">
+    <div class="demo-title">
+      <strong>3.3 — v3/AnimatedSlotList stagger clamp</strong>
+      <small>line 163, Math.min(index, 4)</small>
+    </div>
+    <p class="demo-desc">Phase 2.1과 동일한 stagger 제한을 v3 쪽에도 적용. dashboard 활동 등 긴 리스트의 visual fatigue 감소.</p>
+  </div>
+</section>
+
+<!-- ============================================== -->
+<!-- Risks & Mitigations                             -->
+<!-- ============================================== -->
+<div class="callout">
+  <h2>⚠️ Risks & Mitigations</h2>
+  <p class="lead">각 변화에서 잘못 갈 수 있는 지점과 미리 막아두는 방법.</p>
+  <table class="risk-table">
+    <thead>
+      <tr><th>Risk</th><th>Mitigation</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Stagger가 async 리스트 로딩 시 layout shift 유발</td>
+        <td><code>animation: ... both</code>로 시작 state hold. placeholder 클래스에는 animation 미적용. <code>ListItemRow</code>가 실제 데이터를 받았을 때만 발화.</td>
+      </tr>
+      <tr>
+        <td>React re-render마다 animation 재생</td>
+        <td>CSS keyframe + <code>animation-fill-mode: both</code> (globals.css:617의 <code>v3-slide-up-children</code>이 이미 그렇게 동작). React re-render는 element가 unmount/mount되지 않는 한 CSS animation을 재시작하지 않음.</td>
+      </tr>
+      <tr>
+        <td>Low-end Android 성능</td>
+        <td>모든 새 animation은 <code>transform</code>·<code>opacity</code>만 사용 (GPU). <code>will-change</code>는 기존 위치만 유지, 새로 추가 X (남용 시 오히려 해로움).</td>
+      </tr>
+      <tr>
+        <td>Badge crossfade가 행 unmount 시 flicker</td>
+        <td>Crossfade는 badge 클래스 변경 시에만 발화. 행이 remount되면 행의 entrance animation이 담당 (중복 X).</td>
+      </tr>
+      <tr>
+        <td>DetailTabPills tab content가 두 개 잠시 겹침</td>
+        <td><code>AnimatePresence mode="wait"</code>로 old exit 완료 후 new mount 보장.</td>
+      </tr>
+      <tr>
+        <td>body class 변경이 route motion과 race</td>
+        <td>Phase 1.6에서 루트 <code>template.tsx</code> 명시적으로 제외. 기존 <code>.nav-stack</code> 모션으로 충분.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================================== -->
+<!-- Critical Files Map                              -->
+<!-- ============================================== -->
+<div class="callout">
+  <h2>📂 Critical Files — 어떤 파일이 어떻게 바뀌나</h2>
+  <p class="lead">수정·삭제·재사용(변경 없음)으로 분류. 모든 path는 <code>mobile-dashboard-redesign/mobile/</code> 기준.</p>
+  <div class="files-grid">
+    <div class="file-bucket modify">
+      <h3>Modify</h3>
+      <ul>
+        <li>src/app/globals.css<small>모션 토큰 추가, 글로벌 reduced-motion 블록 추가, 부분 블록(669-675) 삭제</small></li>
+        <li>src/components/app/root/mobile-bottom-nav.tsx<small>1.2 — indicator div style에 transition 한 줄</small></li>
+        <li>src/components/app/mobile-redesign/redesign.css<small>1.3 .nav-page/.scrim 토큰 마이그레이션 · 2.1 mobile-list-pop-up keyframe + .list-item·.contract-item 둘 다 · 2.2 .badge·.badge-mini transition · 2.3 .detail-tabs/.tab-content 블록 교체 + .detail-tabs-indicator + mobile-redesign-tab-fade keyframe</small></li>
+        <li>src/components/app/mobile-redesign/primitives.tsx<small>2.1 (REQUIRED) — ListItemRowProps에 style 추가 + button에 forward · ContractList에 rowStyle 추가</small></li>
+        <li>src/components/app/mobile-redesign/detail-sheet.tsx<small>2.3 — motion/useReducedMotion import + DetailTabPills 교체 (sliding underline)</small></li>
+        <li>src/app/contracts/page.tsx:1177<small>2.1 ListItemRow에 clamped stagger style</small></li>
+        <li>src/app/messages/page.tsx:334<small>2.1 동일 패턴</small></li>
+        <li>src/components/app/mobile-redesign/FilesRedesign.tsx:63<small>2.1 ContractList에 rowStyle 전달</small></li>
+        <li>src/components/app/v3/InputField.tsx<small>2.4 message span을 collapsing wrapper로 (hasErrorMessage 기준)</small></li>
+        <li>src/components/app/v3/ListPanel.tsx<small>3.2 admin surface opacity-only crossfade</small></li>
+        <li>src/components/app/v3/AnimatedSlotList.tsx:163<small>3.3 stagger delay clamp Math.min(index, 4)</small></li>
+      </ul>
+    </div>
+    <div class="file-bucket delete">
+      <h3>Delete</h3>
+      <ul>
+        <li>src/components/app/root/animated-container.tsx<small>1.5 — orphaned dead code (grep으로 caller 0개 확인)</small></li>
+        <li>globals.css의 사용 안 하는 decorative keyframes<small>3.1 — bounce-subtle, pulse-subtle, glow, v3-float, ball-bounce (caller 0개 확인 후)</small></li>
+      </ul>
+    </div>
+    <div class="file-bucket reuse">
+      <h3>Reuse (no change)</h3>
+      <ul>
+        <li>redesign.css의 .nav-stack / .nav-page<small>이미 dominant mobile 모션을 담당, 토큰 마이그레이션만 opportunistic</small></li>
+        <li>globals.css의 Radix data-state animation<small>sheet/dialog/popover 모두 이미 동작</small></li>
+        <li>framer-motion<small>motion·AnimatePresence·useReducedMotion 그대로 사용</small></li>
+        <li><strong>6개 DetailTabPills 소비자 (변경 없음, primitive 수정으로 자동 업그레이드)</strong><small>messages·contracts·consultations·files·employees·client-detail 페이지 — Phase 2.3에서 모두 sliding underline + content fade 자동 적용</small></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================== -->
+<!-- Verification Strategy                           -->
+<!-- ============================================== -->
+<div class="callout">
+  <h2>✅ Verification — 어떻게 검증하나</h2>
+  <p class="lead">각 phase 종료 시 ship gate를 통과해야 다음으로. 명령은 모두 <code>package.json</code>에 실제 존재.</p>
+  <ul class="verify-list">
+    <li>
+      <strong>Type check</strong>
+      package.json에 <code>type-check</code> script가 없음 → <code>npx tsc --noEmit</code> 실행 (next build의 묵시적 check도 OK).
+    </li>
+    <li>
+      <strong>Lint · Test</strong>
+      <code>npm run lint</code>, <code>npm run test</code>, 필요 시 <code>npm run test:screenshots</code>.
+    </li>
+    <li>
+      <strong>iOS Safari · Android Chrome 비디오</strong>
+      바텀 nav 탭 전환, 리스트→detail 슬라이드, 탭 content 크로스페이드, 뱃지 상태 변경, 폼 validation 등록 시 시각 비교.
+    </li>
+    <li>
+      <strong>Reduced-motion</strong>
+      Chrome DevTools → Rendering → "Emulate <code>prefers-reduced-motion: reduce</code>" → 모든 animation 사실상 사라지지만 layout 유지, spinner는 1s로 계속 돌아감, pulse는 opacity 0.6에 고정.
+    </li>
+    <li>
+      <strong>Performance throttling</strong>
+      Chrome DevTools Performance, 4× CPU throttle, 200+ 행 리스트 스크롤 → frame drop 없어야 함.
+    </li>
+    <li>
+      <strong>Playwright regression</strong>
+      <code>tests/dashboard-activities-animation.spec.ts</code>는 dashboard activities 패널의 v3-* 이벤트만 커버. Phase 1·3 후 regression check (새 surface의 positive coverage는 follow-up 작업).
+    </li>
+  </ul>
+</div>
+
+<!-- ============================================== -->
+<!-- Phasing Timeline                                -->
+<!-- ============================================== -->
+<div class="callout">
+  <h2>📅 Phasing — 독립적으로 ship 가능한 3단계</h2>
+  <p class="lead">각 phase는 자체 ship gate를 통과해야 다음으로. 한 단계만 ship해도 가치가 있음.</p>
+  <div class="timeline">
+    <div class="stage p1">
+      <div class="dur">Phase 1 · ~0.75 day</div>
+      <h3>Foundation + biggest wins</h3>
+      <p>모션 토큰, reduced-motion 안전망, 바텀 nav 인디케이터 슬라이드, .nav-page 토큰 마이그레이션, AnimatedContainer dead-code 삭제. <em>(1.4는 드롭 — skeleton 자체가 없어서 N/A)</em></p>
+    </div>
+    <div class="stage p2">
+      <div class="dur">Phase 2 · ~1.25 day</div>
+      <h3>List rhythm + sliding tab indicator + state feedback</h3>
+      <p>.list-item + .contract-item mobile-list-pop-up + clamped stagger (primitive plumbing 필수) · .badge/.badge-mini 크로스페이드 · <strong>DetailTabPills 슬라이딩 underline + content fade (단일 primitive 수정 → 6개 surface 자동 업그레이드)</strong> · v3/InputField 에러 reveal.</p>
+    </div>
+    <div class="stage p3">
+      <div class="dur">Phase 3 · ~0.5 day</div>
+      <h3>Cleanup + admin polish</h3>
+      <p>사용 안 하는 decorative keyframe 제거, v3/ListPanel skeleton 크로스페이드 (admin surface), v3/AnimatedSlotList stagger clamp.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================== -->
+<!-- Anti-overdoing                                  -->
+<!-- ============================================== -->
+<section class="phase">
+  <div class="phase-head">
+    <span class="phase-chip" style="background: hsl(355,40%,94%); color: var(--burgundy);">절대 NO</span>
+    <h2>이번에 안 하는 것들 (senior-dev veto)</h2>
+  </div>
+  <p class="phase-blurb">"animation 많네" 인상을 주지 않기 위한 명시적 skip list. 향후 PR 리뷰의 기준.</p>
+  <ul class="veto-list">
+    <li>이번 롤아웃의 루트 page transition (body-class 충돌)</li>
+    <li>FAB pulse · notification dot bounce · decorative loops</li>
+    <li>아이콘 morph 애니메이션</li>
+    <li>parallax · scroll-driven effect</li>
+    <li>bottom-nav indicator 외 layout spring</li>
+    <li>Hero/Stats grid stagger entrance (above-the-fold)</li>
+    <li>color theme switch transition</li>
+    <li>route loader · top progress bar</li>
+    <li>page-level filter chip 애니메이션 (FilterPills, 대시보드 activeFilter)</li>
+    <li>form submit success checkmark 애니메이션</li>
+    <li>keyboard show/hide 애니메이션</li>
+  </ul>
+</section>
+
+<footer style="text-align: center; color: var(--text-muted); font-size: 0.78rem; margin-top: 28px;">
+  플랜 원본: <code>~/.claude/plans/mobile-ui-ethereal-seahorse.md</code><br/>
+  토큰·이징은 mockup 원본(<code>mockups/mobile-dashboard-redesign-20260509/</code>)의 timing system을 source of truth로 사용.
+</footer>
+
+</div>
+
+<script>
+// ============================================
+// 1.2 Bottom nav indicator
+// ============================================
+let navIdx = 0;
+let navTimer = null;
+function navSet(idx) {
+  navIdx = idx;
+  const total = 5;
+  ['navBefore','navAfter'].forEach(id => {
+    const root = document.getElementById(id);
+    if (!root) return;
+    const indicator = root.querySelector('.indicator');
+    if (id === 'navBefore') {
+      // before: instant — jump to position by reassigning transform with no transition
+      indicator.style.transition = 'none';
+      indicator.style.transform = `translateX(calc(${idx} * (100% + 4px)))`;
+    } else {
+      indicator.style.transform = `translateX(calc(${idx} * (100% + 4px)))`;
+    }
+    root.querySelectorAll('.item').forEach((it, i) => {
+      it.classList.toggle('active', i === idx);
+    });
+  });
+}
+function navReset() { if (navTimer) { clearInterval(navTimer); navTimer = null; } navSet(0); }
+function navCycle() {
+  if (navTimer) { clearInterval(navTimer); navTimer = null; return; }
+  navTimer = setInterval(() => navSet((navIdx + 1) % 5), 900);
+}
+document.querySelectorAll('.bottom-nav .item').forEach(el => {
+  el.addEventListener('click', () => {
+    if (navTimer) { clearInterval(navTimer); navTimer = null; }
+    navSet(Number(el.dataset.i));
+  });
+});
+
+// ============================================
+// 1.3 nav-stack open/close
+// ============================================
+function openDetail() { document.getElementById('navStack').classList.add('show-detail'); }
+function closeDetail() { document.getElementById('navStack').classList.remove('show-detail'); }
+document.getElementById('navStack').querySelector('.scrim').addEventListener('click', closeDetail);
+
+// ============================================
+// 1.4 Skeleton crossfade
+// ============================================
+function skelToggle() {
+  ['skelBefore', 'skelAfter'].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.toggle('loading');
+  });
+}
+
+// ============================================
+// 2.1 List stagger replay
+// ============================================
+function listReplay() {
+  const stage = document.getElementById('listStage');
+  const items = stage.querySelectorAll('.list-item');
+  items.forEach(item => {
+    item.style.animation = 'none';
+    item.offsetHeight; // reflow
+    item.style.animation = '';
+  });
+}
+function listToggleAnimated() {
+  const stage = document.getElementById('listStage');
+  stage.classList.toggle('animated');
+  if (stage.classList.contains('animated')) listReplay();
+}
+
+// ============================================
+// 2.2 Badge cycle
+// ============================================
+const badgeStates = [
+  { label: '대기 중', cls: 'badge badge-warn' },
+  { label: '진행 중', cls: 'badge badge-primary' },
+  { label: '완료', cls: 'badge badge-green' },
+  { label: '교체 요청', cls: 'badge badge-burgundy' },
+];
+let badgeIdx = 0;
+function badgeCycle() {
+  badgeIdx = (badgeIdx + 1) % badgeStates.length;
+  const next = badgeStates[badgeIdx];
+  ['badgeBefore', 'badgeAfter'].forEach(id => {
+    const el = document.getElementById(id);
+    el.className = next.cls;
+    el.textContent = next.label;
+  });
+}
+
+// ============================================
+// 2.3 Tab switch — sliding indicator (mimics framer-motion layoutId)
+// ============================================
+const tabBodies = [
+  "김민준 · 010-1234-5678 · 강남 1지점에서 진행 중인 고객. 담당 매니저는 서지영 님 (제공인력 1).",
+  "계약서 #C-1234 (서명 완료, 2026-03-10) · 위임장 #D-2289 (요청됨) · 보험 동의서 #D-2240 (완료).",
+  "최근 알림: 2026-05-21 입금 안내 (열람) · 2026-05-15 일정 변경 (전송됨) · 2026-05-10 사진 첨부 (열람).",
+];
+
+// Position the indicator under the active pill (measured via getBoundingClientRect — what framer's layoutId does internally)
+function placeIndicator(stageId, indicatorId, activeIdx) {
+  const stage = document.getElementById(stageId);
+  const indicator = document.getElementById(indicatorId);
+  if (!stage || !indicator) return;
+  const pills = stage.querySelectorAll('.tab-pill');
+  const active = pills[activeIdx];
+  if (!active) return;
+  const stageRect = stage.querySelector('.tab-pills').getBoundingClientRect();
+  const aRect = active.getBoundingClientRect();
+  indicator.style.left = `${aRect.left - stageRect.left}px`;
+  indicator.style.width = `${aRect.width}px`;
+}
+
+function tabSwitchAfter(idx) {
+  const stage = document.getElementById('tabsStageAfter');
+  stage.querySelectorAll('.tab-pill').forEach((p, i) => p.classList.toggle('active', i === idx));
+  placeIndicator('tabsStageAfter', 'indicatorAfter', idx);
+  const body = document.getElementById('tabBodyAfter');
+  body.style.animation = 'none';
+  body.offsetHeight;
+  body.style.animation = '';
+  body.textContent = tabBodies[idx];
+}
+
+function tabSwitchBefore(idx) {
+  // "Before" mimics current behavior — text color only, no underline, instant content swap
+  const stage = document.getElementById('tabsStageBefore');
+  stage.querySelectorAll('.tab-pill').forEach((p, i) => p.classList.toggle('active', i === idx));
+  const body = document.getElementById('tabBodyBefore');
+  body.textContent = tabBodies[idx];
+}
+
+// Initial placement (after layout settles)
+requestAnimationFrame(() => {
+  placeIndicator('tabsStageAfter', 'indicatorAfter', 0);
+});
+// Re-place on resize so the indicator tracks layout (also what framer's layoutId does for free)
+window.addEventListener('resize', () => {
+  const activeAfter = Array.from(document.querySelectorAll('#tabsStageAfter .tab-pill'))
+    .findIndex(p => p.classList.contains('active'));
+  if (activeAfter >= 0) placeIndicator('tabsStageAfter', 'indicatorAfter', activeAfter);
+});
+
+// ============================================
+// 2.4 Form validation
+// ============================================
+const stage = document.getElementById('formStage');
+const input = document.getElementById('formInput');
+function formValidate() {
+  const v = input.value.trim();
+  // Simple check: must contain at least one digit and length > 4
+  const ok = v.length === 0 || (/^[0-9-]+$/.test(v) && v.replace(/-/g, '').length >= 10);
+  stage.classList.toggle('has-error', !ok);
+}
+function formToggleError() {
+  stage.classList.toggle('has-error');
+}
+</script>
+</body>
+</html>

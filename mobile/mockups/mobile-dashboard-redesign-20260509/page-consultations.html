@@ -176,13 +176,12 @@
           </div>
 
           <div class="filter-row detail-tabs" style="padding: 0;">
-            <button class="filter-pill active" data-tab="inquiry">문의 내용</button>
-            <button class="filter-pill" data-tab="info">고객 정보</button>
-            <button class="filter-pill" data-tab="thread">응답 이력</button>
+            <button class="filter-pill active" data-tab="info">고객 정보</button>
+            <button class="filter-pill" data-tab="inquiry">상담 내용</button>
           </div>
 
-          <!-- Tab: 문의 내용 -->
-          <div class="tab-content active" data-tab-content="inquiry">
+          <!-- Tab: 상담 내용 -->
+          <div class="tab-content" data-tab-content="inquiry">
             <div class="info-card pop-up" style="padding: 16px;">
               <div class="info-card-title">문의 본문</div>
               <div style="font-size: 0.84rem; line-height: 1.55; color: var(--v3-dark); white-space: pre-wrap;">안녕하세요, 5월 셋째주(5/19~5/31)에 산후도우미 서비스를 신청하고 싶어 문의드립니다.
@@ -193,42 +192,36 @@ A라1형 바우처 가지고 있고 14일 기간으로 알아보고 있습니다
             </div>
 
             <div class="info-card pop-up" style="animation-delay: 60ms;">
-              <div class="info-card-title">자동 추출 정보</div>
-              <div class="info-row"><span class="info-row-label">희망 시작일</span><span class="info-row-value">2025. 5. 19.</span></div>
-              <div class="info-row"><span class="info-row-label">희망 기간</span><span class="info-row-value">14일</span></div>
-              <div class="info-row"><span class="info-row-label">바우처 유형</span><span class="info-row-value">A라1형</span></div>
-              <div class="info-row"><span class="info-row-label">출산 예정일</span><span class="info-row-value">2025. 5. 18.</span></div>
+              <div class="info-card-title">문의 정보</div>
               <div class="info-row"><span class="info-row-label">근무 지역</span><span class="info-row-value">인천 부평구</span></div>
+              <div class="info-row"><span class="info-row-label">서비스 기간</span><span class="info-row-value">14일</span></div>
+              <div class="info-row"><span class="info-row-label">추가 서비스</span><span class="info-row-value"><span class="addon-stack"><span class="addon-stack-item">큰아이 돌봄 · 수량 1</span><span class="addon-stack-item">가사 추가 · 수량 1</span></span></span></div>
+              <div class="info-row"><span class="info-row-label">추천 경로</span><span class="info-row-value">시군구청</span></div>
+              <div class="info-row"><span class="info-row-label">선호 매니저</span><span class="info-row-value">서경자</span></div>
+              <div class="info-row"><span class="info-row-label">추가 사항</span><span class="info-row-value"><span class="additional-notes-value">오후 6시 이후 통화가 편합니다. 큰아이 하원 시간도 같이 상담받고 싶어요.</span></span></div>
             </div>
           </div>
 
           <!-- Tab: 고객 정보 -->
-          <div class="tab-content" data-tab-content="info">
+          <div class="tab-content active" data-tab-content="info">
             <div class="info-card pop-up">
               <div class="info-card-title">기본 정보</div>
               <div class="info-row"><span class="info-row-label">이름</span><span class="info-row-value">홍은지</span></div>
               <div class="info-row"><span class="info-row-label">연락처</span><span class="info-row-value">010-3456-7890</span></div>
-              <div class="info-row"><span class="info-row-label">이메일</span><span class="info-row-value">eunji_h@example.com</span></div>
-              <div class="info-row"><span class="info-row-label">출처</span><span class="info-row-value">웹사이트 문의 폼</span></div>
-              <div class="info-row"><span class="info-row-label">접속 IP</span><span class="info-row-value">인천 부평구 (180.69.X.X)</span></div>
+              <div class="info-row"><span class="info-row-label">주소</span><span class="info-row-value">인천 부평구</span></div>
+              <div class="info-row"><span class="info-row-label">출산 예정일</span><span class="info-row-value">2025. 5. 18.</span></div>
+              <div class="info-row"><span class="info-row-label">출산 경험</span><span class="info-row-value">초산</span></div>
+              <div class="info-row"><span class="info-row-label">바우처 유형</span><span class="info-row-value">A라1형</span></div>
             </div>
 
             <div class="info-card pop-up" style="animation-delay: 60ms;">
-              <div class="info-card-title">신규 고객 여부</div>
-              <div class="info-row"><span class="info-row-label">기존 고객 매칭</span><span class="info-row-value" style="color: var(--v3-text-muted);">없음 (신규)</span></div>
-              <div class="info-row"><span class="info-row-label">유사 고객</span><span class="info-row-value">없음</span></div>
+              <div class="info-card-title">문의 상태</div>
+              <div class="info-row"><span class="info-row-label">출처</span><span class="info-row-value">웹사이트</span></div>
+              <div class="info-row"><span class="info-row-label">확인 여부</span><span class="info-row-value info-row-value-green"><span class="status-value-with-time"><span>확인 완료</span><span class="status-value-time">5/18 14:32</span></span></span></div>
+              <div class="info-row"><span class="info-row-label">진행 상태</span><span class="info-row-value">신규</span></div>
             </div>
           </div>
 
-          <!-- Tab: 응답 이력 -->
-          <div class="tab-content" data-tab-content="thread">
-            <div class="info-card pop-up">
-              <div class="info-card-title">응답 이력 · 0건</div>
-              <div style="text-align: center; padding: 24px 12px; color: var(--v3-text-muted); font-size: 0.78rem;">
-                아직 응답하지 않았습니다.<br/>위의 답장 또는 고객 등록 버튼으로 시작하세요.
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 

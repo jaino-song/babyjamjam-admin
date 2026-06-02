@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8" />
-<title>Mobile Layout — All Pages (Shell Validation)</title>
+<title>Mobile Layout — Pages Index</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
@@ -176,8 +176,8 @@ iframe {
 <body>
 <header>
   <div>
-    <h1>Mobile Layout — 20 Pages (✅ 완전 14 · ⚠️ 부분 3 · 🚧 미구현 3)</h1>
-    <p>✅ 14 fully implemented · ⚠️ 3 with stubbed sub-sections (contracts, messages, alimtalk) · 🚧 3 mockup-only (file-upload, message-new, pricing).</p>
+    <h1>Mobile Layout — Pages Index</h1>
+    <p>Mobile dashboard mockups and frontend-synced route previews.</p>
   </div>
   <div class="cta">
     👉 <b>Tap items + bell</b> in any preview — shell behaves identically across all
@@ -249,7 +249,7 @@ iframe {
 </div>
 
 <!-- ============ Secondary pages (메시지/알림톡 제외 - 부분 구현으로) ============ -->
-<div class="section-divider">Secondary 페이지 (3) <span>· 전체 hub에서 진입 · 메시지/알림톡은 ⚠️ 부분 구현</span></div>
+<div class="section-divider">Secondary 페이지 (4) <span>· 전체 hub에서 진입 · 메시지/알림톡은 ⚠️ 부분 구현</span></div>
 <div class="board">
 
   <div class="col">
@@ -285,6 +285,18 @@ iframe {
     <div class="col-footer">
       <span class="uses">Uses: list shell + filter pills</span>
       <span class="new">Page-only: unread row tint + 2-line snippet preview</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="tab new">알림 설정</span> Notification</h2>
+      <p>App/email notification toggles + Aligo provider selection in the mobile shell.</p>
+    </div>
+    <iframe src="page-notification.html?v=frame-removal"></iframe>
+    <div class="col-footer">
+      <span class="uses">Uses: menu group + menu row primitives + iOS switches</span>
+      <span class="sync">Synced: /notification route target · account email surface</span>
     </div>
   </div>
 

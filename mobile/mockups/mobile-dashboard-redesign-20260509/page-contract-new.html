@@ -6,6 +6,7 @@
 <link rel="stylesheet" href="_shared.css?v=frame-removal" />
 <link rel="stylesheet" href="_shell.css" />
 <style>
+/* ===== Wizard layout (mirrors src/app/contracts/creation/page.module.css) ===== */
 .wizard-content {
   flex: 1;
   display: flex;
@@ -29,7 +30,7 @@
   flex: 1;
   height: 6px;
   border-radius: 999px;
-  background: var(--v3-bg-subtle);
+  background: var(--v3-dim-white);
   overflow: hidden;
 }
 .wizard-progress-fill {
@@ -55,26 +56,6 @@
   font-size: 0.72rem;
   color: var(--v3-text-muted);
   line-height: 1.4;
-}
-
-/* Summary pills */
-.summary-pills {
-  display: flex; flex-wrap: wrap; gap: 6px;
-  padding: 10px 16px 12px;
-  background: white;
-  border-bottom: 1px solid var(--v3-border);
-  flex-shrink: 0;
-}
-.summary-pill {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 0.68rem; font-weight: 700;
-  background: var(--v3-green-light); color: var(--v3-green);
-  padding: 4px 10px;
-  border-radius: 999px;
-}
-.summary-pill::before {
-  content: '✓';
-  font-size: 0.62rem; font-weight: 900;
 }
 
 /* Form scroll area */
@@ -105,7 +86,7 @@
 }
 .optional-badge {
   font-size: 0.55rem; font-weight: 800;
-  background: var(--v3-bg-subtle); color: var(--v3-text-muted);
+  background: var(--v3-dim-white); color: var(--v3-text-muted);
   padding: 2px 6px; border-radius: 4px;
   text-transform: none; letter-spacing: 0;
 }
@@ -137,7 +118,7 @@
 }
 .form-input:focus { border-color: var(--v3-primary); }
 .form-input::placeholder { color: var(--v3-text-muted); opacity: 0.6; }
-.form-input[disabled] { background: var(--v3-bg-subtle); opacity: 0.55; cursor: not-allowed; }
+.form-input[disabled] { background: var(--v3-dim-white); opacity: 0.55; cursor: not-allowed; }
 
 .form-helper {
   font-size: 0.66rem;
@@ -181,13 +162,13 @@
   gap: 10px;
 }
 
-/* Selected client / employee card */
+/* Selected client / employee card (ClientAutocomplete / EmployeeAutocomplete selected state) */
 .entity-pick {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px;
-  background: var(--v3-bg-subtle);
+  background: var(--v3-dim-white);
   border: 1.5px solid var(--v3-border);
   border-radius: 12px;
 }
@@ -229,6 +210,7 @@
   background: white;
   border: 1.5px solid var(--v3-border);
   border-radius: 12px;
+  cursor: pointer;
 }
 .toggle-row .toggle-label {
   font-size: 0.85rem;
@@ -245,7 +227,6 @@
   border-radius: 999px;
   background: var(--v3-border);
   position: relative;
-  cursor: pointer;
   transition: background 0.18s ease;
   flex-shrink: 0;
 }
@@ -287,7 +268,7 @@
   border: 0;
 }
 .wizard-btn.secondary {
-  background: var(--v3-bg-subtle);
+  background: var(--v3-dim-white);
   color: var(--v3-text);
 }
 .wizard-btn.primary {
@@ -303,7 +284,6 @@
   background: var(--v3-primary-light);
   border-radius: 12px;
   padding: 12px 14px;
-  margin-top: 4px;
 }
 .price-summary-row {
   display: flex;
@@ -322,6 +302,125 @@
   padding-top: 8px;
 }
 .price-summary-row .amount { font-variant-numeric: tabular-nums; }
+
+/* Dashed divider between 제공인력 1 and 제공인력 2 (matches code styles.dashedDivider) */
+.dashed-divider {
+  margin: 12px 0;
+  border-top: 1px dashed var(--v3-border);
+}
+
+/* ===== Headless progress modal (CONTRACT_CREATION_PROGRESS_STEPS) ===== */
+.progress-modal {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: none;
+  align-items: center; justify-content: center;
+  padding: 24px;
+  z-index: 150;
+}
+.progress-modal.open { display: flex; }
+.progress-card {
+  width: 100%; max-width: 320px;
+  background: white;
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+}
+.progress-title { font-size: 1.02rem; font-weight: 800; color: var(--v3-dark); margin-bottom: 4px; }
+.progress-sub { font-size: 0.74rem; color: var(--v3-text-muted); margin-bottom: 16px; }
+.progress-list { display: flex; flex-direction: column; gap: 10px; }
+.progress-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  background: var(--v3-dim-white);
+  color: var(--v3-text-muted);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.progress-row.active { background: var(--v3-primary-light); color: var(--v3-primary); font-weight: 700; }
+.progress-row.done   { background: var(--v3-green-light);   color: var(--v3-green);   font-weight: 700; }
+.progress-row.failed { background: var(--v3-burgundy-light); color: var(--v3-burgundy); font-weight: 700; }
+.progress-indicator {
+  width: 22px; height: 22px;
+  border-radius: 9999px;
+  background: white;
+  border: 1.5px solid currentColor;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.progress-row.active .progress-indicator { border-style: dashed; animation: spin 1.2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress-err-hint {
+  margin-top: 12px; padding: 10px;
+  border-radius: 10px;
+  background: var(--v3-burgundy-light);
+  color: var(--v3-burgundy);
+  font-size: 0.74rem; font-weight: 600;
+}
+
+/* ===== Iframe fallback modal (when headless fails) ===== */
+.eform-iframe-modal {
+  position: absolute; inset: 0;
+  background: var(--v3-dim-white);
+  display: none;
+  flex-direction: column;
+  z-index: 200;
+}
+.eform-iframe-modal.open { display: flex; }
+.eform-iframe-header {
+  height: 56px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+  background: white;
+  border-bottom: 1px solid var(--v3-border);
+  font-size: 1rem; font-weight: 700; color: var(--v3-dark);
+}
+.eform-iframe-header button {
+  background: transparent; border: 0; cursor: pointer;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--v3-text);
+}
+.eform-iframe-body {
+  flex: 1; background: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.85rem; color: var(--v3-text-muted);
+}
+
+/* ===== Floating error toast (validation failure on Next) ===== */
+.error-toast {
+  position: absolute;
+  top: 12px; left: 12px; right: 12px;
+  z-index: 1001;
+  background: var(--v3-burgundy);
+  color: white;
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-size: 0.8rem; font-weight: 600;
+  box-shadow: 0 8px 24px rgba(100,20,40,0.25);
+  display: none;
+  text-align: center;
+}
+.error-toast.open { display: block; }
+
+/* ===== Demo toggle ===== */
+.demo-toggle {
+  margin: 0 auto 24px;
+  width: fit-content;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
+  font-family: 'SF Mono', monospace;
+  font-size: 0.7rem;
+}
+.demo-toggle button {
+  background: var(--v3-dark); color: white;
+  border: 0; border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-family: inherit; font-size: inherit;
+}
+.demo-toggle button:hover { background: hsl(214, 50%, 28%); }
 </style>
 </head>
 <body>
@@ -332,16 +431,16 @@
 
       <div class="nav-page list">
         <div class="existing-navbar">
-          <button class="navbar-icon-btn" style="background: transparent;">
+          <button class="navbar-icon-btn" style="background: transparent;" aria-label="뒤로">
             <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
           <div style="font-size: 1rem; font-weight: 700; color: var(--v3-dark);">계약서 생성</div>
-          <button class="navbar-icon-btn" style="background: transparent;">
+          <button class="navbar-icon-btn" style="background: transparent;" aria-label="닫기">
             <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
 
-        <div class="wizard-content">
+        <div class="wizard-content" data-component="mobile-contract-creation">
           <div class="wizard-header">
             <div class="wizard-progress-row">
               <div class="wizard-progress-track">
@@ -353,13 +452,12 @@
             <div class="wizard-step-desc" id="stepDesc">기존 고객을 검색하거나 정보를 입력해주세요.</div>
           </div>
 
-          <div class="summary-pills" id="summaryPills" style="display: none;"></div>
-
           <!-- ============ STEP 1: 이용자 정보 ============ -->
           <div class="form-scroll wizard-step-view active" data-step="1">
             <div class="form-card">
               <div class="form-card-title">이용자 선택 <span class="optional-badge">기존 고객</span></div>
-              <div class="entity-pick">
+              <!-- ClientAutocomplete (selected state) — src/app/contracts/creation의 ClientAutocomplete -->
+              <div class="entity-pick" data-component="mobile-contract-creation-client-picker">
                 <div class="pick-avatar">
                   <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 </div>
@@ -369,7 +467,7 @@
                 </div>
                 <button class="pick-change" type="button">변경</button>
               </div>
-              <div class="form-helper">정보가 자동으로 입력됩니다. 아래에서 직접 수정도 가능합니다.</div>
+              <div class="form-helper">정보가 자동으로 입력되어 다시 입력할 필요 없습니다.</div>
             </div>
 
             <div class="form-card">
@@ -388,7 +486,8 @@
                 </div>
                 <div class="form-row">
                   <label class="form-label">출산 예정일</label>
-                  <input class="form-input" id="f-due" type="date" value="2026-05-30" />
+                  <!-- Code uses YYMMDD text input via handleDateInputChange/yymmddToIso -->
+                  <input class="form-input" id="f-due" type="text" inputmode="numeric" maxlength="6" placeholder="YYMMDD" value="260530" />
                 </div>
               </div>
               <div class="form-row">
@@ -421,7 +520,8 @@
           <div class="form-scroll wizard-step-view" data-step="2">
             <div class="form-card">
               <div class="form-card-title">제공인력 1 <span class="req" style="color: var(--v3-burgundy);">*</span></div>
-              <div class="entity-pick" style="margin-bottom: 10px;">
+              <!-- EmployeeAutocomplete (primary, selected) -->
+              <div class="entity-pick" style="margin-bottom: 10px;" data-component="mobile-contract-creation-emp1-picker">
                 <div class="pick-avatar" style="background: linear-gradient(135deg, hsl(214, 80%, 45%), hsl(214, 80%, 28%));">
                   <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 </div>
@@ -442,15 +542,17 @@
             </div>
 
             <div class="form-card">
-              <div class="toggle-row" id="emp2Toggle">
+              <div class="toggle-row" id="emp2Toggle" role="button" tabindex="0" data-component="mobile-contract-creation-emp2-toggle">
                 <div>
                   <div class="toggle-label">제공인력 2 추가</div>
                   <div class="toggle-sub">쌍태아·삼태아 등 2인 배정 시 사용</div>
                 </div>
                 <div class="toggle-switch" id="emp2Switch"></div>
               </div>
-              <div id="emp2Body" style="display: none; margin-top: 12px; padding-top: 14px; border-top: 1px dashed var(--v3-border);">
-                <div class="entity-pick" style="margin-bottom: 10px;">
+              <div id="emp2Body" style="display: none;">
+                <div class="dashed-divider"></div>
+                <!-- EmployeeAutocomplete (secondary, selected) -->
+                <div class="entity-pick" style="margin-bottom: 10px;" data-component="mobile-contract-creation-emp2-picker">
                   <div class="pick-avatar" style="background: linear-gradient(135deg, hsl(267, 50%, 55%), hsl(267, 50%, 38%));">
                     <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                   </div>
@@ -536,25 +638,26 @@
             </div>
 
             <div class="form-card">
-              <div class="form-card-title">요금 정보 <span class="auto-badge">자동입력</span></div>
+              <!-- 자동입력 badge: visible only when pricesManuallyEdited === false (code: line 855 conditional) -->
+              <div class="form-card-title">요금 정보 <span class="auto-badge" id="autoBadge">자동입력</span></div>
               <div class="form-row">
                 <label class="form-label">총 서비스 금액 <span class="req">*</span></label>
                 <div class="price-input">
-                  <input class="form-input" id="f-full" inputmode="numeric" value="1,280,000" />
+                  <input class="form-input" id="f-full" inputmode="numeric" placeholder="0" value="1,280,000" />
                   <span class="currency">원</span>
                 </div>
               </div>
               <div class="form-row">
                 <label class="form-label">정부지원금 <span class="req">*</span></label>
                 <div class="price-input">
-                  <input class="form-input" id="f-grant" inputmode="numeric" value="896,000" />
+                  <input class="form-input" id="f-grant" inputmode="numeric" placeholder="0" value="896,000" />
                   <span class="currency">원</span>
                 </div>
               </div>
               <div class="form-row">
                 <label class="form-label">본인부담금 <span class="req">*</span></label>
                 <div class="price-input">
-                  <input class="form-input" id="f-actual" inputmode="numeric" value="384,000" />
+                  <input class="form-input" id="f-actual" inputmode="numeric" placeholder="0" value="384,000" />
                   <span class="currency">원</span>
                 </div>
                 <div class="form-helper">총 서비스 금액 − 정부지원금 = 본인부담금. 직접 수정도 가능합니다.</div>
@@ -569,21 +672,22 @@
               <div class="form-grid-2">
                 <div class="form-row">
                   <label class="form-label">시작일 <span class="req">*</span></label>
-                  <input class="form-input" id="f-start" type="date" value="2026-05-14" />
+                  <!-- Code uses YYMMDD text input -->
+                  <input class="form-input" id="f-start" type="text" inputmode="numeric" maxlength="6" placeholder="YYMMDD" value="260514" />
                 </div>
                 <div class="form-row">
                   <label class="form-label">종료일 <span class="req">*</span></label>
-                  <input class="form-input" id="f-end" type="date" value="2026-05-27" />
+                  <input class="form-input" id="f-end" type="text" inputmode="numeric" maxlength="6" placeholder="YYMMDD" value="260527" />
                 </div>
               </div>
-              <div class="form-helper">시작일과 종료일을 선택하면 자동으로 일수가 계산됩니다.</div>
+              <div class="form-helper">시작일 + 바우처 기간으로 종료일이 자동 계산됩니다 (주말·공휴일 제외).</div>
             </div>
 
             <div class="form-card">
               <div class="form-card-title">결제 정보</div>
               <div class="form-row">
                 <label class="form-label">결제 예정일 <span class="req">*</span></label>
-                <input class="form-input" id="f-payment" type="date" value="2026-05-13" />
+                <input class="form-input" id="f-payment" type="text" inputmode="numeric" maxlength="6" placeholder="YYMMDD" value="260513" />
                 <div class="form-helper">고객으로부터 본인부담금을 수령할 예정일입니다.</div>
               </div>
             </div>
@@ -594,7 +698,7 @@
                 <div class="price-summary-row"><span>고객</span><span class="amount">박서연</span></div>
                 <div class="price-summary-row"><span>제공인력</span><span class="amount">김민지</span></div>
                 <div class="price-summary-row"><span>바우처</span><span class="amount">A라-1형 · 10일</span></div>
-                <div class="price-summary-row"><span>기간</span><span class="amount">5/14 → 5/27</span></div>
+                <div class="price-summary-row"><span>기간</span><span class="amount">2026. 5. 14 → 5. 27</span></div>
                 <div class="price-summary-row total"><span>본인부담금</span><span class="amount">384,000 원</span></div>
               </div>
             </div>
@@ -609,12 +713,68 @@
             <button class="wizard-btn primary" id="nextBtn">다음 →</button>
           </div>
         </div>
+
+        <!-- ====== HEADLESS CREATION FLOW OVERLAYS ====== -->
+
+        <!-- Floating error toast (validation failure on Next) -->
+        <div class="error-toast" id="errorToast" data-component="mobile-contract-creation-error-toast">필수 항목을 모두 입력해주세요.</div>
+
+        <!-- Headless progress modal (CONTRACT_CREATION_PROGRESS_STEPS) -->
+        <div class="progress-modal" id="progressModal" data-component="mobile-contract-creation-progress-modal">
+          <div class="progress-card">
+            <h2 class="progress-title">전자문서 처리 중</h2>
+            <p class="progress-sub">백엔드에서 자동으로 처리하고 있어요.</p>
+            <div class="progress-list">
+              <div class="progress-row done" data-component="mobile-contract-creation-progress-client-started">
+                <div class="progress-indicator">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <span>전자문서 클라이언트 시작</span>
+              </div>
+              <div class="progress-row done" data-component="mobile-contract-creation-progress-info-inserted">
+                <div class="progress-indicator">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <span>이용자 정보 입력 완료</span>
+              </div>
+              <div class="progress-row active" data-component="mobile-contract-creation-progress-creating">
+                <div class="progress-indicator"></div>
+                <span>전자문서 생성 중</span>
+              </div>
+              <div class="progress-row" data-component="mobile-contract-creation-progress-sent">
+                <div class="progress-indicator"></div>
+                <span>전자문서 전송 완료</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Iframe fallback modal (when headless fails) -->
+        <div class="eform-iframe-modal" id="eformIframe" data-component="mobile-contract-creation-iframe-modal">
+          <div class="eform-iframe-header">
+            <span>계약서 서명 화면</span>
+            <button onclick="closeIframe()" aria-label="닫기">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <div class="eform-iframe-body">eformsign iframe (수동 입력 화면)</div>
+        </div>
+
       </div>
 
     </div>
   </div>
 </div>
-<div class="variant-label">계약서 생성 · /contracts/creation (4-step wizard)</div>
+<div class="variant-label">계약서 생성 · /contracts/creation (4-step wizard, synced 2026-05-28)</div>
+
+<div class="demo-toggle">
+  <button onclick="resetDemo()">Default</button>
+  <button onclick="showProgress()">Progress Modal</button>
+  <button onclick="showIframe()">Iframe Fallback</button>
+  <button onclick="showError()">Validation Error</button>
+  <button onclick="toggleAutoBadge()">Toggle 자동입력</button>
+</div>
+
 <script>
 const STEPS = [
   null,
@@ -625,48 +785,6 @@ const STEPS = [
 ];
 const TOTAL = 4;
 let cur = 1;
-
-function clearPills(){
-  const pills = document.getElementById('summaryPills');
-  while(pills.firstChild) pills.removeChild(pills.firstChild);
-}
-
-function renderSummaryPills(){
-  const pills = document.getElementById('summaryPills');
-  clearPills();
-  if(cur === 1){
-    pills.style.display = 'none';
-    return;
-  }
-  const chips = [];
-  if(cur >= 2){
-    const name = document.getElementById('f-name').value.trim();
-    if(name) chips.push(name);
-  }
-  if(cur >= 3){
-    const emp = document.getElementById('f-emp1-name').value.trim();
-    if(emp) chips.push(emp);
-  }
-  if(cur >= 4){
-    const v = document.getElementById('f-voucher').value;
-    const d = document.getElementById('f-duration').value;
-    const a = document.getElementById('f-actual').value;
-    if(v) chips.push(v);
-    if(d) chips.push(d);
-    if(a) chips.push(a + '원');
-  }
-  if(chips.length === 0){
-    pills.style.display = 'none';
-    return;
-  }
-  pills.style.display = 'flex';
-  chips.forEach(text => {
-    const pill = document.createElement('span');
-    pill.className = 'summary-pill';
-    pill.appendChild(document.createTextNode(text));
-    pills.appendChild(pill);
-  });
-}
 
 function render(){
   document.querySelectorAll('.wizard-step-view').forEach(v => {
@@ -681,24 +799,47 @@ function render(){
   prev.style.opacity = cur === 1 ? '0.4' : '1';
   prev.style.pointerEvents = cur === 1 ? 'none' : 'auto';
   next.textContent = cur === TOTAL ? '✓ 계약서 생성' : '다음 →';
-  renderSummaryPills();
   const scroll = document.querySelector(`.wizard-step-view[data-step="${cur}"]`);
   if(scroll) scroll.scrollTop = 0;
 }
 
 document.getElementById('nextBtn').addEventListener('click', () => {
   if(cur < TOTAL) { cur++; render(); }
+  else { showProgress(); }
 });
 document.getElementById('prevBtn').addEventListener('click', () => {
   if(cur > 1) { cur--; render(); }
 });
 
+const emp2Toggle = document.getElementById('emp2Toggle');
 const emp2Switch = document.getElementById('emp2Switch');
 const emp2Body = document.getElementById('emp2Body');
-emp2Switch.addEventListener('click', () => {
+function toggleEmp2(){
   emp2Switch.classList.toggle('on');
   emp2Body.style.display = emp2Switch.classList.contains('on') ? 'block' : 'none';
-});
+}
+emp2Toggle.addEventListener('click', toggleEmp2);
+emp2Toggle.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleEmp2(); }});
+
+/* Demo overlay controls */
+function showProgress(){ resetDemo(); document.getElementById('progressModal').classList.add('open'); }
+function showIframe(){ resetDemo(); document.getElementById('eformIframe').classList.add('open'); }
+function closeIframe(){ document.getElementById('eformIframe').classList.remove('open'); }
+function showError(){
+  resetDemo();
+  const t = document.getElementById('errorToast');
+  t.classList.add('open');
+  setTimeout(() => t.classList.remove('open'), 3500);
+}
+function toggleAutoBadge(){
+  const b = document.getElementById('autoBadge');
+  b.style.display = b.style.display === 'none' ? '' : 'none';
+}
+function resetDemo(){
+  document.getElementById('progressModal').classList.remove('open');
+  document.getElementById('eformIframe').classList.remove('open');
+  document.getElementById('errorToast').classList.remove('open');
+}
 
 render();
 </script>
