@@ -55,7 +55,7 @@ export function requireBackendBaseUrl(): string {
 export const serverAPIClient = axios.create({
     baseURL: BACKEND_BASE_URL,
     timeout: 60000,
-    validateStatus: (status) => status < 600,
+    validateStatus: (status) => status < 400,
     headers: {
         "Content-Type": "application/json",
     },

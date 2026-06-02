@@ -1,4 +1,4 @@
-import { resolveBackendBaseUrl } from "../server";
+import { resolveBackendBaseUrl, serverAPIClient } from "../server";
 
 type BackendEnv = Parameters<typeof resolveBackendBaseUrl>[0];
 
@@ -43,5 +43,16 @@ describe("resolveBackendBaseUrl", () => {
             NODE_ENV: "production",
             NEXT_PUBLIC_API_BASE_URL: "ftp://api.example.com",
         }))).toBeNull();
+    });
+});
+
+describe("serverAPIClient", () => {
+    it("rejects backend error statuses so API routes preserve upstream failures", () => {
+        const validateStatus = serverAPIClient.defaults.validateStatus;
+
+        expect(validateStatus?.(200)).toBe(true);
+        expect(validateStatus?.(399)).toBe(true);
+        expect(validateStatus?.(400)).toBe(false);
+        expect(validateStatus?.(500)).toBe(false);
     });
 });
