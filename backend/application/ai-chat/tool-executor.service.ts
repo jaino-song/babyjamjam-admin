@@ -25,6 +25,10 @@ interface ToolIntegerOptions {
     defaultValue?: number;
 }
 
+interface ToolBooleanOptions {
+    defaultValue?: boolean;
+}
+
 @Injectable()
 export class ToolExecutorService {
     private readonly logger = new Logger(ToolExecutorService.name);
@@ -148,7 +152,7 @@ export class ToolExecutorService {
             createEmployee: `새 관리사 "${args['name']}"님을 등록하시겠습니까?`,
             updateEmployee: `관리사 ${employeeRef}의 정보를 수정하시겠습니까?`,
             deleteEmployee: `관리사 ${employeeRef}을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
-            changeEmployeeAvailability: `관리사 ${employeeRef}의 배정 상태를 ${args['available'] ? '가능' : '불가'}으로 변경하시겠습니까?`,
+            changeEmployeeAvailability: `관리사 ${employeeRef}의 배정 상태를 ${this.booleanLabel(args['available'], '가능', '불가')}으로 변경하시겠습니까?`,
             createMessage: `새 메시지 "${args['title']}"을(를) 등록하시겠습니까?`,
             updateMessage: `메시지 ID ${args['messageId']}을(를) 수정하시겠습니까?`,
             deleteMessage: `메시지 ID ${args['messageId']}을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
@@ -233,6 +237,44 @@ export class ToolExecutorService {
         }
 
         return `${key}은(는) 정수여야 합니다`;
+    }
+
+    private parseRequiredBooleanArg(args: ToolArgs, key: string): boolean {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            throw new Error(`${key}이(가) 필요합니다`);
+        }
+
+        return this.parseBooleanValue(value, key);
+    }
+
+    private parseOptionalBooleanArg(args: ToolArgs, key: string, options: ToolBooleanOptions = {}): boolean | undefined {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            return options.defaultValue;
+        }
+
+        return this.parseBooleanValue(value, key);
+    }
+
+    private parseBooleanValue(value: unknown, key: string): boolean {
+        if (typeof value !== "boolean") {
+            throw new Error(`${key}은(는) true 또는 false여야 합니다`);
+        }
+
+        return value;
+    }
+
+    private booleanLabel(value: unknown, trueLabel: string, falseLabel: string): string {
+        if (value === true) {
+            return trueLabel;
+        }
+
+        if (value === false) {
+            return falseLabel;
+        }
+
+        return "지정된 상태";
     }
 
     private async resolveClientId(branchid: string, args: ToolArgs): Promise<number> {
@@ -337,10 +379,10 @@ export class ToolExecutorService {
             duration: this.parseOptionalIntegerArg(args, "duration", { min: 1 }) ?? null,
             startDate: args['startDate'] ? String(args['startDate']) : null,
             endDate: args['endDate'] ? String(args['endDate']) : null,
-            careCenter: Boolean(args['careCenter']),
-            voucherClient: Boolean(args['voucherClient']),
+            careCenter: this.parseRequiredBooleanArg(args, "careCenter"),
+            voucherClient: this.parseRequiredBooleanArg(args, "voucherClient"),
             birthday: args['birthday'] ? String(args['birthday']) : null,
-            breastPump: Boolean(args['breastPump']),
+            breastPump: this.parseOptionalBooleanArg(args, "breastPump", { defaultValue: false }) ?? false,
         });
         return { success: true, data: { id: client.id, name: client.name, message: "산모가 등록되었습니다" } };
     }
@@ -407,7 +449,7 @@ export class ToolExecutorService {
             phone: String(args['phone']),
             grade: String(args['grade']),
             workArea: args['workArea'] ? String(args['workArea']).split(",").map(s => s.trim()) : [],
-            openToNextWork: args['openToNextWork'] !== false,
+            openToNextWork: this.parseOptionalBooleanArg(args, "openToNextWork", { defaultValue: true }) ?? true,
             registeredDate: args['companyRegisteredDate'] ? String(args['companyRegisteredDate']) : undefined,
         });
         return { success: true, data: { id: employee.id, name: employee.name, message: "관리사가 등록되었습니다" } };
@@ -421,7 +463,7 @@ export class ToolExecutorService {
         if (args['phone'] !== undefined) updateData['phone'] = String(args['phone']);
         if (args['grade'] !== undefined) updateData['grade'] = String(args['grade']);
         if (args['workArea'] !== undefined) updateData['workArea'] = String(args['workArea']).split(",").map(s => s.trim());
-        if (args['openToNextWork'] !== undefined) updateData['openToNextWork'] = Boolean(args['openToNextWork']);
+        if (args['openToNextWork'] !== undefined) updateData['openToNextWork'] = this.parseRequiredBooleanArg(args, "openToNextWork");
 
         const employee = await this.employeeService.update(
             branchid,
@@ -648,7 +690,7 @@ export class ToolExecutorService {
 
     private async changeEmployeeAvailability(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
-        const available = Boolean(args['available']);
+        const available = this.parseRequiredBooleanArg(args, "available");
         const employee = await this.employeeService.changeOpenStatus(branchid, employeeId, available);
         return { 
             success: true, 

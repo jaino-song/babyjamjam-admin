@@ -202,4 +202,56 @@ describe("ToolExecutorService", () => {
                 ],
             });
     });
+
+    it("should reject non-boolean client flags instead of coercing strings", async () => {
+        const { executor, mocks } = createExecutor();
+
+        await expect(executor.execute("branch-1", "createClient", {
+            confirmed: true,
+            name: "김산모",
+            primaryEmployeeId: 1,
+            careCenter: "false",
+            voucherClient: true,
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("careCenter") });
+        expect(mocks.clientService.create).not.toHaveBeenCalled();
+
+        mocks.clientService.create.mockResolvedValue({ id: 7, name: "김산모" });
+        await expect(executor.execute("branch-1", "createClient", {
+            confirmed: true,
+            name: "김산모",
+            primaryEmployeeId: 1,
+            careCenter: false,
+            voucherClient: true,
+            breastPump: false,
+        })).resolves.toMatchObject({ success: true });
+        expect(mocks.clientService.create).toHaveBeenCalledWith(
+            "branch-1",
+            expect.objectContaining({
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+            }),
+        );
+    });
+
+    it("should reject non-boolean employee availability values", async () => {
+        const { executor, mocks } = createExecutor();
+
+        await expect(executor.execute("branch-1", "createEmployee", {
+            confirmed: true,
+            id: 1,
+            name: "박관리",
+            phone: "010-0000-0000",
+            grade: "A",
+            openToNextWork: "false",
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("openToNextWork") });
+        expect(mocks.employeeService.create).not.toHaveBeenCalled();
+
+        await expect(executor.execute("branch-1", "changeEmployeeAvailability", {
+            confirmed: true,
+            employeeId: 1,
+            available: "false",
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("available") });
+        expect(mocks.employeeService.changeOpenStatus).not.toHaveBeenCalled();
+    });
 });
