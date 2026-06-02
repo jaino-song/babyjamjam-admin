@@ -6,9 +6,6 @@ import {
   Bell,
   Calculator,
   Calendar,
-  HelpCircle,
-  Languages,
-  Lock,
   MessageCircle,
   MessageSquareText,
   Send,
@@ -18,15 +15,30 @@ import {
 
 import { useAllClients } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
+import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useUnreadCount, usePushNotification } from "@/hooks/usePushNotification";
 import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSettingsRedesign";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
+import { useAlimtalkTriggerRules } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
 
 export default function AllMenuPage() {
-  const { data: clients = [] } = useAllClients();
-  const { data: employees = [] } = useEmployees();
-  const { isSubscribed } = usePushNotification();
-  const { data: unreadNotifCount = 0 } = useUnreadCount(true);
+  const clientsQuery = useAllClients();
+  const employeesQuery = useEmployees();
+  const messageTemplatesQuery = useMessageTemplates();
+  const alimtalkTriggerRulesQuery = useAlimtalkTriggerRules();
+  const pushNotification = usePushNotification();
+  const unreadCountQuery = useUnreadCount(true);
+
+  const clients = clientsQuery.data ?? [];
+  const employees = employeesQuery.data ?? [];
+  const messageTemplates = messageTemplatesQuery.data ?? [];
+  const alimtalkTriggerRules = alimtalkTriggerRulesQuery.data ?? [];
+  const unreadNotifCount = unreadCountQuery.data ?? 0;
+  const isClientsInitialLoading = clientsQuery.isLoading && !clientsQuery.data;
+  const isEmployeesInitialLoading = employeesQuery.isLoading && !employeesQuery.data;
+  const isMessageTemplatesInitialLoading = messageTemplatesQuery.isLoading && !messageTemplatesQuery.data;
+  const isAlimtalkRulesInitialLoading = alimtalkTriggerRulesQuery.isLoading && !alimtalkTriggerRulesQuery.data;
+  const isUnreadInitialLoading = unreadCountQuery.isLoading && unreadCountQuery.data === undefined;
 
   const menuGroups = useMemo<MenuGroup[]>(() => {
     return [
@@ -38,6 +50,8 @@ export default function AllMenuPage() {
             href: "/consultations",
             icon: MessageCircle,
             tone: "burgundy",
+            badgeLoading: isUnreadInitialLoading,
+            badgeSkeletonWidth: "18px",
             ...(unreadNotifCount > 0 ? { badge: String(unreadNotifCount) } : {}),
           },
           {
@@ -45,35 +59,59 @@ export default function AllMenuPage() {
             href: "/clients",
             icon: Users,
             tone: "primary",
-            value: `${clients.length}명`,
+            value: isClientsInitialLoading ? undefined : `${clients.length}명`,
+            valueLoading: isClientsInitialLoading,
+            valueSkeletonWidth: "28px",
           },
           {
             label: "제공인력",
             href: "/employees",
             icon: UserCheck,
             tone: "purple",
-            value: `${employees.length}명`,
+            value: isEmployeesInitialLoading ? undefined : `${employees.length}명`,
+            valueLoading: isEmployeesInitialLoading,
+            valueSkeletonWidth: "28px",
           },
           {
             label: "일정 캘린더",
             href: "/employees/schedule",
             icon: Calendar,
             tone: "orange",
+            disabled: true,
+            statusLabel: "출시 예정",
           },
           {
             label: "통계 보고서",
             href: "/dashboard/analytics",
             icon: BarChart3,
             tone: "green",
+            disabled: true,
+            statusLabel: "출시 예정",
           },
         ],
       },
       {
         title: "서비스 관리",
         rows: [
-          { label: "가격표", href: "/settings", icon: Calculator, tone: "orange" },
-          { label: "메시지", href: "/messages", icon: MessageSquareText, tone: "primary", value: "36건" },
-          { label: "알림톡", href: "/alimtalk", icon: Send, tone: "gold", value: "4종" },
+          { label: "가격표", href: "/prices", icon: Calculator, tone: "orange" },
+          {
+            label: "메시지",
+            href: "/messages",
+            icon: MessageSquareText,
+            tone: "primary",
+            value: isMessageTemplatesInitialLoading ? undefined : `${messageTemplates.length}건`,
+            valueLoading: isMessageTemplatesInitialLoading,
+            valueSkeletonWidth: "32px",
+          },
+          {
+            label: "알림톡",
+            href: "/alimtalk",
+            icon: Send,
+            tone: "gold",
+            value: isAlimtalkRulesInitialLoading ? undefined : `${alimtalkTriggerRules.length}종`,
+            valueLoading: isAlimtalkRulesInitialLoading,
+            valueSkeletonWidth: "28px",
+          },
         ],
       },
       {
@@ -81,24 +119,30 @@ export default function AllMenuPage() {
         rows: [
           {
             label: "알림 설정",
-            href: "/settings",
+            href: "/notification",
             icon: Bell,
             tone: "muted",
-            value: isSubscribed ? "활성" : "비활성",
+            value: pushNotification.isLoading ? undefined : pushNotification.isSubscribed ? "활성" : "비활성",
+            valueLoading: pushNotification.isLoading,
+            valueSkeletonWidth: "38px",
           },
-          { label: "보안", href: "/settings", icon: Lock, tone: "muted" },
-          { label: "언어", href: "/settings", icon: Languages, tone: "muted", value: "한국어" },
-        ],
-      },
-      {
-        title: "지원",
-        rows: [
-          { label: "도움말", href: "/settings", icon: HelpCircle, tone: "muted" },
-          { label: "문의하기", href: "/messages", icon: MessageCircle, tone: "muted" },
         ],
       },
     ];
-  }, [clients.length, employees.length, unreadNotifCount, isSubscribed]);
+  }, [
+    clients.length,
+    employees.length,
+    messageTemplates.length,
+    alimtalkTriggerRules.length,
+    unreadNotifCount,
+    isClientsInitialLoading,
+    isEmployeesInitialLoading,
+    isMessageTemplatesInitialLoading,
+    isAlimtalkRulesInitialLoading,
+    isUnreadInitialLoading,
+    pushNotification.isLoading,
+    pushNotification.isSubscribed,
+  ]);
 
   return (
     <div data-component="all-page" className="md:hidden">

@@ -3,31 +3,30 @@
 import "./redesign.css";
 
 import { useEffect } from "react";
-import { LogOut, PenLine } from "lucide-react";
+import { Building2, LogOut, PenLine } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { menuGroups as defaultMenuGroups } from "./mockup-data";
 import type { MenuGroup } from "./mockup-data";
 import { MenuGroups } from "./primitives";
+import { t } from "@/lib/i18n/translations";
+import type { Locale } from "@/app/actions/locale";
+import { useLocale } from "@/providers/LocaleProvider";
 import { useInitialUser } from "@/providers/UserProvider";
 
 const DEFAULT_PROFILE_NAME = "사용자";
 const DEFAULT_PROFILE_ROLE = "스태프";
-const DEFAULT_PROFILE_BRANCH = "지점 미선택";
-const APP_VERSION = "아가잼잼 어드민 v2.4.1";
+const APP_VERSION_NUMBER = process.env.NEXT_PUBLIC_APP_VERSION ?? process.env.npm_package_version ?? "0.0.0";
+const APP_VERSION = `아가잼잼 어드민 v${APP_VERSION_NUMBER}`;
 
-function getRoleLabel(role: string | undefined) {
-  switch (role) {
-    case "owner":
-    case "admin":
-      return "지점장";
-    case "manager":
-      return "매니저";
-    case "member":
-      return "스태프";
-    default:
-      return DEFAULT_PROFILE_ROLE;
+function getRoleLabel(locale: Locale, role: string | undefined) {
+  if (!role) {
+    return DEFAULT_PROFILE_ROLE;
   }
+
+  const key = `roles.${role}`;
+  const label = t(locale, key);
+  return label === key ? DEFAULT_PROFILE_ROLE : label;
 }
 
 function getAvatarInitial(name: string) {
@@ -40,10 +39,11 @@ export interface AllSettingsRedesignProps {
 
 export function AllSettingsRedesign({ menuGroups = defaultMenuGroups }: AllSettingsRedesignProps) {
   const router = useRouter();
+  const locale = useLocale();
   const user = useInitialUser();
   const profileName = user?.name ?? DEFAULT_PROFILE_NAME;
-  const profileRole = getRoleLabel(user?.role);
-  const profileBranch = user?.branchName ?? DEFAULT_PROFILE_BRANCH;
+  const profileRole = getRoleLabel(locale, user?.role);
+  const isOwner = user?.role === "owner";
 
   useEffect(() => {
     document.body.classList.add("mobile-all-route");
@@ -61,14 +61,13 @@ export function AllSettingsRedesign({ menuGroups = defaultMenuGroups }: AllSetti
           <div className="profile-name">{profileName}</div>
           <div className="profile-role">
             <span>{profileRole}</span>
-            <span className="role-dot" />
-            <span>{profileBranch}</span>
           </div>
         </div>
         <button
           type="button"
           className="profile-edit"
           aria-label="프로필 편집"
+          hidden
           onClick={() => router.push("/select-branch")}
         >
           <PenLine size={14} strokeWidth={2.5} />
@@ -76,6 +75,18 @@ export function AllSettingsRedesign({ menuGroups = defaultMenuGroups }: AllSetti
       </div>
 
       <MenuGroups groups={menuGroups} />
+
+      {isOwner && (
+        <button
+          type="button"
+          className="branch-switch-btn"
+          data-component="mobile-all-branch-switch"
+          onClick={() => router.push("/select-branch")}
+        >
+          <Building2 size={16} strokeWidth={2.5} />
+          지점 변경
+        </button>
+      )}
 
       <button
         type="button"
