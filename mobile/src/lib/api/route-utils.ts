@@ -16,6 +16,40 @@ const COOKIE_OPTIONS = {
     path: "/",
 };
 
+class InvalidJsonBodyError extends Error {
+    constructor() {
+        super("Request body must be valid JSON");
+        this.name = "InvalidJsonBodyError";
+    }
+}
+
+async function readJsonObjectBody(request: NextRequest): Promise<Record<string, unknown>> {
+    const text = await request.text();
+
+    if (!text.trim()) {
+        return {};
+    }
+
+    try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+        }
+    } catch {
+        throw new InvalidJsonBodyError();
+    }
+
+    throw new InvalidJsonBodyError();
+}
+
+function invalidJsonResponse(error: unknown): NextResponse | null {
+    if (error instanceof InvalidJsonBodyError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    return null;
+}
+
 /**
  * Get access token from httpOnly cookie
  */
@@ -143,7 +177,7 @@ export async function proxyPostRequest(
     }
 
     try {
-        const body = await request.json().catch(() => ({}));
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.post(backendPath, {
             ...body,
             ...additionalBody,
@@ -160,6 +194,11 @@ export async function proxyPostRequest(
 
         return NextResponse.json(response.data);
     } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
         return errorResponse(error, context);
     }
 }
@@ -185,7 +224,7 @@ export async function proxyDeleteRequest(
     }
 
     try {
-        const body = await request.json().catch(() => ({}));
+        const body = await readJsonObjectBody(request);
         const { searchParams } = new URL(request.url);
 
         const params: Record<string, string> = { accessToken };
@@ -211,6 +250,11 @@ export async function proxyDeleteRequest(
 
         return NextResponse.json(response.data);
     } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
         return errorResponse(error, context);
     }
 }
