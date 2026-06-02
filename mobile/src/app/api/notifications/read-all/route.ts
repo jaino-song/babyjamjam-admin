@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+
 import { serverAPIClient } from "@/lib/api/server";
+import { errorResponse } from "@/lib/api/route-utils";
 
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
@@ -20,11 +22,7 @@ export async function PATCH(request: NextRequest) {
             headers: getAuthHeaders(token),
         });
         return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[API] Error marking notifications as read:", error.message);
-        return NextResponse.json(
-            { error: "Failed to mark notifications as read" },
-            { status: error.response?.status || 500 }
-        );
+    } catch (error) {
+        return errorResponse(error, "mark notifications as read");
     }
 }

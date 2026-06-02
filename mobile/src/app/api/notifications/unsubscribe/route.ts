@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+
 import { serverAPIClient } from "@/lib/api/server";
+import { errorResponse } from "@/lib/api/route-utils";
 
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
@@ -21,11 +23,7 @@ export async function POST(request: NextRequest) {
             headers: getAuthHeaders(token),
         });
         return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[API] Error unsubscribing from notifications:", error.message);
-        return NextResponse.json(
-            { error: "Failed to unsubscribe from notifications" },
-            { status: error.response?.status || 500 }
-        );
+    } catch (error) {
+        return errorResponse(error, "unsubscribe from notifications");
     }
 }

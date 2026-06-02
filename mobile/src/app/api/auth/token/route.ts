@@ -25,6 +25,15 @@ const EXTENDED_SESSION_ROLES = ["owner", "creator"] as const;
 const EXTENDED_SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
 const DEFAULT_SESSION_MAX_AGE = 3 * 24 * 60 * 60;   // 3 days
 
+function getErrorCode(error: Error): string | undefined {
+    if (!("code" in error)) {
+        return undefined;
+    }
+
+    const { code } = error as { code?: unknown };
+    return typeof code === "string" ? code : undefined;
+}
+
 export async function POST(request: NextRequest) {
     try {
         const { code } = await request.json();
@@ -74,8 +83,9 @@ export async function POST(request: NextRequest) {
         if (error instanceof Error) {
             console.error("Error Name:", error.name);
             console.error("Error Message:", error.message);
-            if ('code' in error) {
-                console.error("Error Code:", (error as any).code);
+            const errorCode = getErrorCode(error);
+            if (errorCode) {
+                console.error("Error Code:", errorCode);
             }
         }
 

@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { AxiosError } from "axios";
+
 import { serverAPIClient } from "@/lib/api/server";
 
 export async function GET() {
-    const results: any = {
+    const results = {
         timestamp: new Date().toISOString(),
         environment: process.env.NODE_ENV,
         backendURL: serverAPIClient.defaults.baseURL,
@@ -20,7 +22,7 @@ export async function GET() {
 
     // Test 2: Try to reach backend health endpoint
     try {
-        console.log("[Health Check] Trying to reach backend at:", serverAPIClient.defaults.baseURL);
+        console.info("[Health Check] Trying to reach backend at:", serverAPIClient.defaults.baseURL);
         const startTime = Date.now();
 
         const response = await serverAPIClient.get("/", {
@@ -40,8 +42,10 @@ export async function GET() {
                 responseTime: `${duration}ms`,
             }
         });
-    } catch (error: any) {
-        console.error("[Health Check] Backend unreachable:", error.message);
+    } catch (error) {
+        const axiosError = error instanceof AxiosError ? error : null;
+        const message = error instanceof Error ? error.message : "Unknown error";
+        console.error("[Health Check] Backend unreachable:", message);
 
         return NextResponse.json({
             ...results,
@@ -49,8 +53,8 @@ export async function GET() {
             message: "Backend unreachable",
             backend: {
                 reachable: false,
-                error: error.message,
-                code: error.code,
+                error: message,
+                code: axiosError?.code,
             }
         }, { status: 503 });
     }

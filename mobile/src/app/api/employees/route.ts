@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { AxiosError } from "axios";
+
 import { serverAPIClient } from "@/lib/api/server";
+
+interface BackendErrorResponse {
+    error?: string;
+    message?: string;
+}
 
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
@@ -61,14 +68,15 @@ export async function POST(request: NextRequest) {
         }
 
         return NextResponse.json(response.data, { status: 201 });
-    } catch (error: any) {
-        console.error("[API] Error creating employee:", error.response?.data || error.message);
+    } catch (error) {
+        const axiosError = error instanceof AxiosError ? error as AxiosError<BackendErrorResponse> : null;
+        console.error("[API] Error creating employee:", axiosError?.response?.data || (error instanceof Error ? error.message : error));
         // Pass through actual backend error response or create error object
-        if (error.response?.data) {
-            return NextResponse.json(error.response.data, { status: error.response.status || 500 });
+        if (axiosError?.response?.data) {
+            return NextResponse.json(axiosError.response.data, { status: axiosError.response.status || 500 });
         }
         return NextResponse.json(
-            { message: error.message || "Failed to create employee", error: "Internal Server Error" },
+            { message: error instanceof Error ? error.message : "Failed to create employee", error: "Internal Server Error" },
             { status: 500 }
         );
     }
@@ -105,13 +113,14 @@ export async function PATCH(request: NextRequest) {
         }
 
         return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[API] Error updating employee:", error.response?.data || error.message);
-        if (error.response?.data) {
-            return NextResponse.json(error.response.data, { status: error.response.status || 500 });
+    } catch (error) {
+        const axiosError = error instanceof AxiosError ? error as AxiosError<BackendErrorResponse> : null;
+        console.error("[API] Error updating employee:", axiosError?.response?.data || (error instanceof Error ? error.message : error));
+        if (axiosError?.response?.data) {
+            return NextResponse.json(axiosError.response.data, { status: axiosError.response.status || 500 });
         }
         return NextResponse.json(
-            { message: error.message || "Failed to update employee", error: "Internal Server Error" },
+            { message: error instanceof Error ? error.message : "Failed to update employee", error: "Internal Server Error" },
             { status: 500 }
         );
     }
