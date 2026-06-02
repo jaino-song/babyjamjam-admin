@@ -56,6 +56,11 @@ export class ChangeEmployeeOpenStatusDto {
     openToNextWork!: boolean;
 }
 
+export class EmployeesByRegisteredDateDto {
+    @IsDateString()
+    date!: string;
+}
+
 export class EmployeesByRegisteredRangeDto {
     @IsDateString()
     startDate!: string;

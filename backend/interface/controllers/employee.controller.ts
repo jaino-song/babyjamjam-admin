@@ -3,6 +3,7 @@ import { EmployeeService } from "application/services/employee.service";
 import {
     ChangeEmployeeOpenStatusDto,
     CreateEmployeeDto,
+    EmployeesByRegisteredDateDto,
     EmployeesByRegisteredRangeDto,
     UpdateEmployeeDto,
 } from "interface/dto/employee.dto";
@@ -50,9 +51,9 @@ export class EmployeeController {
     @Get("registered-date")
     findByRegisteredDate(
         @CurrentTenant() tenant: { branchId?: string },
-        @Query("date") date: string
+        @Query() query: EmployeesByRegisteredDateDto
     ) {
-        return this.employeeService.findByRegisteredDate(tenant.branchId ?? "", new Date(date));
+        return this.employeeService.findByRegisteredDate(tenant.branchId ?? "", new Date(query.date));
     }
 
     @Get("registered-range")

@@ -368,6 +368,15 @@ describe("EmployeeController (Integration)", () => {
                 new Date(date),
             );
         });
+
+        it("should reject invalid registered date before calling service", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/employees/registered-date")
+                .query({ date: "not-a-date" });
+
+            expect(response.status).toBe(400);
+            expect(employeeService.findByRegisteredDate).not.toHaveBeenCalled();
+        });
     });
 
     // ============================================
