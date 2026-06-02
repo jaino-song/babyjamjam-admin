@@ -6,7 +6,7 @@ import { Check, ChevronLeft } from "lucide-react";
 import { useCreateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { api } from "@/lib/api/client";
-import type { CreateClientDto } from "@/lib/client/types";
+import type { CreateClientDto, ServiceStatus } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
@@ -568,7 +568,7 @@ export default function NewClientPage() {
               <select
                 className={SELECT_CLS}
                 value={store.serviceStatus}
-                onChange={(e) => setField("serviceStatus", e.target.value)}
+                onChange={(e) => setField("serviceStatus", e.target.value as ServiceStatus)}
               >
                 {SERVICE_STATUS_OPTIONS.map((s) => (
                   <option key={s.value} value={s.value}>
