@@ -49,6 +49,9 @@ const CLIENT_SERVICE_STATUSES = [
     "terminated",
 ] as const;
 
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const BIRTHDAY_PATTERN = /^(\d{2})(\d{2})(\d{2})$/;
+
 @Injectable()
 export class ToolExecutorService {
     private readonly logger = new Logger(ToolExecutorService.name);
@@ -350,6 +353,77 @@ export class ToolExecutorService {
         return parsed;
     }
 
+    private parseOptionalDateArg(args: ToolArgs, key: string): string | undefined {
+        const value = this.parseOptionalStringArg(args, key);
+        if (value === undefined) {
+            return undefined;
+        }
+
+        return this.parseDateValue(value, key);
+    }
+
+    private parseNullableDateArg(args: ToolArgs, key: string): string | null {
+        const value = this.parseOptionalStringArg(args, key);
+        if (value === undefined) {
+            return null;
+        }
+
+        return this.parseDateValue(value, key);
+    }
+
+    private parseNullableBirthdayArg(args: ToolArgs, key: string): string | null {
+        const value = this.parseOptionalStringArg(args, key);
+        if (value === undefined) {
+            return null;
+        }
+
+        return this.parseBirthdayValue(value, key);
+    }
+
+    private parseDateValue(value: string, key: string): string {
+        const match = ISO_DATE_PATTERN.exec(value);
+        if (!match) {
+            throw new Error(`${key}은(는) YYYY-MM-DD 형식이어야 합니다`);
+        }
+
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        const isValidDate =
+            date.getUTCFullYear() === year
+            && date.getUTCMonth() === month - 1
+            && date.getUTCDate() === day;
+
+        if (!isValidDate) {
+            throw new Error(`${key}은(는) 유효한 날짜여야 합니다`);
+        }
+
+        return value;
+    }
+
+    private parseBirthdayValue(value: string, key: string): string {
+        const match = BIRTHDAY_PATTERN.exec(value);
+        if (!match) {
+            throw new Error(`${key}은(는) YYMMDD 형식이어야 합니다`);
+        }
+
+        const year = 2000 + Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        const isValidDate =
+            date.getUTCFullYear() === year
+            && date.getUTCMonth() === month - 1
+            && date.getUTCDate() === day;
+
+        if (!isValidDate) {
+            throw new Error(`${key}은(는) 유효한 생년월일이어야 합니다`);
+        }
+
+        return value;
+    }
+
     private async resolveClientId(branchid: string, args: ToolArgs): Promise<number> {
         const rawId = args['clientId'];
         if (!this.isMissingArg(rawId)) {
@@ -450,11 +524,11 @@ export class ToolExecutorService {
             phone: this.parseNullableStringArg(args, "phone"),
             type: this.parseNullableStringArg(args, "type"),
             duration: this.parseOptionalIntegerArg(args, "duration", { min: 1 }) ?? null,
-            startDate: this.parseNullableStringArg(args, "startDate"),
-            endDate: this.parseNullableStringArg(args, "endDate"),
+            startDate: this.parseNullableDateArg(args, "startDate"),
+            endDate: this.parseNullableDateArg(args, "endDate"),
             careCenter: this.parseRequiredBooleanArg(args, "careCenter"),
             voucherClient: this.parseRequiredBooleanArg(args, "voucherClient"),
-            birthday: this.parseNullableStringArg(args, "birthday"),
+            birthday: this.parseNullableBirthdayArg(args, "birthday"),
             breastPump: this.parseOptionalBooleanArg(args, "breastPump", { defaultValue: false }) ?? false,
         });
         return { success: true, data: { id: client.id, name: client.name, message: "산모가 등록되었습니다" } };
@@ -474,8 +548,8 @@ export class ToolExecutorService {
         if (args['secondaryEmployeeId'] !== undefined) updateData['secondaryEmployeeId'] = this.parseNullableIntegerArg(args, "secondaryEmployeeId", { min: 1 });
         if (args['type'] !== undefined) updateData['type'] = this.parseNullableStringArg(args, "type");
         if (args['duration'] !== undefined) updateData['duration'] = this.parseNullableIntegerArg(args, "duration", { min: 1 });
-        if (args['startDate'] !== undefined) updateData['startDate'] = this.parseNullableStringArg(args, "startDate");
-        if (args['endDate'] !== undefined) updateData['endDate'] = this.parseNullableStringArg(args, "endDate");
+        if (args['startDate'] !== undefined) updateData['startDate'] = this.parseNullableDateArg(args, "startDate");
+        if (args['endDate'] !== undefined) updateData['endDate'] = this.parseNullableDateArg(args, "endDate");
         if (args['serviceStatus'] !== undefined) updateData['serviceStatus'] = this.parseNullableStringArg(args, "serviceStatus", { allowedValues: CLIENT_SERVICE_STATUSES });
 
         const client = await this.clientService.update(
@@ -528,7 +602,7 @@ export class ToolExecutorService {
             grade: this.parseRequiredStringArg(args, "grade"),
             workArea: this.parseOptionalStringListArg(args, "workArea"),
             openToNextWork: this.parseOptionalBooleanArg(args, "openToNextWork", { defaultValue: true }) ?? true,
-            registeredDate: this.parseOptionalStringArg(args, "companyRegisteredDate"),
+            registeredDate: this.parseOptionalDateArg(args, "companyRegisteredDate"),
         });
         return { success: true, data: { id: employee.id, name: employee.name, message: "관리사가 등록되었습니다" } };
     }

@@ -311,4 +311,37 @@ describe("ToolExecutorService", () => {
         })).resolves.toMatchObject({ success: false, error: expect.stringContaining("filter") });
         expect(mocks.clientService.findByFilter).not.toHaveBeenCalled();
     });
+
+    it("should reject malformed date strings before mutation services run", async () => {
+        const { executor, mocks } = createExecutor();
+
+        await expect(executor.execute("branch-1", "createClient", {
+            confirmed: true,
+            name: "김산모",
+            primaryEmployeeId: 1,
+            careCenter: false,
+            voucherClient: true,
+            startDate: "2026-02-31",
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("startDate") });
+        expect(mocks.clientService.create).not.toHaveBeenCalled();
+
+        await expect(executor.execute("branch-1", "createClient", {
+            confirmed: true,
+            name: "김산모",
+            primaryEmployeeId: 1,
+            careCenter: false,
+            voucherClient: true,
+            birthday: "2026-01-01",
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("birthday") });
+        expect(mocks.clientService.create).not.toHaveBeenCalled();
+
+        await expect(executor.execute("branch-1", "createEmployee", {
+            confirmed: true,
+            name: "박관리",
+            phone: "010-0000-0000",
+            grade: "A",
+            companyRegisteredDate: "tomorrow",
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("companyRegisteredDate") });
+        expect(mocks.employeeService.create).not.toHaveBeenCalled();
+    });
 });
