@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useCreateClient } from "@/hooks/useClients";
+import { useClient, useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
-import type { CreateClientDto } from "@/lib/client/types";
+import type { CreateClientDto, ServiceStatus, UpdateClientDto } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
@@ -63,18 +63,6 @@ function Field({
   );
 }
 
-function getVoucherTypeLabel(type: string): string {
-  if (!type) return "";
-
-  for (const types of Object.values(voucherOptions.voucherOptions)) {
-    for (const [typeValue, typeData] of Object.entries(types)) {
-      if (typeValue === type) return typeData.label;
-    }
-  }
-
-  return type;
-}
-
 const formatPhoneNumber = (value: string): string => {
   const digits = value.replace(/\D/g, "");
   if (digits.length <= 3) return digits;
@@ -102,10 +90,25 @@ const yymmddToIso = (value: string | null | undefined): string | null => {
   return `20${v.slice(0, 2)}-${v.slice(2, 4)}-${v.slice(4, 6)}`;
 };
 
+// ISO "2026-05-30" → "260530" — 편집 모드에서 client 데이터를 wizard store(YYMMDD)에 하이드레이트.
+const isoToYymmdd = (iso: string | null | undefined): string => {
+  if (!iso) return "";
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  return `${m[1].slice(2)}${m[2]}${m[3]}`;
+};
+
 export default function NewClientPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const clientIdParam = searchParams.get("clientId");
+  const editingClientId = clientIdParam ? Number(clientIdParam) : 0;
+  const isEditMode = editingClientId > 0;
+
   const locale = useLocale();
   const createClient = useCreateClient();
+  const updateClient = useUpdateClient();
+  const { data: editingClient } = useClient(isEditMode ? editingClientId : 0);
   const prefillName = useClientDialogStore((s) => s.prefillName);
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
 
@@ -121,16 +124,26 @@ export default function NewClientPage() {
   const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
   const floatingErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastInitializedFormKeyRef = useRef<string | null>(null);
+  const lastHydratedIdRef = useRef<number | null>(null);
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
+  const originalPhoneDigits = useMemo(
+    () => editingClient?.phone?.replace(/\D/g, "") ?? null,
+    [editingClient?.phone],
+  );
+  const isUsingOriginalPhone = Boolean(isEditMode && originalPhoneDigits && phoneDigits === originalPhoneDigits);
   const isPhoneAvailable =
     phoneDigits.length === 11 &&
-    !isCheckingPhoneDuplicate &&
-    !hasPhoneDuplicateCheckFailed &&
-    !isPhoneDuplicate &&
-    lastCheckedPhoneDigits === phoneDigits;
+    (isUsingOriginalPhone ||
+      (!isCheckingPhoneDuplicate &&
+        !hasPhoneDuplicateCheckFailed &&
+        !isPhoneDuplicate &&
+        lastCheckedPhoneDigits === phoneDigits));
   const phoneInlineMessage = phoneDigits.length === 11
-    ? isCheckingPhoneDuplicate
+    ? isUsingOriginalPhone
+      ? "✓ 등록 가능한 번호입니다."
+      : isCheckingPhoneDuplicate
       ? "번호를 확인하고 있습니다."
       : hasPhoneDuplicateCheckFailed
         ? PHONE_DUPLICATE_CHECK_FAILED_MESSAGE
@@ -140,13 +153,15 @@ export default function NewClientPage() {
             ? "✓ 등록 가능한 번호입니다."
             : null
     : null;
-  const phoneHelperTone: HelperTone = isCheckingPhoneDuplicate
-    ? "pending"
-    : hasPhoneDuplicateCheckFailed || isPhoneDuplicate
-      ? "err"
-      : isPhoneAvailable
-        ? "ok"
-        : "muted";
+  const phoneHelperTone: HelperTone = isUsingOriginalPhone
+    ? "ok"
+    : isCheckingPhoneDuplicate
+      ? "pending"
+      : hasPhoneDuplicateCheckFailed || isPhoneDuplicate
+        ? "err"
+        : isPhoneAvailable
+          ? "ok"
+          : "muted";
 
   const showFloatingError = (message: string) => {
     setFloatingError(message);
@@ -167,11 +182,14 @@ export default function NewClientPage() {
     };
   }, []);
 
+  const formSessionKey = isEditMode ? `edit:${editingClientId}` : "create";
+
   useEffect(() => {
-    return () => {
-      reset();
-    };
-  }, [reset]);
+    if (lastInitializedFormKeyRef.current === formSessionKey) return;
+    lastInitializedFormKeyRef.current = formSessionKey;
+    lastHydratedIdRef.current = null;
+    reset();
+  }, [formSessionKey, reset]);
 
   useEffect(() => {
     if (prefillName) {
@@ -180,10 +198,41 @@ export default function NewClientPage() {
     }
   }, [prefillName, clearPrefillName, setField]);
 
+  // 편집 모드: 기존 client 데이터를 wizard store에 1회 하이드레이트 (editingClient.id 변경 시 재실행).
+  // pricesManuallyEdited=true 로 두어 voucherPriceInfos 자동 입력 effect가 저장된 요금을 덮어쓰지 못하게 한다.
+  useEffect(() => {
+    if (!editingClient) return;
+    if (lastHydratedIdRef.current === editingClient.id) return;
+    lastHydratedIdRef.current = editingClient.id;
+
+    setField("name", editingClient.name);
+    setField("birthday", editingClient.birthday ?? "");
+    setField("dueDate", isoToYymmdd(editingClient.dueDate));
+    setField("address", editingClient.address ?? "");
+    setField("phone", editingClient.phone ?? "");
+    setField("primaryEmployeeId", editingClient.primaryEmployee?.id ?? null);
+    setField("secondaryEmployeeId", editingClient.secondaryEmployee?.id ?? null);
+    setField("type", editingClient.type ?? "");
+    setField("duration", editingClient.duration);
+    setField("fullPrice", editingClient.fullPrice ?? "");
+    setField("grant", editingClient.grant ?? "");
+    setField("actualPrice", editingClient.actualPrice ?? "");
+    setField("startDate", isoToYymmdd(editingClient.startDate));
+    setField("endDate", isoToYymmdd(editingClient.endDate));
+    setField("careCenter", editingClient.careCenter);
+    setField("voucherClient", editingClient.voucherClient);
+    setField("breastPump", editingClient.breastPump);
+    setField("serviceStatus", editingClient.serviceStatus ?? "waiting");
+    setPricesManuallyEdited(true);
+  }, [editingClient, setField, setPricesManuallyEdited]);
+
   useEffect(() => {
     if (phoneDigits.length !== 11) {
       return;
     }
+
+    // 편집 모드에서 변경하지 않은 기존 번호는 중복 체크를 건너뛴다 (본인 번호이므로 항상 사용 가능).
+    if (isUsingOriginalPhone) return;
 
     const abortController = new AbortController();
 
@@ -257,7 +306,7 @@ export default function NewClientPage() {
       abortController.abort();
       setIsCheckingPhoneDuplicate(false);
     };
-  }, [phoneDigits]);
+  }, [phoneDigits, isUsingOriginalPhone]);
 
   const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(store.type || "");
 
@@ -314,6 +363,7 @@ export default function NewClientPage() {
         if (store.birthday.replace(/\D/g, "").length !== 6) return false;
         if (!store.dueDate) return false;
         if (phoneDigits.length !== 11) return false;
+        if (isUsingOriginalPhone) return true;
 
         if (isCheckingPhoneDuplicate) {
           return false;
@@ -392,8 +442,12 @@ export default function NewClientPage() {
         breastPump: store.breastPump,
         serviceStatus: store.serviceStatus || null,
       };
-      await createClient.mutateAsync(dto);
-      router.push("/clients");
+      if (isEditMode) {
+        await updateClient.mutateAsync({ id: editingClientId, dto: dto as UpdateClientDto });
+      } else {
+        await createClient.mutateAsync(dto);
+      }
+      router.push(clientsReturnHref);
     } catch (err: unknown) {
       showFloatingError(getErrorMessage(err, locale, "clients.form.error-save-failed"));
     }
@@ -412,8 +466,9 @@ export default function NewClientPage() {
   const isLastStep = activeStep === WIZARD_STEPS.length - 1;
   const activeStepMeta = WIZARD_STEPS[activeStep];
   const progress = ((activeStep + 1) / WIZARD_STEPS.length) * 100;
+  const clientsReturnHref = isEditMode ? `/clients?id=${editingClientId}` : "/clients";
   const goBackToClients = () => {
-    router.push("/clients");
+    router.push(clientsReturnHref);
   };
 
   const handlePrev = () => {
@@ -430,7 +485,8 @@ export default function NewClientPage() {
     handleStepChange(activeStep + 1);
   };
 
-  const isPrimaryDisabled = createClient.isPending || !isStepSatisfied(activeStep);
+  const isSaving = createClient.isPending || updateClient.isPending;
+  const isPrimaryDisabled = isSaving || !isStepSatisfied(activeStep);
 
   return (
     <>
@@ -486,13 +542,13 @@ export default function NewClientPage() {
               <ChevronLeft aria-hidden="true" size={20} strokeWidth={2.5} />
             </button>
 
-            <div className={styles.navbarTitle} data-component="clients-new-navbar-title">새 고객 추가</div>
+            <div className={styles.navbarTitle} data-component="clients-new-navbar-title">{isEditMode ? "고객 정보 수정" : "새 고객 추가"}</div>
 
             <button
               type="button"
               onClick={goBackToClients}
               className={styles.navbarIconButton}
-              aria-label="새 고객 추가 닫기"
+              aria-label={isEditMode ? "고객 정보 수정 닫기" : "새 고객 추가 닫기"}
             >
               <X aria-hidden="true" size={20} strokeWidth={2.5} />
             </button>
@@ -649,7 +705,7 @@ export default function NewClientPage() {
                   <div className={styles.formCard} data-component="clients-new-pricing-card">
                     <div className={styles.formCardTitle} data-component="clients-new-form-card-title">
                       요금 정보
-                      {selectedPriceInfo && !pricesManuallyEdited ? (
+                      {selectedPriceInfo ? (
                         <span className={styles.autoBadge}>자동입력</span>
                       ) : null}
                     </div>
@@ -721,7 +777,7 @@ export default function NewClientPage() {
                       <select
                         className={styles.formInput}
                         value={store.serviceStatus}
-                        onChange={(e) => setField("serviceStatus", e.target.value as typeof store.serviceStatus)}
+                        onChange={(e) => setField("serviceStatus", e.target.value as ServiceStatus)}
                         data-component="clients-new-status-select"
                       >
                         {SERVICE_STATUS_OPTIONS.map((status) => (
@@ -775,7 +831,7 @@ export default function NewClientPage() {
                 disabled={isPrimaryDisabled}
                 className={cn(styles.wizardButton, styles.primaryButton)}
               >
-                {createClient.isPending ? "등록 중..." : isLastStep ? "등록" : "다음"}
+                {isSaving ? (isEditMode ? "저장 중..." : "등록 중...") : isLastStep ? (isEditMode ? "저장" : "등록") : "다음"}
               </button>
             </div>
           </section>

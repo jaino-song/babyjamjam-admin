@@ -2,30 +2,32 @@
 
 import { useMemo, useState } from "react";
 
-import { ListCard } from "@/components/app/mobile-redesign/primitives";
+import { ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import {
-  Avatar,
   DetailTabPills,
   InfoCard,
   InfoRow,
+  MobileDetailActions,
+  MobileDetailHeader,
+  MobileDetailPage,
   MobileDetailSheet,
-  type AvatarTone,
+  MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
 import {
   useConsultationInquiries,
   useMarkConsultationInquiryAsRead,
 } from "@/hooks/use-consultation-inquiries";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import type { ConsultationInquiry } from "@/lib/consultation-inquiry/types";
 import "@/components/app/mobile-redesign/redesign.css";
 
 type ConsultationStatus = "unread" | "confirmed";
 type VoucherKind = "govt" | "self";
-type DetailTabId = "inquiry" | "info" | "thread";
+type DetailTabId = "info" | "inquiry";
 
 interface ConsultationRow {
   id: string;
   initial: string;
-  avatarTone: AvatarTone;
   name: string;
   voucher: string;
   voucherKind: VoucherKind;
@@ -45,32 +47,12 @@ interface ConsultationRow {
   selectedAddons: Array<{ name: string; quantity: number; priceLabel: string }>;
   inquiryStatus: string;
   referralSource: string;
+  additionalNotes: string | null;
+  confirmedAtLabel: string | null;
   dueDateLabel: string;
 }
 
 const ALL_FILTER = "전체";
-const AVATAR_TONES: AvatarTone[] = ["primary", "green", "burgundy", "orange", "purple"];
-const AVATAR_TONE_BY_INITIAL: Record<string, AvatarTone> = {
-  홍: "burgundy",
-  서: "primary",
-  김: "green",
-  이: "orange",
-  한: "purple",
-  박: "primary",
-  윤: "burgundy",
-  최: "green",
-};
-
-function pickAvatarTone(seed: string): AvatarTone {
-  const mappedTone = AVATAR_TONE_BY_INITIAL[seed];
-  if (mappedTone) return mappedTone;
-
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
-  }
-  return AVATAR_TONES[Math.abs(hash) % AVATAR_TONES.length];
-}
 
 function classifyVoucher(voucherType: string | null): VoucherKind {
   if (!voucherType) return "self";
@@ -101,14 +83,25 @@ function formatDueDate(iso: string): { short: string; long: string } {
   return { short, long };
 }
 
+function formatConfirmedAt(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${date.getMonth() + 1}/${date.getDate()} ${hour}:${minute}`;
+}
+
 function humanizeSource(source: string): string {
-  if (source === "website") return "웹사이트 문의 폼";
-  if (source === "phone") return "전화 문의";
+  if (source === "website") return "웹사이트";
+  if (source === "app") return "앱";
+  if (source === "phone") return "전화";
   return source || "-";
 }
 
 function shortSourceLabel(source: string): string {
-  if (source === "website") return "웹";
+  if (source === "website") return "웹사이트";
+  if (source === "app") return "앱";
   if (source === "phone") return "전화";
   return source || "-";
 }
@@ -125,6 +118,11 @@ function inquiryStatusLabel(status: string): string {
   return status;
 }
 
+function serviceDurationLabel(durationDays: number | null): string {
+  if (typeof durationDays !== "number") return "-";
+  return `${durationDays}일`;
+}
+
 function toRow(inquiry: ConsultationInquiry): ConsultationRow {
   const initial = inquiry.motherName.trim().charAt(0) || "?";
   const due = formatDueDate(inquiry.dueDate);
@@ -132,7 +130,6 @@ function toRow(inquiry: ConsultationInquiry): ConsultationRow {
   return {
     id: inquiry.id,
     initial,
-    avatarTone: pickAvatarTone(initial || inquiry.id),
     name: inquiry.motherName,
     voucher,
     voucherKind: classifyVoucher(inquiry.voucherType),
@@ -157,6 +154,8 @@ function toRow(inquiry: ConsultationInquiry): ConsultationRow {
       })) ?? [],
     inquiryStatus: inquiry.status,
     referralSource: inquiry.referralSource,
+    additionalNotes: inquiry.additionalNotes?.trim() || null,
+    confirmedAtLabel: formatConfirmedAt(inquiry.readAt),
     dueDateLabel: due.long,
   };
 }
@@ -171,47 +170,40 @@ function ConsultationDetail({
   onTabChange: (id: DetailTabId) => void;
 }) {
   const [actionStatus, setActionStatus] = useState("");
-  const inquiryBody = [
-    "안녕하세요, 산후도우미 서비스를 신청하고 싶어 문의드립니다.",
-    `${row.voucher} 유형으로 알아보고 있습니다. 출산 예정일은 ${row.dueDateLabel}이고 ${row.region} 거주합니다.`,
-    "가능한 매니저가 있으면 연락 부탁드려요.",
-  ].join("\n\n");
 
   return (
-    <div className="detail-body detail-column" data-component="mobile-consultations-detail">
-      <div className="client-detail-header pop-up">
-        <Avatar initial={row.initial} tone={row.avatarTone} large />
-        <div className="client-detail-title">
-          <div className="client-detail-name">{row.name}</div>
-          <div className="client-detail-badges">
-            <span className={`badge-mini ${row.status === "unread" ? "burgundy" : "green"}`}>
-              {row.status === "unread" ? "미확인" : "확인 완료"}
-            </span>
-            <span className="badge-mini muted">
-              {row.sourceShort} · {row.right}
-            </span>
-          </div>
-        </div>
-      </div>
+    <MobileDetailPage name="consultations">
+      <MobileDetailHeader
+        name="consultations"
+        avatar={row.initial}
+        avatarTone={row.status === "unread" ? "burgundy" : "green"}
+        title={row.name}
+        badges={[
+          {
+            label: row.status === "unread" ? "미확인" : "확인 완료",
+            tone: row.status === "unread" ? "burgundy" : "green",
+          },
+          { label: `${row.sourceShort} · ${row.right}`, tone: "muted" },
+        ]}
+      />
 
-      <div className="detail-actions">
-        <button
-          className="btn btn-secondary"
-          type="button"
-          onClick={() => setActionStatus(`${row.name} 고객에게 답장 패널을 열었습니다.`)}
-          data-component="mobile-consultations-reply"
-        >
-          답장
-        </button>
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={() => setActionStatus(`${row.name} 고객을 등록 화면으로 이동합니다.`)}
-          data-component="mobile-consultations-register"
-        >
-          고객 등록
-        </button>
-      </div>
+      <MobileDetailActions
+        name="consultations"
+        actions={[
+          {
+            label: "답장",
+            variant: "secondary",
+            onClick: () => setActionStatus(`${row.name} 고객에게 답장 패널을 열었습니다.`),
+            dataComponent: "mobile-consultations-reply",
+          },
+          {
+            label: "고객 등록",
+            variant: "primary",
+            onClick: () => setActionStatus(`${row.name} 고객을 등록 화면으로 이동합니다.`),
+            dataComponent: "mobile-consultations-register",
+          },
+        ]}
+      />
       {actionStatus && (
         <div className="action-feedback" role="status">
           {actionStatus}
@@ -220,115 +212,98 @@ function ConsultationDetail({
 
       <DetailTabPills
         tabs={[
-          { id: "inquiry", label: "문의 내용" },
           { id: "info", label: "고객 정보" },
-          { id: "thread", label: "응답 이력" },
+          { id: "inquiry", label: "상담 내용" },
         ]}
         activeTab={activeTab}
         onTabChange={(id) => onTabChange(id as DetailTabId)}
       />
 
-      <div
-        className={`tab-content ${activeTab === "inquiry" ? "active" : ""}`}
-        data-tab-content="inquiry"
-      >
-        <InfoCard title="문의 본문" padded>
-          <div className="consultation-body-copy" data-component="mobile-consultations-inquiry-body">
-            {inquiryBody}
-          </div>
-        </InfoCard>
-        <InfoCard title="자동 추출 정보" delay={60}>
-          <InfoRow label="희망 시작일" value="-" />
-          <InfoRow
-            label="희망 기간"
-            value={row.selectedDurationDays ? `${row.selectedDurationDays}일` : "-"}
-          />
-          <InfoRow label="바우처 유형" value={row.voucher} />
-          <InfoRow label="출산 예정일" value={row.dueDateLabel} />
+      <MobileDetailTabPanel name="consultations" tabId="inquiry" activeTab={activeTab}>
+        <InfoCard title="문의 정보">
           <InfoRow label="근무 지역" value={row.region} />
+          <InfoRow label="서비스 기간" value={serviceDurationLabel(row.selectedDurationDays)} />
+          <InfoRow
+            label="추가 서비스"
+            value={
+              row.selectedAddons.length > 0 ? (
+                <span className="addon-stack">
+                  {row.selectedAddons.map((addon) => (
+                    <span key={`${addon.name}-${addon.priceLabel}`} className="addon-stack-item">
+                      {addon.quantity > 1
+                        ? `${addon.name} × ${addon.quantity} · ${addon.priceLabel}`
+                        : `${addon.name} · ${addon.priceLabel}`}
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                "-"
+              )
+            }
+          />
+          <InfoRow label="추천 경로" value={row.referralSource || "-"} />
+          <InfoRow label="선호 매니저" value={row.preferredCaregiverName || "-"} />
+          <InfoRow
+            label="추가 사항"
+            value={
+              row.additionalNotes ? (
+                <span className="additional-notes-value">{row.additionalNotes}</span>
+              ) : (
+                "-"
+              )
+            }
+          />
         </InfoCard>
-        {(row.selectedPlan || row.selectedAddons.length > 0) && (
-          <InfoCard title="선택한 서비스" delay={120}>
-            {row.selectedPlan && (
-              <InfoRow
-                label={
-                  row.selectedDurationDays
-                    ? `${row.selectedPlan} · ${row.selectedDurationDays}일`
-                    : row.selectedPlan
-                }
-                value={row.selectedPlanPrice || "-"}
-              />
-            )}
-            {row.selectedAddons.map((addon) => (
-              <InfoRow
-                key={`${addon.name}-${addon.priceLabel}`}
-                label={addon.quantity > 1 ? `${addon.name} × ${addon.quantity}` : addon.name}
-                value={addon.priceLabel}
-              />
-            ))}
-          </InfoCard>
-        )}
-      </div>
+      </MobileDetailTabPanel>
 
-      <div
-        className={`tab-content ${activeTab === "info" ? "active" : ""}`}
-        data-tab-content="info"
-      >
+      <MobileDetailTabPanel name="consultations" tabId="info" activeTab={activeTab}>
         <InfoCard title="기본 정보">
           <InfoRow label="이름" value={row.name} />
           <InfoRow label="연락처" value={row.contact} />
           <InfoRow label="주소" value={row.address || "-"} />
+          <InfoRow label="출산 예정일" value={row.dueDateLabel} />
           <InfoRow label="출산 경험" value={row.birthExperience || "-"} />
-          <InfoRow label="출처" value={row.source} />
-          <InfoRow label="추천 경로" value={row.referralSource || "-"} />
-          {row.preferredCaregiverName && (
-            <InfoRow label="선호 매니저" value={row.preferredCaregiverName} />
-          )}
+          <InfoRow label="바우처 유형" value={row.voucher} />
         </InfoCard>
         <InfoCard title="문의 상태" delay={60}>
+          <InfoRow label="출처" value={row.source} />
           <InfoRow
             label="확인 여부"
-            value={row.status === "unread" ? "미확인" : "확인 완료"}
+            value={
+              row.status === "unread" ? (
+                "미확인"
+              ) : (
+                <span className="status-value-with-time">
+                  <span>확인 완료</span>
+                  {row.confirmedAtLabel && (
+                    <span className="status-value-time">{row.confirmedAtLabel}</span>
+                  )}
+                </span>
+              )
+            }
             tone={row.status === "unread" ? "burgundy" : "green"}
           />
           <InfoRow label="진행 상태" value={inquiryStatusLabel(row.inquiryStatus)} />
         </InfoCard>
-      </div>
+      </MobileDetailTabPanel>
 
-      <div
-        className={`tab-content ${activeTab === "thread" ? "active" : ""}`}
-        data-tab-content="thread"
-      >
-        <InfoCard title="응답 이력 · 0건">
-          <div
-            style={{
-              textAlign: "center",
-              padding: "24px 12px",
-              color: "hsl(var(--v3-text-muted))",
-              fontSize: "0.78rem",
-              lineHeight: 1.5,
-            }}
-          >
-            아직 응답하지 않았습니다.
-            <br />
-            위의 답장 또는 고객 등록 버튼으로 시작하세요.
-          </div>
-        </InfoCard>
-      </div>
-    </div>
+    </MobileDetailPage>
   );
 }
 
 export default function ConsultationsPage() {
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<DetailTabId>("inquiry");
+  const [activeTab, setActiveTab] = useState<DetailTabId>("info");
 
   const { data, isLoading, isError } = useConsultationInquiries({ limit: 100 });
   const markRead = useMarkConsultationInquiryAsRead();
 
   const rows = useMemo<ConsultationRow[]>(
-    () => (data?.data ?? []).map(toRow),
+    () =>
+      [...(data?.data ?? [])]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .map(toRow),
     [data],
   );
 
@@ -341,20 +316,39 @@ export default function ConsultationsPage() {
     { label: "확인", count: String(confirmedRows.length) },
   ];
 
-  const visibleSections = useMemo(() => {
-    const sections: Array<{ title: string; rows: ConsultationRow[] }> = [];
-    if (activeFilter === ALL_FILTER || activeFilter === "미확인") {
-      if (unreadRows.length > 0) {
-        sections.push({ title: `미확인 · ${unreadRows.length}건`, rows: unreadRows });
-      }
+  const sectionsFull = useMemo(() => {
+    const sections: Array<{ title: string; fullRows: ConsultationRow[]; fullCount: number }> = [];
+    // 전체: 미확인/확인 grouping 없이 최근 활동순(createdAt) 단일 리스트 (총 8개부터 teaser).
+    if (activeFilter === ALL_FILTER) {
+      return rows.length > 0 ? [{ title: "", fullRows: rows, fullCount: rows.length }] : [];
     }
-    if (activeFilter === ALL_FILTER || activeFilter === "확인") {
-      if (confirmedRows.length > 0) {
-        sections.push({ title: `확인 완료 · ${confirmedRows.length}건`, rows: confirmedRows });
-      }
+    if (activeFilter === "미확인" && unreadRows.length > 0) {
+      sections.push({ title: `미확인 · ${unreadRows.length}건`, fullRows: unreadRows, fullCount: unreadRows.length });
+    }
+    if (activeFilter === "확인" && confirmedRows.length > 0) {
+      sections.push({ title: `확인 완료 · ${confirmedRows.length}건`, fullRows: confirmedRows, fullCount: confirmedRows.length });
     }
     return sections;
-  }, [activeFilter, unreadRows, confirmedRows]);
+  }, [activeFilter, rows, unreadRows, confirmedRows]);
+
+  const maxFullCount = useMemo(
+    () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
+    [sectionsFull],
+  );
+
+  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+    useListInfiniteScroll({
+      resetKey: activeFilter,
+      totalItems: maxFullCount,
+    });
+
+  const visibleSections = useMemo(
+    () =>
+      sectionsFull
+        .map((s) => ({ ...s, rows: s.fullRows.slice(0, visibleCount) }))
+        .filter((s) => s.rows.length > 0),
+    [sectionsFull, visibleCount],
+  );
 
   const selectedRow = useMemo(
     () => (selectedId ? rows.find((r) => r.id === selectedId) ?? null : null),
@@ -363,7 +357,7 @@ export default function ConsultationsPage() {
 
   const handleSelectRow = (row: ConsultationRow) => {
     setSelectedId(row.id);
-    setActiveTab("inquiry");
+    setActiveTab("info");
     if (row.status === "unread") {
       markRead.mutate(row.id);
     }
@@ -382,6 +376,15 @@ export default function ConsultationsPage() {
             filters={filterItems}
             activeFilter={activeFilter}
             onFilterChange={setActiveFilter}
+            scrollRef={scrollContainerRef}
+            loadMoreFooter={
+              isInitialLoad && hasMore ? (
+                <ListLoadMoreButton
+                  onLoadMore={loadMore}
+                  dataComponentPrefix="mobile-consultations"
+                />
+              ) : null
+            }
           >
             {isLoading ? (
               <div
@@ -420,33 +423,43 @@ export default function ConsultationsPage() {
                 상담 문의가 없습니다.
               </div>
             ) : (
-              visibleSections.map((section) => (
-                <div className="section-block" key={section.title}>
-                  <div className="section-header">{section.title}</div>
-                  {section.rows.map((row) => (
-                    <button
+              <>
+              {visibleSections.map((section) => (
+                <div className="section-block" key={section.title || "all"}>
+                  {section.title && <div className="section-header">{section.title}</div>}
+                  {section.rows.map((row, idx) => (
+                    <ListItemRow
                       key={row.id}
-                      type="button"
-                      className={`list-item ${row.status === "unread" ? "unread-row" : ""}`}
-                      data-component="mobile-consultations-row"
-                      onClick={() => handleSelectRow(row)}
-                    >
-                      <div className={`list-avatar av-${row.avatarTone}`}>{row.initial}</div>
-                      <div className="list-info">
-                        <div className="list-name">{row.name}</div>
-                        <div className="consult-snippet">
+                      dataComponent="mobile-consultations-row"
+                      style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
+                      className={row.status === "unread" ? "unread-row" : undefined}
+                      left={
+                        <div className={`list-avatar av-${row.status === "unread" ? "burgundy" : "green"}`}>
+                          {row.initial}
+                        </div>
+                      }
+                      name={row.name}
+                      metaClassName="consult-snippet"
+                      meta={
+                        <>
                           <span className={`voucher-tag ${row.voucherKind}`}>{row.voucher}</span>
                           <span className="snippet-sep">·</span>
                           {row.due}
-                        </div>
-                      </div>
-                      <div className="list-right">
-                        <span className="dday-sub">{row.right}</span>
-                      </div>
-                    </button>
+                        </>
+                      }
+                      right={<span className="dday-sub">{row.right}</span>}
+                      onClick={() => handleSelectRow(row)}
+                    />
                   ))}
                 </div>
-              ))
+              ))}
+              {!isInitialLoad && hasMore && (
+                <ListLoadMoreSentinel
+                  sentinelRef={sentinelRef}
+                  dataComponentPrefix="mobile-consultations"
+                />
+              )}
+              </>
             )}
           </ListCard>
         </div>

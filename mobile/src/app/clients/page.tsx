@@ -1,393 +1,138 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, Clock3, FileCheck2, Send, User, UserPlus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { User } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { useClient, useDeleteClient } from "@/hooks/useClients";
+import { clientQueryKeys, useClient, useDeleteClient } from "@/hooks/useClients";
+import { useAreaTemplates } from "@/hooks";
+import { useEmployees } from "@/hooks/useEmployees";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
+import { api } from "@/lib/api/client";
 import { Client } from "@/lib/client/types";
+import { buildClientContractData } from "@/lib/contracts/client-contract-data";
+import {
+  CONTRACT_CREATION_PROGRESS_STEPS,
+  INITIAL_HEADLESS_PROGRESS,
+  createHeadlessProgressId,
+  getSafeHeadlessFailureMessage,
+  isHeadlessProgressStepKey,
+  type HeadlessProgressEvent,
+  type HeadlessProgressState,
+} from "@/lib/eformsign/headless-progress";
 import { useLocale } from "@/providers/LocaleProvider";
+import { eformsignApi } from "@/services/api";
 import { t } from "@/lib/i18n/translations";
 import { toast } from "@/hooks/use-toast";
-import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import { Badge, ListCard } from "@/components/app/mobile-redesign/primitives";
+import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import {
-  DetailTabPills,
-  InfoCard,
-  InfoRow,
+  Badge,
+  ListCard,
+  ListCountSkeleton,
+  ListItemRow,
+  ListLoadMoreButton,
+  ListLoadMoreSentinel,
+  ListRowsSkeleton,
+} from "@/components/app/mobile-redesign/primitives";
+import {
   MobileDetailSheet,
   MobileSearchBar,
-  type AvatarTone,
 } from "@/components/app/mobile-redesign/detail-sheet";
+import { ClientDetailContent, GROUPS, shouldShowMissingContractBadge, type ClientGroup, type ClientNotificationLogRecord, type DetailTabId } from "@/components/app/clients/client-detail";
 import "@/components/app/mobile-redesign/redesign.css";
 
 const CLIENTS_ROUTE_BODY_CLASS = "mobile-clients-route";
 const ALL_FILTER = "전체";
-const AVATAR_TONES: AvatarTone[] = ["primary", "green", "burgundy", "orange", "purple"];
-const AVATAR_TONE_BY_INITIAL: Partial<Record<string, AvatarTone>> = {
-  "[": "burgundy",
-  박: "green",
-  김: "primary",
-  최: "burgundy",
-  장: "orange",
-  송: "orange",
-  윤: "purple",
-  이: "green",
-  강: "primary",
-};
 
-function pickAvatarTone(client: Client, fallback: number): AvatarTone {
-  if (client.serviceStatus === "completed") return "green";
-  const initial = clientInitial(client.name);
-  if (AVATAR_TONE_BY_INITIAL[initial]) {
-    return AVATAR_TONE_BY_INITIAL[initial];
-  }
-  const code = client.name.charCodeAt(0) || fallback;
-  return AVATAR_TONES[code % AVATAR_TONES.length];
-}
-
-function clientInitial(name: string) {
-  return name.trim().charAt(0) || "?";
-}
-
-function clientMeta(c: Client) {
+function defaultClientMeta(c: Client) {
   const type = c.type ?? "유형 미정";
   return c.primaryEmployee?.name
     ? `${type} · ${c.primaryEmployee.name}`
     : `${type} · 제공인력 미배정`;
 }
 
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return "-";
+function primaryEmployeeMeta(c: Client) {
+  return c.primaryEmployee?.name ?? "제공인력 미배정";
+}
+
+function formatMonthDay(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null;
+
+  const dateOnlyMatch = dateStr.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (dateOnlyMatch) {
+    const month = Number(dateOnlyMatch[2]);
+    const day = Number(dateOnlyMatch[3]);
+    if (Number.isFinite(month) && Number.isFinite(day)) {
+      return `${month}/${day}`;
+    }
+  }
+
   const date = new Date(dateStr);
-  if (Number.isNaN(date.getTime())) return dateStr;
-  return date.toLocaleDateString("ko-KR");
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "numeric",
+    day: "numeric",
+  }).format(date);
 }
 
-function formatPrice(price: string | null): string {
-  if (!price) return "-";
-  const amount = Number(price.replace(/,/g, ""));
-  if (Number.isNaN(amount)) return price;
-  return `${amount.toLocaleString("ko-KR")}원`;
+function labeledDateMeta(label: string, dateStr: string | null | undefined, c: Client): string {
+  const date = formatMonthDay(dateStr);
+  return `${label} ${date ?? "-"} · ${primaryEmployeeMeta(c)}`;
 }
 
-function clientFeatureLabel(client: Client): string | null {
-  if (client.breastPump) return "유축기 대여";
-  if (client.careCenter) return "조리원 이용";
-  if (client.voucherClient) return "바우처";
-  return client.type;
-}
-
-function documentStatusLabel(status: Client["documentStatus"]): string {
-  switch (status) {
+function clientMeta(c: Client) {
+  switch (c.serviceStatus) {
+    case "waiting":
+      return labeledDateMeta("예정일", c.dueDate, c);
+    case "active":
     case "completed":
-      return "완료";
-    case "opened":
-    case "requested":
-      return "검토 필요";
-    case "created":
-      return "발송 대기";
-    case "rejected":
-    case "revoked":
-    case "deleted":
-      return "확인 필요";
+      return labeledDateMeta("종료일", c.endDate, c);
+    case "terminated":
+      return labeledDateMeta("중단일", c.updatedAt ?? c.endDate ?? c.createdAt, c);
+    case "replacement_requested":
+      return labeledDateMeta("교체 요청일", c.updatedAt ?? c.createdAt, c);
     default:
-      return "미발급";
+      return defaultClientMeta(c);
   }
 }
 
-function documentStatusTone(status: Client["documentStatus"]): "green" | "primary" | "orange" | "muted" | "burgundy" {
-  switch (status) {
-    case "completed":
-      return "green";
-    case "opened":
-    case "requested":
-      return "primary";
-    case "created":
-      return "orange";
-    case "rejected":
-    case "revoked":
-    case "deleted":
-      return "burgundy";
-    default:
-      return "muted";
-  }
+// "최근 활동순" 정렬 키 — clients는 활동 timestamp가 없어 서비스 시작일(startDate) 기준, 동률은 최신 id.
+function clientRecency(c: Client): number {
+  const t = c.startDate ? new Date(c.startDate).getTime() : NaN;
+  return Number.isFinite(t) ? t : 0;
+}
+function groupForClient(c: Client): ClientGroup {
+  return GROUPS.find((g) => g.match(c)) ?? GROUPS[GROUPS.length - 1];
 }
 
-interface ClientGroup {
-  key: string;
-  title: string;
-  badge: string;
-  badgeTone: "burgundy" | "primary" | "muted" | "green" | "orange";
-  badgeMini: "burgundy" | "primary" | "muted" | "green" | "orange";
-  match: (c: Client) => boolean;
-  counter: string;
-}
-
-const GROUPS: ClientGroup[] = [
-  {
-    key: "replacement_requested",
-    title: "교체 요청",
-    badge: "교체 요청",
-    badgeTone: "burgundy",
-    badgeMini: "burgundy",
-    match: (c) => c.serviceStatus === "replacement_requested",
-    counter: "명",
-  },
-  {
-    key: "active",
-    title: "진행중",
-    badge: "진행중",
-    badgeTone: "primary",
-    badgeMini: "primary",
-    match: (c) => c.serviceStatus === "active",
-    counter: "명",
-  },
-  {
-    key: "waiting",
-    title: "대기",
-    badge: "대기",
-    badgeTone: "orange",
-    badgeMini: "orange",
-    match: (c) => c.serviceStatus === "waiting" || c.serviceStatus === "pending",
-    counter: "명",
-  },
-  {
-    key: "completed",
-    title: "완료",
-    badge: "완료",
-    badgeTone: "green",
-    badgeMini: "green",
-    match: (c) => c.serviceStatus === "completed",
-    counter: "명",
-  },
-  {
-    key: "expired",
-    title: "종료",
-    badge: "종료",
-    badgeTone: "muted",
-    badgeMini: "muted",
-    match: (c) => c.serviceStatus === "terminated" || c.serviceStatus === "cancelled",
-    counter: "명",
-  },
-];
-
-type DetailTabId = "basic" | "contracts" | "alimtalk";
-
-function DetailDocRow({
-  icon,
-  title,
-  meta,
-  badge,
-  tone,
-}: {
-  icon: ReactNode;
-  title: string;
-  meta: string;
-  badge: string;
-  tone: "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
-}) {
-  return (
-    <div className="doc-row" data-component="mobile-clients-doc-row">
-      <div className={`doc-icon doc-icon-${tone}`} data-component="mobile-clients-doc-icon">
-        {icon}
-      </div>
-      <div className="doc-info" data-component="mobile-clients-doc-info">
-        <div className="doc-title" data-component="mobile-clients-doc-title">
-          {title}
-        </div>
-        <div className="doc-meta" data-component="mobile-clients-doc-meta">
-          {meta}
-        </div>
-      </div>
-      <span className={`badge-mini ${tone}`}>{badge}</span>
-    </div>
-  );
-}
-
-function ClientDetailContent({
-  client,
-  activeTab,
-  onTabChange,
-  onMessage,
-  onIssueContract,
-}: {
-  client: Client;
-  activeTab: DetailTabId;
-  onTabChange: (id: DetailTabId) => void;
-  onMessage: () => void;
-  onIssueContract: () => void;
-}) {
-  const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
-  const featureLabel = clientFeatureLabel(client);
-  const docTone = documentStatusTone(client.documentStatus);
-  const contractCode = client.eDocId ?? `C-${String(client.id).padStart(4, "0")}`;
-
-  return (
-    <div className="detail-body detail-column" data-component="mobile-clients-detail">
-      <div className="client-detail-header pop-up" data-component="mobile-clients-detail-header">
-        <div
-          className={`client-detail-avatar-lg av-${pickAvatarTone(client, client.id)}`}
-          data-component="mobile-clients-detail-avatar"
-        >
-          <User size={22} strokeWidth={2} />
-        </div>
-        <div className="client-detail-title" data-component="mobile-clients-detail-title">
-          <div className="client-detail-name" data-component="mobile-clients-detail-name">
-            {client.name}
-          </div>
-          <div className="client-detail-badges" data-component="mobile-clients-detail-badges">
-            <span className={`badge-mini ${group.badgeMini}`}>{group.badge}</span>
-            {featureLabel && <span className="badge-mini burgundy">{featureLabel}</span>}
-          </div>
-        </div>
-      </div>
-
-      <div className="detail-actions" data-component="mobile-clients-detail-actions">
-        <button
-          className="btn btn-secondary"
-          type="button"
-          onClick={onMessage}
-          data-component="mobile-clients-message"
-        >
-          메시지
-        </button>
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={onIssueContract}
-          data-component="mobile-clients-contract-create"
-        >
-          계약서 발급
-        </button>
-      </div>
-
-      <DetailTabPills
-        tabs={[
-          { id: "basic", label: "기본 정보" },
-          { id: "contracts", label: "계약서 정보" },
-          { id: "alimtalk", label: "알림톡 발송 현황" },
-        ]}
-        activeTab={activeTab}
-        onTabChange={(id) => onTabChange(id as DetailTabId)}
-      />
-
-      <div
-        className={`tab-content ${activeTab === "basic" ? "active" : ""}`}
-        data-tab-content="basic"
-        data-component="mobile-clients-basic-tab"
-      >
-        <InfoCard title="고객 정보">
-          <InfoRow label="이름" value={client.name} />
-          <InfoRow label="생년월일" value={client.birthday ?? "-"} />
-          <InfoRow label="출산 예정일" value={formatDate(client.dueDate)} />
-          <InfoRow label="연락처" value={client.phone ?? "-"} />
-          <InfoRow label="주소" value={client.address ?? "-"} />
-        </InfoCard>
-        <InfoCard title="제공인력" delay={60}>
-          <InfoRow label="제공인력 1" value={client.primaryEmployee?.name ?? "-"} />
-          <InfoRow label="제공인력 2" value={client.secondaryEmployee?.name ?? "-"} />
-        </InfoCard>
-        <InfoCard title="서비스 정보" delay={120}>
-          <InfoRow label="바우처 유형" value={client.type ?? "-"} />
-          <InfoRow label="서비스 기간" value={client.duration ? `${client.duration}일` : "-"} />
-          <InfoRow label="시작일" value={formatDate(client.startDate)} />
-          <InfoRow label="종료일" value={formatDate(client.endDate)} />
-          <InfoRow label="총 서비스 금액" value={formatPrice(client.fullPrice)} />
-          <InfoRow label="정부지원금" value={formatPrice(client.grant)} />
-          <InfoRow label="본인부담금" value={formatPrice(client.actualPrice)} />
-        </InfoCard>
-      </div>
-
-      <div
-        className={`tab-content ${activeTab === "contracts" ? "active" : ""}`}
-        data-tab-content="contracts"
-        data-component="mobile-clients-contracts-tab"
-      >
-        <InfoCard title={client.eDocId ? "계약서 · 2건" : "계약서 · 1건"}>
-          <DetailDocRow
-            icon={<FileCheck2 size={16} strokeWidth={2.5} />}
-            title={`${client.type ?? "산모 서비스"} 계약서`}
-            meta={`${contractCode} · ${formatDate(client.startDate)} 작성`}
-            badge={documentStatusLabel(client.documentStatus)}
-            tone={docTone}
-          />
-          {client.eDocId && (
-            <DetailDocRow
-              icon={<CheckCircle2 size={16} strokeWidth={2.5} />}
-              title="개인정보 동의서"
-              meta={`${client.eDocId} · ${formatDate(client.dueDate)} 완료`}
-              badge={client.hasSigned ? "완료" : "대기"}
-              tone={client.hasSigned ? "green" : "muted"}
-            />
-          )}
-        </InfoCard>
-        <InfoCard title="최근 진행 상황" delay={60}>
-          <InfoRow label="현재 단계" value={documentStatusLabel(client.documentStatus)} tone={docTone as never} />
-          <InfoRow label="서명 대기자" value={client.hasSigned ? "-" : `고객 (${client.name})`} />
-          <InfoRow label="발송일" value={formatDate(client.startDate)} />
-          <InfoRow label="마감일" value={formatDate(client.endDate)} tone={"orange" as never} />
-        </InfoCard>
-      </div>
-
-      <div
-        className={`tab-content ${activeTab === "alimtalk" ? "active" : ""}`}
-        data-tab-content="alimtalk"
-        data-component="mobile-clients-alimtalk-tab"
-      >
-        <InfoCard title="알림톡 · 4건">
-          <DetailDocRow
-            icon={<UserPlus size={16} strokeWidth={2.5} />}
-            title="고객 등록 환영"
-            meta={`${formatDate(client.dueDate)} 오전 10:14`}
-            badge="완료"
-            tone="green"
-          />
-          <DetailDocRow
-            icon={<CheckCircle2 size={16} strokeWidth={2.5} />}
-            title="제공인력 배정 안내"
-            meta={`${formatDate(client.startDate)} · ${client.primaryEmployee?.name ?? "미배정"}`}
-            badge={client.primaryEmployee ? "완료" : "대기"}
-            tone={client.primaryEmployee ? "green" : "muted"}
-          />
-          <DetailDocRow
-            icon={<Send size={16} strokeWidth={2.5} />}
-            title="서비스 시작 D-1 안내"
-            meta={formatDate(client.startDate)}
-            badge="완료"
-            tone="green"
-          />
-          <DetailDocRow
-            icon={<Clock3 size={16} strokeWidth={2.5} />}
-            title="서비스 종료 안내"
-            meta={`${formatDate(client.endDate)} · 발송 예정`}
-            badge="대기"
-            tone="muted"
-          />
-        </InfoCard>
-      </div>
-    </div>
-  );
+function normalizePhone(value: string | null | undefined): string {
+  return (value ?? "").replace(/\D/g, "");
 }
 
 export default function ClientsPage() {
   const locale = useLocale();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const clientIdParam = searchParams.get("id");
 
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [detailSheetTab, setDetailSheetTab] = useState<DetailTabId>("basic");
   const [detailModalOpen, setDetailModalOpen] = useState(false);
-  const [formDialogOpen, setFormDialogOpen] = useState(false);
-  const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
+  const [isIssuingContract, setIsIssuingContract] = useState(false);
+  const [isIssueProgressOpen, setIsIssueProgressOpen] = useState(false);
+  const [issueProgress, setIssueProgress] = useState<HeadlessProgressState>(INITIAL_HEADLESS_PROGRESS);
+  const [issueProgressErrorHint, setIssueProgressErrorHint] = useState<string | null>(null);
+  const issueProgressSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     document.body.classList.add(CLIENTS_ROUTE_BODY_CLASS);
@@ -396,7 +141,11 @@ export default function ClientsPage() {
     };
   }, []);
 
-  const { allClients, allFilteredClients, total } = useInfiniteClients({
+  useEffect(() => () => {
+    issueProgressSourceRef.current?.close();
+  }, []);
+
+  const { allClients, allFilteredClients, total, isLoading, isFetching } = useInfiniteClients({
     filter: "all",
     search: searchQuery,
     filterFn: () => true,
@@ -406,10 +155,37 @@ export default function ClientsPage() {
         ? matchesKoreanSearch(c.primaryEmployee.name, query)
         : false),
   });
+  const isClientsFetching = isLoading || (isFetching && allClients.length === 0);
 
   const deleteClient = useDeleteClient();
+  const { data: employees = [] } = useEmployees();
+  const { data: areaTemplates = [] } = useAreaTemplates();
   const { data: clientFromParam } = useClient(clientIdParam ? Number(clientIdParam) : 0);
   const detailClient = selectedClient ?? (clientIdParam ? clientFromParam ?? null : null);
+  const { data: notificationLogsData = [], isLoading: isNotificationLogsLoading } = useQuery<ClientNotificationLogRecord[]>({
+    queryKey: ["alimtalk", "logs", 200],
+    queryFn: async () => {
+      const res = await api.get<ClientNotificationLogRecord[]>("/alimtalk-logs", {
+        params: { limit: 200 },
+      });
+      return res.data;
+    },
+    enabled: Boolean(detailClient),
+    staleTime: 1000 * 60,
+  });
+
+  const detailNotificationLogs = useMemo(() => {
+    if (!detailClient || !Array.isArray(notificationLogsData)) return [];
+
+    const clientPhone = normalizePhone(detailClient.phone);
+    return notificationLogsData
+      .filter((log) => {
+        if (log.clientId === detailClient.id) return true;
+        if (!clientPhone) return false;
+        return normalizePhone(log.receiver) === clientPhone;
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [detailClient, notificationLogsData]);
 
   const handleSelectClient = (client: Client) => {
     setSelectedClient(client);
@@ -424,17 +200,122 @@ export default function ClientsPage() {
   };
 
   const handleEdit = (client: Client) => {
-    setEditingClient(client);
-    setFormDialogOpen(true);
+    // 기존 ClientFormDialog(데스크탑 폼) 대신 mockup 디자인의 wizard로 라우팅 — `?clientId`로 편집 모드 진입.
     setDetailModalOpen(false);
+    router.push(`/clients/new?clientId=${client.id}`);
   };
 
   const handleMessage = (client: Client) => {
     router.push(`/messages?clientId=${client.id}`);
   };
 
-  const handleIssueContract = () => {
-    router.push("/contracts/creation");
+  const handleIssueContract = async (client: Client) => {
+    if (isIssuingContract) return;
+
+    setIsIssuingContract(true);
+    setIssueProgressErrorHint(null);
+
+    let progressSource: EventSource | null = null;
+    try {
+      const { contractData } = buildClientContractData({
+        client,
+        employees,
+        areaTemplates,
+      });
+
+      const authResult = await eformsignApi.authenticate(Date.now());
+      if (!authResult.success) {
+        throw new Error("eformsign 인증에 실패했습니다.");
+      }
+
+      const progressId = createHeadlessProgressId("client-contract");
+      setIssueProgress({ step: "client-started", completed: false, failed: false });
+      setIsIssueProgressOpen(true);
+
+      progressSource = new EventSource(
+        `/api/eformsign-docs/dispatch-headless/progress?progressId=${encodeURIComponent(progressId)}`,
+      );
+      issueProgressSourceRef.current = progressSource;
+      progressSource.addEventListener("progress", (event) => {
+        let data: HeadlessProgressEvent;
+        try {
+          data = JSON.parse((event as MessageEvent).data) as HeadlessProgressEvent;
+        } catch {
+          return;
+        }
+
+        if (data.step === "failed") {
+          setIssueProgressErrorHint(getSafeHeadlessFailureMessage(data.reason));
+          setIssueProgress((current) => ({
+            step: data.failedStep && isHeadlessProgressStepKey(data.failedStep, CONTRACT_CREATION_PROGRESS_STEPS)
+              ? data.failedStep
+              : current.step ?? "client-started",
+            completed: false,
+            failed: true,
+          }));
+          return;
+        }
+
+        if (!isHeadlessProgressStepKey(data.step, CONTRACT_CREATION_PROGRESS_STEPS)) return;
+        const nextStep = data.step;
+        setIssueProgress((current) =>
+          current.failed
+            ? current
+            : { step: nextStep, completed: nextStep === "sent", failed: false },
+        );
+      });
+
+      const headless = await eformsignApi.dispatchHeadless(contractData, client.id, progressId);
+
+      if (!headless.ok) {
+        setIssueProgressErrorHint(getSafeHeadlessFailureMessage(headless.reason));
+        setIssueProgress((current) => ({
+          step: headless.failedStep && isHeadlessProgressStepKey(headless.failedStep, CONTRACT_CREATION_PROGRESS_STEPS)
+            ? headless.failedStep
+            : current.step ?? "client-started",
+          completed: false,
+          failed: true,
+        }));
+        toast({
+          title: "계약서 자동 발급 실패",
+          description: getSafeHeadlessFailureMessage(headless.reason),
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setIssueProgress({ step: "sent", completed: true, failed: false });
+      if (headless.documentId) {
+        setSelectedClient((current) =>
+          current?.id === client.id
+            ? { ...current, eDocId: headless.documentId ?? current.eDocId, documentStatus: "created" }
+            : current,
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
+      queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
+      queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(client.id) });
+      toast({
+        title: "계약서 자동 발급 완료",
+        description: `${client.name}님 계약서가 발송되었습니다.`,
+      });
+      setTimeout(() => {
+        setIsIssueProgressOpen(false);
+      }, 800);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "계약서 자동 발급 중 오류가 발생했습니다.";
+      setIsIssueProgressOpen(false);
+      setIssueProgress(INITIAL_HEADLESS_PROGRESS);
+      toast({
+        title: "계약서 자동 발급 실패",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      progressSource?.close();
+      issueProgressSourceRef.current = null;
+      setIsIssuingContract(false);
+    }
   };
 
   const handleDeleteRequest = (id: number) => {
@@ -475,32 +356,82 @@ export default function ClientsPage() {
   }, [allFilteredClients]);
 
   const filterItems = useMemo(() => {
-    const items: Array<{ label: string; count: string }> = [
-      { label: ALL_FILTER, count: String(total ?? allClients.length) },
+    if (isClientsFetching) {
+      return [
+        { label: ALL_FILTER, count: "", skeleton: true },
+        ...GROUPS.map((g) => ({ label: g.title, count: "", skeleton: true })),
+      ];
+    }
+
+    const items = [
+      {
+        label: ALL_FILTER,
+        count: String(total ?? allClients.length),
+      },
     ];
     for (const g of GROUPS) {
-      if (grouped.counts[g.key] > 0) {
-        items.push({ label: g.title, count: String(grouped.counts[g.key]) });
-      }
+      items.push({
+        label: g.title,
+        count: String(grouped.counts[g.key] ?? 0),
+      });
     }
     return items;
-  }, [allClients.length, grouped.counts, total]);
+  }, [allClients.length, grouped.counts, isClientsFetching, total]);
 
-  const visibleSections = useMemo(() => {
-    const sections: Array<{ key: string; title: string; group: ClientGroup; rows: Client[] }> = [];
+  const sectionsFull = useMemo(() => {
+    type Section = {
+      key: string;
+      title: string;
+      group: ClientGroup;
+      fullRows: Client[];
+      fullCount: number;
+    };
+
+    // 전체: 카테고리 grouping 없이 최근 활동순 단일 리스트 (총 8개부터 teaser → 무한 스크롤).
+    if (activeFilter === ALL_FILTER) {
+      const flat = allFilteredClients
+        .filter((c) => GROUPS.some((g) => g.match(c)))
+        .sort((a, b) => clientRecency(b) - clientRecency(a) || b.id - a.id);
+      return flat.length > 0
+        ? [{ key: "all", title: "", group: GROUPS[0], fullRows: flat, fullCount: flat.length }]
+        : [];
+    }
+
+    // 개별 필터: 해당 상태 그룹 단일 섹션.
+    const sections: Section[] = [];
     for (const g of GROUPS) {
-      if (activeFilter !== ALL_FILTER && g.title !== activeFilter) continue;
+      if (g.title !== activeFilter) continue;
       const docs = grouped.map[g.key];
       if (!docs || docs.length === 0) continue;
       sections.push({
         key: g.key,
         title: `${g.title} · ${docs.length}${g.counter}`,
         group: g,
-        rows: docs,
+        fullRows: docs,
+        fullCount: docs.length,
       });
     }
     return sections;
-  }, [activeFilter, grouped.map]);
+  }, [activeFilter, grouped.map, allFilteredClients]);
+
+  const maxFullCount = useMemo(
+    () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
+    [sectionsFull],
+  );
+
+  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+    useListInfiniteScroll({
+      resetKey: `${activeFilter}::${searchQuery}`,
+      totalItems: maxFullCount,
+    });
+
+  const visibleSections = useMemo(
+    () =>
+      sectionsFull
+        .map((s) => ({ ...s, rows: s.fullRows.slice(0, visibleCount) }))
+        .filter((s) => s.rows.length > 0),
+    [sectionsFull, visibleCount],
+  );
 
   return (
     <>
@@ -512,12 +443,25 @@ export default function ClientsPage() {
           <div className="shell-content" data-component="mobile-clients-content">
             <ListCard
               title="고객"
-              count={`${total ?? allClients.length}명`}
+              count={
+                isClientsFetching
+                  ? <ListCountSkeleton dataComponentPrefix="mobile-clients" />
+                  : `${total ?? allClients.length}명`
+              }
               actionLabel="+ 추가"
               actionHref="/clients/new"
               filters={filterItems}
               activeFilter={activeFilter}
               onFilterChange={setActiveFilter}
+              scrollRef={scrollContainerRef}
+              loadMoreFooter={
+                isInitialLoad && hasMore ? (
+                  <ListLoadMoreButton
+                    onLoadMore={loadMore}
+                    dataComponentPrefix="mobile-clients"
+                  />
+                ) : null
+              }
               beforeFilters={
                 <MobileSearchBar
                   placeholder="고객 이름, 매니저 검색"
@@ -527,7 +471,9 @@ export default function ClientsPage() {
                 />
               }
             >
-              {visibleSections.length === 0 ? (
+              {isClientsFetching ? (
+                <ListRowsSkeleton dataComponentPrefix="mobile-clients" />
+              ) : visibleSections.length === 0 ? (
                 <div
                   style={{
                     padding: "32px 16px",
@@ -542,44 +488,51 @@ export default function ClientsPage() {
                     : "등록된 고객이 없습니다."}
                 </div>
               ) : (
-                visibleSections.map((section) => (
+                <>
+                {visibleSections.map((section) => (
                   <div
                     className="section-block"
                     key={section.key}
                     data-component="mobile-clients-section"
                   >
-                    <div className="section-header" data-component="mobile-clients-section-header">
-                      {section.title}
-                    </div>
-                    {section.rows.map((c, idx) => (
-                      <button
+                    {section.rows.map((c, idx) => {
+                      const g = groupForClient(c);
+                      return (
+                      <ListItemRow
                         key={c.id}
-                        type="button"
-                        className="list-item"
-                        data-component="mobile-clients-row"
+                        style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
+	                        dataComponent="mobile-clients-row"
+	                        left={
+	                          <div className={`list-avatar av-${g.badgeTone}`} data-component="mobile-clients-row-avatar">
+	                            <User size={16} strokeWidth={2} />
+	                          </div>
+	                        }
+                        name={c.name}
+                        meta={clientMeta(c)}
+                        right={
+                          <div
+                            className="list-row-badges mobile-clients-row-badges"
+                            data-component="mobile-clients-row-badges"
+                          >
+                            <Badge label={g.badge} tone={g.badgeTone} />
+                            {shouldShowMissingContractBadge(c) && (
+                              <Badge label="계약서 없음" tone="burgundy" />
+                            )}
+                          </div>
+                        }
                         onClick={() => handleSelectClient(c)}
-                      >
-                        <div
-                          className={`list-avatar av-${pickAvatarTone(c, c.id + idx)}`}
-                          data-component="mobile-clients-avatar"
-                        >
-                          <User size={16} strokeWidth={2} />
-                        </div>
-                        <div className="list-info" data-component="mobile-clients-list-info">
-                          <div className="list-name" data-component="mobile-clients-list-name">
-                            {c.name}
-                          </div>
-                          <div className="list-meta" data-component="mobile-clients-list-meta">
-                            {clientMeta(c)}
-                          </div>
-                        </div>
-                        <div className="list-right" data-component="mobile-clients-list-right">
-                          <Badge label={section.group.badge} tone={section.group.badgeTone} />
-                        </div>
-                      </button>
-                    ))}
+                      />
+                      );
+                    })}
                   </div>
-                ))
+                ))}
+                {!isInitialLoad && hasMore && (
+                  <ListLoadMoreSentinel
+                    sentinelRef={sentinelRef}
+                    dataComponentPrefix="mobile-clients"
+                  />
+                )}
+                </>
               )}
             </ListCard>
           </div>
@@ -589,9 +542,14 @@ export default function ClientsPage() {
             <ClientDetailContent
               client={detailClient}
               activeTab={detailSheetTab}
+              notificationLogs={detailNotificationLogs}
+              isNotificationLogsLoading={isNotificationLogsLoading}
+              isIssuingContract={isIssuingContract}
               onTabChange={setDetailSheetTab}
               onMessage={() => handleMessage(detailClient)}
               onIssueContract={handleIssueContract}
+              onEdit={handleEdit}
+              onDelete={handleDeleteRequest}
             />
           ) : (
             <div className="detail-body" data-component="mobile-clients-detail-empty" />
@@ -623,14 +581,20 @@ export default function ClientsPage() {
         onConfirm={handleDeleteConfirm}
       />
 
-      <ClientFormDialog
-        open={formDialogOpen}
-        onClose={() => {
-          setFormDialogOpen(false);
-          setEditingClient(null);
-        }}
-        client={editingClient}
+      <HeadlessProgressModal
+        open={isIssueProgressOpen}
+        title="계약서 자동 발급 중"
+        subtitle={
+          issueProgress.failed
+            ? "자동 발급에 실패했습니다. 고객 정보와 계약서 유형을 확인해 주세요."
+            : undefined
+        }
+        steps={CONTRACT_CREATION_PROGRESS_STEPS}
+        progress={issueProgress}
+        errorHint={issueProgressErrorHint}
+        dataComponentPrefix="mobile-clients-contract-issue-progress"
       />
+
     </>
   );
 }

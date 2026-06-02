@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import type { Client, PaginatedResponse } from "@/lib/client/types";
@@ -23,15 +23,13 @@ export function useInfiniteClients({
   searchFn,
 }: UseInfiniteClientsOptions = {}) {
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
+  const resetKey = `${filter}::${search}`;
+  const [prevResetKey, setPrevResetKey] = useState(resetKey);
 
-  useEffect(() => {
-    setVisibleCount((prev) => {
-      if (filter === "all" && search === "" && prev === INITIAL_VISIBLE_COUNT) {
-        return prev;
-      }
-      return INITIAL_VISIBLE_COUNT;
-    });
-  }, [filter, search]);
+  if (resetKey !== prevResetKey) {
+    setPrevResetKey(resetKey);
+    setVisibleCount(INITIAL_VISIBLE_COUNT);
+  }
 
   const query = useQuery<PaginatedResponse<Client>>({
     queryKey: clientQueryKeys.list(1, 50),
@@ -46,7 +44,7 @@ export function useInfiniteClients({
     gcTime: 1000 * 60 * 60,
   });
 
-  const allClients = query.data?.data || [];
+  const allClients = useMemo(() => query.data?.data ?? [], [query.data?.data]);
   const total = query.data?.total || 0;
 
   const allFilteredClients = useMemo(() => {
@@ -86,6 +84,7 @@ export function useInfiniteClients({
     allFilteredClients,
     total,
     isLoading: query.isLoading,
+    isFetching: query.isFetching,
     isFetchingNextPage: false,
     hasNextPage,
     fetchNextPage,
