@@ -20,6 +20,7 @@ import {
 import { SelectBranchDto, SwitchBranchDto } from "interface/dto/branch-auth.dto";
 import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
+import { getKakaoOAuthConfig } from "infrastructure/auth/kakao-config";
 
 @Controller("auth")
 export class AuthController {
@@ -300,10 +301,11 @@ export class AuthController {
     @UseGuards(JwtGuard)
     async initiateKakaoLink(@Request() req: any, @Res() res: Response) {
         const state = await this.authService.createLinkingState(req.user.userId);
+        const kakaoOAuthConfig = getKakaoOAuthConfig();
 
         const kakaoAuthUrl = new URL("https://kauth.kakao.com/oauth/authorize");
-        kakaoAuthUrl.searchParams.set("client_id", process.env['KAKAO_CLIENT_ID'] || "");
-        kakaoAuthUrl.searchParams.set("redirect_uri", process.env['KAKAO_CALLBACK_URL'] || "");
+        kakaoAuthUrl.searchParams.set("client_id", kakaoOAuthConfig.clientID);
+        kakaoAuthUrl.searchParams.set("redirect_uri", kakaoOAuthConfig.callbackURL);
         kakaoAuthUrl.searchParams.set("response_type", "code");
         kakaoAuthUrl.searchParams.set("state", state);
 
