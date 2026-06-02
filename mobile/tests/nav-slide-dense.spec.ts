@@ -16,6 +16,17 @@ fs.mkdirSync(OUT, { recursive: true });
 const EMAIL = "wlsghtmeod@gmail.com";
 const PASSWORD = "Test1234!";
 
+interface NavSample {
+  t: number;
+  x: number | null;
+  width: number | null;
+}
+
+type DiagnosticWindow = Window & typeof globalThis & {
+  __navStart?: number;
+  __navSamples?: NavSample[];
+};
+
 test.use({
   viewport: { width: 375, height: 812 },
   storageState: { cookies: [], origins: [] }, // force real login
@@ -100,8 +111,9 @@ test("dense nav slide capture: 25 frames @ 8ms across tab change", async ({ page
   // Prime the page-side position tracker BEFORE clicking so the first samples
   // come as soon as possible after the click.
   await page.evaluate(() => {
-    (window as any).__navStart = 0;
-    (window as any).__navSamples = [];
+    const diagnosticWindow = window as DiagnosticWindow;
+    diagnosticWindow.__navStart = 0;
+    diagnosticWindow.__navSamples = [];
   });
 
   // Kick off the click + a 200ms position-sampling loop running in the page,
@@ -109,7 +121,8 @@ test("dense nav slide capture: 25 frames @ 8ms across tab change", async ({ page
   const startSampling = page.evaluate(() => {
     return new Promise<void>((resolve) => {
       const start = performance.now();
-      (window as any).__navStart = start;
+      const diagnosticWindow = window as DiagnosticWindow;
+      diagnosticWindow.__navStart = start;
       const tick = () => {
         const t = performance.now() - start;
         const el = document.querySelector(
@@ -117,9 +130,9 @@ test("dense nav slide capture: 25 frames @ 8ms across tab change", async ({ page
         ) as HTMLElement | null;
         if (el) {
           const r = el.getBoundingClientRect();
-          (window as any).__navSamples.push({ t, x: r.x, width: r.width });
+          diagnosticWindow.__navSamples?.push({ t, x: r.x, width: r.width });
         } else {
-          (window as any).__navSamples.push({ t, x: null, width: null });
+          diagnosticWindow.__navSamples?.push({ t, x: null, width: null });
         }
         if (t >= 208) {
           resolve();
@@ -156,11 +169,9 @@ test("dense nav slide capture: 25 frames @ 8ms across tab change", async ({ page
   await nav.screenshot({ path: path.join(OUT, "26-settled.png") });
 
   // Dump indicator position samples for the structured report.
-  const samples = (await page.evaluate(() => (window as any).__navSamples ?? [])) as Array<{
-    t: number;
-    x: number | null;
-    width: number | null;
-  }>;
+  const samples = await page.evaluate((): NavSample[] => {
+    return (window as DiagnosticWindow).__navSamples ?? [];
+  });
   console.log(`[indicator samples — ${samples.length} entries]`);
   for (const s of samples) {
     console.log(

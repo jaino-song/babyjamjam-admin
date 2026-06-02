@@ -15,6 +15,19 @@ fs.mkdirSync(OUT, { recursive: true });
 const EMAIL = "wlsghtmeod@gmail.com";
 const PASSWORD = "Test1234!";
 
+interface IndicatorFrame {
+  t: number;
+  transform: string | null;
+  inlineTransform: string | null;
+  inlineStyleAttr: string | null;
+  sameNode: boolean;
+  markerStill: string | null;
+}
+
+type DiagnosticWindow = Window & typeof globalThis & {
+  __indicatorFrames?: IndicatorFrame[];
+};
+
 test.use({
   viewport: { width: 375, height: 812 },
   storageState: { cookies: [], origins: [] }, // ignore auth.json — do real login
@@ -143,13 +156,14 @@ test("diagnose: is the indicator the SAME DOM node before/after click?", async (
     const nav = document.querySelector('[data-component="mobile-bottom-nav"]');
     const indicator = nav?.querySelector('div[aria-hidden="true"]') as HTMLElement | null;
     if (!indicator) return;
-    (window as any).__indicatorFrames = [];
+    const diagnosticWindow = window as DiagnosticWindow;
+    diagnosticWindow.__indicatorFrames = [];
     const start = performance.now();
     const tick = () => {
       const t = performance.now() - start;
       if (t > 800) return;
       const el = document.querySelector('[data-component="mobile-bottom-nav-indicator"]') as HTMLElement | null;
-      (window as any).__indicatorFrames.push({
+      diagnosticWindow.__indicatorFrames?.push({
         t: Math.round(t),
         transform: el ? getComputedStyle(el).transform : null,
         inlineTransform: el?.style.transform ?? null,
@@ -167,16 +181,18 @@ test("diagnose: is the indicator the SAME DOM node before/after click?", async (
   // Let polling collect ~800ms of frames
   await page.waitForTimeout(900);
 
-  const frames = await page.evaluate(() => (window as any).__indicatorFrames ?? []);
+  const frames = await page.evaluate((): IndicatorFrame[] => {
+    return (window as DiagnosticWindow).__indicatorFrames ?? [];
+  });
   console.log(`[INDICATOR FRAMES — looking for continuity + transition]`);
-  for (const f of frames as Array<{ t: number; transform: string | null; inlineTransform: string | null; inlineStyleAttr: string | null; sameNode: boolean; markerStill: string | null }>) {
+  for (const f of frames) {
     // Only show transitions: log every 8th frame plus all change frames
-    const idx = (frames as any[]).indexOf(f);
+    const idx = frames.indexOf(f);
     if (idx % 8 !== 0 && idx !== 0 && idx !== (frames.length - 1)) continue;
     console.log(`  t=${String(f.t).padStart(4, " ")}ms same=${f.sameNode} computed=${f.transform} inline.transform=${JSON.stringify(f.inlineTransform)} inlineAttr.preview=${f.inlineStyleAttr?.slice(0, 120)}`);
   }
 
-  const lostNodeFrame = frames.find((f: any) => f.sameNode === false);
+  const lostNodeFrame = frames.find((f) => f.sameNode === false);
   if (lostNodeFrame) {
     console.log(`\n>>> BUG IDENTIFIED: indicator DOM node was replaced at t=${lostNodeFrame.t}ms <<<`);
   } else {

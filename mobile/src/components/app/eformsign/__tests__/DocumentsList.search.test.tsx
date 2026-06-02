@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { DocumentsList } from '../DocumentsList';
-import type { EformsignDocumentView } from '@/lib/eformsign/types';
+import type { EformsignDocument } from '@/lib/eformsign/types';
 
 const mockUseEformsignDocumentsByType = jest.fn();
 const mockUseEformsignAuth = jest.fn();
@@ -34,7 +34,7 @@ const createMockDocument = (
   doc_id: string,
   customer_name: string | null,
   status: '대기' | '완료' | '만료' = '완료'
-): any => ({
+): EformsignDocument => ({
   id: doc_id,
   document_number: `DOC-${doc_id}`,
   template: { id: 'template-1', name: 'Test Template' },
