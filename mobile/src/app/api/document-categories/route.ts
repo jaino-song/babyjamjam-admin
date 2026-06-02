@@ -13,7 +13,9 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const response = await serverAPIClient.get("/document-categories");
+        const response = await serverAPIClient.get("/document-categories", {
+            headers: getAuthHeaders(token),
+        });
         return NextResponse.json(response.data);
     } catch (error) {
         console.error("[document-categories] GET error:", error);
