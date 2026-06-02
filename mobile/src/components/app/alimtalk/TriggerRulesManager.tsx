@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   BellRing,
@@ -47,6 +47,11 @@ type RuleSelection = string | "new" | null;
 type RuleStatusFilter = "active" | "inactive";
 
 type RuleFormState = CreateAlimtalkTriggerRuleDto;
+type RuleFormDraft = {
+  selectionId: RuleSelection;
+  state: RuleFormState;
+};
+type RuleFormUpdate = RuleFormState | ((current: RuleFormState) => RuleFormState);
 
 type RuleListItem = {
   id: string;
@@ -132,6 +137,49 @@ function normalizeDto(dto: RuleFormState): CreateAlimtalkTriggerRuleDto {
   };
 }
 
+function normalizeFormOptions(state: RuleFormState): RuleFormState {
+  const allowedRecipients = RECIPIENT_OPTIONS[state.eventType];
+  const recipientType = allowedRecipients.some((option) => option.value === state.recipientType)
+    ? state.recipientType
+    : allowedRecipients[0].value;
+
+  const allowedOffsets = OFFSET_OPTIONS[state.eventType];
+  const offsetType = allowedOffsets.some((option) => option.value === state.offsetType)
+    ? state.offsetType
+    : allowedOffsets[0].value;
+
+  return {
+    ...state,
+    recipientType,
+    offsetType,
+    offsetDays:
+      offsetType === state.offsetType
+        ? state.offsetDays
+        : 0,
+  };
+}
+
+function normalizeFormTemplate(
+  state: RuleFormState,
+  availableTemplates: TriggerTemplateCatalogItem[]
+): RuleFormState {
+  if (availableTemplates.length === 0) return state;
+  if (availableTemplates.some((template) => template.key === state.templateKey)) {
+    return state;
+  }
+  return {
+    ...state,
+    templateKey: availableTemplates[0].key,
+  };
+}
+
+function normalizeFormState(
+  state: RuleFormState,
+  availableTemplates: TriggerTemplateCatalogItem[] = []
+): RuleFormState {
+  return normalizeFormTemplate(normalizeFormOptions(state), availableTemplates);
+}
+
 function getRuleSummary(rule: RuleFormState) {
   const eventLabel = EVENT_OPTIONS.find((option) => option.value === rule.eventType)?.label ?? rule.eventType;
   const recipientLabel =
@@ -154,7 +202,7 @@ export function TriggerRulesManager() {
   const { toast } = useToast();
   const [selectedRuleId, setSelectedRuleId] = useState<RuleSelection>(null);
   const [statusFilter, setStatusFilter] = useState<RuleStatusFilter>("active");
-  const [formState, setFormState] = useState<RuleFormState>(DEFAULT_FORM_STATE);
+  const [formDraft, setFormDraft] = useState<RuleFormDraft | null>(null);
 
   const { data: rules = [], isLoading } = useAlimtalkTriggerRules();
   const createMutation = useCreateAlimtalkTriggerRule();
@@ -169,78 +217,53 @@ export function TriggerRulesManager() {
   const resolvedProvider: Exclude<AlimtalkProvider, "none"> =
     providerSettings?.provider === "channeltalk" ? "channeltalk" : "aligo";
 
-  const selectedRule =
-    selectedRuleId && selectedRuleId !== "new"
-      ? rules.find((rule) => rule.id === selectedRuleId) ?? null
-      : null;
-
-  const templateQuery = useAlimtalkTriggerTemplates({
-    provider: resolvedProvider,
-    eventType: formState.eventType,
-    recipientType: formState.recipientType,
-  });
-
-  const availableTemplates = useMemo(() => templateQuery.data ?? [], [templateQuery.data]);
   const filteredRules = useMemo(() => {
     return rules.filter((rule) => rule.isActive === (statusFilter === "active"));
   }, [rules, statusFilter]);
 
-  useEffect(() => {
-    if (selectedRuleId === "new") return;
-    if (selectedRuleId === null && filteredRules.length > 0) {
-      setSelectedRuleId(filteredRules[0].id);
-      return;
+  const effectiveSelectedRuleId = useMemo<RuleSelection>(() => {
+    if (selectedRuleId === "new") return "new";
+    if (selectedRuleId && filteredRules.some((rule) => rule.id === selectedRuleId)) {
+      return selectedRuleId;
     }
-    if (!selectedRuleId) return;
+    return filteredRules[0]?.id ?? null;
+  }, [filteredRules, selectedRuleId]);
 
-    const existsInRules = rules.some((rule) => rule.id === selectedRuleId);
-    if (!existsInRules) {
-      setSelectedRuleId(filteredRules[0]?.id ?? null);
-      return;
-    }
+  const selectedRule =
+    effectiveSelectedRuleId && effectiveSelectedRuleId !== "new"
+      ? rules.find((rule) => rule.id === effectiveSelectedRuleId) ?? null
+      : null;
 
-    const existsInFilteredRules = filteredRules.some((rule) => rule.id === selectedRuleId);
-    if (!existsInFilteredRules) {
-      setSelectedRuleId(filteredRules[0]?.id ?? null);
-    }
-  }, [filteredRules, rules, selectedRuleId]);
+  const baseFormState = useMemo(() => {
+    if (effectiveSelectedRuleId === "new") return DEFAULT_FORM_STATE;
+    return toFormState(selectedRule);
+  }, [effectiveSelectedRuleId, selectedRule]);
+  const draftState =
+    formDraft?.selectionId === effectiveSelectedRuleId ? formDraft.state : baseFormState;
+  const optionNormalizedFormState = useMemo(
+    () => normalizeFormOptions(draftState),
+    [draftState]
+  );
 
-  useEffect(() => {
-    if (selectedRuleId === "new") {
-      setFormState(DEFAULT_FORM_STATE);
-      return;
-    }
-    setFormState(toFormState(selectedRule));
-  }, [selectedRuleId, selectedRule]);
+  const templateQuery = useAlimtalkTriggerTemplates({
+    provider: resolvedProvider,
+    eventType: optionNormalizedFormState.eventType,
+    recipientType: optionNormalizedFormState.recipientType,
+  });
 
-  useEffect(() => {
-    const allowedRecipients = RECIPIENT_OPTIONS[formState.eventType];
-    if (!allowedRecipients.some((option) => option.value === formState.recipientType)) {
-      setFormState((current) => ({
-        ...current,
-        recipientType: allowedRecipients[0].value,
-      }));
-    }
+  const availableTemplates = useMemo(() => templateQuery.data ?? [], [templateQuery.data]);
+  const formState = useMemo(
+    () => normalizeFormTemplate(optionNormalizedFormState, availableTemplates),
+    [availableTemplates, optionNormalizedFormState]
+  );
 
-    const allowedOffsets = OFFSET_OPTIONS[formState.eventType];
-    if (!allowedOffsets.some((option) => option.value === formState.offsetType)) {
-      setFormState((current) => ({
-        ...current,
-        offsetType: allowedOffsets[0].value,
-        offsetDays: 0,
-      }));
-    }
-  }, [formState.eventType, formState.recipientType, formState.offsetType]);
-
-  useEffect(() => {
-    if (availableTemplates.length === 0) return;
-    if (!availableTemplates.some((template) => template.key === formState.templateKey)) {
-      setFormState((current) => ({
-        ...current,
-        templateKey: availableTemplates[0].key,
-      }));
-    }
-  }, [availableTemplates, formState.templateKey]);
+  const updateFormState = (updater: RuleFormUpdate) => {
+    const nextState = typeof updater === "function" ? updater(formState) : updater;
+    setFormDraft({
+      selectionId: effectiveSelectedRuleId,
+      state: normalizeFormState(nextState, availableTemplates),
+    });
+  };
 
   const listItems = useMemo<RuleListItem[]>(() => {
     return filteredRules.map((rule) => ({
@@ -257,19 +280,19 @@ export function TriggerRulesManager() {
   }, [availableTemplates, formState.templateKey]);
 
   const hasChanges = useMemo(() => {
-    if (selectedRuleId === "new") {
+    if (effectiveSelectedRuleId === "new") {
       return !!formState.name.trim();
     }
     if (!selectedRule) return false;
     return JSON.stringify(normalizeDto(formState)) !== JSON.stringify(normalizeDto(toFormState(selectedRule)));
-  }, [formState, selectedRule, selectedRuleId]);
+  }, [effectiveSelectedRuleId, formState, selectedRule]);
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
   const handleCreateNew = () => {
     setStatusFilter("active");
     setSelectedRuleId("new");
-    setFormState(DEFAULT_FORM_STATE);
+    setFormDraft({ selectionId: "new", state: DEFAULT_FORM_STATE });
   };
 
   const handleSave = async () => {
@@ -286,9 +309,10 @@ export function TriggerRulesManager() {
     }
 
     try {
-      if (selectedRuleId === "new" || !selectedRule) {
+      if (effectiveSelectedRuleId === "new" || !selectedRule) {
         const created = await createMutation.mutateAsync(dto);
         setSelectedRuleId(created.id);
+        setFormDraft({ selectionId: created.id, state: toFormState(created) });
         toast({ description: "발송 규칙이 생성되었습니다." });
       } else {
         await updateMutation.mutateAsync({ id: selectedRule.id, dto });
@@ -304,6 +328,7 @@ export function TriggerRulesManager() {
     try {
       await deleteMutation.mutateAsync(selectedRule.id);
       setSelectedRuleId(null);
+      setFormDraft(null);
       toast({ description: "발송 규칙이 삭제되었습니다." });
     } catch {
       toast({ variant: "destructive", description: "규칙 삭제 중 오류가 발생했습니다." });
@@ -313,13 +338,23 @@ export function TriggerRulesManager() {
   return (
     <section data-component="alimtalk-trigger-rules">
       <div data-component="alimtalk-trigger-rules-layout" className="min-h-[680px]">
-        <SplitLayout hasSelection={selectedRuleId !== null} onBack={() => setSelectedRuleId(null)}>
+        <SplitLayout
+          hasSelection={effectiveSelectedRuleId !== null}
+          onBack={() => {
+            setSelectedRuleId(null);
+            setFormDraft(null);
+          }}
+        >
           <ListPanel
             title="발송 규칙"
             subtitle="메시지 자동 발송 규칙을 설정할 수 있어요"
             tabs={RULE_STATUS_TABS.map((tab) => ({ ...tab }))}
             activeTab={statusFilter}
-            onTabChange={(value) => setStatusFilter(value as RuleStatusFilter)}
+            onTabChange={(value) => {
+              setStatusFilter(value as RuleStatusFilter);
+              setSelectedRuleId(null);
+              setFormDraft(null);
+            }}
             headerActions={
               <HeaderActionButton
                 icon={Plus}
@@ -338,12 +373,16 @@ export function TriggerRulesManager() {
                 slotClassName={({ item, isLoading: slotLoading }) =>
                   cn(
                     "flex items-center gap-3 rounded-[18px] border-2 p-3 text-left transition-all duration-200",
-                    !slotLoading && item?.id === selectedRuleId
+                    !slotLoading && item?.id === effectiveSelectedRuleId
                       ? "border-v3-primary bg-v3-primary-light"
                       : "border-transparent bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/50",
                   )
                 }
-                onSlotClick={(item) => setSelectedRuleId(item.id)}
+                onSlotClick={(item) => {
+                  const nextRule = rules.find((rule) => rule.id === item.id) ?? null;
+                  setSelectedRuleId(item.id);
+                  setFormDraft({ selectionId: item.id, state: toFormState(nextRule) });
+                }}
                 render={({ item, isLoading: slotLoading }) => {
                   if (slotLoading) {
                     return (
@@ -404,7 +443,7 @@ export function TriggerRulesManager() {
           </ListPanel>
 
           <DetailPanel
-            title={selectedRuleId === "new" ? "새 발송 규칙" : selectedRule?.name ?? "발송 규칙"}
+            title={effectiveSelectedRuleId === "new" ? "새 발송 규칙" : selectedRule?.name ?? "발송 규칙"}
             subtitle="이벤트 시점, 수신자, 템플릿을 조합해 자동 발송 동작을 정의합니다."
             trailing={
               <div data-component="alimtalk-trigger-rules-actions" className="flex items-center gap-2">
@@ -436,7 +475,7 @@ export function TriggerRulesManager() {
               </div>
             }
           >
-            {selectedRuleId === null && !isLoading ? (
+            {effectiveSelectedRuleId === null && !isLoading ? (
               <div data-component="alimtalk-trigger-rules-detail-empty" className="rounded-[18px] border border-dashed border-v3-border p-8 text-center text-[0.82rem] text-v3-text-muted">
                 왼쪽 목록에서 규칙을 선택하거나 새 규칙을 만들어 주세요.
               </div>
@@ -449,7 +488,7 @@ export function TriggerRulesManager() {
                   </div>
                   <Switch
                     checked={formState.isActive}
-                    onCheckedChange={(checked) => setFormState((current) => ({ ...current, isActive: checked }))}
+                    onCheckedChange={(checked) => updateFormState((current) => ({ ...current, isActive: checked }))}
                   />
                 </div>
 
@@ -459,7 +498,7 @@ export function TriggerRulesManager() {
                     <input
                       id="trigger-rule-name"
                       value={formState.name}
-                      onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))}
+                      onChange={(event) => updateFormState((current) => ({ ...current, name: event.target.value }))}
                       placeholder="예: 서비스 시작 7일 전 고객 안내"
                       className={INPUT_CLASS}
                     />
@@ -474,7 +513,7 @@ export function TriggerRulesManager() {
                         const nextEventType = event.target.value as TriggerEventType;
                         const nextRecipient = RECIPIENT_OPTIONS[nextEventType][0].value;
                         const nextOffset = OFFSET_OPTIONS[nextEventType][0].value;
-                        setFormState((current) => ({
+                        updateFormState((current) => ({
                           ...current,
                           eventType: nextEventType,
                           recipientType: nextRecipient,
@@ -499,7 +538,7 @@ export function TriggerRulesManager() {
                       value={formState.offsetType}
                       onChange={(event) => {
                         const nextOffsetType = event.target.value as TriggerOffsetType;
-                        setFormState((current) => ({
+                        updateFormState((current) => ({
                           ...current,
                           offsetType: nextOffsetType,
                           offsetDays:
@@ -524,7 +563,7 @@ export function TriggerRulesManager() {
                       id="trigger-rule-recipient"
                       value={formState.recipientType}
                       onChange={(event) =>
-                        setFormState((current) => ({
+                        updateFormState((current) => ({
                           ...current,
                           recipientType: event.target.value as TriggerRecipientType,
                         }))
@@ -549,7 +588,7 @@ export function TriggerRulesManager() {
                       min={1}
                       value={formState.offsetDays || 1}
                       onChange={(event) =>
-                        setFormState((current) => ({
+                        updateFormState((current) => ({
                           ...current,
                           offsetDays: Math.max(Number(event.target.value || 1), 1),
                         }))
@@ -565,7 +604,7 @@ export function TriggerRulesManager() {
                     id="trigger-rule-template"
                     value={formState.templateKey}
                     onChange={(event) =>
-                      setFormState((current) => ({
+                      updateFormState((current) => ({
                         ...current,
                         templateKey: event.target.value as TriggerTemplateKey,
                       }))

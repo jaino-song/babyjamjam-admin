@@ -8,14 +8,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useMessageTemplate } from "@/hooks/use-message-templates";
 import { ContentPaper } from "@/components/app/root/content-paper";
 
-export default function EditTemplatePage() {
-  const params = useParams();
-  const router = useRouter();
-  const id = params.id as string;
-
-  const { data: template, isLoading, error } = useMessageTemplate(id);
-
-  const BackButton = () => (
+function BackButton() {
+  return (
     <div data-component="messages-template-edit-nav" className="mb-4">
       <Button variant="ghost" size="icon" asChild>
         <Link href="/messages/templates">
@@ -24,11 +18,19 @@ export default function EditTemplatePage() {
       </Button>
     </div>
   );
+}
+
+export default function EditTemplatePage() {
+  const params = useParams();
+  const router = useRouter();
+  const id = params.id as string;
+
+  const { data: template, isLoading, error } = useMessageTemplate(id);
 
   if (isLoading) {
     return (
       <div data-component="messages-template-edit" className="bg-background">
-        <div className="mx-auto px-4 py-6 sm:px-6 sm:py-8 md:px-12">
+        <div data-component="messages-template-edit-loading-content" className="mx-auto px-4 py-6 sm:px-6 sm:py-8 md:px-12">
           <BackButton />
           <ContentPaper title="템플릿" className="flex min-h-[70vh] items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -41,7 +43,7 @@ export default function EditTemplatePage() {
   if (error || !template) {
     return (
       <div data-component="messages-template-edit" className="bg-background">
-        <div className="mx-auto px-4 py-6 sm:px-6 sm:py-8 md:px-12">
+        <div data-component="messages-template-edit-error-content" className="mx-auto px-4 py-6 sm:px-6 sm:py-8 md:px-12">
           <BackButton />
           <ContentPaper title="템플릿" className="min-h-[70vh]">
             <Alert variant="destructive">
@@ -61,7 +63,7 @@ export default function EditTemplatePage() {
       >
         <BackButton />
         <ContentPaper title={template.name} subtitle="모바일에서는 보기와 발송만 지원합니다">
-          <div className="space-y-4">
+          <div data-component="messages-template-edit-body" className="space-y-4">
             <div
               data-component="messages-template-content"
               className="whitespace-pre-wrap rounded-2xl border border-v3-border/60 bg-white p-4 text-[0.85rem] leading-relaxed text-v3-dark"

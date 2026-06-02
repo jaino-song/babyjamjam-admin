@@ -72,14 +72,9 @@ export function Autocomplete<T>({
     const [highlightedIndex, setHighlightedIndex] = useState(-1);
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-
-    useEffect(() => {
-        if (value) {
-            setInputValue(getItemLabel(value));
-        } else {
-            setInputValue("");
-        }
-    }, [value, getItemLabel]);
+    const selectedInputValue = value ? getItemLabel(value) : "";
+    const isEditingInput = isFocused || isToggledOpen;
+    const displayInputValue = isEditingInput ? inputValue : selectedInputValue;
 
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
@@ -93,20 +88,19 @@ export function Autocomplete<T>({
     }, []);
 
     const filteredItems = useMemo(() => {
-        const query = inputValue.trim();
+        const query = displayInputValue.trim();
         if (!query) return items;
         if (filter) return items.filter((item) => filter(item, query));
         return items.filter((item) =>
             getItemLabel(item).toLowerCase().includes(query.toLowerCase())
         );
-    }, [items, inputValue, filter, getItemLabel]);
+    }, [items, displayInputValue, filter, getItemLabel]);
 
     const showDropdown =
-        (isFocused && inputValue.trim().length > 0) || isToggledOpen;
-
-    useEffect(() => {
-        setHighlightedIndex(-1);
-    }, [filteredItems]);
+        (isFocused && displayInputValue.trim().length > 0) || isToggledOpen;
+    const optionCount = filteredItems.length + (manualEntry ? 1 : 0);
+    const activeHighlightedIndex =
+        highlightedIndex >= 0 && highlightedIndex < optionCount ? highlightedIndex : -1;
 
     const handleSelect = (item: T) => {
         setInputValue(getItemLabel(item));
@@ -140,10 +134,10 @@ export function Autocomplete<T>({
         } else if (e.key === "ArrowUp") {
             e.preventDefault();
             setHighlightedIndex((prev) => (prev - 1 + total) % total);
-        } else if (e.key === "Enter" && highlightedIndex >= 0) {
+        } else if (e.key === "Enter" && activeHighlightedIndex >= 0) {
             e.preventDefault();
-            if (highlightedIndex < filteredItems.length) {
-                handleSelect(filteredItems[highlightedIndex]);
+            if (activeHighlightedIndex < filteredItems.length) {
+                handleSelect(filteredItems[activeHighlightedIndex]);
             } else if (manualEntry) {
                 handleManualEntry();
             }
@@ -176,9 +170,16 @@ export function Autocomplete<T>({
                 <Input
                     ref={inputRef}
                     type="text"
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onFocus={() => setIsFocused(true)}
+                    value={displayInputValue}
+                    onChange={(e) => {
+                        setInputValue(e.target.value);
+                        setHighlightedIndex(-1);
+                    }}
+                    onFocus={() => {
+                        setInputValue(selectedInputValue);
+                        setHighlightedIndex(-1);
+                        setIsFocused(true);
+                    }}
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     data-component={inputDc}
@@ -206,6 +207,8 @@ export function Autocomplete<T>({
                                 setIsFocused(false);
                                 inputRef.current?.blur();
                             } else {
+                                setInputValue(selectedInputValue);
+                                setHighlightedIndex(-1);
                                 setIsToggledOpen(true);
                                 inputRef.current?.focus();
                             }
@@ -243,7 +246,7 @@ export function Autocomplete<T>({
                                     const selected =
                                         value != null &&
                                         getItemKey(value) === getItemKey(item);
-                                    const highlighted = highlightedIndex === index;
+                                    const highlighted = activeHighlightedIndex === index;
                                     const ctx = { highlighted, selected };
                                     const meta = getItemMeta?.(item, ctx);
                                     const headerExtra = getItemHeaderExtra?.(item, ctx);
@@ -302,7 +305,7 @@ export function Autocomplete<T>({
                                     }
                                     className={cn(
                                         "flex flex-col w-full py-3 px-3 cursor-pointer transition-colors",
-                                        highlightedIndex === filteredItems.length &&
+                                        activeHighlightedIndex === filteredItems.length &&
                                             "bg-v3-primary text-white"
                                     )}
                                     data-component={addBtnDc}
@@ -313,7 +316,7 @@ export function Autocomplete<T>({
                                         <span
                                             className={cn(
                                                 "text-sm font-medium",
-                                                highlightedIndex !== filteredItems.length &&
+                                                activeHighlightedIndex !== filteredItems.length &&
                                                     "text-primary"
                                             )}
                                         >
@@ -324,7 +327,7 @@ export function Autocomplete<T>({
                                         <span
                                             className={cn(
                                                 "text-xs mt-1 ml-6",
-                                                highlightedIndex !== filteredItems.length &&
+                                                activeHighlightedIndex !== filteredItems.length &&
                                                     "text-muted-foreground"
                                             )}
                                         >

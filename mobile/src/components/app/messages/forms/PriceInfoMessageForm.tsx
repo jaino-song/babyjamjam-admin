@@ -1,6 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useEffect, useMemo, useRef, useState } from "react";
 import voucherOptions from "../templates/json/voucher.json";
 import { GeneratedMsg } from "../templates/GeneratedMsg";
 import bankAccountJSON from "../templates/json/bank-account.json";
@@ -87,21 +86,18 @@ export const PriceInfoMessageForm = () => {
     accNum: "",
   });
 
-  // Sync local state with Zustand store when store changes
-  useEffect(() => {
-    setFormData(prev => ({
-      ...prev,
-      name: name,
-      duration: voucherDuration,
-      type: voucherType,
-    }));
-  }, [name, voucherType, voucherDuration]);
+  const resolvedFormData = useMemo<PriceInfoFormData>(() => ({
+    ...formData,
+    name,
+    duration: voucherDuration,
+    type: voucherType,
+  }), [formData, name, voucherDuration, voucherType]);
 
   // Bank account info query
   const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
 
   // Voucher price info query (연도 필터 적용)
-  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(formData.type, voucherYear);
+  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(resolvedFormData.type, voucherYear);
 
   // Voucher type change handler
   const handleVoucherTypeChange = (value: string) => {
@@ -146,7 +142,7 @@ export const PriceInfoMessageForm = () => {
   };
 
   const handleDurationTooltipOpen = (open: boolean) => {
-    if (!formData.type && open) {
+    if (!resolvedFormData.type && open) {
       setDurationTooltipOpen(true);
       if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
       tooltipTimerRef.current = setTimeout(() => setDurationTooltipOpen(false), 3000);
@@ -157,10 +153,10 @@ export const PriceInfoMessageForm = () => {
 
   const handleGenerate = () => {
     const formattedData = {
-      ...formData,
-      fullPrice: formatPrice(formData.fullPrice),
-      grant: formatPrice(formData.grant),
-      actualPrice: formatPrice(formData.actualPrice),
+      ...resolvedFormData,
+      fullPrice: formatPrice(resolvedFormData.fullPrice),
+      grant: formatPrice(resolvedFormData.grant),
+      actualPrice: formatPrice(resolvedFormData.actualPrice),
     };
 
     const message = systemTemplate?.content
@@ -227,11 +223,11 @@ export const PriceInfoMessageForm = () => {
               <TooltipProvider delayDuration={0}>
                 <Tooltip open={durationTooltipOpen} onOpenChange={handleDurationTooltipOpen}>
                   <TooltipTrigger asChild>
-                    <div tabIndex={!formData.type ? 0 : -1}>
+                    <div tabIndex={!resolvedFormData.type ? 0 : -1}>
                       <Select
-                        value={formData.duration || undefined}
+                        value={resolvedFormData.duration || undefined}
                         onValueChange={handleDurationChange}
-                        disabled={!formData.type || voucherPriceInfos.length === 0}
+                        disabled={!resolvedFormData.type || voucherPriceInfos.length === 0}
                       >
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder={t(locale, "price-info-msg.duration-label")} />
@@ -255,7 +251,7 @@ export const PriceInfoMessageForm = () => {
 
             <div className="space-y-2 col-span-5">
               <Label>{t(locale, "price-info-msg.area-label")}</Label>
-              <Select value={formData.area || undefined} onValueChange={handleAreaChange}>
+              <Select value={resolvedFormData.area || undefined} onValueChange={handleAreaChange}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder={t(locale, "price-info-msg.area-label")} />
                 </SelectTrigger>
@@ -276,7 +272,7 @@ export const PriceInfoMessageForm = () => {
                   : t(locale, "price-info-msg.voucher-type-label")}
               </Label>
               <Select
-                value={formData.type}
+                value={resolvedFormData.type}
                 onValueChange={handleVoucherTypeChange}
                 disabled={isVoucherPriceInfosLoading}
               >
@@ -302,18 +298,18 @@ export const PriceInfoMessageForm = () => {
           </div>
 
           {/* Price Info */}
-          {formData.fullPrice && formData.grant && formData.actualPrice && (
+          {resolvedFormData.fullPrice && resolvedFormData.grant && resolvedFormData.actualPrice && (
             <div className="flex flex-col gap-2">
               <p className="text-sm font-medium">
-                {t(locale, "price-info-msg.full-price-label")}: {formatPrice(formData.fullPrice)}
+                {t(locale, "price-info-msg.full-price-label")}: {formatPrice(resolvedFormData.fullPrice)}
                 {t(locale, "common.currency-symbol")}
               </p>
               <p className="text-sm font-medium">
-                {t(locale, "price-info-msg.grant-price-label")}: {formatPrice(formData.grant)}
+                {t(locale, "price-info-msg.grant-price-label")}: {formatPrice(resolvedFormData.grant)}
                 {t(locale, "common.currency-symbol")}
               </p>
               <p className="text-sm font-medium">
-                {t(locale, "price-info-msg.actual-price-label")}: {formatPrice(formData.actualPrice)}
+                {t(locale, "price-info-msg.actual-price-label")}: {formatPrice(resolvedFormData.actualPrice)}
                 {t(locale, "common.currency-symbol")}
               </p>
             </div>
@@ -324,9 +320,9 @@ export const PriceInfoMessageForm = () => {
             size="lg"
             onClick={handleGenerate}
             disabled={
-              !formData.name ||
-              !formData.type ||
-              !formData.area ||
+              !resolvedFormData.name ||
+              !resolvedFormData.type ||
+              !resolvedFormData.area ||
               isVoucherPriceInfosLoading ||
               isBankAccountInfosLoading
             }

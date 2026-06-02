@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Home, User, FileText, Sparkles, Menu } from "lucide-react";
@@ -21,6 +21,10 @@ const NAV_ITEMS: Array<{
   { href: "/all", label: "전체", icon: Menu, kind: "normal" },
 ];
 const ALL_NAV_INDEX = NAV_ITEMS.findIndex((item) => item.href === "/all");
+interface PressedNavItem {
+  href: string;
+  pathname: string;
+}
 
 function isNavItemActive(href: string, pathname: string): boolean {
   if (href === "/dashboard") return pathname === "/dashboard";
@@ -33,15 +37,12 @@ export function MobileBottomNav() {
   const pathname = usePathname();
   const safePathname = pathname ?? "";
   const prefersReducedMotion = useReducedMotion();
-  const [pressedHref, setPressedHref] = useState<string | null>(null);
+  const [pressedItem, setPressedItem] = useState<PressedNavItem | null>(null);
   const activeIndex = safePathname
     ? NAV_ITEMS.findIndex((item) => isNavItemActive(item.href, safePathname))
     : -1;
   const activeItem = activeIndex >= 0 ? NAV_ITEMS[activeIndex] : null;
-
-  useEffect(() => {
-    setPressedHref(null);
-  }, [pathname]);
+  const pressedHref = pressedItem?.pathname === safePathname ? pressedItem.href : null;
 
   const indicatorIndex = (() => {
     if (pressedHref) {
@@ -114,7 +115,7 @@ export function MobileBottomNav() {
             aria-current={isActive ? "page" : undefined}
             onClick={() => {
               if (!isActive) {
-                setPressedHref(item.href);
+                setPressedItem({ href: item.href, pathname: safePathname });
               }
             }}
             data-component={

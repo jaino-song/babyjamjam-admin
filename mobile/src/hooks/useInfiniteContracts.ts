@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
@@ -57,13 +57,13 @@ export function useInfiniteContracts({
   filterType = null,
   excludedNames = [],
 }: UseInfiniteContractsOptions = {}) {
-  // Track how many items are visible (starts at 6, increases by 20 each load)
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
-
-  // Reset visible count when filter changes
-  useEffect(() => {
-    setVisibleCount(INITIAL_VISIBLE_COUNT);
-  }, [filterType]);
+  const visibilityKey = `${filterType ?? "all"}:${excludedNames.join("|")}`;
+  const [visibleState, setVisibleState] = useState({
+    key: visibilityKey,
+    count: INITIAL_VISIBLE_COUNT,
+  });
+  const visibleCount =
+    visibleState.key === visibilityKey ? visibleState.count : INITIAL_VISIBLE_COUNT;
 
   // Fetch all documents once
   const query = useQuery<EformsignDocumentsResponse>({
@@ -76,10 +76,10 @@ export function useInfiniteContracts({
 
   // Process and filter all documents
   const allFilteredDocuments = useMemo(() => {
-    if (!query.data?.documents) return [];
+    const sourceDocuments = query.data?.documents ?? [];
 
     // Filter by status type
-    let docs = filterByActualStatus(query.data.documents, filterType);
+    let docs = filterByActualStatus(sourceDocuments, filterType);
 
     // Filter out excluded names
     if (excludedNames.length > 0) {
@@ -91,7 +91,7 @@ export function useInfiniteContracts({
 
     // Sort by created_date
     return sortByCreatedDate(docs);
-  }, [query.data?.documents, filterType, excludedNames]);
+  }, [query.data, filterType, excludedNames]);
 
   // Slice to visible count
   const documents = useMemo(() => {
@@ -106,8 +106,11 @@ export function useInfiniteContracts({
 
   // Load more function - just increases visible count
   const fetchNextPage = useCallback(() => {
-    setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, allFilteredDocuments.length));
-  }, [allFilteredDocuments.length]);
+    setVisibleState({
+      key: visibilityKey,
+      count: Math.min(visibleCount + PAGE_SIZE, allFilteredDocuments.length),
+    });
+  }, [allFilteredDocuments.length, visibilityKey, visibleCount]);
 
   return {
     documents,
