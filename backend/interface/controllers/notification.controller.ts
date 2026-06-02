@@ -188,10 +188,11 @@ export class NotificationController {
     }
 
     /**
-     * Test broadcast - development only, no auth required
+     * Test broadcast - development only
      * 개발/테스트용 엔드포인트
      */
     @Post("test-broadcast")
+    @UseGuards(JwtGuard, TenantGuard, OwnerOrAdminGuard)
     async testBroadcast(): Promise<BroadcastResultResponseDto> {
         if (this.configService.get('NODE_ENV') === 'production') {
             throw new ForbiddenException('Test endpoint disabled in production');

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 import request from "supertest";
 import { VoucherPriceInfoController } from "interface/controllers/voucher-price-info.controller";
 import { VoucherPriceInfoService } from "application/services/voucher-price-info.service";
@@ -34,6 +35,15 @@ describe("VoucherPriceInfoController (Integration)", () => {
         actualPrice: overrides.actualPrice ?? "500000",
         year: overrides.year ?? 2025,
     });
+
+    const getMethodGuards = (
+        methodName: "list" | "findByType" | "getDistinctYears" | "findById",
+    ) => {
+        return Reflect.getMetadata(
+            GUARDS_METADATA,
+            VoucherPriceInfoController.prototype[methodName],
+        ) ?? [];
+    };
 
     beforeEach(async () => {
         const mockVoucherService = {
@@ -77,6 +87,20 @@ describe("VoucherPriceInfoController (Integration)", () => {
 
     afterEach(async () => {
         await app.close();
+    });
+
+    describe("read endpoint guard metadata", () => {
+        it.each([
+            ["list"],
+            ["findByType"],
+            ["getDistinctYears"],
+            ["findById"],
+        ] as const)("should protect %s with owner/admin guards", (methodName) => {
+            const guards = getMethodGuards(methodName);
+
+            expect(guards).toContain(JwtGuard);
+            expect(guards).toContain(OwnerOrAdminGuard);
+        });
     });
 
     // ============================================

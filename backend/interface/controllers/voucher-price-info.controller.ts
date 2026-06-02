@@ -39,21 +39,25 @@ export class VoucherPriceInfoController {
     }
 
     @Get()
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     list() {
         return this.voucherService.list();
     }
 
     @Get("type")
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     findByType(@Query("type") type: string, @Query("year") year?: string) {
         return this.voucherService.findByType(type, year ? Number(year) : undefined);
     }
 
     @Get("years")
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     getDistinctYears() {
         return this.voucherService.getDistinctYears();
     }
 
     @Get("id")
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     findById(@Query("id", ParseIntPipe) id: number) {
         return this.voucherService.findById(id);
     }
