@@ -1,0 +1,47 @@
+import { resolveBackendBaseUrl } from "../server";
+
+type BackendEnv = Parameters<typeof resolveBackendBaseUrl>[0];
+
+function createEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
+    return {
+        NODE_ENV: "development",
+        VERCEL_ENV: undefined,
+        NEXT_PUBLIC_API_BASE_URL: undefined,
+        DEVELOPMENT_API_BASE_URL: undefined,
+        ...overrides,
+    };
+}
+
+describe("resolveBackendBaseUrl", () => {
+    it("uses local backend fallback outside production-like environments", () => {
+        expect(resolveBackendBaseUrl(createEnv())).toBe("http://localhost:3001");
+    });
+
+    it("requires NEXT_PUBLIC_API_BASE_URL in production", () => {
+        expect(resolveBackendBaseUrl(createEnv({
+            NODE_ENV: "production",
+            DEVELOPMENT_API_BASE_URL: "http://localhost:3001",
+        }))).toBeNull();
+    });
+
+    it("requires NEXT_PUBLIC_API_BASE_URL on Vercel preview", () => {
+        expect(resolveBackendBaseUrl(createEnv({
+            VERCEL_ENV: "preview",
+            DEVELOPMENT_API_BASE_URL: "http://localhost:3001",
+        }))).toBeNull();
+    });
+
+    it("normalizes valid backend URLs", () => {
+        expect(resolveBackendBaseUrl(createEnv({
+            NODE_ENV: "production",
+            NEXT_PUBLIC_API_BASE_URL: "https://api.example.com/",
+        }))).toBe("https://api.example.com");
+    });
+
+    it("rejects invalid URL schemes", () => {
+        expect(resolveBackendBaseUrl(createEnv({
+            NODE_ENV: "production",
+            NEXT_PUBLIC_API_BASE_URL: "ftp://api.example.com",
+        }))).toBeNull();
+    });
+});
