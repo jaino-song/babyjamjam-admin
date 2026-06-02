@@ -31,6 +31,7 @@ export interface CreateConsultationInquiryParams {
     referralSource: string;
     privacyAcceptedAt: Date;
     selectedServices: ConsultationSelectedServices | null;
+    additionalNotes: string | null;
     source: string;
     status: ConsultationInquiryStatus;
     readAt?: Date | null;
@@ -50,6 +51,7 @@ export interface ConsultationInquiryEntity {
     referralSource: string;
     privacyAcceptedAt: Date;
     selectedServices: ConsultationSelectedServices | null;
+    additionalNotes: string | null;
     source: string;
     status: string;
     readAt: Date | null;
