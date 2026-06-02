@@ -23,7 +23,7 @@ class InvalidJsonBodyError extends Error {
     }
 }
 
-async function readJsonObjectBody(request: NextRequest): Promise<Record<string, unknown>> {
+export async function readJsonObjectBody(request: NextRequest): Promise<Record<string, unknown>> {
     const text = await request.text();
 
     if (!text.trim()) {
@@ -42,7 +42,7 @@ async function readJsonObjectBody(request: NextRequest): Promise<Record<string, 
     throw new InvalidJsonBodyError();
 }
 
-function invalidJsonResponse(error: unknown): NextResponse | null {
+export function invalidJsonResponse(error: unknown): NextResponse | null {
     if (error instanceof InvalidJsonBodyError) {
         return NextResponse.json({ error: error.message }, { status: 400 });
     }
