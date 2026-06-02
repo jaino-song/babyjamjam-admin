@@ -304,7 +304,7 @@ describe("ClientService", () => {
                 // Assert
                 // Should lookup current schedule by clientId
                 expect(prismaService.employee_schedule.findFirst).toHaveBeenCalledWith({
-                    where: { clientId: 1, replaced: false },
+                    where: { clientId: 1, branchId: "org-1", replaced: false },
                     orderBy: { id: 'desc' },
                 });
                 // Mark old schedule as replaced
