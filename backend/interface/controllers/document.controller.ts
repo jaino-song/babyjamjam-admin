@@ -132,8 +132,9 @@ export class DocumentController {
             storagePath,
             mimeType,
         );
+        const branchId = tenant.branchId ?? "";
 
-        const entity = await this.documentService.create(tenant.branchId ?? "", {
+        const entity = await this.documentService.create(branchId, {
             name: dto.name || file.originalname,
             description: dto.description,
             categoryId: dto.categoryId,
@@ -142,7 +143,7 @@ export class DocumentController {
             filesize: file.size,
             storagepath: storagePath,
             storageurl: storageUrl,
-            branchid: dto.branchid,
+            branchid: branchId,
             uploadedby: dto.uploadedby || "system",
         });
         return toResponse(entity);
@@ -150,7 +151,9 @@ export class DocumentController {
 
     @Post()
     async create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateDocumentDto) {
-        const entity = await this.documentService.create(tenant.branchId ?? "", {
+        const branchId = tenant.branchId ?? "";
+
+        const entity = await this.documentService.create(branchId, {
             name: dto.name,
             description: dto.description,
             categoryId: dto.categoryId,
@@ -159,7 +162,7 @@ export class DocumentController {
             filesize: dto.filesize,
             storagepath: dto.storagepath,
             storageurl: dto.storageurl,
-            branchid: dto.branchid,
+            branchid: branchId,
             uploadedby: dto.uploadedby,
         });
         return toResponse(entity);
