@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { BACKEND_BASE_URL } from "@/lib/api/server";
-import { getAuthToken } from "@/lib/api/route-utils";
+import { getAuthToken, upstreamStreamErrorResponse } from "@/lib/api/route-utils";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
   });
 
   if (!upstream.ok || !upstream.body) {
-    return new Response(null, { status: upstream.status });
+    return upstreamStreamErrorResponse(upstream, "Unable to open eformsign document event stream");
   }
 
   return new Response(upstream.body, {

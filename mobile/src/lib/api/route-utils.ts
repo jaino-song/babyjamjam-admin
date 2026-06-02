@@ -88,6 +88,30 @@ export function backendJsonResponse(response: { data: unknown; status?: number }
     return NextResponse.json(response.data ?? {}, { status });
 }
 
+export async function upstreamStreamErrorResponse(
+    upstream: Response,
+    fallbackMessage = "Upstream stream request failed"
+): Promise<Response> {
+    const status = upstream.ok ? 502 : upstream.status;
+    const body = await upstream.text().catch(() => "");
+    const contentType = upstream.headers.get("Content-Type");
+
+    if (body) {
+        const headers = new Headers();
+        if (contentType) {
+            headers.set("Content-Type", contentType);
+        }
+        return new Response(body, { status, headers });
+    }
+
+    return new Response(JSON.stringify({ error: fallbackMessage }), {
+        status,
+        headers: {
+            "Content-Type": "application/json",
+        },
+    });
+}
+
 /**
  * Set auth tokens in httpOnly cookies
  */
