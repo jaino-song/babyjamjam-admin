@@ -1,13 +1,84 @@
 "use client";
 
+import { type CSSProperties, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Home, User, FileText, Sparkles, Menu } from "lucide-react";
+import { useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 
+const NAV_ITEMS: Array<{
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  kind?: "normal" | "chat";
+}> = [
+  { href: "/dashboard", label: "홈", icon: Home, kind: "normal" },
+  { href: "/clients", label: "고객", icon: User, kind: "normal" },
+  { href: "/chat", label: "어시스턴트", icon: Sparkles, kind: "chat" },
+  { href: "/contracts", label: "계약", icon: FileText, kind: "normal" },
+  { href: "/all", label: "전체", icon: Menu, kind: "normal" },
+];
+const ALL_NAV_INDEX = NAV_ITEMS.findIndex((item) => item.href === "/all");
+
+function isNavItemActive(href: string, pathname: string): boolean {
+  if (href === "/dashboard") return pathname === "/dashboard";
+  if (href === "/chat") return pathname === "/chat";
+  if (href === "/all") return pathname === "/all";
+  return pathname.startsWith(href);
+}
+
 export function MobileBottomNav() {
   const pathname = usePathname();
+  const safePathname = pathname ?? "";
+  const prefersReducedMotion = useReducedMotion();
+  const [pressedHref, setPressedHref] = useState<string | null>(null);
+  const activeIndex = safePathname
+    ? NAV_ITEMS.findIndex((item) => isNavItemActive(item.href, safePathname))
+    : -1;
+  const activeItem = activeIndex >= 0 ? NAV_ITEMS[activeIndex] : null;
+
+  useEffect(() => {
+    setPressedHref(null);
+  }, [pathname]);
+
+  const indicatorIndex = (() => {
+    if (pressedHref) {
+      const idx = NAV_ITEMS.findIndex((item) => item.href === pressedHref);
+      if (idx >= 0) return idx;
+    }
+    return activeIndex >= 0 ? activeIndex : ALL_NAV_INDEX;
+  })();
+
+  const isChatRoute = safePathname === "/chat";
+  const navGapPx = 2;
+  const navPaddingPx = 5;
+  const indicatorVisible = activeItem !== null || pressedHref !== null;
+  const indicatorTransition = (() => {
+    if (prefersReducedMotion) return "none";
+    if (!indicatorVisible) return "opacity 140ms ease-out";
+    return "transform 320ms cubic-bezier(0.32, 0.72, 0, 1), background 180ms ease-out, opacity 120ms ease-out";
+  })();
+  const indicatorStyle: CSSProperties = {
+    position: "absolute",
+    top: `${navPaddingPx}px`,
+    right: "auto",
+    bottom: `${navPaddingPx}px`,
+    left: `${navPaddingPx}px`,
+    display: "block",
+    height: "auto",
+    width: `calc((100% - ${(navPaddingPx * 2) + (navGapPx * (NAV_ITEMS.length - 1))}px) / ${NAV_ITEMS.length})`,
+    padding: 0,
+    borderRadius: "0.875rem",
+    background: "hsl(var(--v3-primary))",
+    opacity: indicatorVisible ? 1 : 0,
+    pointerEvents: "none",
+    transform: `translate3d(calc(${indicatorIndex * 100}% + ${indicatorIndex * navGapPx}px), 0, 0)`,
+    transition: indicatorTransition,
+    willChange: indicatorVisible ? "transform" : "opacity",
+    zIndex: 0,
+  };
 
   if (!pathname) return null;
 
@@ -15,34 +86,14 @@ export function MobileBottomNav() {
 
   if (pathname.startsWith("/clients/new")) return null;
 
-  const navItems: Array<{
-    href: string;
-    label: string;
-    icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
-    kind?: "normal" | "chat";
-  }> = [
-      { href: "/dashboard", label: "홈", icon: Home, kind: "normal" },
-      { href: "/clients", label: "고객", icon: User, kind: "normal" },
-      { href: "/chat", label: "어시스턴트", icon: Sparkles, kind: "chat" },
-      { href: "/contracts", label: "계약", icon: FileText, kind: "normal" },
-      { href: "/all", label: "전체", icon: Menu, kind: "normal" },
-    ];
-
-  const activeIndex = navItems.findIndex((item) => {
-    if (item.href === "/dashboard") return pathname === "/dashboard";
-    if (item.href === "/chat" || item.href === "/all")
-      return pathname === item.href;
-    return pathname.startsWith(item.href);
-  });
-
-  const activeItem = activeIndex >= 0 ? navItems[activeIndex] : null;
-
   return (
     <nav
       data-component="mobile-bottom-nav"
       className={cn(
-        "fixed left-1/2 z-[var(--mobile-z-nav,30)] w-[calc(100%-2rem)] max-w-[398px] -translate-x-1/2",
-        "grid grid-cols-5 items-end gap-1 p-2",
+        isChatRoute
+          ? "z-[var(--mobile-z-nav,30)]"
+          : "fixed left-1/2 z-[var(--mobile-z-nav,30)] w-[calc(100%-2rem)] max-w-[398px] -translate-x-1/2",
+        "grid grid-cols-5 items-end gap-[2px] p-[5px]",
         "bg-white/80 backdrop-blur-xl rounded-2xl",
         "shadow-v3-hover",
       )}
@@ -50,57 +101,35 @@ export function MobileBottomNav() {
         bottom: "max(calc(1rem + env(safe-area-inset-bottom)), calc(100dvh - var(--mobile-shell-max-height, 932px) + 1rem))",
       }}
     >
-      {activeIndex >= 0 && (
-        <div
-          aria-hidden="true"
-          className={cn(
-            "absolute top-2 bottom-2 rounded-2xl",
-            activeItem?.kind === "chat"
-              ? "bg-v3-primary-light"
-              : "bg-v3-primary"
-          )}
-          style={{
-            width: "calc((100% - 2rem) / 5)",
-            left: "0.5rem",
-            transform: `translateX(calc(${activeIndex} * (100% + 0.25rem)))`,
-          }}
-        />
-      )}
+      <span data-component="mobile-bottom-indicator" role="presentation" style={indicatorStyle} />
 
-      {navItems.map((item) => {
-        const isActive =
-          item.href === "/dashboard"
-            ? pathname === "/dashboard"
-            : item.href === "/chat" || item.href === "/all"
-              ? pathname === item.href
-              : pathname.startsWith(item.href);
+      {NAV_ITEMS.map((item) => {
+        const isActive = isNavItemActive(item.href, pathname);
         const Icon = item.icon;
 
         return (
           <Link
             key={item.href}
             href={item.href}
+            aria-current={isActive ? "page" : undefined}
+            onClick={() => {
+              if (!isActive) {
+                setPressedHref(item.href);
+              }
+            }}
             data-component={
               item.kind === "chat"
                 ? "mobile-bottom-nav-chat"
                 : `mobile-bottom-nav-${item.href.replace("/", "")}`
             }
             className={cn(
-              "relative z-10 flex flex-col items-center gap-1 p-2 rounded-2xl",
-              item.kind === "chat"
-                ? "text-v3-primary"
-                : isActive
-                  ? "text-white"
-                  : "text-gray-500"
+              "relative z-10 flex h-10 flex-col items-center gap-[2px] rounded-[14px] px-1 py-[5px]",
+              isActive ? "text-white" : "text-gray-500"
             )}
           >
             <Icon
-              className={cn(
-                item.kind === "chat"
-                  ? "lucide lucide-sparkles h-5 w-5 text-navy shrink-0"
-                  : "w-5 h-5"
-              )}
-              strokeWidth={item.kind === "chat" ? 2 : 2.5}
+              className="h-5 w-5 shrink-0"
+              strokeWidth={2.5}
             />
             <span className="text-[10px] font-medium leading-none">
               {item.label}

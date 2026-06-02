@@ -2,10 +2,92 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { ChevronRight, FileCheck2, Plus } from "lucide-react";
+import type { CSSProperties, ReactNode, RefObject } from "react";
+import { ChevronDown, ChevronRight, FileCheck2, Plus } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import type { ContractRow, ListRow, MenuGroup, SectionRows } from "./mockup-data";
+
+export function ListLoadMoreButton({
+  onLoadMore,
+  dataComponentPrefix,
+}: {
+  onLoadMore: () => void;
+  dataComponentPrefix: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onLoadMore}
+      className="peek-bounce flex flex-col items-center gap-0.5 text-v3-primary"
+      data-component={`${dataComponentPrefix}-load-more-button`}
+      aria-label="더 많은 항목 불러오기"
+    >
+      <span className="text-[0.78rem] font-bold">탭하여 더보기</span>
+      <ChevronDown size={20} strokeWidth={2.5} />
+    </button>
+  );
+}
+
+export function ListLoadMoreSentinel({
+  sentinelRef,
+  dataComponentPrefix,
+}: {
+  sentinelRef: RefObject<HTMLDivElement | null>;
+  dataComponentPrefix: string;
+}) {
+  return (
+    <div
+      ref={sentinelRef}
+      className="h-1"
+      aria-hidden="true"
+      data-component={`${dataComponentPrefix}-load-sentinel`}
+    />
+  );
+}
+
+export function ListCountSkeleton({ dataComponentPrefix }: { dataComponentPrefix: string }) {
+  return (
+    <span
+      className="inline-block h-[0.7rem] w-7 animate-pulse rounded-full bg-v3-dim-white align-middle"
+      data-component={`${dataComponentPrefix}-count-skeleton`}
+    />
+  );
+}
+
+export function ListRowsSkeleton({
+  dataComponentPrefix,
+  rowCount = 6,
+}: {
+  dataComponentPrefix: string;
+  rowCount?: number;
+}) {
+  return (
+    <div className="section-block" data-component={`${dataComponentPrefix}-loading-skeleton`}>
+      {Array.from({ length: rowCount }).map((_, index) => (
+        <div
+          key={`${dataComponentPrefix}-skeleton-${index}`}
+          className="list-item"
+          data-component={`${dataComponentPrefix}-row-skeleton`}
+          aria-hidden="true"
+          style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
+        >
+          <Skeleton className="list-avatar rounded-full bg-v3-dim-white animate-pulse" />
+          <div
+            className="list-info flex flex-col"
+            data-component={`${dataComponentPrefix}-row-skeleton-info`}
+          >
+            <Skeleton className="h-4 w-20 bg-v3-dim-white animate-pulse" />
+            <Skeleton className="mt-1.5 h-3 w-32 bg-v3-dim-white animate-pulse" />
+          </div>
+          <div className="list-right" data-component={`${dataComponentPrefix}-row-skeleton-right`}>
+            <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white animate-pulse" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const avatarToneClass: Record<NonNullable<ListRow["avatarTone"]>, string> = {
   primary: "bg-v3-primary",
@@ -49,16 +131,128 @@ const menuIconStroke: Record<MenuGroup["rows"][number]["tone"], string> = {
   gold: "hsl(45,70%,30%)",
 };
 
+type MobileMenuTone = MenuGroup["rows"][number]["tone"];
+type MobileMenuIconComponent = MenuGroup["rows"][number]["icon"];
+
+export function MobileMenuIcon({
+  icon: Icon,
+  tone,
+}: {
+  icon: MobileMenuIconComponent;
+  tone: MobileMenuTone;
+}) {
+  return (
+    <div className={`menu-icon ${menuToneClass[tone]}`}>
+      <Icon size={18} strokeWidth={2.5} color={menuIconStroke[tone]} />
+    </div>
+  );
+}
+
+export function MobileMenuGroup({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="menu-group" data-component="mobile-redesign-menu-group">
+      <div className="menu-group-title">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+export function MobileMenuRow({
+  label,
+  icon,
+  tone,
+  href,
+  disabled = false,
+  description,
+  rightContent,
+  className,
+  children,
+}: {
+  label: string;
+  icon: MobileMenuIconComponent;
+  tone: MobileMenuTone;
+  href?: string;
+  disabled?: boolean;
+  description?: ReactNode;
+  rightContent?: ReactNode;
+  className?: string;
+  children?: ReactNode;
+}) {
+  const rowClassName = [
+    "menu-row",
+    !href && !disabled ? "menu-row-static" : "",
+    disabled ? "menu-row-disabled" : "",
+    className ?? "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const rowContent = (
+    <>
+      <MobileMenuIcon icon={icon} tone={tone} />
+      <div className="menu-text">
+        <div className="menu-label">{label}</div>
+        {description ? <div className="menu-description">{description}</div> : null}
+        {children}
+      </div>
+      {rightContent}
+    </>
+  );
+
+  if (disabled) {
+    return (
+      <button
+        type="button"
+        className={rowClassName}
+        data-component="mobile-redesign-menu-row"
+        disabled
+      >
+        {rowContent}
+      </button>
+    );
+  }
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={rowClassName}
+        data-component="mobile-redesign-menu-row"
+      >
+        {rowContent}
+      </Link>
+    );
+  }
+
+  return (
+    <div className={rowClassName} data-component="mobile-redesign-menu-row">
+      {rowContent}
+    </div>
+  );
+}
+
 export function Badge({ label, tone }: { label: string; tone: keyof typeof badgeToneClass }) {
   return <span className={`badge ${badgeToneClass[tone]}`}>{label}</span>;
 }
+
+type FilterPillItem = {
+  label: string;
+  count: ReactNode;
+  active?: boolean;
+  skeleton?: boolean;
+};
 
 export function FilterPills({
   items,
   activeLabel: controlledActive,
   onChange,
 }: {
-  items: Array<{ label: string; count: string; active?: boolean }>;
+  items: FilterPillItem[];
   activeLabel?: string;
   onChange?: (label: string) => void;
 }) {
@@ -73,16 +267,34 @@ export function FilterPills({
   return (
     <div className="filter-row" data-component="mobile-redesign-filter-row">
       {items.map((item) => (
-        <button
-          key={item.label}
-          type="button"
-          className={`filter-pill ${item.label === activeLabel ? "active" : ""}`}
-          data-component="mobile-redesign-filter-pill"
-          aria-pressed={item.label === activeLabel}
-          onClick={() => handleClick(item.label)}
-        >
-          {item.label} <span className="count">{item.count}</span>
-        </button>
+        item.skeleton ? (
+          <button
+            key={item.label}
+            type="button"
+            className="filter-pill filter-pill-skeleton"
+            data-component="mobile-redesign-filter-pill"
+            data-loading="true"
+            aria-hidden="true"
+            disabled
+            tabIndex={-1}
+          >
+            <span className="filter-pill-skeleton-content">
+              {item.label}
+              <span className="filter-pill-skeleton-count">00</span>
+            </span>
+          </button>
+        ) : (
+          <button
+            key={item.label}
+            type="button"
+            className={`filter-pill ${item.label === activeLabel ? "active" : ""}`}
+            data-component="mobile-redesign-filter-pill"
+            aria-pressed={item.label === activeLabel}
+            onClick={() => handleClick(item.label)}
+          >
+            {item.label} <span className="count">{item.count}</span>
+          </button>
+        )
       ))}
     </div>
   );
@@ -93,30 +305,39 @@ export function ListCard({
   count,
   actionLabel,
   actionHref,
+  actionIcon,
+  onActionClick,
   filters,
   activeFilter,
   onFilterChange,
   beforeFilters,
   beforeScroll,
+  scrollRef,
+  loadMoreFooter,
   children,
 }: {
   title: string;
-  count?: string;
+  count?: ReactNode;
   actionLabel?: string;
   actionHref?: string;
-  filters: Array<{ label: string; count: string; active?: boolean }>;
+  actionIcon?: ReactNode;
+  onActionClick?: () => void;
+  filters: FilterPillItem[];
   activeFilter?: string;
   onFilterChange?: (label: string) => void;
   beforeFilters?: ReactNode;
   beforeScroll?: ReactNode;
+  scrollRef?: RefObject<HTMLDivElement | null>;
+  loadMoreFooter?: ReactNode;
   children: ReactNode;
 }) {
-  const actionIcon = actionLabel?.startsWith("+") ? null : <Plus size={12} strokeWidth={3} />;
+  const resolvedActionIcon =
+    actionIcon ?? (actionLabel?.startsWith("+") ? null : <Plus size={12} strokeWidth={3} />);
   const [actionFeedback, setActionFeedback] = useState("");
   const action = actionLabel ? (
     actionHref ? (
       <Link href={actionHref} className="list-action" data-component="mobile-redesign-list-action">
-        {actionIcon}
+        {resolvedActionIcon}
         {actionLabel}
       </Link>
     ) : (
@@ -124,9 +345,12 @@ export function ListCard({
         type="button"
         className="list-action"
         data-component="mobile-redesign-list-action"
-        onClick={() => setActionFeedback(`${actionLabel.replace(/^\+\s*/, "")} 기능을 열었습니다.`)}
+        onClick={
+          onActionClick ??
+          (() => setActionFeedback(`${actionLabel.replace(/^\+\s*/, "")} 기능을 열었습니다.`))
+        }
       >
-        {actionIcon}
+        {resolvedActionIcon}
         {actionLabel}
       </button>
     )
@@ -151,19 +375,34 @@ export function ListCard({
         </div>
       )}
       {beforeScroll}
-      <div className="list-card-scroll" data-component="mobile-redesign-list-scroll">
+      <div
+        ref={scrollRef}
+        className="list-card-scroll"
+        data-component="mobile-redesign-list-scroll"
+      >
         {children}
       </div>
+      {loadMoreFooter && (
+        <div className="list-card-footer" data-component="mobile-redesign-list-footer">
+          {loadMoreFooter}
+        </div>
+      )}
     </div>
   );
 }
 
-export function SectionedList({ sections }: { sections: SectionRows[] }) {
+export function SectionedList({
+  sections,
+  hideSectionHeader,
+}: {
+  sections: SectionRows[];
+  hideSectionHeader?: (section: SectionRows) => boolean;
+}) {
   return (
     <>
       {sections.map((section) => (
         <div className="section-block" key={section.title} data-component="mobile-redesign-list-section">
-          <div className="section-header">{section.title}</div>
+          {!hideSectionHeader?.(section) && <div className="section-header">{section.title}</div>}
           {section.rows.map((row) => (
             <ClientLikeRow key={`${section.title}-${row.name}`} row={row} />
           ))}
@@ -173,9 +412,54 @@ export function SectionedList({ sections }: { sections: SectionRows[] }) {
   );
 }
 
+type ListItemRowProps = {
+  dataComponent?: string;
+  left: ReactNode;
+  name: ReactNode;
+  meta?: ReactNode;
+  metaClassName?: string;
+  right?: ReactNode;
+  onClick?: () => void;
+  className?: string;
+  style?: CSSProperties;
+};
+
+export function ListItemRow({
+  dataComponent,
+  left,
+  name,
+  meta,
+  metaClassName = "list-meta",
+  right,
+  onClick,
+  className,
+  style,
+}: ListItemRowProps) {
+  const rootClass = className ? `list-item ${className}` : "list-item";
+  return (
+    <button
+      type="button"
+      className={rootClass}
+      data-component={dataComponent}
+      onClick={onClick}
+      style={style}
+    >
+      {left}
+      <div className="list-info flex flex-col">
+        <div className="list-name">{name}</div>
+        {meta !== undefined && <div className={metaClassName}>{meta}</div>}
+      </div>
+      {right !== undefined && <div className="list-right">{right}</div>}
+    </button>
+  );
+}
+
 export function ClientLikeRow({ row }: { row: ListRow }) {
   const hasDue = Boolean(row.due || row.dueSub);
   const interactive = typeof row.onClick === "function";
+  const badges = row.badges?.length
+    ? row.badges
+    : [{ label: row.badge, tone: row.badgeTone }];
 
   const handleKey = interactive
     ? (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -196,14 +480,22 @@ export function ClientLikeRow({ row }: { row: ListRow }) {
       onKeyDown={handleKey}
     >
       <div className={`list-avatar ${avatarToneClass[row.avatarTone ?? "primary"]}`}>{row.initial}</div>
-      <div className="list-info">
+      <div className="list-info flex flex-col">
         <div className="list-name">
           {row.name}
-          {hasDue && (
-            <>
-              {" "}
-              <Badge label={row.badge} tone={row.badgeTone} />
-            </>
+          {hasDue && badges.length > 0 && (
+            <span
+              className="list-row-badges"
+              data-component="mobile-redesign-list-row-badges"
+            >
+              {badges.map((badge, index) => (
+                <Badge
+                  key={`${badge.label}-${index}`}
+                  label={badge.label}
+                  tone={badge.tone}
+                />
+              ))}
+            </span>
           )}
         </div>
         <div className="list-meta">{row.meta}</div>
@@ -215,20 +507,37 @@ export function ClientLikeRow({ row }: { row: ListRow }) {
             {row.dueSub && <span className="dday-sub">{row.dueSub}</span>}
           </>
         ) : (
-          <Badge label={row.badge} tone={row.badgeTone} />
+          <span
+            className="list-row-badges"
+            data-component="mobile-redesign-list-row-badges"
+          >
+            {badges.map((badge, index) => (
+              <Badge
+                key={`${badge.label}-${index}`}
+                label={badge.label}
+                tone={badge.tone}
+              />
+            ))}
+          </span>
         )}
       </div>
     </div>
   );
 }
 
-export function ContractList({ sections }: { sections: Array<{ title: string; rows: ContractRow[] }> }) {
+export function ContractList({
+  sections,
+  rowStyle,
+}: {
+  sections: Array<{ title: string; rows: ContractRow[] }>;
+  rowStyle?: (index: number) => CSSProperties;
+}) {
   return (
     <>
       {sections.map((section) => (
         <div className="section-block" key={section.title} data-component="mobile-redesign-contract-section">
           <div className="section-header">{section.title}</div>
-          {section.rows.map((row) => {
+          {section.rows.map((row, idx) => {
             const interactive = typeof row.onClick === "function";
             return (
               <div
@@ -239,6 +548,7 @@ export function ContractList({ sections }: { sections: Array<{ title: string; ro
                 role={interactive ? "button" : undefined}
                 tabIndex={interactive ? 0 : undefined}
                 onClick={row.onClick}
+                style={rowStyle?.(idx)}
                 onKeyDown={
                   interactive
                     ? (e) => {
@@ -275,50 +585,56 @@ export function MenuGroups({ groups }: { groups: MenuGroup[] }) {
   return (
     <>
       {groups.map((group) => (
-        <div className="menu-group" key={group.title} data-component="mobile-redesign-menu-group">
-          <div className="menu-group-title">{group.title}</div>
+        <MobileMenuGroup title={group.title} key={group.title}>
           {group.rows.map((row) => {
-            const Icon = row.icon;
-            return row.href ? (
-                <Link
-                  key={`${group.title}-${row.label}`}
-                  href={row.href}
-                  className="menu-row"
-                  data-component="mobile-redesign-menu-row"
-                >
-                  <div className={`menu-icon ${menuToneClass[row.tone]}`}>
-                    <Icon size={18} strokeWidth={2.5} color={menuIconStroke[row.tone]} />
-                  </div>
-                  <div className="menu-text">
-                    <div className="menu-label">{row.label}</div>
-                  </div>
-                  <div className="menu-right">
-                    {row.badge && <span className="menu-badge">{row.badge}</span>}
-                    {row.value && <span className="menu-value">{row.value}</span>}
-                    <ChevronRight size={16} strokeWidth={2} />
-                  </div>
-                </Link>
-              ) : (
-                <div
-                  key={`${group.title}-${row.label}`}
-                  className="menu-row"
-                  data-component="mobile-redesign-menu-row"
-                >
-                  <div className={`menu-icon ${menuToneClass[row.tone]}`}>
-                    <Icon size={18} strokeWidth={2.5} color={menuIconStroke[row.tone]} />
-                  </div>
-                  <div className="menu-text">
-                    <div className="menu-label">{row.label}</div>
-                  </div>
-                  <div className="menu-right">
-                    {row.badge && <span className="menu-badge">{row.badge}</span>}
-                    {row.value && <span className="menu-value">{row.value}</span>}
-                    <ChevronRight size={16} strokeWidth={2} />
-                  </div>
-                </div>
-              );
+            const badgeSkeletonStyle = row.badgeSkeletonWidth
+              ? ({ "--menu-badge-skeleton-width": row.badgeSkeletonWidth } as CSSProperties)
+              : undefined;
+            const valueSkeletonStyle = row.valueSkeletonWidth
+              ? ({ "--menu-value-skeleton-width": row.valueSkeletonWidth } as CSSProperties)
+              : undefined;
+            const rightContent = (
+              <div className="menu-right">
+                {row.badgeLoading ? (
+                  <span
+                    className="menu-badge menu-badge-skeleton"
+                    data-component="mobile-all-badge-skeleton"
+                    style={badgeSkeletonStyle}
+                    aria-hidden="true"
+                  />
+                ) : row.badge ? (
+                  <span className="menu-badge">{row.badge}</span>
+                ) : null}
+                {row.valueLoading ? (
+                  <span
+                    className="menu-value menu-value-skeleton"
+                    data-component="mobile-all-value-skeleton"
+                    style={valueSkeletonStyle}
+                    aria-hidden="true"
+                  />
+                ) : row.value ? (
+                  <span className="menu-value">{row.value}</span>
+                ) : null}
+                {row.statusLabel ? (
+                  <span className="menu-status-pill">{row.statusLabel}</span>
+                ) : (
+                  <ChevronRight size={16} strokeWidth={2} />
+                )}
+              </div>
+            );
+            return (
+              <MobileMenuRow
+                key={`${group.title}-${row.label}`}
+                label={row.label}
+                icon={row.icon}
+                tone={row.tone}
+                href={row.href}
+                disabled={row.disabled}
+                rightContent={rightContent}
+              />
+            );
           })}
-        </div>
+        </MobileMenuGroup>
       ))}
     </>
   );

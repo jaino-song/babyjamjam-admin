@@ -4,9 +4,6 @@ import {
   Calendar,
   Calculator,
   File,
-  HelpCircle,
-  Languages,
-  Lock,
   MessageCircle,
   MessageSquareText,
   Send,
@@ -16,7 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export interface DashboardStat {
+export interface DashboardAnalytic {
   label: string;
   value: string;
   tone: "primary" | "orange" | "green" | "burgundy";
@@ -31,6 +28,7 @@ export interface ListRow {
   initial: string;
   badge: string;
   badgeTone: "primary" | "green" | "burgundy" | "orange" | "muted";
+  badges?: Array<{ label: string; tone: ListRow["badgeTone"] }>;
   due?: string;
   dueSub?: string;
   dueTone?: "urgent" | "soon";
@@ -59,7 +57,13 @@ export interface MenuRow {
   icon: LucideIcon;
   tone: "primary" | "green" | "burgundy" | "orange" | "purple" | "muted" | "gold";
   badge?: string;
+  badgeLoading?: boolean;
+  badgeSkeletonWidth?: string;
   value?: string;
+  valueLoading?: boolean;
+  valueSkeletonWidth?: string;
+  disabled?: boolean;
+  statusLabel?: string;
 }
 
 export interface MenuGroup {
@@ -67,16 +71,16 @@ export interface MenuGroup {
   rows: MenuRow[];
 }
 
-export const dashboardStats: DashboardStat[] = [
+export const dashboardAnalytics: DashboardAnalytic[] = [
   { label: "서비스 진행 중", value: "0", tone: "primary", icon: User },
-  { label: "이번달 시작 예정", value: "1", tone: "orange", icon: Calendar },
+  { label: "7일 내 시작 예정", value: "1", tone: "orange", icon: Calendar },
   { label: "검토 필요 문서", value: "2", tone: "green", icon: File, urgent: true },
-  { label: "대기 문서", value: "3", tone: "burgundy", icon: Send },
+  { label: "계약서 미완료", value: "3", tone: "burgundy", icon: Send },
 ];
 
 export const dashboardSections: SectionRows[] = [
   {
-    title: "계약서 처리 필요 · 2건",
+    title: "조치 필요 · 2건",
     rows: [
       {
         name: "[더미] 정유진",
@@ -222,22 +226,22 @@ export const contractSections: Array<{ title: string; rows: ContractRow[] }> = [
   {
     title: "조치 필요 · 5건",
     rows: [
-      { name: "이수현 · A통합1형", meta: "서명 진행 · 2/3", badge: "검토 필요", badgeTone: "primary", iconTone: "primary" },
-      { name: "[더미] 정유진 · A라1형", meta: "작성 진행 · 1/4", badge: "대기", badgeTone: "muted", iconTone: "muted" },
-      { name: "송진호 · A통합1형", meta: "작성 진행 · 2/4", badge: "대기", badgeTone: "muted", iconTone: "muted" },
+      { name: "이수현 · A통합1형", meta: "제공기관 검토 필요 · 5단계", badge: "검토 필요", badgeTone: "primary", iconTone: "primary" },
+      { name: "[더미] 정유진 · A라1형", meta: "이용자 문서 열람 · 3단계", badge: "대기", badgeTone: "muted", iconTone: "muted" },
+      { name: "송진호 · A통합1형", meta: "이용자 서명 완료 · 4단계", badge: "대기", badgeTone: "muted", iconTone: "muted" },
     ],
   },
   {
     title: "진행 중",
     rows: [
-      { name: "박서연 · A라1형", meta: "서명 진행 · 0/1", badge: "검토 필요", badgeTone: "primary", iconTone: "primary" },
+      { name: "박서연 · A라1형", meta: "제공기관 검토 필요 · 5단계", badge: "검토 필요", badgeTone: "primary", iconTone: "primary" },
     ],
   },
   {
     title: "완료 · 최근",
     rows: [
-      { name: "김도윤 · B가1형", meta: "완료 · 4/4", badge: "완료", badgeTone: "green", iconTone: "green" },
-      { name: "장하늘 · A통합1형", meta: "완료 · 4/4", badge: "완료", badgeTone: "green", iconTone: "green" },
+      { name: "김도윤 · B가1형", meta: "계약서 완료 · 6단계", badge: "완료", badgeTone: "green", iconTone: "green" },
+      { name: "장하늘 · A통합1형", meta: "계약서 완료 · 6단계", badge: "완료", badgeTone: "green", iconTone: "green" },
     ],
   },
 ];
@@ -249,14 +253,14 @@ export const menuGroups: MenuGroup[] = [
       { label: "상담", href: "/consultations", icon: MessageCircle, tone: "burgundy", badge: "3" },
       { label: "고객", href: "/clients", icon: Users, tone: "primary", value: "42명" },
       { label: "제공인력", href: "/employees", icon: UserCheck, tone: "purple", value: "12명" },
-      { label: "일정 캘린더", href: "/employees/schedule", icon: Calendar, tone: "orange" },
-      { label: "통계 보고서", href: "/dashboard/analytics", icon: BarChart3, tone: "green" },
+      { label: "일정 캘린더", href: "/employees/schedule", icon: Calendar, tone: "orange", disabled: true, statusLabel: "출시 예정" },
+      { label: "통계 보고서", href: "/dashboard/analytics", icon: BarChart3, tone: "green", disabled: true, statusLabel: "출시 예정" },
     ],
   },
   {
     title: "서비스 관리",
     rows: [
-      { label: "가격표", href: "/settings", icon: Calculator, tone: "orange" },
+      { label: "가격표", href: "/prices", icon: Calculator, tone: "orange" },
       { label: "메시지", href: "/messages", icon: MessageSquareText, tone: "primary", value: "36건" },
       { label: "알림톡", href: "/alimtalk", icon: Send, tone: "gold", value: "4종" },
     ],
@@ -264,16 +268,7 @@ export const menuGroups: MenuGroup[] = [
   {
     title: "설정",
     rows: [
-      { label: "알림 설정", href: "/settings", icon: Bell, tone: "muted", value: "활성" },
-      { label: "보안", href: "/settings", icon: Lock, tone: "muted" },
-      { label: "언어", href: "/settings", icon: Languages, tone: "muted", value: "한국어" },
-    ],
-  },
-  {
-    title: "지원",
-    rows: [
-      { label: "도움말", href: "/settings", icon: HelpCircle, tone: "muted" },
-      { label: "문의하기", href: "/messages", icon: MessageCircle, tone: "muted" },
+      { label: "알림 설정", href: "/notification", icon: Bell, tone: "muted", value: "활성" },
     ],
   },
 ];

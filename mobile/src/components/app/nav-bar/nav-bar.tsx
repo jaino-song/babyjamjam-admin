@@ -69,7 +69,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     const isFiles = pathname === "/files";
     const isContracts = pathname === "/contracts";
     const isClients = pathname === "/clients";
-    const isSettings = pathname === "/settings";
+    const isSettings = pathname === "/notification" || pathname === "/settings";
     const isEmployees = pathname === "/employees";
     const isAdminOrOwner = user?.role === 'admin' || user?.role === 'owner';
     const isAdmin = pathname === '/admin' || pathname?.startsWith('/admin/');
@@ -81,7 +81,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
         { href: "/clients", label: t(locale, "nav-bar.clients"), icon: <Users className="h-4 w-4" />, active: isClients },
         { href: "/employees", label: t(locale, "nav-bar.employees"), icon: <UserCog className="h-4 w-4" />, active: isEmployees },
         { href: "/files", label: t(locale, "nav-bar.files"), icon: <FileText className="h-4 w-4" />, active: isFiles },
-        { href: "/settings", label: t(locale, "nav-bar.settings"), icon: <Settings className="h-4 w-4" />, active: isSettings },
+        { href: "/notification", label: t(locale, "nav-bar.settings"), icon: <Settings className="h-4 w-4" />, active: isSettings },
     ];
 
     return (

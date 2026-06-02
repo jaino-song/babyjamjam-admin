@@ -60,7 +60,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "시스템",
     items: [
       { label: "알림", href: "/messages", icon: Bell },
-      { label: "설정", href: "/settings", icon: Settings },
+      { label: "설정", href: "/notification", icon: Settings },
     ],
   },
 ];
