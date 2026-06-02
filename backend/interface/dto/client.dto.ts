@@ -1,4 +1,5 @@
-import { IsBoolean, IsDateString, IsInt, IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString } from "class-validator";
+import { SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
 
 export class CreateClientDto {
     @IsString()
@@ -63,7 +64,7 @@ export class CreateClientDto {
     dueDate?: string | null;
 
     @IsOptional()
-    @IsString()
+    @IsIn(SERVICE_STATUS_VALUES)
     serviceStatus?: string | null;
 
     @IsBoolean()
@@ -140,7 +141,7 @@ export class UpdateClientDto {
     dueDate?: string | null;
 
     @IsOptional()
-    @IsString()
+    @IsIn(SERVICE_STATUS_VALUES)
     serviceStatus?: string | null;
 
     @IsOptional()

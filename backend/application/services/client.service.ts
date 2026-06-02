@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
 import {
     CreateClientUsecase,
     DeleteClientUsecase,
@@ -10,7 +10,7 @@ import {
 import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { computeServiceStatus, SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
+import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { AlimtalkService } from "./alimtalk.service";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
 
@@ -103,6 +103,16 @@ export class ClientService {
         @Optional() private readonly triggerService?: AlimtalkTriggerService,
     ) {}
 
+    private assertAllowedServiceStatus(status: string | null | undefined): void {
+        if (status == null) return;
+
+        if (!isServiceStatus(status)) {
+            throw new BadRequestException(
+                `serviceStatus must be one of: ${SERVICE_STATUS_VALUES.join(", ")}`
+            );
+        }
+    }
+
     async create(branchid: string, params: {
         name: string;
         primaryEmployeeId?: number | null;
@@ -127,6 +137,7 @@ export class ClientService {
         const startDate = params.startDate ? new Date(params.startDate) : null;
         const endDate = params.endDate ? new Date(params.endDate) : null;
         const dueDate = params.dueDate ? new Date(params.dueDate) : null;
+        this.assertAllowedServiceStatus(params.serviceStatus);
 
         // First create the client
         const client = await this.createClientUsecase.execute(branchid, {
@@ -413,6 +424,7 @@ export class ClientService {
         if (!existingClient) {
             throw new Error(`Client with id ${id} not found`);
         }
+        this.assertAllowedServiceStatus(params.serviceStatus);
 
         const startDate = params.startDate ? new Date(params.startDate) : existingClient.startDate ?? new Date();
         const endDate = params.endDate ? new Date(params.endDate) : existingClient.endDate ?? new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
