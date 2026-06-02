@@ -8,6 +8,10 @@ export const LIST_INFINITE_PAGE_SIZE = 6;
 
 const ROW_SELECTOR = ".list-item, .contract-item";
 
+function clampVisibleCount(count: number, totalItems: number): number {
+  return Math.min(Math.max(count, 0), Math.max(totalItems, 0));
+}
+
 /**
  * Teaser → tap-to-expand → infinite scroll 패턴.
  *
@@ -32,18 +36,20 @@ export function useListInfiniteScroll({
   totalItems: number;
   fallbackInitialCount?: number;
 }) {
-  const [visibleCount, setVisibleCount] = useState(fallbackInitialCount);
-  const [hasInteracted, setHasInteracted] = useState(false);
-  const [prevResetKey, setPrevResetKey] = useState(resetKey);
+  const initialVisibleCount = clampVisibleCount(fallbackInitialCount, totalItems);
+  const [visibilityState, setVisibilityState] = useState({
+    resetKey,
+    visibleCount: initialVisibleCount,
+    hasInteracted: false,
+  });
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  // Reset on filter/tab change (compare-during-render pattern; React-recommended over an effect).
-  if (resetKey !== prevResetKey) {
-    setPrevResetKey(resetKey);
-    setHasInteracted(false);
-    setVisibleCount(fallbackInitialCount);
-  }
+  const isReset = visibilityState.resetKey !== resetKey;
+  const visibleCount = isReset
+    ? initialVisibleCount
+    : clampVisibleCount(visibilityState.visibleCount, totalItems);
+  const hasInteracted = isReset ? false : visibilityState.hasInteracted;
 
   // Measure how many rows fit and adjust visibleCount while still in initial state.
   useLayoutEffect(() => {
@@ -63,8 +69,22 @@ export function useListInfiniteScroll({
       const padBottom = parseFloat(style.paddingBottom) || 0;
       const usable = scrollH - padTop - padBottom;
       const fit = Math.max(1, Math.floor((usable + gap) / (rowH + gap)));
-      const target = fit + 1; // +1 peek row, masked by footer white-fade
-      setVisibleCount((prev) => (prev === target ? prev : target));
+      const target = clampVisibleCount(fit + 1, totalItems); // +1 peek row, masked by footer white-fade
+      setVisibilityState((current) => {
+        if (
+          current.resetKey === resetKey &&
+          current.visibleCount === target &&
+          current.hasInteracted === false
+        ) {
+          return current;
+        }
+
+        return {
+          resetKey,
+          visibleCount: target,
+          hasInteracted: false,
+        };
+      });
     };
 
     measure();
@@ -78,9 +98,22 @@ export function useListInfiniteScroll({
   const hasMore = visibleCount < totalItems;
 
   const loadMore = useCallback(() => {
-    setHasInteracted(true);
-    setVisibleCount((current) => current + LIST_INFINITE_PAGE_SIZE);
-  }, []);
+    setVisibilityState((current) => {
+      const currentVisibleCount =
+        current.resetKey === resetKey
+          ? clampVisibleCount(current.visibleCount, totalItems)
+          : initialVisibleCount;
+
+      return {
+        resetKey,
+        visibleCount: clampVisibleCount(
+          currentVisibleCount + LIST_INFINITE_PAGE_SIZE,
+          totalItems,
+        ),
+        hasInteracted: true,
+      };
+    });
+  }, [initialVisibleCount, resetKey, totalItems]);
 
   useEffect(() => {
     if (!hasMore || isInitialLoad) return;

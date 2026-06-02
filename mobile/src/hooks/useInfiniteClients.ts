@@ -22,14 +22,11 @@ export function useInfiniteClients({
   filterFn,
   searchFn,
 }: UseInfiniteClientsOptions = {}) {
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
   const resetKey = `${filter}::${search}`;
-  const [prevResetKey, setPrevResetKey] = useState(resetKey);
-
-  if (resetKey !== prevResetKey) {
-    setPrevResetKey(resetKey);
-    setVisibleCount(INITIAL_VISIBLE_COUNT);
-  }
+  const [visibleState, setVisibleState] = useState({
+    key: resetKey,
+    count: INITIAL_VISIBLE_COUNT,
+  });
 
   const query = useQuery<PaginatedResponse<Client>>({
     queryKey: clientQueryKeys.list(1, 50),
@@ -61,22 +58,36 @@ export function useInfiniteClients({
     return list;
   }, [allClients, filter, search, filterFn, searchFn]);
 
+  const visibleCount = Math.min(
+    visibleState.key === resetKey ? visibleState.count : INITIAL_VISIBLE_COUNT,
+    allFilteredClients.length,
+  );
+
   const clients = useMemo(() => {
     return allFilteredClients.slice(0, visibleCount);
   }, [allFilteredClients, visibleCount]);
 
-  const hasNextPage =
-    visibleCount < allFilteredClients.length ||
-    (visibleCount === INITIAL_VISIBLE_COUNT &&
-      allFilteredClients.length === INITIAL_VISIBLE_COUNT);
+  const hasNextPage = visibleCount < allFilteredClients.length;
   const isInitialLoad = visibleCount <= INITIAL_VISIBLE_COUNT;
 
   const fetchNextPage = useCallback(() => {
-    setVisibleCount((prev) => {
-      const next = Math.min(prev + PAGE_SIZE, allFilteredClients.length);
-      return next === prev ? prev + PAGE_SIZE : next;
+    setVisibleState((current) => {
+      const currentCount = Math.min(
+        current.key === resetKey ? current.count : INITIAL_VISIBLE_COUNT,
+        allFilteredClients.length,
+      );
+      const nextCount = Math.min(currentCount + PAGE_SIZE, allFilteredClients.length);
+
+      if (current.key === resetKey && current.count === nextCount) {
+        return current;
+      }
+
+      return {
+        key: resetKey,
+        count: nextCount,
+      };
     });
-  }, [allFilteredClients.length]);
+  }, [allFilteredClients.length, resetKey]);
 
   return {
     clients,
