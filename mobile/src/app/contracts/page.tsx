@@ -63,8 +63,8 @@ import "@/components/app/mobile-redesign/redesign.css";
 
 const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
 
-type ContractCategory = "in-progress" | "drafting" | "completed" | "rejected";
-type FilterKey = "전체" | "대기" | "검토 필요" | "완료" | "기간 만료";
+type ContractCategory = "in-progress" | "drafting" | "completed" | "rejected" | "unknown";
+type FilterKey = "전체" | "대기" | "검토 필요" | "완료" | "기간 만료" | "상태 확인";
 type DetailTabId = "basic" | "signers" | "alimtalk";
 type NotificationStatus = "pending" | "sent" | "failed";
 type NotificationLogRecord = {
@@ -94,7 +94,7 @@ type ContractStageItem = {
 
 const EXCLUDED_CUSTOMER_NAMES: string[] = [];
 const CONTRACT_ROUTE_BODY_CLASS = "mobile-contracts-route";
-const FILTER_LABELS: FilterKey[] = ["전체", "대기", "검토 필요", "완료", "기간 만료"];
+const FILTER_LABELS: FilterKey[] = ["전체", "대기", "검토 필요", "완료", "기간 만료", "상태 확인"];
 const CONTRACT_LIST_INITIAL_VISIBLE_COUNT = 9;
 const CONTRACT_OPEN_CODES = new Set(["034", "064", "074", "076"]);
 const CONTRACT_OPEN_KEYWORDS = ["doc_open", "open_participant", "open_outsider", "open_reviewer", "open_reader", "열람"];
@@ -171,7 +171,7 @@ function customerName(doc: EformsignDocument): string {
 
 function categorize(doc: EformsignDocument): ContractCategory {
   const cat = getStatusCategory(doc.current_status?.status_type);
-  if (cat === "completed" || cat === "rejected") return cat;
+  if (cat === "completed" || cat === "rejected" || cat === "unknown") return cat;
   // 모든 step recipient가 내부자(recipient_type "01")면 staff 최종 확인 대기 → "검토 필요" (in-progress).
   // 외부 서명자가 남아있으면 → "대기" (drafting bucket: 외부 서명 대기).
   const recipients = doc.current_status?.step_recipients ?? [];
@@ -222,6 +222,13 @@ function categoryTones(category: ContractCategory): {
         badgeTone: "muted",
         badgeMini: "muted",
         infoTone: "muted",
+      };
+    case "unknown":
+      return {
+        badge: "상태 확인",
+        badgeTone: "orange",
+        badgeMini: "orange",
+        infoTone: "orange",
       };
     default:
       return {
@@ -392,6 +399,7 @@ function isDocumentViewPending(doc: EformsignDocument, category: ContractCategor
   return (
     category !== "completed" &&
     category !== "rejected" &&
+    category !== "unknown" &&
     !hasDocumentSendFailure(doc) &&
     !isReviewNeeded(doc) &&
     !hasOpenedDocument(doc) &&
@@ -403,6 +411,7 @@ function progressLabel(doc: EformsignDocument): string {
   const category = categorize(doc);
   if (category === "completed") return "6/6 - 계약서 완료";
   if (category === "rejected") return "기간 만료";
+  if (category === "unknown") return "상태 확인 필요";
   if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
   if (isReviewNeeded(doc)) return "5/6 - 제공기관 검토 필요";
   if (hasCustomerSignatureDocument(doc)) return "4/6 - 이용자 서명 완료";
@@ -1246,6 +1255,7 @@ export default function ContractsPage() {
       drafting: [],
       completed: [],
       rejected: [],
+      unknown: [],
     };
     for (const doc of filteredDocuments) {
       groups[categorize(doc)].push(doc);
@@ -1264,6 +1274,7 @@ export default function ContractsPage() {
       "검토 필요": grouped["in-progress"].length,
       완료: grouped.completed.length,
       "기간 만료": grouped.rejected.length,
+      "상태 확인": grouped.unknown.length,
     };
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
   }, [filteredDocuments.length, grouped, isContractsLoading]);
@@ -1308,6 +1319,11 @@ export default function ContractsPage() {
     if (activeFilter === "기간 만료") {
       return grouped.rejected.length > 0
         ? [section("rejected", "기간 만료/반려", grouped.rejected, "rejected")]
+        : [];
+    }
+    if (activeFilter === "상태 확인") {
+      return grouped.unknown.length > 0
+        ? [section("unknown", "상태 확인", grouped.unknown, "unknown")]
         : [];
     }
     return [];

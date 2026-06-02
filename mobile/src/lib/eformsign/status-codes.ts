@@ -46,7 +46,8 @@ export const IN_PROGRESS_CODES = [
 ] as const;
 
 // Korean status labels
-export type DocumentStatusLabel = "대기" | "완료" | "만료";
+export type DocumentStatusLabel = "대기" | "완료" | "만료" | "알 수 없음";
+export type DocumentStatusCategory = "completed" | "rejected" | "in-progress" | "unknown";
 
 // Filter types for API calls
 export type DocumentFilterType = "in-progress" | "completed" | "rejected" | null;
@@ -61,7 +62,7 @@ export function normalizeStatusCode(code: string | undefined | null): string {
 /**
  * Get document status category from status code
  */
-export function getStatusCategory(statusCode: string | undefined | null): "completed" | "rejected" | "in-progress" {
+export function getStatusCategory(statusCode: string | undefined | null): DocumentStatusCategory {
   const normalized = normalizeStatusCode(statusCode);
   
   if (COMPLETED_CODES.includes(normalized as typeof COMPLETED_CODES[number])) {
@@ -70,7 +71,10 @@ export function getStatusCategory(statusCode: string | undefined | null): "compl
   if (REJECTED_CODES.includes(normalized as typeof REJECTED_CODES[number])) {
     return "rejected";
   }
-  return "in-progress";
+  if (IN_PROGRESS_CODES.includes(normalized as typeof IN_PROGRESS_CODES[number])) {
+    return "in-progress";
+  }
+  return "unknown";
 }
 
 /**
@@ -84,8 +88,10 @@ export function mapStatusToLabel(statusCode: string | undefined | null): Documen
       return "완료";
     case "rejected":
       return "만료";
-    default:
+    case "in-progress":
       return "대기";
+    default:
+      return "알 수 없음";
   }
 }
 
@@ -114,4 +120,3 @@ export function getStatusColor(status: string): BadgeVariant {
   }
   return "info";
 }
-
