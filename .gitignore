@@ -16,6 +16,7 @@ frontend/test-results/
 frontend/playwright-report/
 **/playwright-report/
 .playwright-mcp/
+**/lint_report.txt
 
 # next.js
 **/.next/
