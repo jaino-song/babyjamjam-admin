@@ -60,7 +60,6 @@ export async function POST(request: NextRequest) {
       {
         headers: {
           Authorization: `Bearer ${token}`,
-          "Content-Type": "multipart/form-data",
         },
         // 큰 파일 처리를 위한 타임아웃 연장
         timeout: 120000,

@@ -40,6 +40,7 @@ export interface AreaTemplate {
 // Query keys - centralized for consistency
 export const voucherQueryKeys = {
   bankAccountInfos: ["bank-account-infos"] as const,
+  voucherPriceInfosRoot: ["voucher-price-infos"] as const,
   voucherPriceInfos: (type: string, year?: number) => ["voucher-price-infos", type, year] as const,
   voucherYears: ["voucher-years"] as const,
   areaTemplates: ["area-templates"] as const,
@@ -120,4 +121,3 @@ export function useAreaTemplates() {
     gcTime: 1000 * 60 * 60 * 24, // 24 hours
   });
 }
-
