@@ -169,11 +169,25 @@ const PUBLIC_ROUTES = [
   "/callback",
   "/logout",
   "/auth",
-  "/api",
   "/_next",
   "/favicon.ico",
   "/manifest.json",
   "/sw.js",
+];
+
+const PUBLIC_API_ROUTES = [
+  "/api/auth/callback",
+  "/api/auth/check-email",
+  "/api/auth/forgot-password",
+  "/api/auth/kakao",
+  "/api/auth/login",
+  "/api/auth/refresh",
+  "/api/auth/register",
+  "/api/auth/resend-verification",
+  "/api/auth/reset-password",
+  "/api/auth/token",
+  "/api/auth/verify-email",
+  "/api/health",
 ];
 
 // Routes that require auth but NOT branch selection
@@ -181,11 +195,27 @@ const AUTH_ONLY_ROUTES = [
   "/select-branch",
 ];
 
+function isRouteMatch(pathname: string, route: string): boolean {
+  return pathname === route || pathname.startsWith(`${route}/`);
+}
+
+function isApiRoute(pathname: string): boolean {
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+
+function apiJsonResponse(error: string, status: number): NextResponse {
+  return NextResponse.json({ error }, { status });
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  if (PUBLIC_API_ROUTES.some((route) => isRouteMatch(pathname, route))) {
+    return NextResponse.next();
+  }
+
   // Skip public routes
-  if (PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
+  if (PUBLIC_ROUTES.some((route) => isRouteMatch(pathname, route))) {
     return NextResponse.next();
   }
 
@@ -221,6 +251,10 @@ export async function middleware(request: NextRequest) {
 
   // No auth token - redirect to login
   if (!authToken || isTokenExpired(authToken)) {
+    if (isApiRoute(pathname)) {
+      return apiJsonResponse("Authentication required", 401);
+    }
+
     const loginUrl = new URL("/login", request.url);
     const response = NextResponse.redirect(loginUrl);
     clearAuthCookies(response);
@@ -253,6 +287,10 @@ export async function middleware(request: NextRequest) {
 
     // No branch selected - redirect to select-branch
     if (!decoded.branchId) {
+      if (isApiRoute(pathname)) {
+        return apiJsonResponse("Branch selection required", 403);
+      }
+
       const selectBranchUrl = new URL("/select-branch", request.url);
       const response = NextResponse.redirect(selectBranchUrl);
       if (refreshedSession) {
@@ -283,6 +321,10 @@ export async function middleware(request: NextRequest) {
     }
     return response;
   } catch {
+    if (isApiRoute(pathname)) {
+      return apiJsonResponse("Authentication required", 401);
+    }
+
     // Invalid token - redirect to login
     const loginUrl = new URL("/login", request.url);
     const response = NextResponse.redirect(loginUrl);
