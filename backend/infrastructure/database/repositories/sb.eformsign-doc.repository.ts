@@ -1,6 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
-import { IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
+import {
+    EformsignDocClientSummary,
+    IEformsignDocRepository,
+} from "domain/repositories/eformsign-doc.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc.mapper";
 
@@ -44,7 +47,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return docs.map(EformsignDocMapper.toDomain);
     }
 
-    async findClientNamesByBranch(branchid: string): Promise<Array<{ documentId: string; clientName: string }>> {
+    async findClientNamesByBranch(branchid: string): Promise<EformsignDocClientSummary[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
             where: { branchId: branchid },
             select: { documentId: true, clientId: true },
@@ -55,12 +58,38 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         if (clientIds.length === 0) return [];
         const clients = await this.prismaService.client.findMany({
             where: { id: { in: clientIds } },
-            select: { id: true, name: true },
+            select: { id: true, name: true, phone: true },
         });
-        const nameById = new Map(clients.map((c) => [c.id, c.name]));
+        const schedules = await this.prismaService.employee_schedule.findMany({
+            where: {
+                clientId: { in: clientIds },
+                branchId: branchid,
+                replaced: false,
+            },
+            include: {
+                primaryEmployee: true,
+            },
+            orderBy: { id: "desc" },
+        });
+        const clientById = new Map(clients.map((c) => [c.id, c]));
+        const providerByClientId = new Map<number, string>();
+        for (const schedule of schedules) {
+            if (!providerByClientId.has(schedule.clientId)) {
+                providerByClientId.set(schedule.clientId, schedule.primaryEmployee.name);
+            }
+        }
         return docs
-            .filter((d) => d.documentId && d.clientId != null && nameById.has(d.clientId))
-            .map((d) => ({ documentId: d.documentId, clientName: nameById.get(d.clientId!)! }));
+            .filter((d) => d.documentId && d.clientId != null && clientById.has(d.clientId))
+            .map((d) => {
+                const client = clientById.get(d.clientId!)!;
+                return {
+                    documentId: d.documentId,
+                    clientId: client.id,
+                    clientName: client.name,
+                    clientPhone: client.phone ?? null,
+                    providerName: providerByClientId.get(d.clientId!) ?? null,
+                };
+            });
     }
 
     async create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
