@@ -31,6 +31,7 @@ export interface ConsultationInquiry {
     referralSource: string;
     privacyAcceptedAt: string;
     selectedServices: ConsultationSelectedServices | null;
+    additionalNotes: string | null;
     source: string;
     status: string;
     readAt: string | null;
