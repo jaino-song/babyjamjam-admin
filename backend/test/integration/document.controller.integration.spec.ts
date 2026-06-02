@@ -150,4 +150,26 @@ describe("DocumentController (Integration)", () => {
             }),
         );
     });
+
+    it("should use tenant user as document uploader when uploading documents", async () => {
+        fileStorage.upload.mockResolvedValue("https://example.test/contract.pdf");
+        documentService.create.mockResolvedValue(createDocumentEntity("branch-1"));
+
+        const response = await request(app.getHttpServer())
+            .post("/documents/upload")
+            .field("name", "Contract")
+            .field("categoryId", "contract")
+            .field("tags", JSON.stringify(["signed"]))
+            .field("uploadedby", "attacker-user")
+            .field("uploadedBy", "camel-attacker-user")
+            .attach("file", Buffer.from("fake-file"), "contract.pdf");
+
+        expect(response.status).toBe(201);
+        expect(documentService.create).toHaveBeenCalledWith(
+            "branch-1",
+            expect.objectContaining({
+                uploadedby: "user-1",
+            }),
+        );
+    });
 });

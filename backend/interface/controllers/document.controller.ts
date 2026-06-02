@@ -101,7 +101,7 @@ export class DocumentController {
         }),
     )
     async upload(
-        @CurrentTenant() tenant: { branchId?: string },
+        @CurrentTenant() tenant: { branchId?: string; userId?: string },
         @UploadedFile() file: Express.Multer.File,
         @Body() dto: UploadDocumentDto,
     ) {
@@ -144,7 +144,7 @@ export class DocumentController {
             storagepath: storagePath,
             storageurl: storageUrl,
             branchid: branchId,
-            uploadedby: dto.uploadedby || "system",
+            uploadedby: tenant.userId || "system",
         });
         return toResponse(entity);
     }
