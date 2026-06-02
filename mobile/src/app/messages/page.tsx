@@ -7,12 +7,18 @@ import { MessageCircle, ThumbsUp } from "lucide-react";
 
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { api } from "@/lib/api/client";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
+import { ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import {
   Avatar,
   DetailTabPills,
   InfoCard,
   InfoRow,
+  MobileDetailActions,
+  MobileDetailHeader,
+  MobileDetailPage,
   MobileDetailSheet,
+  MobileDetailTabPanel,
   type AvatarTone,
   type DetailTab,
   type InfoTone,
@@ -79,8 +85,6 @@ interface MessageThreadRow {
   sentAt: string;
 }
 
-const BUILTIN_TEMPLATE_COUNT = 7;
-
 const MESSAGE_FILTERS: MessageFilter[] = ["전체", "알림톡", "SMS", "실패"];
 const MESSAGE_SECTION_ORDER: MessageSection[] = ["오늘", "어제", "이전"];
 const DETAIL_TABS: DetailTab[] = [
@@ -89,154 +93,10 @@ const DETAIL_TABS: DetailTab[] = [
   { id: "template", label: "템플릿 정보" },
 ];
 
-const MOCKUP_MESSAGE_ROWS: MessageThreadRow[] = [
-  {
-    id: "mock-park-seoyeon",
-    recipient: "박서연",
-    initial: "박",
-    avatarTone: "orange",
-    channel: "kakao",
-    title: "서비스 안내",
-    timeLabel: "방금",
-    section: "오늘",
-    status: "sent",
-    statusLabel: "발송 성공",
-    receiver: "010-1234-5678",
-    messageBody:
-      "안녕하세요 박서연 고객님,\n\n오늘 오전 9시 김민지 매니저가 방문 예정입니다. 준비물은 별도로 안내드린 사항을 참고해 주세요.\n\n문의사항이 있으시면 언제든지 연락 주세요.\n\n아가잼잼 인천점",
-    templateName: "서비스 시작 리마인드",
-    trigger: "자동 (서비스 시작)",
-    employeeName: "김민지",
-    serviceStartDate: "2025-05-10",
-    clientId: null,
-    sentAt: "2025. 5. 10. 오전 8:32",
-  },
-  {
-    id: "mock-kim-doyoon",
-    recipient: "김도윤",
-    initial: "김",
-    avatarTone: "primary",
-    channel: "kakao",
-    title: "제공인력 배정 안내",
-    timeLabel: "2시간 전",
-    section: "오늘",
-    status: "sent",
-    statusLabel: "발송 성공",
-    receiver: "010-2345-6789",
-    messageBody: "김도윤 고객님, 담당 제공인력 배정이 완료되었습니다. 방문 일정은 별도 안내드리겠습니다.",
-    templateName: "제공인력 배정 안내",
-    trigger: "자동 (제공인력 배정)",
-    employeeName: "이하은",
-    serviceStartDate: "2025-05-12",
-    clientId: null,
-    sentAt: "2025. 5. 10. 오전 6:41",
-  },
-  {
-    id: "mock-jung-yujin",
-    recipient: "[더미] 정유진",
-    initial: "정",
-    avatarTone: "burgundy",
-    channel: "kakao",
-    title: "서비스 안내",
-    timeLabel: "방금",
-    section: "오늘",
-    status: "failed",
-    statusLabel: "실패",
-    receiver: "010-3456-7890",
-    messageBody: "정유진 고객님, 서비스 안내 메시지 발송에 실패했습니다. 연락처를 확인해 주세요.",
-    templateName: "서비스 안내",
-    trigger: "자동 (서비스 시작)",
-    employeeName: "김민지",
-    serviceStartDate: "2025-05-10",
-    clientId: null,
-    sentAt: "2025. 5. 10. 오전 8:34",
-  },
-  {
-    id: "mock-jang-haneul",
-    recipient: "장하늘",
-    initial: "장",
-    avatarTone: "green",
-    channel: "kakao",
-    title: "서비스 종료 안내",
-    timeLabel: "5/9",
-    section: "어제",
-    status: "sent",
-    statusLabel: "발송 성공",
-    receiver: "010-4567-8901",
-    messageBody: "장하늘 고객님, 예정된 서비스 종료 일정을 안내드립니다. 이용해 주셔서 감사합니다.",
-    templateName: "서비스 종료 안내",
-    trigger: "자동 (서비스 종료)",
-    employeeName: "오서윤",
-    serviceStartDate: "2025-04-09",
-    clientId: null,
-    sentAt: "2025. 5. 9. 오후 6:20",
-  },
-  {
-    id: "mock-yoon-jia",
-    recipient: "윤지아",
-    initial: "윤",
-    avatarTone: "purple",
-    channel: "sms",
-    title: "고객 등록 환영",
-    timeLabel: "5/9",
-    section: "어제",
-    status: "sent",
-    statusLabel: "발송 성공",
-    receiver: "010-5678-9012",
-    messageBody: "윤지아 고객님, 아가잼잼 인천점 등록이 완료되었습니다.",
-    templateName: "고객 등록 환영",
-    trigger: "수동 발송",
-    employeeName: "미배정",
-    serviceStartDate: "미정",
-    clientId: null,
-    sentAt: "2025. 5. 9. 오후 2:15",
-  },
-  {
-    id: "mock-choi-yerin",
-    recipient: "최예린",
-    initial: "최",
-    avatarTone: "orange",
-    channel: "kakao",
-    title: "서비스 시작 D-1 안내",
-    timeLabel: "5/9",
-    section: "어제",
-    status: "sent",
-    statusLabel: "발송 성공",
-    receiver: "010-6789-0123",
-    messageBody: "최예린 고객님, 내일 서비스가 시작됩니다. 방문 전 준비 사항을 확인해 주세요.",
-    templateName: "서비스 시작 D-1 안내",
-    trigger: "자동 (D-1)",
-    employeeName: "한유나",
-    serviceStartDate: "2025-05-10",
-    clientId: null,
-    sentAt: "2025. 5. 9. 오전 9:00",
-  },
-  {
-    id: "mock-lee-suhyun",
-    recipient: "이수현",
-    initial: "이",
-    avatarTone: "primary",
-    channel: "kakao",
-    title: "서비스 종료 안내",
-    timeLabel: "4/22",
-    section: "이전",
-    status: "sent",
-    statusLabel: "발송 성공",
-    receiver: "010-7890-1234",
-    messageBody: "이수현 고객님, 서비스 종료 안내드립니다. 추가 상담이 필요하시면 지점으로 연락해 주세요.",
-    templateName: "서비스 종료 안내",
-    trigger: "자동 (서비스 종료)",
-    employeeName: "정다은",
-    serviceStartDate: "2025-03-22",
-    clientId: null,
-    sentAt: "2025. 4. 22. 오전 10:12",
-  },
-];
-
 const AVATAR_TONES: AvatarTone[] = ["orange", "primary", "burgundy", "green", "purple"];
 
 function getInitial(name: string): string {
-  const trimmed = name.replace("[더미]", "").trim();
+  const trimmed = name.trim();
   return trimmed.charAt(0) || "?";
 }
 
@@ -332,20 +192,16 @@ function filterRows(rows: MessageThreadRow[], filter: MessageFilter): MessageThr
   return rows;
 }
 
-function buildSections(rows: MessageThreadRow[]): Array<{ title: MessageSection; rows: MessageThreadRow[] }> {
-  return MESSAGE_SECTION_ORDER.map((title) => ({
-    title,
-    rows: rows.filter((row) => row.section === title),
-  })).filter((section) => section.rows.length > 0);
+function buildSections(
+  rows: MessageThreadRow[],
+): Array<{ title: MessageSection; fullRows: MessageThreadRow[]; fullCount: number }> {
+  return MESSAGE_SECTION_ORDER.map((title) => {
+    const filtered = rows.filter((row) => row.section === title);
+    return { title, fullRows: filtered, fullCount: filtered.length };
+  }).filter((section) => section.fullRows.length > 0);
 }
 
-function getFilterCount(rows: MessageThreadRow[], filter: MessageFilter, hasLiveRows: boolean): string {
-  if (!hasLiveRows) {
-    if (filter === "전체") return "36";
-    if (filter === "알림톡") return "28";
-    if (filter === "SMS") return "5";
-    return "3";
-  }
+function getFilterCount(rows: MessageThreadRow[], filter: MessageFilter): string {
   return String(filterRows(rows, filter).length);
 }
 
@@ -366,7 +222,7 @@ export default function MessagesPage() {
     },
   });
 
-  const { data: historyLogsData } = useQuery<AlimtalkLogRecord[]>({
+  const { data: historyLogsData, isLoading: isHistoryLogsLoading } = useQuery<AlimtalkLogRecord[]>({
     queryKey: ["alimtalk", "logs", 200],
     queryFn: async () => {
       const res = await api.get<AlimtalkLogRecord[]>("/alimtalk-logs", { params: { limit: 200 } });
@@ -386,13 +242,32 @@ export default function MessagesPage() {
     () => historyLogs.map((log, index) => mapLogToThread(log, index)),
     [historyLogs],
   );
-  const hasLiveRows = liveRows.length > 0;
-  const rows = hasLiveRows ? liveRows : MOCKUP_MESSAGE_ROWS;
+  const rows = liveRows;
+  const isFilterPillLoading = isHistoryLogsLoading && historyLogsData === undefined;
   const filteredRows = useMemo(() => filterRows(rows, activeFilter), [activeFilter, rows]);
-  const sections = useMemo(() => buildSections(filteredRows), [filteredRows]);
+  const sectionsFull = useMemo(() => buildSections(filteredRows), [filteredRows]);
+
+  const maxFullCount = useMemo(
+    () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
+    [sectionsFull],
+  );
+
+  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+    useListInfiniteScroll({
+      resetKey: activeFilter,
+      totalItems: maxFullCount,
+    });
+
+  const sections = useMemo(
+    () =>
+      sectionsFull
+        .map((s) => ({ ...s, rows: s.fullRows.slice(0, visibleCount) }))
+        .filter((s) => s.rows.length > 0),
+    [sectionsFull, visibleCount],
+  );
   const detailMessage = selectedMessage ?? filteredRows[0] ?? rows[0];
-  const templateCount = Math.max(BUILTIN_TEMPLATE_COUNT + userTemplates.length, 12);
-  const automationSubLabel = upcomingJobs.length > 0 ? `${upcomingJobs.length}건 예정` : "자동 발송 4종";
+  const templateCount = userTemplates.length;
+  const automationSubLabel = upcomingJobs.length > 0 ? `${upcomingJobs.length}건 예정` : "예정 없음";
 
   const openDetail = (message: MessageThreadRow) => {
     setSelectedMessage(message);
@@ -439,88 +314,128 @@ export default function MessagesPage() {
             </div>
 
             <div className="filter-row" data-component="mobile-messages-filter-row">
-              {MESSAGE_FILTERS.map((filter) => (
-                <button
-                  key={filter}
-                  type="button"
-                  className={`filter-pill ${activeFilter === filter ? "active" : ""}`}
-                  aria-pressed={activeFilter === filter}
-                  onClick={() => setActiveFilter(filter)}
-                >
-                  {filter}
-                  <span className={`count ${filter === "실패" ? "messages-filter-count-danger" : ""}`}>
-                    {getFilterCount(rows, filter, hasLiveRows)}
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            <div className="list-card-scroll" data-component="mobile-messages-scroll">
-              {sections.map((section) => (
-                <div className="section-block" key={section.title} data-component="mobile-messages-section">
-                  <div className="section-header" data-component="mobile-messages-section-header">{section.title}</div>
-                  {section.rows.map((row) => (
+              {isFilterPillLoading
+                ? MESSAGE_FILTERS.map((filter) => (
                     <button
-                      key={row.id}
+                      key={filter}
                       type="button"
-                      className="list-item"
-                      data-component="mobile-messages-row"
-                      onClick={() => openDetail(row)}
+                      className="filter-pill filter-pill-skeleton"
+                      data-component="mobile-redesign-filter-pill"
+                      data-loading="true"
+                      aria-hidden="true"
+                      disabled
+                      tabIndex={-1}
                     >
-                      <Avatar initial={row.initial} tone={row.avatarTone} />
-                      <span className="list-info">
-                        <span className="list-name">
-                          {row.recipient}
-                          <span className={`thread-channel ${row.channel}`}>
-                            {row.channel === "kakao" ? "알림톡" : "SMS"}
-                          </span>
-                        </span>
-                        <span className="list-meta">{row.title}</span>
+                      <span className="filter-pill-skeleton-content">
+                        {filter}
+                        <span className="filter-pill-skeleton-count">00</span>
                       </span>
-                      <span className="list-right">
-                        {row.status === "failed" ? (
-                          <span className="badge badge-burgundy">실패</span>
-                        ) : (
-                          <span className="dday-sub">{row.timeLabel}</span>
-                        )}
+                    </button>
+                  ))
+                : MESSAGE_FILTERS.map((filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      className={`filter-pill ${activeFilter === filter ? "active" : ""}`}
+                      data-component="mobile-redesign-filter-pill"
+                      aria-pressed={activeFilter === filter}
+                      onClick={() => setActiveFilter(filter)}
+                    >
+                      {filter}
+                      <span className={`count ${filter === "실패" ? "messages-filter-count-danger" : ""}`}>
+                        {getFilterCount(rows, filter)}
                       </span>
                     </button>
                   ))}
-                </div>
-              ))}
             </div>
+
+            <div ref={scrollContainerRef} className="list-card-scroll" data-component="mobile-messages-scroll">
+              {sections.length > 0 ? (
+                sections.map((section) => (
+                  <div className="section-block" key={section.title} data-component="mobile-messages-section">
+                    <div className="section-header" data-component="mobile-messages-section-header">{section.title}</div>
+                    {section.rows.map((row: MessageThreadRow, idx) => (
+                      <ListItemRow
+                        key={row.id}
+                        dataComponent="mobile-messages-row"
+                        left={<Avatar initial={row.initial} tone={row.avatarTone} />}
+                        style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
+                        name={
+                          <>
+                            {row.recipient}
+                            <span className={`thread-channel ${row.channel}`}>
+                              {row.channel === "kakao" ? "알림톡" : "SMS"}
+                            </span>
+                          </>
+                        }
+                        meta={row.title}
+                        right={
+                          row.status === "failed" ? (
+                            <span className="badge badge-burgundy">실패</span>
+                          ) : (
+                            <span className="dday-sub">{row.timeLabel}</span>
+                          )
+                        }
+                        onClick={() => openDetail(row)}
+                      />
+                    ))}
+                  </div>
+                ))
+              ) : (
+                <div
+                  data-component="mobile-messages-empty"
+                  className="px-4 py-12 text-center text-[0.78rem] text-v3-text-muted"
+                >
+                  발송 내역이 없습니다.
+                </div>
+              )}
+              {!isInitialLoad && hasMore && (
+                <ListLoadMoreSentinel
+                  sentinelRef={sentinelRef}
+                  dataComponentPrefix="mobile-messages"
+                />
+              )}
+            </div>
+            {isInitialLoad && hasMore && (
+              <div className="list-card-footer" data-component="mobile-messages-footer">
+                <ListLoadMoreButton
+                  onLoadMore={loadMore}
+                  dataComponentPrefix="mobile-messages"
+                />
+              </div>
+            )}
           </div>
         </div>
       }
       detail={
         detailMessage ? (
-          <div className="detail-body" data-component="mobile-messages-detail-body">
-            <div className="client-detail-header pop-up" data-component="mobile-messages-detail-header">
-              <Avatar initial={detailMessage.initial} tone={detailMessage.avatarTone} large />
-              <div className="client-detail-title" data-component="mobile-messages-detail-title">
-                <div className="client-detail-name" data-component="mobile-messages-detail-name">{detailMessage.recipient}</div>
-                <div className="client-detail-badges" data-component="mobile-messages-detail-badges">
-                  <span className={`badge-mini ${detailMessage.channel === "kakao" ? "kakao" : "primary"}`}>
-                    {detailMessage.channel === "kakao" ? "알림톡" : "SMS"}
-                  </span>
-                  <span className={`badge-mini ${getStatusTone(detailMessage.status)}`}>
-                    {detailMessage.statusLabel}
-                  </span>
-                </div>
-              </div>
-            </div>
+          <MobileDetailPage name="messages" dataComponent="mobile-messages-detail-body">
+            <MobileDetailHeader
+              name="messages"
+              avatar={detailMessage.initial}
+              avatarTone={detailMessage.avatarTone}
+              title={detailMessage.recipient}
+              badges={[
+                {
+                  label: detailMessage.channel === "kakao" ? "알림톡" : "SMS",
+                  tone: detailMessage.channel === "kakao" ? "kakao" : "primary",
+                },
+                { label: detailMessage.statusLabel, tone: getStatusTone(detailMessage.status) },
+              ]}
+            />
 
-            <div className="detail-actions" data-component="mobile-messages-detail-actions">
-              <button type="button" className="btn btn-secondary">
-                재발송
-              </button>
-              <Link
-                href={detailMessage.clientId ? `/clients/${detailMessage.clientId}` : "/clients"}
-                className="btn btn-primary messages-detail-link"
-              >
-                고객 보기
-              </Link>
-            </div>
+            <MobileDetailActions
+              name="messages"
+              actions={[
+                { label: "재발송", variant: "secondary" },
+                {
+                  label: "고객 보기",
+                  variant: "primary",
+                  href: detailMessage.clientId ? `/clients/${detailMessage.clientId}` : "/clients",
+                  className: "messages-detail-link",
+                },
+              ]}
+            />
 
             <DetailTabPills
               tabs={DETAIL_TABS}
@@ -528,20 +443,24 @@ export default function MessagesPage() {
               onTabChange={(tab) => setActiveDetailTab(tab as MessageDetailTab)}
             />
 
-            <div
-              className={`tab-content ${activeDetailTab === "content" ? "active" : ""}`}
-              data-component="mobile-messages-detail-content-tab"
+            <MobileDetailTabPanel
+              name="messages"
+              tabId="content"
+              activeTab={activeDetailTab}
+              dataComponent="mobile-messages-detail-content-tab"
             >
               <InfoCard title="메시지 본문" padded>
                 <div className="messages-body-text" data-component="mobile-messages-detail-message-body">
                   {detailMessage.messageBody}
                 </div>
               </InfoCard>
-            </div>
+            </MobileDetailTabPanel>
 
-            <div
-              className={`tab-content ${activeDetailTab === "recipient" ? "active" : ""}`}
-              data-component="mobile-messages-detail-recipient-tab"
+            <MobileDetailTabPanel
+              name="messages"
+              tabId="recipient"
+              activeTab={activeDetailTab}
+              dataComponent="mobile-messages-detail-recipient-tab"
             >
               <InfoCard title="수신자 정보">
                 <InfoRow label="수신자" value={detailMessage.recipient} />
@@ -549,11 +468,13 @@ export default function MessagesPage() {
                 <InfoRow label="연락처" value={detailMessage.receiver} />
                 <InfoRow label="채널 ID" value={detailMessage.channel === "kakao" ? "@babyjamjam_kakao" : "SMS"} />
               </InfoCard>
-            </div>
+            </MobileDetailTabPanel>
 
-            <div
-              className={`tab-content ${activeDetailTab === "template" ? "active" : ""}`}
-              data-component="mobile-messages-detail-template-tab"
+            <MobileDetailTabPanel
+              name="messages"
+              tabId="template"
+              activeTab={activeDetailTab}
+              dataComponent="mobile-messages-detail-template-tab"
             >
               <InfoCard title="템플릿 정보">
                 <InfoRow label="템플릿" value={detailMessage.templateName} />
@@ -573,8 +494,8 @@ export default function MessagesPage() {
                 <InfoRow label="employeeName" value={detailMessage.employeeName} />
                 <InfoRow label="serviceStartDate" value={detailMessage.serviceStartDate} />
               </InfoCard>
-            </div>
-          </div>
+            </MobileDetailTabPanel>
+          </MobileDetailPage>
         ) : null
       }
     />

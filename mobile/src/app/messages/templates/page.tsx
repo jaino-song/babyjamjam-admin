@@ -8,6 +8,8 @@ import { useRouter } from "next/navigation";
 import "@/components/app/mobile-redesign/redesign.css";
 import { useSystemTemplates } from "@/features/system-templates/hooks";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
+import { ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 
 import styles from "./page.module.css";
 
@@ -225,10 +227,20 @@ export default function TemplatesPage() {
       });
   }, [activeFilter, enabledOverrides, rows, searchQuery]);
 
-  const systemRows = visibleRows.filter((row) => row.kind === "system");
-  const userRows = visibleRows.filter((row) => row.kind === "user");
-  const systemTitle = usesMockupRows ? "시스템 자동 · 4개" : `시스템 자동 · ${systemRows.length}개`;
-  const userTitle = usesMockupRows ? "사용자 작성 · 8개" : `사용자 작성 · ${userRows.length}개`;
+  const systemRowsFull = visibleRows.filter((row) => row.kind === "system");
+  const userRowsFull = visibleRows.filter((row) => row.kind === "user");
+  const systemTitle = usesMockupRows ? "시스템 자동 · 4개" : `시스템 자동 · ${systemRowsFull.length}개`;
+  const userTitle = usesMockupRows ? "사용자 작성 · 8개" : `사용자 작성 · ${userRowsFull.length}개`;
+
+  const maxFullCount = Math.max(systemRowsFull.length, userRowsFull.length);
+  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+    useListInfiniteScroll({
+      resetKey: `${activeFilter}::${searchQuery}`,
+      totalItems: maxFullCount,
+    });
+
+  const systemRows = systemRowsFull.slice(0, visibleCount);
+  const userRows = userRowsFull.slice(0, visibleCount);
 
   const openTemplate = (row: TemplateRow) => {
     router.push(getTemplateDestination(row));
@@ -292,7 +304,7 @@ export default function TemplatesPage() {
             ))}
           </div>
 
-          <div className="list-card-scroll" data-component="messages-templates-scroll">
+          <div ref={scrollContainerRef} className="list-card-scroll" data-component="messages-templates-scroll">
             {systemRows.length > 0 && (
               <TemplateSection
                 title={systemTitle}
@@ -311,7 +323,21 @@ export default function TemplatesPage() {
                 onToggle={toggleTemplate}
               />
             )}
+            {!isInitialLoad && hasMore && (
+              <ListLoadMoreSentinel
+                sentinelRef={sentinelRef}
+                dataComponentPrefix="messages-templates"
+              />
+            )}
           </div>
+          {isInitialLoad && hasMore && (
+            <div className="list-card-footer" data-component="messages-templates-footer">
+              <ListLoadMoreButton
+                onLoadMore={loadMore}
+                dataComponentPrefix="messages-templates"
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>

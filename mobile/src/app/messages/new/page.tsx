@@ -113,6 +113,7 @@ export default function NewMessagePage() {
   const searchParams = useSearchParams();
   const initialBody = searchParams.get("body") ?? DEFAULT_BODY;
   const initialTemplateId = searchParams.get("template") ?? FALLBACK_TEMPLATE_OPTIONS[0].id;
+  const initialClientId = Number(searchParams.get("clientId"));
 
   const [channel, setChannel] = useState<Channel>("alimtalk");
   const [receiver, setReceiver] = useState("");
@@ -168,6 +169,7 @@ export default function NewMessagePage() {
         message: body.trim(),
         triggerType: "immediate",
       };
+      if (Number.isFinite(initialClientId) && initialClientId > 0) payload.clientId = initialClientId;
       if (title.trim()) payload.title = title.trim();
       if (recipientName.trim()) payload.recipientName = recipientName.trim();
       const res = await api.post<SendResponse>("/message-deliveries/sms", payload);

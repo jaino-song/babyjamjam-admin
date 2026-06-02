@@ -10,13 +10,19 @@ import {
   type Document,
 } from "@/hooks/use-documents";
 import { useDocumentCategories } from "@/hooks/use-document-categories";
-import { ListCard } from "@/components/app/mobile-redesign/primitives";
+import { ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import {
   DetailTabPills,
   InfoCard,
   InfoRow,
+  MobileDetailActions,
+  MobileDetailHeader,
+  MobileDetailPage,
   MobileDetailSheet,
   MobileSearchBar,
+  MobileDetailTabPanel,
+  type BadgeTone,
 } from "@/components/app/mobile-redesign/detail-sheet";
 import "@/components/app/mobile-redesign/redesign.css";
 
@@ -345,12 +351,12 @@ function FileDetailContent({
   const extLabel = fileExtensionLabel(doc.name, doc.mimeType);
   const sizeLabel = fileSizeLabel(doc.fileSize);
 
-  const badgeToneByKind: Record<FileKind, string> = {
-    pdf: "badge-mini burgundy",
-    img: "badge-mini green",
-    doc: "badge-mini primary",
-    xls: "badge-mini green",
-    misc: "badge-mini muted",
+  const badgeToneByKind: Record<FileKind, BadgeTone> = {
+    pdf: "burgundy",
+    img: "green",
+    doc: "primary",
+    xls: "green",
+    misc: "muted",
   };
 
   const handleDownload = () => {
@@ -368,41 +374,37 @@ function FileDetailContent({
   };
 
   return (
-    <div className="detail-body detail-column" data-component="mobile-files-detail">
-      <div className="client-detail-header pop-up">
-        <div className={`client-detail-avatar-lg file-detail-avatar`}>
-          <FileKindIconLarge kind={kind} />
-        </div>
-        <div className="client-detail-title">
-          <div className="client-detail-name" style={{ fontSize: "0.95rem" }}>
-            {doc.name}
-          </div>
-          <div className="client-detail-badges">
-            <span className={badgeToneByKind[kind]}>{extLabel}</span>
-            <span className="badge-mini muted">{categoryLabel}</span>
-            <span className="badge-mini muted">{sizeLabel}</span>
-          </div>
-        </div>
-      </div>
+    <MobileDetailPage name="files">
+      <MobileDetailHeader
+        name="files"
+        avatar={<FileKindIconLarge kind={kind} />}
+        avatarClassName="file-detail-avatar"
+        title={doc.name}
+        titleStyle={{ fontSize: "0.95rem" }}
+        badges={[
+          { label: extLabel, tone: badgeToneByKind[kind] },
+          { label: categoryLabel, tone: "muted" },
+          { label: sizeLabel, tone: "muted" },
+        ]}
+      />
 
-      <div className="detail-actions">
-        <button
-          className="btn btn-secondary"
-          type="button"
-          onClick={handleShare}
-          data-component="mobile-files-share"
-        >
-          공유
-        </button>
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={handleDownload}
-          data-component="mobile-files-download"
-        >
-          다운로드
-        </button>
-      </div>
+      <MobileDetailActions
+        name="files"
+        actions={[
+          {
+            label: "공유",
+            variant: "secondary",
+            onClick: handleShare,
+            dataComponent: "mobile-files-share",
+          },
+          {
+            label: "다운로드",
+            variant: "primary",
+            onClick: handleDownload,
+            dataComponent: "mobile-files-download",
+          },
+        ]}
+      />
       {actionStatus && (
         <div className="action-feedback" role="status">
           {actionStatus}
@@ -420,11 +422,11 @@ function FileDetailContent({
         onTabChange={(id) => onTabChange(id as DetailTabId)}
       />
 
-      <div className={`tab-content ${activeTab === "preview" ? "active" : ""}`} data-tab-content="preview">
+      <MobileDetailTabPanel name="files" tabId="preview" activeTab={activeTab}>
         <FilePreview doc={doc} categoryLabel={categoryLabel} sizeLabel={sizeLabel} />
-      </div>
+      </MobileDetailTabPanel>
 
-      <div className={`tab-content ${activeTab === "info" ? "active" : ""}`} data-tab-content="info">
+      <MobileDetailTabPanel name="files" tabId="info" activeTab={activeTab}>
         <InfoCard title="파일 정보">
           <InfoRow label="파일명" value={<span style={{ fontSize: "0.72rem" }}>{doc.name}</span>} />
           <InfoRow label="형식" value={doc.mimeType} />
@@ -438,9 +440,9 @@ function FileDetailContent({
           <InfoRow label="등록일" value={formatDateTime(doc.createdAt)} />
           <InfoRow label="수정일" value={formatDateTime(doc.updatedAt)} />
         </InfoCard>
-      </div>
+      </MobileDetailTabPanel>
 
-      <div className={`tab-content ${activeTab === "description" ? "active" : ""}`} data-tab-content="description">
+      <MobileDetailTabPanel name="files" tabId="description" activeTab={activeTab}>
         <InfoCard title="설명" padded>
           {doc.description?.trim() ? (
             <div
@@ -465,10 +467,10 @@ function FileDetailContent({
             </div>
           )}
         </InfoCard>
-      </div>
+      </MobileDetailTabPanel>
 
-      <div className={`tab-content ${activeTab === "tags" ? "active" : ""}`} data-tab-content="tags">
-        <InfoCard title={`태그 · ${doc.tags.length}개`}>
+      <MobileDetailTabPanel name="files" tabId="tags" activeTab={activeTab}>
+        <InfoCard title="태그">
           {doc.tags.length > 0 ? (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "4px 0" }}>
               {doc.tags.map((tag) => (
@@ -489,8 +491,8 @@ function FileDetailContent({
             </div>
           )}
         </InfoCard>
-      </div>
-    </div>
+      </MobileDetailTabPanel>
+    </MobileDetailPage>
   );
 }
 
@@ -552,22 +554,43 @@ export default function FilesPage() {
     return items;
   }, [groupedAll, searchFilteredDocs.length, categoryLookup]);
 
-  const visibleSections = useMemo(() => {
-    const sections: Array<{ title: string; categoryId: string; docs: Document[] }> = [];
+  const sectionsFull = useMemo(() => {
+    const sections: Array<{ title: string; categoryId: string; fullDocs: Document[]; fullCount: number }> = [];
     for (const [categoryId, docs] of groupedAll.entries()) {
       const label = categoryLookup.get(categoryId) ?? "기타";
       if (activeFilter !== ALL_FILTER && label !== activeFilter) continue;
+      const sorted = [...docs].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
       sections.push({
         title: `${label} · ${docs.length}건`,
         categoryId,
-        docs: [...docs].sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-        ),
+        fullDocs: sorted,
+        fullCount: sorted.length,
       });
     }
     sections.sort((a, b) => a.title.localeCompare(b.title));
     return sections;
   }, [groupedAll, categoryLookup, activeFilter]);
+
+  const maxFullCount = useMemo(
+    () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
+    [sectionsFull],
+  );
+
+  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+    useListInfiniteScroll({
+      resetKey: `${activeFilter}::${searchQuery}`,
+      totalItems: maxFullCount,
+    });
+
+  const visibleSections = useMemo(
+    () =>
+      sectionsFull
+        .map((s) => ({ ...s, docs: s.fullDocs.slice(0, visibleCount) }))
+        .filter((s) => s.docs.length > 0),
+    [sectionsFull, visibleCount],
+  );
 
   const selectedCategoryLabel = selectedDoc
     ? categoryLookup.get(selectedDoc.categoryId) ?? "기타"
@@ -588,6 +611,15 @@ export default function FilesPage() {
             filters={filterItems}
             activeFilter={activeFilter}
             onFilterChange={setActiveFilter}
+            scrollRef={scrollContainerRef}
+            loadMoreFooter={
+              isInitialLoad && hasMore ? (
+                <ListLoadMoreButton
+                  onLoadMore={loadMore}
+                  dataComponentPrefix="mobile-files"
+                />
+              ) : null
+            }
             beforeFilters={
               <MobileSearchBar
                 placeholder="파일명, 고객명 검색"
@@ -612,40 +644,45 @@ export default function FilesPage() {
                   : "등록된 파일이 없습니다."}
               </div>
             ) : (
-              visibleSections.map((section) => (
+              <>
+              {visibleSections.map((section) => (
                 <div className="section-block" key={section.categoryId}>
                   <div className="section-header">{section.title}</div>
-                  {section.docs.map((doc) => {
+                  {section.docs.map((doc, idx) => {
                     const kind = fileKindFromMime(doc.mimeType);
                     const extLabel = fileExtensionLabel(doc.name, doc.mimeType);
                     return (
-                      <button
+                      <ListItemRow
                         key={doc.id}
-                        type="button"
-                        className="list-item"
-                        data-component="mobile-files-row"
+                        dataComponent="mobile-files-row"
+                        style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
+                        left={<FileKindIcon kind={kind} />}
+                        name={doc.name}
+                        metaClassName="file-meta"
+                        meta={
+                          <>
+                            {fileSizeLabel(doc.fileSize)}
+                            <span className="sep">·</span>
+                            {extLabel}
+                          </>
+                        }
+                        right={<span className="dday-sub">{relativeUploadLabel(doc.createdAt)}</span>}
                         onClick={() => {
                           setSelectedDoc(doc);
                           setActiveTab("preview");
                         }}
-                      >
-                        <FileKindIcon kind={kind} />
-                        <div className="list-info">
-                          <div className="list-name">{doc.name}</div>
-                          <div className="file-meta">
-                            {fileSizeLabel(doc.fileSize)}
-                            <span className="sep">·</span>
-                            {extLabel}
-                          </div>
-                        </div>
-                        <div className="list-right">
-                          <span className="dday-sub">{relativeUploadLabel(doc.createdAt)}</span>
-                        </div>
-                      </button>
+                      />
                     );
                   })}
                 </div>
-              ))
+              ))}
+              {!isInitialLoad && hasMore && (
+                <ListLoadMoreSentinel
+                  sentinelRef={sentinelRef}
+                  dataComponentPrefix="mobile-files"
+                />
+              )}
+              </>
             )}
           </ListCard>
         </div>

@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, KeyboardEvent } from "react";
-import Link from "next/link";
-import { Bell, FileText, Home, Menu, Plus, Send, Sparkles, Users } from "lucide-react";
+import { Bell, Send, SquarePen } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -16,7 +15,7 @@ import ContractSendWizard from "@/components/app/chat/ContractSendWizard";
 import ContractStatusWizard, {
   type ContractStatusResult,
 } from "@/components/app/chat/ContractStatusWizard";
-import { useChatStream, type ChatMessage, type ChatState } from "@/hooks/useChatStream";
+import { useChatStream, type ChatMessage } from "@/hooks/useChatStream";
 import { useInitialUser } from "@/providers/UserProvider";
 
 import styles from "./chat.module.css";
@@ -26,54 +25,6 @@ interface ChatDisplayMessage extends ChatMessage {
   sources?: string[];
   timeLabel?: string;
 }
-
-const MOCKUP_MESSAGES: ChatDisplayMessage[] = [
-  {
-    id: "mockup-greeting",
-    role: "assistant",
-    content: "안녕하세요 송진호 님. 인천점 운영을 돕는 AI 어시스턴트예요. 오늘 어떤 걸 도와드릴까요?",
-    timestamp: "2026-05-12T00:14:00.000Z",
-    timeLabel: "오전 9:14",
-  },
-  {
-    id: "mockup-user-1",
-    role: "user",
-    content: "이번 주 시작 예정인 고객들의 제공인력 배정 현황 보여줘",
-    timestamp: "2026-05-12T00:15:00.000Z",
-    timeLabel: "오전 9:15",
-  },
-  {
-    id: "mockup-answer",
-    role: "assistant",
-    content:
-      "이번 주(5/12-5/18) 시작 예정 고객은 총 3명입니다.\n\n· 송진호 (5/14, A통합1형) — 제공인력 미배정 ⚠\n· 윤지아 (5/21, B가1형) — 제공인력 미배정 ⚠\n· 박민수 (5/16, A라1형) — 김민지 매니저 배정됨 ✓\n\n미배정 2건은 시작일까지 D-3 이내라 우선 배정이 필요합니다.",
-    timestamp: "2026-05-12T00:15:00.000Z",
-    timeLabel: "오전 9:15",
-    sources: ["고객 · 8건", "제공인력 · 12명"],
-  },
-  {
-    id: "mockup-user-2",
-    role: "user",
-    content: "송진호 고객한테 가장 적합한 제공인력 추천해줘",
-    timestamp: "2026-05-12T00:16:00.000Z",
-    timeLabel: "오전 9:16",
-  },
-  {
-    id: "mockup-typing",
-    role: "assistant",
-    content: "",
-    timestamp: "2026-05-12T00:16:20.000Z",
-    isStreaming: true,
-  },
-];
-
-const navItems = [
-  { href: "/dashboard", label: "홈", icon: Home },
-  { href: "/clients", label: "고객", icon: Users },
-  { href: "/chat", label: "어시스턴트", icon: Sparkles },
-  { href: "/contracts", label: "계약", icon: FileText },
-  { href: "/all", label: "전체", icon: Menu },
-] as const;
 
 function formatMessageTime(message: ChatDisplayMessage) {
   if (message.timeLabel) return message.timeLabel;
@@ -233,19 +184,7 @@ function AssistantMessage({ message }: { message: ChatDisplayMessage }) {
 function ToolExecutingIndicator({ toolName }: { toolName: string | null }) {
   return (
     <div className={styles.stateIndicator} data-component="chat-tool-executing-indicator">
-      <Spinner size="sm" />
       <p>{toolName ? `${toolName} 실행 중...` : "처리 중..."}</p>
-    </div>
-  );
-}
-
-function StateIndicator({ state }: { state: ChatState }) {
-  if (state !== "connecting") return null;
-
-  return (
-    <div className={styles.stateIndicator} data-component="chat-state-indicator">
-      <Spinner size="sm" />
-      <p>연결 중...</p>
     </div>
   );
 }
@@ -318,28 +257,6 @@ function ChatComposer({
   );
 }
 
-function ChatBottomNav() {
-  return (
-    <nav className={styles.bottomNav} data-component="mobile-bottom-nav" aria-label="주요 메뉴">
-      {navItems.map((item) => {
-        const Icon = item.icon;
-
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={`${styles.bottomNavItem} ${item.href === "/chat" ? styles.bottomNavItemActive : ""}`}
-            data-component={item.href === "/chat" ? "mobile-bottom-nav-chat" : `mobile-bottom-nav-${item.href.slice(1)}`}
-          >
-            <Icon size={18} strokeWidth={item.href === "/chat" ? 2 : 2.5} />
-            <span className={styles.navLabel}>{item.label}</span>
-          </Link>
-        );
-      })}
-    </nav>
-  );
-}
-
 export default function ChatPage() {
   const user = useInitialUser();
   const {
@@ -402,8 +319,6 @@ export default function ChatPage() {
   }, [messages]);
 
   const visibleMessages = useMemo<ChatDisplayMessage[]>(() => {
-    if (messages.length === 0) return MOCKUP_MESSAGES;
-
     return messages.map((message, index) => ({
       ...message,
       id: `live-${index}-${message.timestamp}`,
@@ -435,7 +350,7 @@ export default function ChatPage() {
             title="새 대화"
             aria-label="새 대화"
           >
-            <Plus size={18} strokeWidth={2.5} />
+            <SquarePen size={18} strokeWidth={2.5} />
           </button>
           <button className={styles.navbarIconBtn} type="button" aria-label="알림">
             <Bell size={18} strokeWidth={2} />
@@ -461,7 +376,6 @@ export default function ChatPage() {
           )}
 
           {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
-          <StateIndicator state={state} />
 
           {showConfirmButtons && (
             <div className={styles.confirmActions} data-component="chat-confirm-actions">
@@ -479,7 +393,6 @@ export default function ChatPage() {
       </div>
 
       <ChatComposer onSubmit={sendMessage} disabled={isInputDisabled} />
-      <ChatBottomNav />
     </section>
   );
 }

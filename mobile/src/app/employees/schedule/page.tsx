@@ -56,7 +56,7 @@ function buildEntries(clients: Client[]): ScheduleEntry[] {
       });
     }
 
-    if (client.startDate && client.serviceStatus !== "terminated" && client.serviceStatus !== "cancelled") {
+    if (client.startDate && client.serviceStatus !== "terminated") {
       const date = new Date(client.startDate);
       if (!Number.isNaN(date.getTime())) {
         date.setHours(0, 0, 0, 0);
