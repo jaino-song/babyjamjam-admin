@@ -34,6 +34,12 @@ interface TemplateOption {
 
 type Channel = "alimtalk" | "sms";
 
+interface NewMessageFormProps {
+  initialBody: string;
+  initialTemplateId: string;
+  initialClientId: number;
+}
+
 const PHONE_REGEX = /^[0-9,\-\s]+$/;
 const MAX_BODY = 2000;
 const MAX_TITLE = 44;
@@ -109,12 +115,24 @@ function buildPreview(body: string) {
 }
 
 export default function NewMessagePage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const initialBody = searchParams.get("body") ?? DEFAULT_BODY;
   const initialTemplateId = searchParams.get("template") ?? FALLBACK_TEMPLATE_OPTIONS[0].id;
   const initialClientId = Number(searchParams.get("clientId"));
+  const routeSeedKey = `${initialBody}\u0000${initialTemplateId}`;
 
+  return (
+    <NewMessageForm
+      key={routeSeedKey}
+      initialBody={initialBody}
+      initialTemplateId={initialTemplateId}
+      initialClientId={initialClientId}
+    />
+  );
+}
+
+function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: NewMessageFormProps) {
+  const router = useRouter();
   const [channel, setChannel] = useState<Channel>("alimtalk");
   const [receiver, setReceiver] = useState("");
   const [recipients, setRecipients] = useState<RecipientChip[]>(DEFAULT_RECIPIENTS);
