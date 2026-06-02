@@ -61,4 +61,19 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
             },
         );
     });
+
+    it("preserves backend status and payload", async () => {
+        mockJwtDecode.mockReturnValue({ role: "owner" });
+        mockPost.mockResolvedValue({
+            status: 422,
+            data: { error: "이미지를 파싱할 수 없습니다" },
+        });
+
+        const response = await POST(createRequest());
+
+        expect(response.status).toBe(422);
+        await expect(response.json()).resolves.toEqual({
+            error: "이미지를 파싱할 수 없습니다",
+        });
+    });
 });

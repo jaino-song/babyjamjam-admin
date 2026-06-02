@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtDecode } from "jwt-decode";
 import { serverAPIClient } from "@/lib/api/server";
+import { backendJsonResponse } from "@/lib/api/route-utils";
 
 interface TokenPayload {
   role?: string | null;
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
       },
     );
 
-    return NextResponse.json(response.data);
+    return backendJsonResponse(response);
   } catch (error) {
     console.error("[API] Error parsing voucher image:", error);
 

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtDecode } from "jwt-decode";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+  backendJsonResponse,
+  invalidJsonResponse,
+  readJsonObjectBody,
+} from "@/lib/api/route-utils";
 
 interface TokenPayload {
   role?: string | null;
@@ -33,10 +38,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const body = await request.json();
+    const body = await readJsonObjectBody(request);
 
     // items 배열 검증
-    if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
+    const items = body.items;
+    if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
         { error: "업데이트할 항목이 없습니다" },
         { status: 400 },
@@ -44,7 +50,8 @@ export async function POST(request: NextRequest) {
     }
 
     // year 검증
-    if (!body.year || typeof body.year !== "number" || body.year < 2000 || body.year > 2100) {
+    const year = body.year;
+    if (typeof year !== "number" || year < 2000 || year > 2100) {
       return NextResponse.json(
         { error: "유효한 연도를 입력해주세요 (2000-2100)" },
         { status: 400 },
@@ -63,8 +70,11 @@ export async function POST(request: NextRequest) {
       },
     );
 
-    return NextResponse.json(response.data);
+    return backendJsonResponse(response);
   } catch (error) {
+    const invalidJson = invalidJsonResponse(error);
+    if (invalidJson) return invalidJson;
+
     console.error("[API] Error bulk updating voucher prices:", error);
 
     // axios 에러 처리
