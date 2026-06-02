@@ -19,6 +19,12 @@ export interface ToolExecutionResult {
 
 type ToolArgs = Record<string, unknown>;
 
+interface ToolIntegerOptions {
+    min?: number;
+    max?: number;
+    defaultValue?: number;
+}
+
 @Injectable()
 export class ToolExecutorService {
     private readonly logger = new Logger(ToolExecutorService.name);
@@ -48,75 +54,75 @@ export class ToolExecutorService {
         try {
             switch (toolName) {
                 case "searchClients":
-                    return this.searchClients(branchid, args);
+                    return await this.searchClients(branchid, args);
                 case "getClient":
-                    return this.getClient(branchid, args);
+                    return await this.getClient(branchid, args);
                 case "createClient":
-                    return this.createClient(branchid, args);
+                    return await this.createClient(branchid, args);
                 case "updateClient":
-                    return this.updateClient(branchid, args);
+                    return await this.updateClient(branchid, args);
                 case "deleteClient":
-                    return this.deleteClient(branchid, args);
+                    return await this.deleteClient(branchid, args);
                 case "searchEmployees":
-                    return this.searchEmployees(branchid, args);
+                    return await this.searchEmployees(branchid, args);
                 case "getEmployee":
-                    return this.getEmployee(branchid, args);
+                    return await this.getEmployee(branchid, args);
                 case "createEmployee":
-                    return this.createEmployee(branchid, args);
+                    return await this.createEmployee(branchid, args);
                 case "updateEmployee":
-                    return this.updateEmployee(branchid, args);
+                    return await this.updateEmployee(branchid, args);
                 case "deleteEmployee":
-                    return this.deleteEmployee(branchid, args);
+                    return await this.deleteEmployee(branchid, args);
                 case "getMessages":
-                    return this.getMessages(branchid);
+                    return await this.getMessages(branchid);
                 case "createMessage":
-                    return this.createMessage(branchid, args);
+                    return await this.createMessage(branchid, args);
                 case "updateMessage":
-                    return this.updateMessage(branchid, args);
+                    return await this.updateMessage(branchid, args);
                 case "deleteMessage":
-                    return this.deleteMessage(branchid, args);
+                    return await this.deleteMessage(branchid, args);
                 case "listAvailableTemplates":
-                    return this.listAvailableTemplates(branchid);
+                    return await this.listAvailableTemplates(branchid);
                 case "createAndSendContract":
-                    return this.createAndSendContract(branchid, args);
+                    return await this.createAndSendContract(branchid, args);
                 case "getContractStatus":
-                    return this.getContractStatus(branchid, args);
+                    return await this.getContractStatus(branchid, args);
                 case "getDashboardStats":
-                    return this.getDashboardStats(branchid);
+                    return await this.getDashboardStats(branchid);
                 // Client filters & actions
                 case "getClientsByFilter":
-                    return this.getClientsByFilter(branchid, args);
+                    return await this.getClientsByFilter(branchid, args);
                 case "terminateClientService":
-                    return this.terminateClientService(branchid, args);
+                    return await this.terminateClientService(branchid, args);
                 case "requestEmployeeReplacement":
-                    return this.requestEmployeeReplacement(branchid, args);
+                    return await this.requestEmployeeReplacement(branchid, args);
                 // Employee filters & actions
                 case "getAvailableEmployees":
-                    return this.getAvailableEmployees(branchid);
+                    return await this.getAvailableEmployees(branchid);
                 case "getEmployeesByWorkArea":
-                    return this.getEmployeesByWorkArea(branchid, args);
+                    return await this.getEmployeesByWorkArea(branchid, args);
                 case "getEmployeesByGrade":
-                    return this.getEmployeesByGrade(branchid, args);
+                    return await this.getEmployeesByGrade(branchid, args);
                 case "changeEmployeeAvailability":
-                    return this.changeEmployeeAvailability(branchid, args);
+                    return await this.changeEmployeeAvailability(branchid, args);
                 // Schedules
                 case "listSchedules":
-                    return this.listSchedules(branchid);
+                    return await this.listSchedules(branchid);
                 case "getSchedulesByEmployee":
-                    return this.getSchedulesByEmployee(branchid, args);
+                    return await this.getSchedulesByEmployee(branchid, args);
                 // Voucher prices
                 case "listVoucherPrices":
-                    return this.listVoucherPrices();
+                    return await this.listVoucherPrices(args);
                 case "getVoucherPriceByType":
-                    return this.getVoucherPriceByType(args);
+                    return await this.getVoucherPriceByType(args);
                 // Bank accounts
                 case "listBankAccounts":
-                    return this.listBankAccounts();
+                    return await this.listBankAccounts();
                 case "getBankAccountByArea":
-                    return this.getBankAccountByArea(args);
+                    return await this.getBankAccountByArea(args);
                 // Contracts
                 case "listAllContracts":
-                    return this.listAllContracts(branchid);
+                    return await this.listAllContracts(branchid);
                 default:
                     return { success: false, error: `Unknown tool: ${toolName}` };
             }
@@ -156,11 +162,83 @@ export class ToolExecutorService {
         };
     }
 
+    private isMissingArg(value: unknown): boolean {
+        return value === undefined || value === null || (typeof value === "string" && value.trim().length === 0);
+    }
+
+    private parseRequiredIntegerArg(args: ToolArgs, key: string, options: ToolIntegerOptions = {}): number {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            throw new Error(`${key}이(가) 필요합니다`);
+        }
+
+        return this.parseIntegerValue(value, key, options);
+    }
+
+    private parseOptionalIntegerArg(args: ToolArgs, key: string, options: ToolIntegerOptions = {}): number | undefined {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            return options.defaultValue;
+        }
+
+        return this.parseIntegerValue(value, key, options);
+    }
+
+    private parseNullableIntegerArg(args: ToolArgs, key: string, options: ToolIntegerOptions = {}): number | null {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            return null;
+        }
+
+        return this.parseIntegerValue(value, key, options);
+    }
+
+    private parseIntegerValue(value: unknown, key: string, options: ToolIntegerOptions): number {
+        let parsed: number;
+
+        if (typeof value === "number") {
+            parsed = value;
+        } else if (typeof value === "string" && /^[-+]?\d+$/.test(value.trim())) {
+            parsed = Number(value.trim());
+        } else {
+            throw new Error(this.integerErrorMessage(key, options));
+        }
+
+        if (!Number.isSafeInteger(parsed)) {
+            throw new Error(this.integerErrorMessage(key, options));
+        }
+
+        if (options.min !== undefined && parsed < options.min) {
+            throw new Error(this.integerErrorMessage(key, options));
+        }
+
+        if (options.max !== undefined && parsed > options.max) {
+            throw new Error(this.integerErrorMessage(key, options));
+        }
+
+        return parsed;
+    }
+
+    private integerErrorMessage(key: string, options: ToolIntegerOptions): string {
+        if (options.min !== undefined && options.max !== undefined) {
+            return `${key}은(는) ${options.min} 이상 ${options.max} 이하의 정수여야 합니다`;
+        }
+
+        if (options.min !== undefined) {
+            return `${key}은(는) ${options.min} 이상의 정수여야 합니다`;
+        }
+
+        if (options.max !== undefined) {
+            return `${key}은(는) ${options.max} 이하의 정수여야 합니다`;
+        }
+
+        return `${key}은(는) 정수여야 합니다`;
+    }
+
     private async resolveClientId(branchid: string, args: ToolArgs): Promise<number> {
         const rawId = args['clientId'];
-        const parsedId = Number(rawId);
-        if (Number.isFinite(parsedId) && parsedId > 0) {
-            return parsedId;
+        if (!this.isMissingArg(rawId)) {
+            return this.parseRequiredIntegerArg(args, "clientId", { min: 1 });
         }
 
         const clientName = [args['clientName'], args['name'], args['query']]
@@ -190,9 +268,8 @@ export class ToolExecutorService {
         nameKey: string,
     ): Promise<number> {
         const rawId = args[idKey];
-        const parsedId = Number(rawId);
-        if (Number.isFinite(parsedId) && parsedId > 0) {
-            return parsedId;
+        if (!this.isMissingArg(rawId)) {
+            return this.parseRequiredIntegerArg(args, idKey, { min: 1 });
         }
 
         const employeeNameRaw = args[nameKey];
@@ -217,8 +294,9 @@ export class ToolExecutorService {
 
     private async searchClients(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const query = String(args['query'] || "");
-        const page = Number(args['page']) || 1;
-        const limit = Math.min(Number(args['limit']) || 10, 50);
+        const page = this.parseOptionalIntegerArg(args, "page", { defaultValue: 1, min: 1 }) ?? 1;
+        const requestedLimit = this.parseOptionalIntegerArg(args, "limit", { defaultValue: 10, min: 1 }) ?? 10;
+        const limit = Math.min(requestedLimit, 50);
 
         const result = await this.clientService.findAllPaginated(branchid, page, limit, query);
         return {
@@ -240,7 +318,7 @@ export class ToolExecutorService {
     }
 
     private async getClient(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const clientId = Number(args['clientId']);
+        const clientId = this.parseRequiredIntegerArg(args, "clientId", { min: 1 });
         const client = await this.clientService.findById(branchid, clientId);
         if (!client) {
             return { success: false, error: "산모를 찾을 수 없습니다" };
@@ -251,12 +329,12 @@ export class ToolExecutorService {
     private async createClient(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const client = await this.clientService.create(branchid, {
             name: String(args['name']),
-            primaryEmployeeId: Number(args['primaryEmployeeId']),
-            secondaryEmployeeId: args['secondaryEmployeeId'] ? Number(args['secondaryEmployeeId']) : null,
+            primaryEmployeeId: this.parseRequiredIntegerArg(args, "primaryEmployeeId", { min: 1 }),
+            secondaryEmployeeId: this.parseOptionalIntegerArg(args, "secondaryEmployeeId", { min: 1 }) ?? null,
             address: args['address'] ? String(args['address']) : null,
             phone: args['phone'] ? String(args['phone']) : null,
             type: args['type'] ? String(args['type']) : null,
-            duration: args['duration'] ? Number(args['duration']) : null,
+            duration: this.parseOptionalIntegerArg(args, "duration", { min: 1 }) ?? null,
             startDate: args['startDate'] ? String(args['startDate']) : null,
             endDate: args['endDate'] ? String(args['endDate']) : null,
             careCenter: Boolean(args['careCenter']),
@@ -274,10 +352,10 @@ export class ToolExecutorService {
         if (args['name'] !== undefined) updateData['name'] = String(args['name']);
         if (args['phone'] !== undefined) updateData['phone'] = args['phone'] ? String(args['phone']) : null;
         if (args['address'] !== undefined) updateData['address'] = args['address'] ? String(args['address']) : null;
-        if (args['primaryEmployeeId'] !== undefined) updateData['primaryEmployeeId'] = Number(args['primaryEmployeeId']);
-        if (args['secondaryEmployeeId'] !== undefined) updateData['secondaryEmployeeId'] = args['secondaryEmployeeId'] ? Number(args['secondaryEmployeeId']) : null;
+        if (args['primaryEmployeeId'] !== undefined) updateData['primaryEmployeeId'] = this.parseRequiredIntegerArg(args, "primaryEmployeeId", { min: 1 });
+        if (args['secondaryEmployeeId'] !== undefined) updateData['secondaryEmployeeId'] = this.parseNullableIntegerArg(args, "secondaryEmployeeId", { min: 1 });
         if (args['type'] !== undefined) updateData['type'] = args['type'] ? String(args['type']) : null;
-        if (args['duration'] !== undefined) updateData['duration'] = args['duration'] ? Number(args['duration']) : null;
+        if (args['duration'] !== undefined) updateData['duration'] = this.parseNullableIntegerArg(args, "duration", { min: 1 });
         if (args['startDate'] !== undefined) updateData['startDate'] = args['startDate'] ? String(args['startDate']) : null;
         if (args['endDate'] !== undefined) updateData['endDate'] = args['endDate'] ? String(args['endDate']) : null;
         if (args['serviceStatus'] !== undefined) updateData['serviceStatus'] = args['serviceStatus'] ? String(args['serviceStatus']) : null;
@@ -315,7 +393,7 @@ export class ToolExecutorService {
     }
 
     private async getEmployee(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
         const employee = await this.employeeService.findById(branchid, employeeId);
         if (!employee) {
             return { success: false, error: "관리사를 찾을 수 없습니다" };
@@ -336,7 +414,7 @@ export class ToolExecutorService {
     }
 
     private async updateEmployee(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
         const updateData: Record<string, unknown> = {};
         
         if (args['name'] !== undefined) updateData['name'] = String(args['name']);
@@ -354,7 +432,7 @@ export class ToolExecutorService {
     }
 
     private async deleteEmployee(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
         await this.employeeService.delete(branchid, employeeId);
         return { success: true, data: { message: "관리사가 삭제되었습니다" } };
     }
@@ -383,7 +461,7 @@ export class ToolExecutorService {
     }
 
     private async updateMessage(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const messageId = Number(args['messageId']);
+        const messageId = this.parseRequiredIntegerArg(args, "messageId", { min: 1 });
         const title = args['title'] !== undefined ? String(args['title']) : "";
         const text = args['text'] !== undefined ? String(args['text']) : "";
 
@@ -392,7 +470,7 @@ export class ToolExecutorService {
     }
 
     private async deleteMessage(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const messageId = Number(args['messageId']);
+        const messageId = this.parseRequiredIntegerArg(args, "messageId", { min: 1 });
         await this.messageService.delete(branchid, messageId);
         return { success: true, data: { message: "메시지가 삭제되었습니다" } };
     }
@@ -410,7 +488,7 @@ export class ToolExecutorService {
     }
 
     private async createAndSendContract(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const clientId = Number(args['clientId']);
+        const clientId = this.parseRequiredIntegerArg(args, "clientId", { min: 1 });
         const areaId = String(args['areaId']);
 
         const template = await this.areaTemplateService.findByArea(branchid, areaId);
@@ -446,8 +524,9 @@ export class ToolExecutorService {
             return { success: true, data: doc };
         }
 
-        if (args['clientId']) {
-            const docs = await this.eformsignDocService.findByClientId(branchid, Number(args['clientId']));
+        if (!this.isMissingArg(args['clientId'])) {
+            const clientId = this.parseRequiredIntegerArg(args, "clientId", { min: 1 });
+            const docs = await this.eformsignDocService.findByClientId(branchid, clientId);
             return { success: true, data: docs };
         }
 
@@ -506,6 +585,7 @@ export class ToolExecutorService {
     }
 
     private async requestEmployeeReplacement(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
+        const newSecondaryEmployeeId = this.parseOptionalIntegerArg(args, "newSecondaryEmployeeId", { min: 1 });
         const clientId = await this.resolveClientId(branchid, args);
         const newPrimaryEmployeeId = await this.resolveEmployeeId(
             branchid,
@@ -513,7 +593,6 @@ export class ToolExecutorService {
             "newPrimaryEmployeeId",
             "newPrimaryEmployeeName",
         );
-        const newSecondaryEmployeeId = args['newSecondaryEmployeeId'] ? Number(args['newSecondaryEmployeeId']) : undefined;
         const client = await this.clientService.requestReplacement(
             branchid,
             clientId,
@@ -568,7 +647,7 @@ export class ToolExecutorService {
     }
 
     private async changeEmployeeAvailability(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
         const available = Boolean(args['available']);
         const employee = await this.employeeService.changeOpenStatus(branchid, employeeId, available);
         return { 
@@ -600,7 +679,7 @@ export class ToolExecutorService {
     }
 
     private async getSchedulesByEmployee(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
         const [primarySchedules, secondarySchedules] = await Promise.all([
             this.employeeScheduleService.findByPrimaryEmployeeId(branchid, employeeId),
             this.employeeScheduleService.findBySecondaryEmployeeId(branchid, employeeId),
@@ -626,11 +705,13 @@ export class ToolExecutorService {
         };
     }
 
-    private async listVoucherPrices(): Promise<ToolExecutionResult> {
+    private async listVoucherPrices(args: ToolArgs): Promise<ToolExecutionResult> {
+        const year = this.parseOptionalIntegerArg(args, "year", { min: 1900, max: 2200 });
         const vouchers = await this.voucherPriceInfoService.list();
+        const filteredVouchers = year === undefined ? vouchers : vouchers.filter((v) => v.year === year);
         return {
             success: true,
-            data: vouchers.map(v => ({
+            data: filteredVouchers.map(v => ({
                 id: v.id,
                 type: v.type,
                 duration: Number(v.duration),
@@ -644,7 +725,7 @@ export class ToolExecutorService {
 
     private async getVoucherPriceByType(args: ToolArgs): Promise<ToolExecutionResult> {
         const type = String(args['type']);
-        const year = args['year'] ? Number(args['year']) : undefined;
+        const year = this.parseOptionalIntegerArg(args, "year", { min: 1900, max: 2200 });
         const vouchers = await this.voucherPriceInfoService.findByType(type, year);
         return {
             success: true,
