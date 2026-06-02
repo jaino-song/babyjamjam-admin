@@ -27,6 +27,9 @@ import { FILE_STORAGE_PORT, FileStoragePort } from "domain/ports/file-storage.po
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
+const MAX_DOCUMENT_TAGS = 50;
+const MAX_DOCUMENT_TAG_LENGTH = 100;
+
 function toResponse(entity: DocumentEntity) {
     return {
         id: entity.id,
@@ -43,6 +46,37 @@ function toResponse(entity: DocumentEntity) {
         createdAt: entity.createdat,
         updatedAt: entity.updatedat,
     };
+}
+
+function parseDocumentTags(tags: string[] | string | undefined): string[] {
+    if (tags === undefined) {
+        return [];
+    }
+
+    let parsed: unknown = tags;
+    if (typeof tags === "string") {
+        try {
+            parsed = JSON.parse(tags);
+        } catch {
+            throw new BadRequestException("tags must be a valid JSON array");
+        }
+    }
+
+    if (!Array.isArray(parsed)) {
+        throw new BadRequestException("tags must be an array");
+    }
+
+    if (parsed.length > MAX_DOCUMENT_TAGS) {
+        throw new BadRequestException(`tags must contain ${MAX_DOCUMENT_TAGS} items or fewer`);
+    }
+
+    if (!parsed.every((tag): tag is string => (
+        typeof tag === "string" && tag.length <= MAX_DOCUMENT_TAG_LENGTH
+    ))) {
+        throw new BadRequestException(`each tag must be a string up to ${MAX_DOCUMENT_TAG_LENGTH} characters`);
+    }
+
+    return parsed;
 }
 
 @Controller("documents")
@@ -90,6 +124,7 @@ export class DocumentController {
             ? `${randomUUID()}.${fileExtension}`
             : randomUUID();
         const mimeType = file.mimetype || "application/octet-stream";
+        const tags = parseDocumentTags(dto.tags);
 
         // upload to storage
         const storageUrl = await this.fileStorage.upload(
@@ -97,9 +132,6 @@ export class DocumentController {
             storagePath,
             mimeType,
         );
-
-        // parse tags from string if needed (form-data sends arrays as strings)
-        const tags = typeof dto.tags === "string" ? JSON.parse(dto.tags) : dto.tags || [];
 
         const entity = await this.documentService.create(tenant.branchId ?? "", {
             name: dto.name || file.originalname,
