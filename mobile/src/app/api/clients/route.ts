@@ -1,22 +1,21 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-// Helper to get auth token from request
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-// Helper to create authorization headers
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 // GET /api/clients - Get all clients (with optional pagination)
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const searchParams = request.nextUrl.searchParams;
@@ -35,13 +34,9 @@ export async function GET(request: NextRequest) {
             params,
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error fetching clients:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch clients" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch clients");
     }
 }
 
@@ -50,31 +45,18 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
-        const body = await request.json();
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.post("/clients", body, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data, { status: 201 });
-    } catch (error: unknown) {
-        const apiError = error as {
-            response?: { data?: unknown; status?: number };
-            message?: string;
-        };
+        return backendJsonResponse(response);
+    } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) return invalidJson;
 
-        console.error("[API] Error creating client:", apiError.response?.data || apiError.message);
-
-        if (apiError.response?.data) {
-            return NextResponse.json(apiError.response.data, {
-                status: apiError.response.status || 500,
-            });
-        }
-
-        return NextResponse.json(
-            { error: "Failed to create client" },
-            { status: 500 }
-        );
+        return errorResponse(error, "create client");
     }
 }

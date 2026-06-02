@@ -1,35 +1,40 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
+import { invalidClientIdResponse, isValidClientId } from "../../client-route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 // PATCH /api/clients/[id]/terminate - Terminate client service
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { id } = await params;
-        const body = await request.json().catch(() => ({}));
+        if (!isValidClientId(id)) {
+            return invalidClientIdResponse();
+        }
+
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.patch(`/clients/${id}/terminate`, body, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error terminating client service:", error);
-        return NextResponse.json(
-            { error: "Failed to terminate client service" },
-            { status: 500 }
-        );
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) return invalidJson;
+
+        return errorResponse(error, "terminate client service");
     }
 }
