@@ -14,6 +14,30 @@ export interface EformsignTokenResponse {
 
 const ISO_END_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
+function getDocumentCreatedTimestamp(document: { created_date?: unknown; createdDate?: unknown }): number {
+    const value = document.created_date ?? document.createdDate;
+
+    if (value instanceof Date) {
+        return value.getTime();
+    }
+
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? value : 0;
+    }
+
+    if (typeof value === "string") {
+        const numericValue = Number(value);
+        if (Number.isFinite(numericValue) && value.trim() !== "") {
+            return numericValue;
+        }
+
+        const timestamp = Date.parse(value);
+        return Number.isFinite(timestamp) ? timestamp : 0;
+    }
+
+    return 0;
+}
+
 @Injectable()
 export class EformsignService {
     private readonly logger = new Logger(EformsignService.name);
@@ -482,8 +506,8 @@ export class EformsignService {
             }
         }
 
-        // Sort by createdDate descending (newest first)
-        uniqueDocuments.sort((a, b) => b.createdDate - a.createdDate);
+        // eformsign list_document returns created_date; local fallbacks may use createdDate.
+        uniqueDocuments.sort((a, b) => getDocumentCreatedTimestamp(b) - getDocumentCreatedTimestamp(a));
 
         return {
             documents: uniqueDocuments,
