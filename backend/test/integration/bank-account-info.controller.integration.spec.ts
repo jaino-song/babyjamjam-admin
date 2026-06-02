@@ -4,6 +4,8 @@ import request from "supertest";
 import { BankAccountInfoController } from "interface/controllers/bank-account-info.controller";
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
 import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 
 describe("BankAccountInfoController (Integration)", () => {
     // ============================================
@@ -44,7 +46,18 @@ describe("BankAccountInfoController (Integration)", () => {
                     useValue: mockBankAccountInfoService,
                 },
             ],
-        }).compile();
+        })
+            .overrideGuard(JwtGuard)
+            .useValue({
+                canActivate: (context: { switchToHttp: () => { getRequest: () => { user?: unknown } } }) => {
+                    const request = context.switchToHttp().getRequest();
+                    request.user = { userId: "owner-user-id", role: "owner" };
+                    return true;
+                },
+            })
+            .overrideGuard(OwnerOrAdminGuard)
+            .useValue({ canActivate: () => true })
+            .compile();
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));

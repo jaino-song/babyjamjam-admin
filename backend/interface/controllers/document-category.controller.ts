@@ -1,6 +1,8 @@
-import { Controller, Get, Post, Delete, Body, Param } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { IsString } from "class-validator";
 import { DocumentCategoryService, DocumentCategory } from "application/services/document-category.service";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 
 class CreateDocumentCategoryDto {
     @IsString()
@@ -23,6 +25,7 @@ export class DocumentCategoryController {
     }
 
     @Post()
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     async create(@Body() dto: CreateDocumentCategoryDto): Promise<DocumentCategory> {
         return this.documentCategoryService.create({
             value: dto.value,
@@ -32,6 +35,7 @@ export class DocumentCategoryController {
     }
 
     @Delete(":id")
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     async delete(@Param("id") id: string): Promise<void> {
         return this.documentCategoryService.delete(id);
     }

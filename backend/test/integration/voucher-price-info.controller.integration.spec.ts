@@ -3,6 +3,8 @@ import { INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
 import { VoucherPriceInfoController } from "interface/controllers/voucher-price-info.controller";
 import { VoucherPriceInfoService } from "application/services/voucher-price-info.service";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 
 describe("VoucherPriceInfoController (Integration)", () => {
     // ============================================
@@ -53,7 +55,18 @@ describe("VoucherPriceInfoController (Integration)", () => {
                     useValue: mockVoucherService,
                 },
             ],
-        }).compile();
+        })
+            .overrideGuard(JwtGuard)
+            .useValue({
+                canActivate: (context: { switchToHttp: () => { getRequest: () => { user?: unknown } } }) => {
+                    const request = context.switchToHttp().getRequest();
+                    request.user = { userId: "owner-user-id", role: "owner" };
+                    return true;
+                },
+            })
+            .overrideGuard(OwnerOrAdminGuard)
+            .useValue({ canActivate: () => true })
+            .compile();
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));
