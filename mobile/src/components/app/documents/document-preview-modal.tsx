@@ -228,8 +228,9 @@ export default function DocumentPreviewModal({
 
             {isImage && (
               <div className="w-full h-full overflow-auto flex justify-center items-center p-4">
+                {/* eslint-disable-next-line @next/next/no-img-element -- Authenticated binary downloads are served through an app API route; next/image optimization is not suitable here. */}
                 <img
-                  src={`${getDownloadUrl(doc.id)}#toolbar=0`}
+                  src={getDownloadUrl(doc.id)}
                   alt={doc.name}
                   className="max-w-full max-h-full object-contain transition-transform duration-200"
                   style={{
