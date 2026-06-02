@@ -27,9 +27,11 @@ export class SystemSettingController {
 
     @Get("alimtalk-provider")
     async getAlimtalkProvider(): Promise<AlimtalkProviderResponseDto> {
-        const provider = await this.systemSettingService.getAlimtalkProvider();
-        const enabled = await this.systemSettingService.isAlimtalkEnabled();
-        return AlimtalkProviderResponseDto.from(provider, enabled);
+        const setting = await this.systemSettingService.getAlimtalkProviderSetting();
+        const provider = setting?.getAlimtalkProvider()
+            ?? await this.systemSettingService.getAlimtalkProvider();
+        const enabled = provider !== "none";
+        return AlimtalkProviderResponseDto.from(provider, enabled, setting?.updatedAt);
     }
 
     @Put("alimtalk-provider")

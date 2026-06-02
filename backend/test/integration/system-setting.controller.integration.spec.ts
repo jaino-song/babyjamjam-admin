@@ -3,7 +3,10 @@ import { INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
 import { SystemSettingController } from "interface/controllers/system-setting.controller";
 import { SystemSettingService } from "application/services/system-setting.service";
+import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerGuard } from "infrastructure/auth/owner.guard";
+import { TenantGuard } from "infrastructure/tenant";
 import { SystemSettingEntity, AlimtalkProvider } from "domain/entities/system-setting.entity";
 
 describe("SystemSettingController (Integration)", () => {
@@ -13,6 +16,7 @@ describe("SystemSettingController (Integration)", () => {
     beforeEach(async () => {
         const mockSystemSettingService = {
             getAlimtalkProvider: jest.fn(),
+            getAlimtalkProviderSetting: jest.fn(),
             setAlimtalkProvider: jest.fn(),
             isAlimtalkEnabled: jest.fn(),
         };
@@ -24,9 +28,17 @@ describe("SystemSettingController (Integration)", () => {
                     provide: SystemSettingService,
                     useValue: mockSystemSettingService,
                 },
+                {
+                    provide: MessageSenderApprovalService,
+                    useValue: {},
+                },
             ],
         })
             .overrideGuard(JwtGuard)
+            .useValue({ canActivate: () => true })
+            .overrideGuard(TenantGuard)
+            .useValue({ canActivate: () => true })
+            .overrideGuard(OwnerGuard)
             .useValue({ canActivate: () => true })
             .compile();
 
@@ -38,13 +50,15 @@ describe("SystemSettingController (Integration)", () => {
     });
 
     afterEach(async () => {
-        await app.close();
+        await app?.close();
     });
 
     describe("GET /settings/alimtalk-provider", () => {
         it("should return current provider setting", async () => {
-            systemSettingService.getAlimtalkProvider.mockResolvedValue("aligo");
-            systemSettingService.isAlimtalkEnabled.mockResolvedValue(true);
+            const updatedAt = new Date("2026-05-28T12:00:00.000Z");
+            systemSettingService.getAlimtalkProviderSetting.mockResolvedValue(
+                new SystemSettingEntity("alimtalk_provider", "aligo", updatedAt)
+            );
 
             const response = await request(app.getHttpServer())
                 .get("/settings/alimtalk-provider");
@@ -53,12 +67,18 @@ describe("SystemSettingController (Integration)", () => {
             expect(response.body).toEqual({
                 provider: "aligo",
                 enabled: true,
+                updatedAt: updatedAt.toISOString(),
             });
         });
 
         it("should return disabled state when provider is none", async () => {
-            systemSettingService.getAlimtalkProvider.mockResolvedValue("none");
-            systemSettingService.isAlimtalkEnabled.mockResolvedValue(false);
+            systemSettingService.getAlimtalkProviderSetting.mockResolvedValue(
+                new SystemSettingEntity(
+                    "alimtalk_provider",
+                    "none",
+                    new Date("2026-05-28T12:00:00.000Z")
+                )
+            );
 
             const response = await request(app.getHttpServer())
                 .get("/settings/alimtalk-provider");
@@ -67,6 +87,21 @@ describe("SystemSettingController (Integration)", () => {
             expect(response.body).toEqual({
                 provider: "none",
                 enabled: false,
+                updatedAt: "2026-05-28T12:00:00.000Z",
+            });
+        });
+
+        it("should return default provider without updatedAt when setting is not stored", async () => {
+            systemSettingService.getAlimtalkProviderSetting.mockResolvedValue(null);
+            systemSettingService.getAlimtalkProvider.mockResolvedValue("aligo");
+
+            const response = await request(app.getHttpServer())
+                .get("/settings/alimtalk-provider");
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({
+                provider: "aligo",
+                enabled: true,
             });
         });
     });

@@ -6,6 +6,7 @@ import { SystemSettingEntity, AlimtalkProvider } from "domain/entities/system-se
 describe("SystemSettingService", () => {
     const createMockGetSettingUsecase = () => ({
         execute: jest.fn(),
+        executeEntity: jest.fn(),
         executeWithDefault: jest.fn(),
     });
 
@@ -57,6 +58,22 @@ describe("SystemSettingService", () => {
             const result = await service.getAlimtalkProvider();
 
             expect(result).toBe("none");
+        });
+    });
+
+    describe("getAlimtalkProviderSetting", () => {
+        it("should return the stored provider setting entity with updatedAt", async () => {
+            const entity = new SystemSettingEntity(
+                "alimtalk_provider",
+                "aligo",
+                new Date("2026-05-28T12:00:00.000Z")
+            );
+            getSettingUsecase.executeEntity.mockResolvedValue(entity);
+
+            const result = await service.getAlimtalkProviderSetting();
+
+            expect(getSettingUsecase.executeEntity).toHaveBeenCalledWith("alimtalk_provider");
+            expect(result).toBe(entity);
         });
     });
 

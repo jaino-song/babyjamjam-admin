@@ -68,8 +68,15 @@ describe("SbSystemSettingRepository", () => {
 
                 expect(systemSettingModel.upsert).toHaveBeenCalledWith({
                     where: { key: "alimtalk_provider" },
-                    create: { key: "alimtalk_provider", value: "channeltalk" },
-                    update: { value: "channeltalk" },
+                    create: {
+                        key: "alimtalk_provider",
+                        value: "channeltalk",
+                        updatedAt: entity.updatedAt,
+                    },
+                    update: {
+                        value: "channeltalk",
+                        updatedAt: entity.updatedAt,
+                    },
                 });
                 expect(result).toBeInstanceOf(SystemSettingEntity);
                 expect(result.value).toBe("channeltalk");
@@ -88,6 +95,18 @@ describe("SbSystemSettingRepository", () => {
 
                 const result = await repository.upsert(entity);
 
+                expect(systemSettingModel.upsert).toHaveBeenCalledWith({
+                    where: { key: "alimtalk_provider" },
+                    create: {
+                        key: "alimtalk_provider",
+                        value: "none",
+                        updatedAt: entity.updatedAt,
+                    },
+                    update: {
+                        value: "none",
+                        updatedAt: entity.updatedAt,
+                    },
+                });
                 expect(result.value).toBe("none");
             });
         });
