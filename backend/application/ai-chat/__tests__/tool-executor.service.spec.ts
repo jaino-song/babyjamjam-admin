@@ -254,4 +254,27 @@ describe("ToolExecutorService", () => {
         })).resolves.toMatchObject({ success: false, error: expect.stringContaining("available") });
         expect(mocks.employeeService.changeOpenStatus).not.toHaveBeenCalled();
     });
+
+    it("should honor employee availability filters during search", async () => {
+        const { executor, mocks } = createExecutor();
+        mocks.employeeService.findAll.mockResolvedValue([
+            { id: 1, name: "김관리", phone: "010-1111-1111", grade: "A", openToNextWork: true },
+            { id: 2, name: "김관리2", phone: "010-2222-2222", grade: "B", openToNextWork: false },
+        ]);
+
+        await expect(executor.execute("branch-1", "searchEmployees", {
+            query: "김관리",
+            openToNextWork: true,
+        })).resolves.toMatchObject({
+            success: true,
+            data: [
+                expect.objectContaining({ id: 1, openToNextWork: true }),
+            ],
+        });
+
+        await expect(executor.execute("branch-1", "searchEmployees", {
+            query: "김관리",
+            openToNextWork: "true",
+        })).resolves.toMatchObject({ success: false, error: expect.stringContaining("openToNextWork") });
+    });
 });

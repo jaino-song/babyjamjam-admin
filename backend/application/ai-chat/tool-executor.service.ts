@@ -418,9 +418,11 @@ export class ToolExecutorService {
 
     private async searchEmployees(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const query = String(args['query'] || "");
+        const openToNextWork = this.parseOptionalBooleanArg(args, "openToNextWork");
         const employees = await this.employeeService.findAll(branchid);
         const filtered = employees.filter(e => 
-            e.name.includes(query) || e.phone.includes(query)
+            (e.name.includes(query) || e.phone.includes(query))
+            && (openToNextWork === undefined || e.openToNextWork === openToNextWork)
         );
         return {
             success: true,
