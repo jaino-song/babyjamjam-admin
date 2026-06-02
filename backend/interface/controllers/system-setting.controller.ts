@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Put, Request, UseGuards } from "@nestjs/common";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { SystemSettingService } from "application/services/system-setting.service";
 import {
     UpdateAlimtalkProviderDto,
@@ -35,6 +36,7 @@ export class SystemSettingController {
     }
 
     @Put("alimtalk-provider")
+    @UseGuards(OwnerOrAdminGuard)
     async updateAlimtalkProvider(
         @Body() dto: UpdateAlimtalkProviderDto
     ): Promise<AlimtalkProviderResponseDto> {

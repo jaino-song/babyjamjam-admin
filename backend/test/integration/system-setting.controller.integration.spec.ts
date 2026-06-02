@@ -1,11 +1,13 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 import request from "supertest";
 import { SystemSettingController } from "interface/controllers/system-setting.controller";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { SystemSettingEntity, AlimtalkProvider } from "domain/entities/system-setting.entity";
 
@@ -39,6 +41,8 @@ describe("SystemSettingController (Integration)", () => {
             .overrideGuard(TenantGuard)
             .useValue({ canActivate: () => true })
             .overrideGuard(OwnerGuard)
+            .useValue({ canActivate: () => true })
+            .overrideGuard(OwnerOrAdminGuard)
             .useValue({ canActivate: () => true })
             .compile();
 
@@ -107,6 +111,15 @@ describe("SystemSettingController (Integration)", () => {
     });
 
     describe("PUT /settings/alimtalk-provider", () => {
+        it("should require owner/admin privileges", () => {
+            const guards = Reflect.getMetadata(
+                GUARDS_METADATA,
+                SystemSettingController.prototype.updateAlimtalkProvider,
+            ) ?? [];
+
+            expect(guards).toContain(OwnerOrAdminGuard);
+        });
+
         it("should update provider to channeltalk", async () => {
             const entity = new SystemSettingEntity(
                 "alimtalk_provider",
