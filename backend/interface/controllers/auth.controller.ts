@@ -24,16 +24,14 @@ import { getKakaoOAuthConfig } from "infrastructure/auth/kakao-config";
 
 @Controller("auth")
 export class AuthController {
-    private readonly rateLimitGuard: RateLimitGuard;
     private static readonly PENDING_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
     private static readonly PENDING_ONBOARDING_TOKEN_HEADER = "x-pending-onboarding-token";
 
     constructor(
         private readonly authService: AuthService,
         private readonly prisma: PrismaService,
-    ) {
-        this.rateLimitGuard = new RateLimitGuard();
-    }
+        private readonly rateLimitGuard: RateLimitGuard,
+    ) {}
 
     @Get("kakao")
     @UseGuards(AuthGuard("kakao"))
