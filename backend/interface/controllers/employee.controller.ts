@@ -8,6 +8,7 @@ import {
 } from "interface/dto/employee.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { parseInteger } from "interface/parse-integer";
 
 @Controller("employees")
 @UseGuards(JwtGuard, TenantGuard)
@@ -73,7 +74,7 @@ export class EmployeeController {
 
     @Get("id")
     findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
-        return this.employeeService.findById(tenant.branchId ?? "", Number(id));
+        return this.employeeService.findById(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
     }
 
     @Patch("open-status")
@@ -84,7 +85,7 @@ export class EmployeeController {
     ) {
         return this.employeeService.changeOpenStatus(
             tenant.branchId ?? "",
-            Number(id),
+            parseInteger(id, "id", { min: 1 }),
             dto.openToNextWork
         );
     }
@@ -95,11 +96,11 @@ export class EmployeeController {
         @Query("id") id: string,
         @Body() dto: UpdateEmployeeDto
     ) {
-        return this.employeeService.update(tenant.branchId ?? "", Number(id), dto);
+        return this.employeeService.update(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }), dto);
     }
 
     @Delete()
     delete(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
-        return this.employeeService.delete(tenant.branchId ?? "", Number(id));
+        return this.employeeService.delete(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
     }
 }

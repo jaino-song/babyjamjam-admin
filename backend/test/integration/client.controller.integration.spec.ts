@@ -249,6 +249,15 @@ describe("ClientController (Integration)", () => {
                     "Kim",
                 );
             });
+
+            it("should reject invalid pagination before calling service", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/clients")
+                    .query({ page: "abc", limit: "20" });
+
+                expect(response.status).toBe(400);
+                expect(clientService.findAllPaginated).not.toHaveBeenCalled();
+            });
         });
 
         it("should return dashboard overview", async () => {
@@ -280,6 +289,15 @@ describe("ClientController (Integration)", () => {
             expect(response.status).toBe(200);
             expect(response.body.stats.activeClients).toBe(1);
             expect(clientService.getDashboardOverview).toHaveBeenCalledWith(expect.any(String), 25);
+        });
+
+        it("should reject invalid dashboard overview limits before calling service", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/clients/dashboard-overview")
+                .query({ limit: "-1" });
+
+            expect(response.status).toBe(400);
+            expect(clientService.getDashboardOverview).not.toHaveBeenCalled();
         });
 
         it("should return action-required alerts", async () => {

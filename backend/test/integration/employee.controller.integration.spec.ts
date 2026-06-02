@@ -232,6 +232,15 @@ describe("EmployeeController (Integration)", () => {
                 expect(employeeService.findById).toHaveBeenCalledWith(expect.any(String), 999);
             });
         });
+
+        it("should reject invalid ids before calling service", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/employees/id")
+                .query({ id: "abc" });
+
+            expect(response.status).toBe(400);
+            expect(employeeService.findById).not.toHaveBeenCalled();
+        });
     });
 
     // ============================================

@@ -6,6 +6,19 @@ import { GenerateStaffDocumentRequestDto } from "../dto/staff-document.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { Response } from "express";
+import { parseInteger } from "interface/parse-integer";
+
+function throwHttpOrInternalError(error: unknown): never {
+    if (error instanceof HttpException) {
+        throw error;
+    }
+
+    const message = error instanceof Error ? error.message : "Unknown error";
+    throw new HttpException(
+        { error: message },
+        HttpStatus.INTERNAL_SERVER_ERROR
+    );
+}
 
 @Controller("api")
 @UseGuards(JwtGuard, TenantGuard)
@@ -146,16 +159,12 @@ export class EformsignController {
             }
             const documents = await this.eformsignService.getAllDocuments(
                 accessToken,
-                limit ? Number(limit) : 100,
-                skip ? Number(skip) : 0,
+                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
+                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
             return documents;
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error";
-            throw new HttpException(
-                { error: message },
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throwHttpOrInternalError(error);
         }
     }
 
@@ -177,16 +186,12 @@ export class EformsignController {
             }
             const documents = await this.eformsignService.getInProgressDocuments(
                 accessToken,
-                limit ? Number(limit) : 100,
-                skip ? Number(skip) : 0,
+                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
+                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
             return documents;
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error";
-            throw new HttpException(
-                { error: message },
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throwHttpOrInternalError(error);
         }
     }
 
@@ -208,16 +213,12 @@ export class EformsignController {
             }
             const documents = await this.eformsignService.getCompletedDocuments(
                 accessToken,
-                limit ? Number(limit) : 100,
-                skip ? Number(skip) : 0,
+                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
+                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
             return documents;
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error";
-            throw new HttpException(
-                { error: message },
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throwHttpOrInternalError(error);
         }
     }
 
@@ -239,16 +240,12 @@ export class EformsignController {
             }
             const documents = await this.eformsignService.getRejectedDocuments(
                 accessToken,
-                limit ? Number(limit) : 100,
-                skip ? Number(skip) : 0,
+                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
+                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
             return documents;
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error";
-            throw new HttpException(
-                { error: message },
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throwHttpOrInternalError(error);
         }
     }
 

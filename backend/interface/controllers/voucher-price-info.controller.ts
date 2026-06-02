@@ -20,6 +20,7 @@ import {
   CreateVoucherPriceInfoDto,
   UpdateVoucherPriceInfoDto,
 } from "interface/dto/voucher-price-info.dto";
+import { parseOptionalInteger } from "interface/parse-integer";
 
 @Controller("voucher-price-infos")
 export class VoucherPriceInfoController {
@@ -47,7 +48,7 @@ export class VoucherPriceInfoController {
     @Get("type")
     @UseGuards(JwtGuard, OwnerOrAdminGuard)
     findByType(@Query("type") type: string, @Query("year") year?: string) {
-        return this.voucherService.findByType(type, year ? Number(year) : undefined);
+        return this.voucherService.findByType(type, parseOptionalInteger(year, "year", { min: 1900, max: 2200 }));
     }
 
     @Get("years")
