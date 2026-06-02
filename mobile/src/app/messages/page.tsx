@@ -427,7 +427,13 @@ export default function MessagesPage() {
             <MobileDetailActions
               name="messages"
               actions={[
-                { label: "재발송", variant: "secondary" },
+                {
+                  label: "재발송 준비 중",
+                  variant: "secondary",
+                  disabled: true,
+                  ariaLabel: "재발송 기능은 준비 중입니다.",
+                  dataComponent: "mobile-messages-resend-disabled",
+                },
                 {
                   label: "고객 보기",
                   variant: "primary",

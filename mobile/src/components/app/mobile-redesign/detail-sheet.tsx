@@ -178,6 +178,7 @@ export function MobileDetailActions({
       {actions?.map((action, index) => {
         const actionClassName = cn("btn", `btn-${action.variant ?? "secondary"}`, action.className);
         const key = action.dataComponent ?? `${name}-action-${index}`;
+        const isDisabled = action.disabled ?? (!action.href && !action.onClick);
 
         if (action.href) {
           return (
@@ -199,7 +200,7 @@ export function MobileDetailActions({
             className={actionClassName}
             type="button"
             onClick={action.onClick}
-            disabled={action.disabled}
+            disabled={isDisabled}
             aria-busy={action.busy}
             aria-label={action.ariaLabel}
             data-component={action.dataComponent}

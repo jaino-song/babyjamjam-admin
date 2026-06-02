@@ -16,8 +16,11 @@ import { useInitialUser } from "@/providers/UserProvider";
 
 const DEFAULT_PROFILE_NAME = "사용자";
 const DEFAULT_PROFILE_ROLE = "스태프";
-const APP_VERSION_NUMBER = process.env.NEXT_PUBLIC_APP_VERSION ?? process.env.npm_package_version ?? "0.0.0";
-const APP_VERSION = `아가잼잼 어드민 v${APP_VERSION_NUMBER}`;
+
+function getAppVersion() {
+  const version = process.env.NEXT_PUBLIC_APP_VERSION ?? process.env.npm_package_version ?? "0.0.0";
+  return `아가잼잼 어드민 v${version}`;
+}
 
 function getRoleLabel(locale: Locale, role: string | undefined) {
   if (!role) {
@@ -97,7 +100,7 @@ export function AllSettingsRedesign({ menuGroups = defaultMenuGroups }: AllSetti
         <LogOut size={16} strokeWidth={2.5} />
         로그아웃
       </button>
-      <div className="app-version">{APP_VERSION}</div>
+      <div className="app-version">{getAppVersion()}</div>
     </div>
   );
 }
