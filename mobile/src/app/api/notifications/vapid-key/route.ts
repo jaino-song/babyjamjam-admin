@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { E2E_VAPID_PUBLIC_KEY, isE2ETest } from "@/lib/e2e";
+import { backendJsonResponse } from "@/lib/api/route-utils";
 
 /**
  * GET /api/notifications/vapid-key
@@ -14,7 +15,7 @@ export async function GET() {
         }
 
         const response = await serverAPIClient.get("/notifications/vapid-key");
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error: unknown) {
         const err = error as { message?: string; response?: { status?: number } };
         console.error("[API] Error fetching vapid key:", err.message);

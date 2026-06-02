@@ -78,6 +78,16 @@ export function getAuthHeaders(token: string | null): Record<string, string> {
     return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+export function backendJsonResponse(response: { data: unknown; status?: number }): NextResponse {
+    const status = response.status ?? 200;
+
+    if (status === 204) {
+        return new NextResponse(null, { status });
+    }
+
+    return NextResponse.json(response.data ?? {}, { status });
+}
+
 /**
  * Set auth tokens in httpOnly cookies
  */
