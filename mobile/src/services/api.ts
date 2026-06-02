@@ -71,6 +71,14 @@ export interface EformsignAuthStatusResponse {
     hasRefreshToken: boolean;
 }
 
+export interface EformsignDocClientSummary {
+    documentId: string;
+    clientId: number;
+    clientName: string;
+    clientPhone: string | null;
+    providerName: string | null;
+}
+
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
@@ -145,6 +153,21 @@ export const eformsignApi = {
         const { data } = await api.post('/refresh-access-token', { executionTime });
         return data;
     },
+    reRequestDocument: async (
+        documentId: string,
+        params: {
+            stepType: string;
+            stepSeq: string;
+            comment?: string;
+            recipientPhone?: {
+                countryCode: string;
+                phoneNumber: string;
+            };
+        }
+    ): Promise<{ status?: string; code?: string; message?: string }> => {
+        const { data } = await api.post(`/eformsign/documents/${documentId}/re-request`, params);
+        return data;
+    },
     generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
         const { data } = await api.post('/generate-document', { contractData, clientId });
         return data;
@@ -211,6 +234,10 @@ export const eformsignApi = {
         const { data } = await api.post('/eformsign-docs', params);
         return data;
     },
+    getDocumentClientNames: async (): Promise<EformsignDocClientSummary[]> => {
+        const { data } = await api.get('/eformsign-docs/client-names');
+        return data;
+    },
     // Documents APIs - token is read from httpOnly cookie on server
     // Note: eformsign routes use /eformsign prefix to avoid conflict with file storage /documents
     // Unified endpoint - fetches all documents in single request (more efficient)
@@ -218,6 +245,16 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/documents', { params });
         return data;
     },
+    getDocument: async (documentId: string): Promise<EformsignDocumentsResponse["documents"][number]> => {
+        const { data } = await api.get(`/eformsign/documents/${documentId}`);
+        return data;
+    },
+    getDocumentDownloadUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document`,
+    getDocumentReceiptDownloadUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&page=7`,
+    getDocumentPreviewUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document#toolbar=0`,
     getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents/in-progress');
         return data;
