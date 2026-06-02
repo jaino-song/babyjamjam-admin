@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, Check } from "lucide-react";
 
@@ -36,6 +36,23 @@ export default function SelectBranchPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const confirmSelectBranch = useCallback(async (branchId: string) => {
+    setSubmitting(true);
+    try {
+      const result = await setCurrentBranch(branchId);
+      if (!result.success) {
+        setError(result.error || "지점 선택에 실패했습니다.");
+        setSubmitting(false);
+        return;
+      }
+      router.replace("/dashboard");
+    } catch (err) {
+      console.error("[Select Branch] Error selecting branch:", err);
+      setError("지점 선택에 실패했습니다.");
+      setSubmitting(false);
+    }
+  }, [router]);
+
   useEffect(() => {
     const fetchBranches = async () => {
       try {
@@ -55,7 +72,7 @@ export default function SelectBranchPage() {
 
         const fetched = result.branches || [];
         setBranches(fetched);
-        if (fetched.length > 0 && !selectedId) setSelectedId(fetched[0].id);
+        setSelectedId((current) => current ?? fetched[0]?.id ?? null);
       } catch (err) {
         console.error("[Select Branch] Error fetching branches:", err);
         setError("지점 목록을 불러오는데 실패했습니다.");
@@ -65,25 +82,7 @@ export default function SelectBranchPage() {
     };
 
     fetchBranches();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router]);
-
-  const confirmSelectBranch = async (branchId: string) => {
-    setSubmitting(true);
-    try {
-      const result = await setCurrentBranch(branchId);
-      if (!result.success) {
-        setError(result.error || "지점 선택에 실패했습니다.");
-        setSubmitting(false);
-        return;
-      }
-      router.replace("/dashboard");
-    } catch (err) {
-      console.error("[Select Branch] Error selecting branch:", err);
-      setError("지점 선택에 실패했습니다.");
-      setSubmitting(false);
-    }
-  };
+  }, [confirmSelectBranch]);
 
   const handleLogout = () => {
     document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
@@ -102,6 +101,7 @@ export default function SelectBranchPage() {
         style={{ alignItems: "center", justifyContent: "center" }}
       >
         <div
+          data-component="select-branch-loading"
           style={{
             display: "flex",
             flexDirection: "column",
@@ -121,8 +121,8 @@ export default function SelectBranchPage() {
   if (error) {
     return (
       <div className="branch-page" data-component="select-branch">
-        <div className="branch-header">
-          <div className="branch-title">지점 선택</div>
+        <div className="branch-header" data-component="select-branch-header">
+          <div className="branch-title" data-component="select-branch-title">지점 선택</div>
         </div>
         <div className="auth-server-error" role="alert" data-component="select-branch-error">
           {error}
@@ -142,10 +142,11 @@ export default function SelectBranchPage() {
   if (branches.length === 0) {
     return (
       <div className="branch-page" data-component="select-branch">
-        <div className="branch-header">
-          <div className="branch-title">접근 가능한 지점이 없습니다</div>
+        <div className="branch-header" data-component="select-branch-header">
+          <div className="branch-title" data-component="select-branch-title">접근 가능한 지점이 없습니다</div>
         </div>
         <div
+          data-component="select-branch-empty"
           style={{
             display: "flex",
             flexDirection: "column",
@@ -162,7 +163,7 @@ export default function SelectBranchPage() {
           </p>
           <p style={{ fontSize: "0.74rem" }}>권한이 부여되면 이 페이지를 새로고침하세요.</p>
         </div>
-        <div className="branch-actions">
+        <div className="branch-actions" data-component="select-branch-actions">
           <button type="button" className="branch-btn" onClick={() => window.location.reload()}>
             새로고침
           </button>
@@ -178,16 +179,24 @@ export default function SelectBranchPage() {
 
   return (
     <div className="branch-page" data-component="select-branch">
-      <div className="branch-header">
-        <div className="branch-title">지점 선택</div>
+      <div className="branch-header" data-component="select-branch-header">
+        <div className="branch-title" data-component="select-branch-title">지점 선택</div>
       </div>
 
       {user && (
         <div className="branch-user" data-component="select-branch-user">
-          <div className="branch-user-avatar">{user.name?.charAt(0) || "?"}</div>
-          <div className="branch-user-info">
-            <div className="branch-user-name">{user.name || "사용자"}</div>
-            {user.email && <div className="branch-user-email">{user.email}</div>}
+          <div className="branch-user-avatar" data-component="select-branch-user-avatar">
+            {user.name?.charAt(0) || "?"}
+          </div>
+          <div className="branch-user-info" data-component="select-branch-user-info">
+            <div className="branch-user-name" data-component="select-branch-user-name">
+              {user.name || "사용자"}
+            </div>
+            {user.email && (
+              <div className="branch-user-email" data-component="select-branch-user-email">
+                {user.email}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -205,11 +214,15 @@ export default function SelectBranchPage() {
               disabled={submitting}
               data-component="select-branch-row"
             >
-              <div className="branch-card-icon" style={{ background: iconColor }}>
+              <div
+                className="branch-card-icon"
+                data-component="select-branch-row-icon"
+                style={{ background: iconColor }}
+              >
                 <Building2 size={20} strokeWidth={2.5} />
               </div>
-              <div className="branch-card-info">
-                <div className="branch-card-name">
+              <div className="branch-card-info" data-component="select-branch-row-info">
+                <div className="branch-card-name" data-component="select-branch-row-name">
                   {branch.name}
                   <span className="role-pill">{getRoleLabel(branch.role)}</span>
                 </div>
@@ -222,7 +235,7 @@ export default function SelectBranchPage() {
         })}
       </div>
 
-      <div className="branch-actions">
+      <div className="branch-actions" data-component="select-branch-actions">
         <button
           type="button"
           className="branch-btn"
