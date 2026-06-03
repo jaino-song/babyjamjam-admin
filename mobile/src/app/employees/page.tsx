@@ -76,24 +76,45 @@ function employeeMeta(e: Employee) {
   return employeePrimaryArea(e);
 }
 
-interface EmployeeGroup {
-  key: EmployeeStatus;
+interface EmployeeGroupBase {
   title: string;
   badge: string;
   badgeTone: "orange" | "green" | "muted";
   badgeMini: "orange" | "green" | "muted";
 }
 
-const GROUPS: EmployeeGroup[] = [
+interface KnownEmployeeGroup extends EmployeeGroupBase {
+  key: EmployeeStatus;
+}
+
+interface UnknownEmployeeGroup extends EmployeeGroupBase {
+  key: "unknown";
+}
+
+type EmployeeGroup = KnownEmployeeGroup | UnknownEmployeeGroup;
+
+const GROUPS: KnownEmployeeGroup[] = [
   { key: "available", title: "근무 가능", badge: "근무 가능", badgeTone: "orange", badgeMini: "orange" },
   { key: "working", title: "근무 중", badge: "근무 중", badgeTone: "green", badgeMini: "green" },
   { key: "unavailable", title: "근무 불가", badge: "근무 불가", badgeTone: "muted", badgeMini: "muted" },
 ];
 
+const UNKNOWN_EMPLOYEE_GROUP: EmployeeGroup = {
+  key: "unknown",
+  title: "상태 미정",
+  badge: "상태 미정",
+  badgeTone: "muted",
+  badgeMini: "muted",
+};
+
 // "최근 활동순" 정렬 키 — employees는 활동 timestamp가 없어 등록일(registeredDate) 기준, 동률은 최신 id.
 function employeeRecency(e: Employee): number {
   const t = e.registeredDate ? new Date(e.registeredDate).getTime() : NaN;
   return Number.isFinite(t) ? t : 0;
+}
+
+export function buildAllEmployeeRowsForList(employees: Employee[]): Employee[] {
+  return [...employees].sort((a, b) => employeeRecency(b) - employeeRecency(a) || b.id - a.id);
 }
 
 function formatRegisteredDate(value: string | null | undefined): string {
@@ -115,8 +136,8 @@ function formatRegisteredDate(value: string | null | undefined): string {
   return `${year}년 ${month}월 ${day}일`;
 }
 
-function groupForEmployee(e: Employee): EmployeeGroup {
-  return GROUPS.find((g) => g.key === e.status) ?? GROUPS[0];
+export function groupForEmployee(e: Employee): EmployeeGroup {
+  return GROUPS.find((g) => g.key === e.status) ?? UNKNOWN_EMPLOYEE_GROUP;
 }
 
 type DetailTabId = "basic" | "clients" | "history";
@@ -134,7 +155,7 @@ function EmployeeDetailContent({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const group = GROUPS.find((g) => g.key === employee.status) ?? GROUPS[0];
+  const group = groupForEmployee(employee);
   const availability = employee.openToNextWork ? "근무 가능" : "근무 불가";
   const availabilityTone = employee.openToNextWork ? "green" : "muted";
   const currentClientInitial = employee.status === "working" ? "박" : employeeInitial(employee.name);
@@ -376,9 +397,7 @@ export default function EmployeesPage() {
 
     // 전체: 상태 grouping 없이 최근 활동순 단일 리스트 (총 8개부터 teaser → 무한 스크롤).
     if (activeFilter === ALL_FILTER) {
-      const flat = allEmployees
-        .filter((e) => GROUPS.some((g) => g.key === e.status))
-        .sort((a, b) => employeeRecency(b) - employeeRecency(a) || b.id - a.id);
+      const flat = buildAllEmployeeRowsForList(allEmployees);
       return flat.length > 0
         ? [{ key: "all", title: "", group: GROUPS[0], fullRows: flat, fullCount: flat.length }]
         : [];

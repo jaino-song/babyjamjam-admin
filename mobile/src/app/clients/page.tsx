@@ -110,8 +110,23 @@ function clientRecency(c: Client): number {
   const t = c.startDate ? new Date(c.startDate).getTime() : NaN;
   return Number.isFinite(t) ? t : 0;
 }
-function groupForClient(c: Client): ClientGroup {
-  return GROUPS.find((g) => g.match(c)) ?? GROUPS[GROUPS.length - 1];
+
+export function buildAllClientRowsForList(clients: Client[]): Client[] {
+  return [...clients].sort((a, b) => clientRecency(b) - clientRecency(a) || b.id - a.id);
+}
+
+const UNKNOWN_CLIENT_GROUP: ClientGroup = {
+  key: "unknown",
+  title: "상태 미정",
+  badge: "상태 미정",
+  badgeTone: "muted",
+  badgeMini: "muted",
+  match: () => false,
+  counter: "명",
+};
+
+export function groupForClient(c: Client): ClientGroup {
+  return GROUPS.find((g) => g.match(c)) ?? UNKNOWN_CLIENT_GROUP;
 }
 
 function normalizePhone(value: string | null | undefined): string {
@@ -393,9 +408,7 @@ export default function ClientsPage() {
 
     // 전체: 카테고리 grouping 없이 최근 활동순 단일 리스트 (총 8개부터 teaser → 무한 스크롤).
     if (activeFilter === ALL_FILTER) {
-      const flat = allFilteredClients
-        .filter((c) => GROUPS.some((g) => g.match(c)))
-        .sort((a, b) => clientRecency(b) - clientRecency(a) || b.id - a.id);
+      const flat = buildAllClientRowsForList(allFilteredClients);
       return flat.length > 0
         ? [{ key: "all", title: "", group: GROUPS[0], fullRows: flat, fullCount: flat.length }]
         : [];
