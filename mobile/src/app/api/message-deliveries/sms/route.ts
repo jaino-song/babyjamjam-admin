@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
+import {
+  getAuthHeaders,
+  getAuthToken,
+  invalidJsonResponse,
+  readJsonObjectBody,
+} from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,12 +14,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
+    const body = await readJsonObjectBody(request);
     const response = await serverAPIClient.post("/message-deliveries/sms", body, {
       headers: getAuthHeaders(token),
     });
     return NextResponse.json(response.data, { status: response.status });
   } catch (error) {
+    const invalidJson = invalidJsonResponse(error);
+    if (invalidJson) {
+      return invalidJson;
+    }
+
     if (error && typeof error === "object" && "response" in error) {
       const axiosErr = error as { response?: { status?: number; data?: unknown } };
       if (axiosErr.response) {
