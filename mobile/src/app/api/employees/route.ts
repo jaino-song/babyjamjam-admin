@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AxiosError } from "axios";
 
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
-interface BackendErrorResponse {
-    error?: string;
-    message?: string;
+function isValidEmployeeId(id: string | null): id is string {
+    return Boolean(id && /^[1-9]\d*$/.test(id));
 }
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
+function invalidEmployeeIdResponse(): NextResponse {
+    return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
 }
 
 // GET /api/employees - Get all employees
@@ -21,29 +24,16 @@ export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const response = await serverAPIClient.get("/employees", {
             headers: getAuthHeaders(token),
         });
 
-        // Check if backend returned an error status
-        if (response.status >= 400) {
-            console.error("[API] Backend error fetching employees:", response.data);
-            return NextResponse.json(
-                { error: response.data?.message || "Failed to fetch employees" },
-                { status: response.status }
-            );
-        }
-
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error fetching employees:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch employees" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch employees");
     }
 }
 
@@ -52,33 +42,22 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
-        const body = await request.json();
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.post("/employees", body, {
             headers: getAuthHeaders(token),
         });
 
-        // Check if backend returned an error status
-        if (response.status >= 400) {
-            console.error("[API] Backend error creating employee:", response.data);
-            // Pass through the backend response as-is for consistent error structure
-            return NextResponse.json(response.data, { status: response.status });
+        return backendJsonResponse(response);
+    } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
         }
 
-        return NextResponse.json(response.data, { status: 201 });
-    } catch (error) {
-        const axiosError = error instanceof AxiosError ? error as AxiosError<BackendErrorResponse> : null;
-        console.error("[API] Error creating employee:", axiosError?.response?.data || (error instanceof Error ? error.message : error));
-        // Pass through actual backend error response or create error object
-        if (axiosError?.response?.data) {
-            return NextResponse.json(axiosError.response.data, { status: axiosError.response.status || 500 });
-        }
-        return NextResponse.json(
-            { message: error instanceof Error ? error.message : "Failed to create employee", error: "Internal Server Error" },
-            { status: 500 }
-        );
+        return errorResponse(error, "create employee");
     }
 }
 
@@ -95,34 +74,29 @@ export async function PATCH(request: NextRequest) {
             );
         }
 
-        const token = getAuthToken(request);
-        if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        if (!isValidEmployeeId(id)) {
+            return invalidEmployeeIdResponse();
         }
 
-        const body = await request.json();
+        const token = getAuthToken(request);
+        if (!token) {
+            return unauthorizedResponse("Unauthorized");
+        }
+
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.patch("/employees", body, {
             params: { id },
             headers: getAuthHeaders(token),
         });
 
-        // Check if backend returned an error status
-        if (response.status >= 400) {
-            console.error("[API] Backend error updating employee:", response.data);
-            return NextResponse.json(response.data, { status: response.status });
+        return backendJsonResponse(response);
+    } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
         }
 
-        return NextResponse.json(response.data);
-    } catch (error) {
-        const axiosError = error instanceof AxiosError ? error as AxiosError<BackendErrorResponse> : null;
-        console.error("[API] Error updating employee:", axiosError?.response?.data || (error instanceof Error ? error.message : error));
-        if (axiosError?.response?.data) {
-            return NextResponse.json(axiosError.response.data, { status: axiosError.response.status || 500 });
-        }
-        return NextResponse.json(
-            { message: error instanceof Error ? error.message : "Failed to update employee", error: "Internal Server Error" },
-            { status: 500 }
-        );
+        return errorResponse(error, "update employee");
     }
 }
 
@@ -139,9 +113,13 @@ export async function DELETE(request: NextRequest) {
             );
         }
 
+        if (!isValidEmployeeId(id)) {
+            return invalidEmployeeIdResponse();
+        }
+
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const response = await serverAPIClient.delete("/employees", {
@@ -149,21 +127,8 @@ export async function DELETE(request: NextRequest) {
             headers: getAuthHeaders(token),
         });
 
-        // Check if backend returned an error status
-        if (response.status >= 400) {
-            console.error("[API] Backend error deleting employee:", response.data);
-            return NextResponse.json(
-                { error: response.data?.message || "Failed to delete employee" },
-                { status: response.status }
-            );
-        }
-
-        return NextResponse.json({ success: true });
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error deleting employee:", error);
-        return NextResponse.json(
-            { error: "Failed to delete employee" },
-            { status: 500 }
-        );
+        return errorResponse(error, "delete employee");
     }
 }
