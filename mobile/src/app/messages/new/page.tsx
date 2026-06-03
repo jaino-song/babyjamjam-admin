@@ -41,8 +41,10 @@ interface NewMessageFormProps {
 }
 
 const PHONE_REGEX = /^[0-9,\-\s]+$/;
+const SINGLE_PHONE_REGEX = /^[0-9-]+$/;
 const MAX_BODY = 2000;
 const MAX_TITLE = 44;
+const MAX_RECIPIENTS = 50;
 
 const DEFAULT_BODY = `안녕하세요 #{clientName} 고객님,
 
@@ -100,6 +102,13 @@ const VARIABLE_CHIPS = ["#{clientName}", "#{employeeName}", "#{serviceStartDate}
 
 function normalizePhone(raw: string) {
   return raw.replace(/[^0-9\-,]/g, "");
+}
+
+function splitRecipientPhones(raw: string) {
+  return normalizePhone(raw)
+    .split(",")
+    .map((phone) => phone.trim())
+    .filter(Boolean);
 }
 
 function hasUnreplacedVariables(text: string) {
@@ -165,7 +174,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
     if (recipients.length > 0) {
       return recipients.map((recipient) => recipient.phone).join(",");
     }
-    return receiver.trim();
+    return splitRecipientPhones(receiver).join(",");
+  }, [receiver, recipients]);
+  const recipientCount = useMemo(() => {
+    if (recipients.length > 0) {
+      return recipients.length;
+    }
+    return splitRecipientPhones(receiver).length;
   }, [receiver, recipients]);
 
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
@@ -174,11 +189,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
   const validationError = useMemo(() => {
     if (!receiverPayload) return "수신자를 입력해 주세요.";
     if (!PHONE_REGEX.test(receiverPayload)) return "수신자 연락처 형식이 올바르지 않습니다. (숫자, '-', ',' 만 허용)";
+    if (splitRecipientPhones(receiverPayload).some((phone) => !SINGLE_PHONE_REGEX.test(phone))) {
+      return "수신자 연락처 형식이 올바르지 않습니다. (숫자, '-', ',' 만 허용)";
+    }
+    if (recipientCount > MAX_RECIPIENTS) return `수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`;
     if (!body.trim()) return "메시지 본문을 입력해 주세요.";
     if (body.length > MAX_BODY) return `본문은 최대 ${MAX_BODY}자까지 입력할 수 있습니다.`;
     if (title.length > MAX_TITLE) return `제목은 최대 ${MAX_TITLE}자까지 입력할 수 있습니다.`;
     return null;
-  }, [receiverPayload, body, title]);
+  }, [receiverPayload, recipientCount, body, title]);
 
   const sendMutation = useMutation<SendResponse, unknown, void>({
     mutationFn: async () => {
@@ -186,6 +205,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
         receiver: receiverPayload,
         message: body.trim(),
         triggerType: "immediate",
+        channel,
+        msgType: channel === "sms" ? "SMS" : "AUTO",
       };
       if (Number.isFinite(initialClientId) && initialClientId > 0) payload.clientId = initialClientId;
       if (title.trim()) payload.title = title.trim();
@@ -215,20 +236,28 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
   });
 
   const addManualRecipient = () => {
-    const normalized = normalizePhone(receiver);
-    if (!normalized || !PHONE_REGEX.test(normalized)) return;
+    const normalizedPhones = splitRecipientPhones(receiver);
+    if (normalizedPhones.length === 0) return;
+    if (normalizedPhones.some((phone) => !SINGLE_PHONE_REGEX.test(phone))) return;
+    if (recipients.length + normalizedPhones.length > MAX_RECIPIENTS) {
+      setErrorMessage(`수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`);
+      return;
+    }
+
+    const manualName = recipientName.trim();
     setRecipients((current) => [
       ...current,
-      {
-        id: `manual-${normalized}-${current.length}`,
-        name: recipientName.trim() || normalized,
-        phone: normalized,
-        initial: recipientName.trim().slice(0, 1) || "수",
-        tone: "primary",
-      },
+      ...normalizedPhones.map((phone, index) => ({
+        id: `manual-${phone}-${current.length + index}`,
+        name: normalizedPhones.length === 1 && manualName ? manualName : phone,
+        phone,
+        initial: normalizedPhones.length === 1 && manualName ? manualName.slice(0, 1) : "수",
+        tone: "primary" as const,
+      })),
     ]);
     setReceiver("");
     setRecipientName("");
+    setErrorMessage(null);
   };
 
   const handleTemplateSelect = (option: TemplateOption) => {
@@ -250,7 +279,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
   };
 
   const primaryActionLabel =
-    recipients.length > 0 ? `${recipients.length}명에게 발송` : "즉시 발송";
+    recipientCount > 0 ? `${recipientCount}명에게 발송` : "즉시 발송";
 
   return (
     <section data-component="messages-new-page" className={styles.pageRoot}>
@@ -310,7 +339,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
                     </span>
                   ))}
                 </div>
-                <div data-component="messages-new-recipient-helper" className={styles.formHelper}>총 {recipients.length}명 선택됨 · 한 번에 최대 50명까지 발송 가능</div>
+                <div data-component="messages-new-recipient-helper" className={styles.formHelper}>총 {recipientCount}명 선택됨 · 한 번에 최대 {MAX_RECIPIENTS}명까지 발송 가능</div>
               </div>
             </section>
 
