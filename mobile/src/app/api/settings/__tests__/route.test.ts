@@ -1,0 +1,115 @@
+/**
+ * @jest-environment node
+ */
+import { NextRequest } from "next/server";
+
+import { serverAPIClient } from "@/lib/api/server";
+import {
+  GET as getAlimtalkProvider,
+  PUT as updateAlimtalkProvider,
+} from "../alimtalk-provider/route";
+import { POST as requestMessageSenderApproval } from "../message-sender-approval/route";
+
+jest.mock("@/lib/api/server", () => ({
+  serverAPIClient: {
+    get: jest.fn(),
+    post: jest.fn(),
+    put: jest.fn(),
+  },
+}));
+
+const mockGet = serverAPIClient.get as jest.Mock;
+const mockPost = serverAPIClient.post as jest.Mock;
+const mockPut = serverAPIClient.put as jest.Mock;
+
+function createRequest(path: string, init: { method?: string; body?: BodyInit; headers?: Record<string, string> } = {}): NextRequest {
+  return new NextRequest(`http://localhost${path}`, {
+    method: init.method,
+    headers: {
+      cookie: "auth_token=auth-token",
+      ...init.headers,
+    },
+    body: init.body,
+  });
+}
+
+describe("settings API routes", () => {
+  let consoleErrorSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockPut.mockReset();
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("preserves backend error status and payload for Alimtalk provider settings", async () => {
+    mockGet.mockRejectedValue({
+      response: {
+        status: 403,
+        data: { error: "settings access denied" },
+      },
+    });
+
+    const response = await getAlimtalkProvider(
+      createRequest("/api/settings/alimtalk-provider"),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "settings access denied" });
+  });
+
+  it("preserves backend status and payload when updating Alimtalk provider settings", async () => {
+    mockPut.mockResolvedValue({
+      status: 202,
+      data: { queued: true },
+    });
+
+    const response = await updateAlimtalkProvider(
+      createRequest("/api/settings/alimtalk-provider", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "kakao" }),
+      }),
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ queued: true });
+  });
+
+  it("rejects malformed Alimtalk provider JSON before proxying", async () => {
+    const response = await updateAlimtalkProvider(
+      createRequest("/api/settings/alimtalk-provider", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: "{bad-json",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Request body must be valid JSON",
+    });
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed message sender approval JSON before proxying", async () => {
+    const response = await requestMessageSenderApproval(
+      createRequest("/api/settings/message-sender-approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{bad-json",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Request body must be valid JSON",
+    });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+});
