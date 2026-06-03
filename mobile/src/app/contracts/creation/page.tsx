@@ -31,6 +31,8 @@ import {
   createHeadlessProgressId,
   getSafeHeadlessFailureMessage,
   isHeadlessProgressStepKey,
+  resolveFailedHeadlessProgress,
+  resolveNextHeadlessProgress,
   type HeadlessProgressEvent,
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
@@ -495,22 +497,24 @@ export default function ContractCreationPage() {
           try { data = JSON.parse((event as MessageEvent).data) as HeadlessProgressEvent; }
           catch { return; }
           if (data.step === "failed") {
-            setProgressErrorHint(getSafeHeadlessFailureMessage(data.reason));
-            setCreationProgress((current) => ({
-              step: data.failedStep && isHeadlessProgressStepKey(data.failedStep, CONTRACT_CREATION_PROGRESS_STEPS)
-                ? data.failedStep
-                : current.step ?? "client-started",
-              completed: false,
-              failed: true,
-            }));
+            const errorHint = getSafeHeadlessFailureMessage(data.reason);
+            setCreationProgress((current) => {
+              const next = resolveFailedHeadlessProgress(
+                current,
+                data.failedStep,
+                CONTRACT_CREATION_PROGRESS_STEPS,
+              );
+              if (next !== current) {
+                setProgressErrorHint(errorHint);
+              }
+              return next;
+            });
             return;
           }
           if (!isHeadlessProgressStepKey(data.step, CONTRACT_CREATION_PROGRESS_STEPS)) return;
           const nextStep = data.step;
           setCreationProgress((current) =>
-            current.failed
-              ? current
-              : { step: nextStep, completed: nextStep === "sent", failed: false },
+            resolveNextHeadlessProgress(current, nextStep, CONTRACT_CREATION_PROGRESS_STEPS),
           );
         });
 
@@ -533,18 +537,32 @@ export default function ContractCreationPage() {
         }
 
         console.warn("[contract-creation] headless dispatch returned ok=false", headless.reason);
-        setProgressErrorHint(getSafeHeadlessFailureMessage(headless.reason));
-        setCreationProgress((current) => ({
-          step: headless.failedStep && isHeadlessProgressStepKey(headless.failedStep, CONTRACT_CREATION_PROGRESS_STEPS)
-            ? headless.failedStep
-            : current.step ?? "client-started",
-          completed: false,
-          failed: true,
-        }));
+        const errorHint = getSafeHeadlessFailureMessage(headless.reason);
+        setCreationProgress((current) => {
+          const next = resolveFailedHeadlessProgress(
+            current,
+            headless.failedStep,
+            CONTRACT_CREATION_PROGRESS_STEPS,
+          );
+          if (next !== current) {
+            setProgressErrorHint(errorHint);
+          }
+          return next;
+        });
       } catch (headlessError) {
         console.warn("[contract-creation] headless dispatch threw", headlessError);
-        setProgressErrorHint(getSafeHeadlessFailureMessage(headlessError instanceof Error ? headlessError.message : undefined));
-        setCreationProgress((current) => ({ ...current, failed: true }));
+        const errorHint = getSafeHeadlessFailureMessage(headlessError instanceof Error ? headlessError.message : undefined);
+        setCreationProgress((current) => {
+          const next = resolveFailedHeadlessProgress(
+            current,
+            undefined,
+            CONTRACT_CREATION_PROGRESS_STEPS,
+          );
+          if (next !== current) {
+            setProgressErrorHint(errorHint);
+          }
+          return next;
+        });
       } finally {
         progressSource?.close();
         progressSourceRef.current = null;

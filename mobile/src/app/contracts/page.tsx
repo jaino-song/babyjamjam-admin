@@ -39,6 +39,8 @@ import {
   createHeadlessProgressId,
   getSafeHeadlessFailureMessage,
   isHeadlessProgressStepKey,
+  resolveFailedHeadlessProgress,
+  resolveNextHeadlessProgress,
   type HeadlessProgressEvent,
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
@@ -1085,22 +1087,24 @@ export default function ContractsPage() {
         try { data = JSON.parse((event as MessageEvent).data) as HeadlessProgressEvent; }
         catch { return; }
         if (data.step === "failed") {
-          setFinalizeErrorHint(getSafeHeadlessFailureMessage(data.reason));
-          setFinalizeProgress((current) => ({
-            step: data.failedStep && isHeadlessProgressStepKey(data.failedStep, CONTRACT_FINALIZE_PROGRESS_STEPS)
-              ? data.failedStep
-              : current.step ?? "client-started",
-            completed: false,
-            failed: true,
-          }));
+          const errorHint = getSafeHeadlessFailureMessage(data.reason);
+          setFinalizeProgress((current) => {
+            const next = resolveFailedHeadlessProgress(
+              current,
+              data.failedStep,
+              CONTRACT_FINALIZE_PROGRESS_STEPS,
+            );
+            if (next !== current) {
+              setFinalizeErrorHint(errorHint);
+            }
+            return next;
+          });
           return;
         }
         if (!isHeadlessProgressStepKey(data.step, CONTRACT_FINALIZE_PROGRESS_STEPS)) return;
         const nextStep = data.step;
         setFinalizeProgress((current) =>
-          current.failed
-            ? current
-            : { step: nextStep, completed: nextStep === "sent", failed: false },
+          resolveNextHeadlessProgress(current, nextStep, CONTRACT_FINALIZE_PROGRESS_STEPS),
         );
       });
 
@@ -1125,18 +1129,32 @@ export default function ContractsPage() {
       }
 
       console.warn("[finalize] headless ok=false", headless.reason);
-      setFinalizeErrorHint(getSafeHeadlessFailureMessage(headless.reason));
-      setFinalizeProgress((current) => ({
-        step: headless.failedStep && isHeadlessProgressStepKey(headless.failedStep, CONTRACT_FINALIZE_PROGRESS_STEPS)
-          ? (headless.failedStep as HeadlessProgressState["step"])
-          : current.step ?? "client-started",
-        completed: false,
-        failed: true,
-      }));
+      const errorHint = getSafeHeadlessFailureMessage(headless.reason);
+      setFinalizeProgress((current) => {
+        const next = resolveFailedHeadlessProgress(
+          current,
+          headless.failedStep,
+          CONTRACT_FINALIZE_PROGRESS_STEPS,
+        );
+        if (next !== current) {
+          setFinalizeErrorHint(errorHint);
+        }
+        return next;
+      });
     } catch (err) {
       console.warn("[finalize] headless threw", err);
-      setFinalizeErrorHint(getSafeHeadlessFailureMessage(err instanceof Error ? err.message : undefined));
-      setFinalizeProgress((current) => ({ ...current, failed: true }));
+      const errorHint = getSafeHeadlessFailureMessage(err instanceof Error ? err.message : undefined);
+      setFinalizeProgress((current) => {
+        const next = resolveFailedHeadlessProgress(
+          current,
+          undefined,
+          CONTRACT_FINALIZE_PROGRESS_STEPS,
+        );
+        if (next !== current) {
+          setFinalizeErrorHint(errorHint);
+        }
+        return next;
+      });
     } finally {
       progressSource?.close();
       finalizeProgressSourceRef.current = null;

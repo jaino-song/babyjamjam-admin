@@ -52,6 +52,56 @@ export function isHeadlessProgressStepKey(
     return steps.some((item) => item.key === value);
 }
 
+function getHeadlessProgressStepRank(
+    step: HeadlessProgressStepKey | null | undefined,
+    steps: readonly HeadlessProgressStep[],
+): number {
+    if (!step) return -1;
+    return steps.findIndex((item) => item.key === step);
+}
+
+export function resolveNextHeadlessProgress(
+    current: HeadlessProgressState,
+    nextStep: HeadlessProgressStepKey,
+    steps: readonly HeadlessProgressStep[],
+): HeadlessProgressState {
+    if (current.failed || current.completed) {
+        return current;
+    }
+
+    const currentRank = getHeadlessProgressStepRank(current.step, steps);
+    const nextRank = getHeadlessProgressStepRank(nextStep, steps);
+    if (nextRank < 0 || nextRank <= currentRank) {
+        return current;
+    }
+
+    return {
+        step: nextStep,
+        completed: nextStep === "sent",
+        failed: false,
+    };
+}
+
+export function resolveFailedHeadlessProgress(
+    current: HeadlessProgressState,
+    failedStep: string | undefined,
+    steps: readonly HeadlessProgressStep[],
+): HeadlessProgressState {
+    if (current.failed || current.completed) {
+        return current;
+    }
+
+    const step = failedStep && isHeadlessProgressStepKey(failedStep, steps)
+        ? failedStep
+        : current.step ?? "client-started";
+
+    return {
+        step,
+        completed: false,
+        failed: true,
+    };
+}
+
 export function getSafeHeadlessFailureMessage(reason: string | undefined): string {
     if (!reason) return "백엔드 자동 처리에 실패했습니다. 잠시 후 다시 시도해주세요.";
     if (/timed out|timeout/i.test(reason)) return "백엔드 자동 처리 시간이 초과되었습니다.";

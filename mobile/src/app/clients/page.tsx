@@ -19,6 +19,8 @@ import {
   createHeadlessProgressId,
   getSafeHeadlessFailureMessage,
   isHeadlessProgressStepKey,
+  resolveFailedHeadlessProgress,
+  resolveNextHeadlessProgress,
   type HeadlessProgressEvent,
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
@@ -245,40 +247,46 @@ export default function ClientsPage() {
         }
 
         if (data.step === "failed") {
-          setIssueProgressErrorHint(getSafeHeadlessFailureMessage(data.reason));
-          setIssueProgress((current) => ({
-            step: data.failedStep && isHeadlessProgressStepKey(data.failedStep, CONTRACT_CREATION_PROGRESS_STEPS)
-              ? data.failedStep
-              : current.step ?? "client-started",
-            completed: false,
-            failed: true,
-          }));
+          const errorHint = getSafeHeadlessFailureMessage(data.reason);
+          setIssueProgress((current) => {
+            const next = resolveFailedHeadlessProgress(
+              current,
+              data.failedStep,
+              CONTRACT_CREATION_PROGRESS_STEPS,
+            );
+            if (next !== current) {
+              setIssueProgressErrorHint(errorHint);
+            }
+            return next;
+          });
           return;
         }
 
         if (!isHeadlessProgressStepKey(data.step, CONTRACT_CREATION_PROGRESS_STEPS)) return;
         const nextStep = data.step;
         setIssueProgress((current) =>
-          current.failed
-            ? current
-            : { step: nextStep, completed: nextStep === "sent", failed: false },
+          resolveNextHeadlessProgress(current, nextStep, CONTRACT_CREATION_PROGRESS_STEPS),
         );
       });
 
       const headless = await eformsignApi.dispatchHeadless(contractData, client.id, progressId);
 
       if (!headless.ok) {
-        setIssueProgressErrorHint(getSafeHeadlessFailureMessage(headless.reason));
-        setIssueProgress((current) => ({
-          step: headless.failedStep && isHeadlessProgressStepKey(headless.failedStep, CONTRACT_CREATION_PROGRESS_STEPS)
-            ? headless.failedStep
-            : current.step ?? "client-started",
-          completed: false,
-          failed: true,
-        }));
+        const errorHint = getSafeHeadlessFailureMessage(headless.reason);
+        setIssueProgress((current) => {
+          const next = resolveFailedHeadlessProgress(
+            current,
+            headless.failedStep,
+            CONTRACT_CREATION_PROGRESS_STEPS,
+          );
+          if (next !== current) {
+            setIssueProgressErrorHint(errorHint);
+          }
+          return next;
+        });
         toast({
           title: "계약서 자동 발급 실패",
-          description: getSafeHeadlessFailureMessage(headless.reason),
+          description: errorHint,
           variant: "destructive",
         });
         return;
