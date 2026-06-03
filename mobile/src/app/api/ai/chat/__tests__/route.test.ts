@@ -4,7 +4,10 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 
+import { POST as submitFeedback } from "../feedback/route";
+import { GET as getChatHistory } from "../history/route";
 import { POST as persistChat } from "../persist/route";
+import { GET as getChatSession, DELETE as deleteChatSession } from "../sessions/[id]/route";
 import { POST as streamChat } from "../stream/route";
 
 jest.mock("next/headers", () => ({
@@ -33,6 +36,18 @@ function createRequest(path: string, body: BodyInit): NextRequest {
     headers: { "Content-Type": "application/json" },
     body,
   });
+}
+
+function createGetRequest(path: string): NextRequest {
+  return new NextRequest(`http://localhost${path}`, {
+    method: "GET",
+  });
+}
+
+function createSessionParams(id: string): { params: Promise<{ id: string }> } {
+  return {
+    params: Promise.resolve({ id }),
+  };
 }
 
 describe("AI chat API routes", () => {
@@ -101,5 +116,86 @@ describe("AI chat API routes", () => {
     expect(response.status).toBe(502);
     expect(response.headers.get("Content-Type")).toContain("text/event-stream");
     await expect(response.text()).resolves.toContain("backend unavailable");
+  });
+
+  it("rejects out-of-range history limits before proxying", async () => {
+    setAuthCookie("auth-token");
+
+    const response = await getChatHistory(createGetRequest("/api/ai/chat/history?limit=500"));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "limit must be between 1 and 50",
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects negative history offsets before proxying", async () => {
+    setAuthCookie("auth-token");
+
+    const response = await getChatHistory(createGetRequest("/api/ai/chat/history?offset=-1"));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "offset must be greater than or equal to 0",
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("preserves successful backend status when fetching history", async () => {
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ items: [] }), {
+        status: 206,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await getChatHistory(createGetRequest("/api/ai/chat/history?offset=1&limit=2"));
+
+    expect(response.status).toBe(206);
+    await expect(response.json()).resolves.toEqual({ items: [] });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/ai/chat/history?offset=1&limit=2"),
+      expect.any(Object),
+    );
+  });
+
+  it("rejects unsafe session IDs before fetching a session", async () => {
+    setAuthCookie("auth-token");
+
+    const response = await getChatSession(
+      createGetRequest("/api/ai/chat/sessions/bad%2Fid"),
+      createSessionParams("bad/id"),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid session id" });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe session IDs before deleting a session", async () => {
+    setAuthCookie("auth-token");
+
+    const response = await deleteChatSession(
+      createGetRequest("/api/ai/chat/sessions/bad%2Fid"),
+      createSessionParams("bad/id"),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid session id" });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed feedback JSON before proxying", async () => {
+    setAuthCookie("auth-token");
+
+    const response = await submitFeedback(createRequest("/api/ai/chat/feedback", "{bad-json"));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Request body must be valid JSON",
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

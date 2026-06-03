@@ -3,6 +3,26 @@ import { NextRequest } from "next/server";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
 
 const BACKEND_URL = BACKEND_BASE_URL;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function jsonResponse(data: unknown, status: number): Response {
+    return new Response(JSON.stringify(data), {
+        status,
+        headers: { "Content-Type": "application/json" },
+    });
+}
+
+function invalidSessionIdResponse(): Response {
+    return jsonResponse({ error: "Invalid session id" }, 400);
+}
+
+function getSessionUrl(id: string): string | null {
+    if (!SESSION_ID_PATTERN.test(id)) {
+        return null;
+    }
+
+    return `${BACKEND_URL}/ai/chat/sessions/${encodeURIComponent(id)}`;
+}
 
 export async function GET(
     request: NextRequest,
@@ -13,13 +33,15 @@ export async function GET(
     const { id } = await params;
 
     if (!authToken) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-        });
+        return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
-    const backendResponse = await fetch(`${BACKEND_URL}/ai/chat/sessions/${id}`, {
+    const sessionUrl = getSessionUrl(id);
+    if (!sessionUrl) {
+        return invalidSessionIdResponse();
+    }
+
+    const backendResponse = await fetch(sessionUrl, {
         method: "GET",
         headers: {
             Authorization: `Bearer ${authToken.value}`,
@@ -28,10 +50,7 @@ export async function GET(
 
     const data = await backendResponse.json();
 
-    return new Response(JSON.stringify(data), {
-        status: backendResponse.status,
-        headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse(data, backendResponse.status);
 }
 
 export async function DELETE(
@@ -43,13 +62,15 @@ export async function DELETE(
     const { id } = await params;
 
     if (!authToken) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-        });
+        return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
-    const backendResponse = await fetch(`${BACKEND_URL}/ai/chat/sessions/${id}`, {
+    const sessionUrl = getSessionUrl(id);
+    if (!sessionUrl) {
+        return invalidSessionIdResponse();
+    }
+
+    const backendResponse = await fetch(sessionUrl, {
         method: "DELETE",
         headers: {
             Authorization: `Bearer ${authToken.value}`,
@@ -62,8 +83,5 @@ export async function DELETE(
 
     const data = await backendResponse.json();
 
-    return new Response(JSON.stringify(data), {
-        status: backendResponse.status,
-        headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse(data, backendResponse.status);
 }
