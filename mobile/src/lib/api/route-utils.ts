@@ -99,6 +99,61 @@ export function getUpstreamErrorStatus(error: unknown, fallbackStatus = 500): nu
     return fallbackStatus;
 }
 
+function getUpstreamErrorData(error: unknown): unknown {
+    if (error && typeof error === "object" && "response" in error) {
+        return (error as { response?: { data?: unknown } }).response?.data;
+    }
+
+    return undefined;
+}
+
+function safeErrorCode(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+
+    return /^[A-Z][A-Z0-9_:-]{0,63}$/.test(value) ? value : undefined;
+}
+
+export function sanitizeUpstreamClientError(
+    upstreamData: unknown,
+    fallbackMessage: string
+): { error: string; code?: string; hasKakaoAccount?: boolean } {
+    const payload: { error: string; code?: string; hasKakaoAccount?: boolean } = {
+        error: fallbackMessage,
+    };
+
+    if (upstreamData && typeof upstreamData === "object") {
+        const data = upstreamData as { code?: unknown; hasKakaoAccount?: unknown };
+        const code = safeErrorCode(data.code);
+        if (code) {
+            payload.code = code;
+        }
+        if (typeof data.hasKakaoAccount === "boolean") {
+            payload.hasKakaoAccount = data.hasKakaoAccount;
+        }
+    }
+
+    return payload;
+}
+
+export function logUpstreamError(context: string, error: unknown): void {
+    const data = getUpstreamErrorData(error);
+    const upstreamCode = data && typeof data === "object"
+        ? safeErrorCode((data as { code?: unknown }).code)
+        : undefined;
+    const transportCode = error && typeof error === "object"
+        ? safeErrorCode((error as { code?: unknown }).code)
+        : undefined;
+    const errorName = error instanceof Error ? error.name : undefined;
+
+    console.error(`[${context}] Error:`, {
+        status: getUpstreamErrorStatus(error),
+        code: upstreamCode ?? transportCode,
+        name: errorName,
+    });
+}
+
 export function upstreamJsonErrorResponse(
     status = 502,
     fallbackMessage = "Backend request failed"

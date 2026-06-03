@@ -3,8 +3,11 @@ import { serverAPIClient } from "@/lib/api/server";
 import {
   getAuthHeaders,
   getAuthToken,
+  getUpstreamErrorStatus,
   invalidJsonResponse,
+  logUpstreamError,
   readJsonObjectBody,
+  sanitizeUpstreamClientError,
 } from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
@@ -28,10 +31,15 @@ export async function POST(request: NextRequest) {
     if (error && typeof error === "object" && "response" in error) {
       const axiosErr = error as { response?: { status?: number; data?: unknown } };
       if (axiosErr.response) {
-        return NextResponse.json(axiosErr.response.data, { status: axiosErr.response.status ?? 500 });
+        const status = getUpstreamErrorStatus(error);
+        logUpstreamError("API send SMS", error);
+        return NextResponse.json(
+          sanitizeUpstreamClientError(axiosErr.response.data, "Failed to send SMS"),
+          { status },
+        );
       }
     }
-    console.error("[API] Error sending SMS:", error);
+    logUpstreamError("API send SMS", error);
     return NextResponse.json(
       { error: "Failed to send SMS" },
       { status: 500 },

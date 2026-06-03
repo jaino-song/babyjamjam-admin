@@ -3,6 +3,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+import { getUpstreamErrorStatus, logUpstreamError, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
 
 interface TokenPayload {
     sub: string;
@@ -78,19 +79,15 @@ export async function POST(request: NextRequest) {
             requiresBranchSelection: data.requiresBranchSelection,
         }, { status: 200 });
     } catch (error) {
-        console.error("[Auth Login] Error:", error);
+        logUpstreamError("Auth Login", error);
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
-            const status = axiosError.response?.status || 500;
+            const status = getUpstreamErrorStatus(error);
             const responseData = axiosError.response?.data;
 
-            if (responseData) {
-                return NextResponse.json(responseData, { status });
-            }
-
             return NextResponse.json(
-                { error: axiosError.message || "Login failed" },
+                sanitizeUpstreamClientError(responseData, "Login failed"),
                 { status }
             );
         }
