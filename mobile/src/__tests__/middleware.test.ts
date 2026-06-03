@@ -30,6 +30,13 @@ describe("middleware API route protection", () => {
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
+  it("does not allow the legacy token callback as a public API route", async () => {
+    const response = await middleware(createRequest("/api/auth/callback"));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Authentication required" });
+  });
+
   it("rejects protected API routes without a session", async () => {
     const response = await middleware(createRequest("/api/clients"));
 

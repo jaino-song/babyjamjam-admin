@@ -176,7 +176,6 @@ const PUBLIC_ROUTES = [
 ];
 
 const PUBLIC_API_ROUTES = [
-  "/api/auth/callback",
   "/api/auth/check-email",
   "/api/auth/forgot-password",
   "/api/auth/kakao",
