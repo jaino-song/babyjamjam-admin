@@ -46,6 +46,16 @@ describe("eformsign SSE proxy routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "tenant blocked" });
   });
 
+  it("maps document event transport failures to a structured response", async () => {
+    mockFetch.mockRejectedValue(new Error("backend unavailable"));
+
+    const response = await getEvents(createRequest("/api/eformsign-docs/events"));
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    await expect(response.json()).resolves.toEqual({ error: "backend unavailable" });
+  });
+
   it("preserves upstream error text for dispatch progress", async () => {
     mockFetch.mockResolvedValue(
       new Response("progress stream unavailable", {
@@ -63,6 +73,18 @@ describe("eformsign SSE proxy routes", () => {
     await expect(response.text()).resolves.toBe("progress stream unavailable");
   });
 
+  it("maps dispatch progress transport failures to a structured response", async () => {
+    mockFetch.mockRejectedValue(new Error("dispatch backend unavailable"));
+
+    const response = await getDispatchProgress(
+      createRequest("/api/eformsign-docs/dispatch-headless/progress?progressId=progress-1"),
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    await expect(response.json()).resolves.toEqual({ error: "dispatch backend unavailable" });
+  });
+
   it("preserves upstream error JSON for finalize progress", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ message: "progress not found" }), {
@@ -78,5 +100,17 @@ describe("eformsign SSE proxy routes", () => {
     expect(response.status).toBe(404);
     expect(response.headers.get("Content-Type")).toContain("application/json");
     await expect(response.json()).resolves.toEqual({ message: "progress not found" });
+  });
+
+  it("maps finalize progress transport failures to a structured response", async () => {
+    mockFetch.mockRejectedValue(new Error("finalize backend unavailable"));
+
+    const response = await getFinalizeProgress(
+      createRequest("/api/eformsign-docs/finalize-headless/progress?progressId=progress-1"),
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    await expect(response.json()).resolves.toEqual({ error: "finalize backend unavailable" });
   });
 });

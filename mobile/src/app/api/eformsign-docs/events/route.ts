@@ -1,7 +1,11 @@
 import { NextRequest } from "next/server";
 
 import { BACKEND_BASE_URL } from "@/lib/api/server";
-import { getAuthToken, upstreamStreamErrorResponse } from "@/lib/api/route-utils";
+import {
+  getAuthToken,
+  upstreamStreamErrorResponse,
+  upstreamStreamTransportErrorResponse,
+} from "@/lib/api/route-utils";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,15 +16,23 @@ export async function GET(request: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const upstream = await fetch(`${BACKEND_BASE_URL}/eformsign-docs/events`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "text/event-stream",
-    },
-    signal: request.signal,
-    cache: "no-store",
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${BACKEND_BASE_URL}/eformsign-docs/events`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "text/event-stream",
+      },
+      signal: request.signal,
+      cache: "no-store",
+    });
+  } catch (error) {
+    return upstreamStreamTransportErrorResponse(
+      error,
+      "Unable to open eformsign document event stream"
+    );
+  }
 
   if (!upstream.ok || !upstream.body) {
     return upstreamStreamErrorResponse(upstream, "Unable to open eformsign document event stream");

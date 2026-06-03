@@ -1,5 +1,9 @@
 import { NextRequest } from "next/server";
-import { getAuthToken, upstreamStreamErrorResponse } from "@/lib/api/route-utils";
+import {
+    getAuthToken,
+    upstreamStreamErrorResponse,
+    upstreamStreamTransportErrorResponse,
+} from "@/lib/api/route-utils";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
 
 export const dynamic = "force-dynamic";
@@ -18,15 +22,23 @@ export async function GET(request: NextRequest) {
 
     const upstreamUrl = `${BACKEND_BASE_URL}/eformsign-docs/finalize-headless/progress?progressId=${encodeURIComponent(progressId)}`;
 
-    const upstream = await fetch(upstreamUrl, {
-        method: "GET",
-        headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "text/event-stream",
-        },
-        signal: request.signal,
-        cache: "no-store",
-    });
+    let upstream: Response;
+    try {
+        upstream = await fetch(upstreamUrl, {
+            method: "GET",
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "text/event-stream",
+            },
+            signal: request.signal,
+            cache: "no-store",
+        });
+    } catch (error) {
+        return upstreamStreamTransportErrorResponse(
+            error,
+            "Unable to open finalize progress stream"
+        );
+    }
 
     if (!upstream.ok || !upstream.body) {
         return upstreamStreamErrorResponse(upstream, "Unable to open finalize progress stream");

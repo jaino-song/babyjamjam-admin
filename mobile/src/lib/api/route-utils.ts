@@ -112,6 +112,22 @@ export async function upstreamStreamErrorResponse(
     });
 }
 
+export function upstreamStreamTransportErrorResponse(
+    error: unknown,
+    fallbackMessage = "Upstream stream request failed"
+): Response {
+    const errorMessage = error instanceof Error && error.message
+        ? error.message
+        : fallbackMessage;
+
+    return new Response(JSON.stringify({ error: errorMessage }), {
+        status: 502,
+        headers: {
+            "Content-Type": "application/json",
+        },
+    });
+}
+
 /**
  * Set auth tokens in httpOnly cookies
  */
