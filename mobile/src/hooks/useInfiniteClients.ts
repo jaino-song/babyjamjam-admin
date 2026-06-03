@@ -8,12 +8,54 @@ import { clientQueryKeys } from "./useClients";
 
 const INITIAL_VISIBLE_COUNT = 6;
 const PAGE_SIZE = 6;
+const API_PAGE_SIZE = 50;
+const MAX_CLIENT_PAGES = 50;
 
 interface UseInfiniteClientsOptions {
   filter?: string;
   search?: string;
   filterFn?: (client: Client, filterValue: string) => boolean;
   searchFn?: (client: Client, query: string) => boolean;
+}
+
+function resolveTotalPages(response: PaginatedResponse<Client>): number {
+  if (Number.isInteger(response.totalPages) && response.totalPages > 0) {
+    return Math.min(response.totalPages, MAX_CLIENT_PAGES);
+  }
+
+  const total = Number.isFinite(response.total) ? response.total : response.data.length;
+  return Math.min(Math.max(1, Math.ceil(total / API_PAGE_SIZE)), MAX_CLIENT_PAGES);
+}
+
+async function fetchClientPage(page: number): Promise<PaginatedResponse<Client>> {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("limit", String(API_PAGE_SIZE));
+  const { data } = await api.get(`/clients?${params.toString()}`);
+  return data;
+}
+
+async function fetchAllClientPages(): Promise<PaginatedResponse<Client>> {
+  const firstPage = await fetchClientPage(1);
+  const totalPages = resolveTotalPages(firstPage);
+
+  if (totalPages <= 1) {
+    return firstPage;
+  }
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, index) => fetchClientPage(index + 2)),
+  );
+  const allData = [firstPage, ...remainingPages].flatMap((page) => page.data);
+
+  return {
+    ...firstPage,
+    data: allData,
+    total: Number.isFinite(firstPage.total) ? firstPage.total : allData.length,
+    page: 1,
+    limit: API_PAGE_SIZE,
+    totalPages,
+  };
 }
 
 export function useInfiniteClients({
@@ -29,14 +71,8 @@ export function useInfiniteClients({
   });
 
   const query = useQuery<PaginatedResponse<Client>>({
-    queryKey: clientQueryKeys.list(1, 50),
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.set("page", "1");
-      params.set("limit", "50");
-      const { data } = await api.get(`/clients?${params.toString()}`);
-      return data;
-    },
+    queryKey: [...clientQueryKeys.lists(), { scope: "all-pages", limit: API_PAGE_SIZE }] as const,
+    queryFn: fetchAllClientPages,
     staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 60,
   });

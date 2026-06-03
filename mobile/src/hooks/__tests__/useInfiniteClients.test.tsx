@@ -32,6 +32,18 @@ function createResponse(count: number): PaginatedResponse<Client> {
   };
 }
 
+function createPageResponse(page: number, total: number, count: number): PaginatedResponse<Client> {
+  const offset = (page - 1) * 50;
+  const clients = Array.from({ length: count }, (_, index) => createClient(offset + index + 1));
+  return {
+    data: clients,
+    total,
+    page,
+    limit: 50,
+    totalPages: Math.ceil(total / 50),
+  };
+}
+
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -101,5 +113,29 @@ describe("useInfiniteClients", () => {
 
     expect(result.current.allClients).toHaveLength(3);
     expect(result.current.total).toBe(3);
+  });
+
+  it("loads all backend pages instead of stopping at the first 50 clients", async () => {
+    mockedApiGet.mockImplementation(async (url) => {
+      const query = new URL(String(url), "http://localhost").searchParams;
+      const page = Number(query.get("page"));
+
+      return {
+        data: page === 1
+          ? createPageResponse(1, 51, 50)
+          : createPageResponse(2, 51, 1),
+      };
+    });
+
+    const { result } = renderHook(() => useInfiniteClients(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.allClients).toHaveLength(51);
+    expect(result.current.total).toBe(51);
+    expect(mockedApiGet).toHaveBeenCalledWith("/clients?page=1&limit=50");
+    expect(mockedApiGet).toHaveBeenCalledWith("/clients?page=2&limit=50");
   });
 });
