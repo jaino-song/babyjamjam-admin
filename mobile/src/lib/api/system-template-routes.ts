@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
+    backendJsonResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
@@ -36,7 +39,7 @@ export async function proxySystemTemplateGet(
             headers: getAuthHeaders(token),
         });
 
-        return NextResponse.json(response.data, { status: response.status });
+        return backendJsonResponse(response);
     } catch (error) {
         return errorResponse(error, context);
     }
@@ -54,13 +57,18 @@ export async function proxySystemTemplatePost(
     }
 
     try {
-        const body = await request.json().catch(() => ({}));
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.post(buildSystemTemplatePath(key, suffix), body, {
             headers: getAuthHeaders(token),
         });
 
-        return NextResponse.json(response.data, { status: response.status });
+        return backendJsonResponse(response);
     } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
         return errorResponse(error, context);
     }
 }

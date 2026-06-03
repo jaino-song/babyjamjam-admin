@@ -6,6 +6,7 @@ import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 
 import { POST as rollbackTemplate } from "../[key]/rollback/[version]/route";
+import { POST as validateTemplate } from "../[key]/validate/route";
 import { GET as getTemplateVersions } from "../[key]/versions/route";
 
 jest.mock("@/lib/api/server", () => ({
@@ -19,10 +20,14 @@ const mockGet = serverAPIClient.get as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
 const expectedAuthorization = `Bearer ${"token-1"}`;
 
-function createRequest(path: string, method = "GET", cookie?: string): NextRequest {
+function createRequest(path: string, method = "GET", cookie?: string, body?: BodyInit): NextRequest {
     return new NextRequest(`http://localhost${path}`, {
         method,
-        headers: cookie ? { cookie } : undefined,
+        headers: {
+            ...(cookie ? { cookie } : {}),
+            ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        body,
     });
 }
 
@@ -92,5 +97,23 @@ describe("system-template nested API routes", () => {
             {},
             { headers: { Authorization: expectedAuthorization } },
         );
+    });
+
+    it("rejects malformed template action JSON before proxying", async () => {
+        const response = await validateTemplate(
+            createRequest(
+                "/api/system-templates/GREETING/validate",
+                "POST",
+                "auth_token=token-1",
+                "{bad-json",
+            ),
+            { params: Promise.resolve({ key: "GREETING" }) },
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({
+            error: "Request body must be valid JSON",
+        });
+        expect(mockPost).not.toHaveBeenCalled();
     });
 });
