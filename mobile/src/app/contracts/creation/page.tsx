@@ -25,6 +25,7 @@ import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialo
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { isStrictIsoDate, isoToYymmdd, normalizeIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { buildInitialSignRequestDocRecord } from "@/lib/eformsign/document-record";
 import {
   CONTRACT_CREATION_PROGRESS_STEPS,
   INITIAL_HEADLESS_PROGRESS,
@@ -398,20 +399,14 @@ export default function ContractCreationPage() {
         onSuccess: async (response) => {
           if (finalClientId && response.document_id) {
             try {
-              await eformsignApi.createDocRecord({
+              await eformsignApi.createDocRecord(buildInitialSignRequestDocRecord({
                 documentId: response.document_id,
                 clientId: finalClientId,
-                statusType: "060",
-                statusDetail: "대기",
-                stepType: "01",
-                stepIndex: "1",
-                stepName: "서명 요청",
-                stepRecipientType: "01",
                 stepRecipientName: name,
                 stepRecipientSms: phone,
                 expiredDate: expiry.add(30, "day").toISOString(),
                 linkToClient: true,
-              });
+              }));
             } catch (docError) {
               console.error("Failed to create eformsign doc record:", docError);
             }

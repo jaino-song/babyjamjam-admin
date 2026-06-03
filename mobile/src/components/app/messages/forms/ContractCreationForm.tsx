@@ -7,6 +7,7 @@ import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
+import { buildInitialSignRequestDocRecord } from "@/lib/eformsign/document-record";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -470,20 +471,14 @@ export const ContractCreationForm = () => {
             // Create eformsign_doc record to track the document and link to client
             if (finalClientId && response.document_id) {
               try {
-                await eformsignApi.createDocRecord({
+                await eformsignApi.createDocRecord(buildInitialSignRequestDocRecord({
                   documentId: response.document_id,
                   clientId: finalClientId,
-                  statusType: "060", // 대기
-                  statusDetail: "대기",
-                  stepType: "01",
-                  stepIndex: "1",
-                  stepName: "서명 요청",
-                  stepRecipientType: "01",
                   stepRecipientName: name,
                   stepRecipientSms: phone,
                   expiredDate: end.add(30, "day").toISOString(),
                   linkToClient: true, // Also update client.e_doc_id for tracking
-                });
+                }));
               } catch (docError) {
                 console.error("Failed to create eformsign doc record:", docError);
                 // Don't fail the whole operation if doc record creation fails

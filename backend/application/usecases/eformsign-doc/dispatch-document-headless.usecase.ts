@@ -122,7 +122,7 @@ export class DispatchDocumentHeadlessUsecase {
                     documentId,
                     clientId: params.clientId,
                     statusType: "060",
-                    statusDetail: "대기",
+                    statusDetail: "서명 요청됨",
                     stepType: "01",
                     stepIndex: "1",
                     stepName: "서명 요청",
