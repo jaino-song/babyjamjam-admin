@@ -211,15 +211,15 @@ describe("AlimtalkTriggerController (Integration)", () => {
             expect(triggerService.listUpcomingJobs).toHaveBeenCalledWith(branchId, 200);
         });
 
-        it("caps the limit at 500", async () => {
+        it("rejects limits above 500", async () => {
             triggerService.listUpcomingJobs.mockResolvedValue([]);
 
             const response = await request(app.getHttpServer())
                 .get("/alimtalk-trigger-jobs/upcoming")
                 .query({ limit: 999 });
 
-            expect(response.status).toBe(200);
-            expect(triggerService.listUpcomingJobs).toHaveBeenCalledWith(branchId, 500);
+            expect(response.status).toBe(400);
+            expect(triggerService.listUpcomingJobs).not.toHaveBeenCalled();
         });
     });
 
@@ -233,7 +233,18 @@ describe("AlimtalkTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
-            expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25);
+            expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25, 0);
+        });
+
+        it("passes validated skip to history lookup", async () => {
+            triggerService.listHistory.mockResolvedValue([createMockHistoryRecord()]);
+
+            const response = await request(app.getHttpServer())
+                .get("/alimtalk-logs")
+                .query({ limit: 25, skip: 50 });
+
+            expect(response.status).toBe(200);
+            expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25, 50);
         });
     });
 

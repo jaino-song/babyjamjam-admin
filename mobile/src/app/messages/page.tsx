@@ -7,6 +7,7 @@ import { MessageCircle, ThumbsUp } from "lucide-react";
 
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { api } from "@/lib/api/client";
+import { fetchAllAlimtalkLogs } from "@/lib/alimtalk/logs";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import {
@@ -223,11 +224,8 @@ export default function MessagesPage() {
   });
 
   const { data: historyLogsData, isLoading: isHistoryLogsLoading } = useQuery<AlimtalkLogRecord[]>({
-    queryKey: ["alimtalk", "logs", 200],
-    queryFn: async () => {
-      const res = await api.get<AlimtalkLogRecord[]>("/alimtalk-logs", { params: { limit: 200 } });
-      return res.data;
-    },
+    queryKey: ["alimtalk", "logs", "all"],
+    queryFn: () => fetchAllAlimtalkLogs<AlimtalkLogRecord>(),
   });
 
   const upcomingJobs = useMemo(

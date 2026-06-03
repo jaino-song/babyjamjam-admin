@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
       headers: getAuthHeaders(token),
       params: {
         limit: searchParams.get("limit") ?? undefined,
+        skip: searchParams.get("skip") ?? undefined,
       },
     });
     return backendJsonResponse(response);

@@ -60,6 +60,24 @@ describe("Alimtalk API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "log access denied" });
   });
 
+  it("forwards Alimtalk log limit and skip params", async () => {
+    mockGet.mockResolvedValue({
+      status: 200,
+      data: [],
+    });
+
+    const response = await listAlimtalkLogs(createRequest("/api/alimtalk-logs?limit=500&skip=500"));
+
+    expect(response.status).toBe(200);
+    expect(mockGet).toHaveBeenCalledWith("/alimtalk-logs", {
+      headers: { Authorization: "Bearer auth-token" },
+      params: {
+        limit: "500",
+        skip: "500",
+      },
+    });
+  });
+
   it("preserves backend error status and payload when listing upcoming jobs", async () => {
     mockGet.mockRejectedValue({
       response: {

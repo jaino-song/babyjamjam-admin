@@ -175,12 +175,13 @@ export class AlimtalkTriggerService {
     async listHistory(
         branchId: string,
         limit = 200,
+        skip = 0,
     ): Promise<AlimtalkHistoryRecordView[]> {
         if (!(await hasTable(this.prisma, "alimtalk_log"))) {
             return [];
         }
 
-        const logs = await this.logRepository.findRecentByBranch(branchId, limit);
+        const logs = await this.logRepository.findRecentByBranch(branchId, limit, skip);
         if (logs.length === 0) {
             return [];
         }

@@ -7,6 +7,7 @@ export interface IAlimtalkLogRepository {
     findRecentByBranch(
         branchId: string,
         limit?: number,
+        skip?: number,
     ): Promise<AlimtalkLogEntity[]>;
 }
 

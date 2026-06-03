@@ -14,7 +14,7 @@ import type {
   TriggerEventType,
   TriggerTemplateKey,
 } from "@/features/alimtalk-triggers/types";
-import { api } from "@/lib/api/client";
+import { fetchAllAlimtalkLogs } from "@/lib/alimtalk/logs";
 import "@/components/app/mobile-redesign/redesign.css";
 
 interface AlimtalkLogRecord {
@@ -137,13 +137,8 @@ export function AlimtalkAutomationPage() {
   const updateRuleMutation = useUpdateAlimtalkTriggerRule();
 
   const { data: logsResponse = [] } = useQuery<unknown>({
-    queryKey: ["alimtalk", "logs", 200],
-    queryFn: async () => {
-      const res = await api.get<unknown>("/alimtalk-logs", {
-        params: { limit: 200 },
-      });
-      return res.data;
-    },
+    queryKey: ["alimtalk", "logs", "all"],
+    queryFn: () => fetchAllAlimtalkLogs<AlimtalkLogRecord>(),
   });
 
   const rules = useMemo<AlimtalkTriggerRule[]>(() => (

@@ -10,7 +10,7 @@ import { useAreaTemplates } from "@/hooks";
 import { useEmployees } from "@/hooks/useEmployees";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
-import { api } from "@/lib/api/client";
+import { fetchAllAlimtalkLogs } from "@/lib/alimtalk/logs";
 import { Client } from "@/lib/client/types";
 import { buildClientContractData } from "@/lib/contracts/client-contract-data";
 import {
@@ -166,13 +166,8 @@ export default function ClientsPage() {
   const { data: clientFromParam } = useClient(selectedClientIdFromParam ?? 0);
   const detailClient = selectedClient ?? (selectedClientIdFromParam !== null ? clientFromParam ?? null : null);
   const { data: notificationLogsData = [], isLoading: isNotificationLogsLoading } = useQuery<ClientNotificationLogRecord[]>({
-    queryKey: ["alimtalk", "logs", 200],
-    queryFn: async () => {
-      const res = await api.get<ClientNotificationLogRecord[]>("/alimtalk-logs", {
-        params: { limit: 200 },
-      });
-      return res.data;
-    },
+    queryKey: ["alimtalk", "logs", "all"],
+    queryFn: () => fetchAllAlimtalkLogs<ClientNotificationLogRecord>(),
     enabled: Boolean(detailClient),
     staleTime: 1000 * 60,
   });

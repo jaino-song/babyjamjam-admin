@@ -38,10 +38,12 @@ export class AlimtalkTriggerController {
     listHistory(
         @CurrentTenant() tenant: { branchId?: string },
         @Query("limit") limit?: string,
+        @Query("skip") skip?: string,
     ) {
         return this.triggerService.listHistory(
             tenant.branchId ?? "",
             parseInteger(limit, "limit", { defaultValue: 200, min: 1, max: 500 }),
+            parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
         );
     }
 
