@@ -90,6 +90,47 @@ describe("useEformsignDocumentEvents", () => {
     expect(MockEventSource.instances[0]?.closed).toBe(true);
   });
 
+  it("suppresses duplicate docs-changed payloads while allowing distinct payloads", () => {
+    const onDocsChanged = jest.fn();
+    renderHook(() =>
+      useEformsignDocumentEvents({ enabled: true, onDocsChanged }),
+    );
+
+    act(() => {
+      MockEventSource.instances[0]?.dispatch(
+        "docs-changed",
+        JSON.stringify({ documentId: "doc-1", reason: "doc:complete" }),
+      );
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(onDocsChanged).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      MockEventSource.instances[0]?.dispatch(
+        "docs-changed",
+        JSON.stringify({ documentId: "doc-1", reason: "doc:complete" }),
+      );
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(onDocsChanged).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      MockEventSource.instances[0]?.dispatch(
+        "docs-changed",
+        JSON.stringify({ documentId: "doc-1", reason: "doc:archived" }),
+      );
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(onDocsChanged).toHaveBeenCalledTimes(2);
+    expect(onDocsChanged).toHaveBeenLastCalledWith({
+      documentId: "doc-1",
+      reason: "doc:archived",
+    });
+  });
+
   it("closes while hidden and reconnects when visible again", () => {
     renderHook(() =>
       useEformsignDocumentEvents({ enabled: true, onDocsChanged: jest.fn() }),

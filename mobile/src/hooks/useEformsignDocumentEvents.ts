@@ -16,6 +16,7 @@ interface UseEformsignDocumentEventsOptions {
 const EFORM_DOC_EVENTS_URL = "/api/eformsign-docs/events";
 const RECONNECT_DELAY_MS = 30 * 1000;
 const INVALIDATE_DEBOUNCE_MS = 300;
+const DUPLICATE_EVENT_SUPPRESSION_MS = 2 * 1000;
 
 function parseDocsChangedEvent(event: Event): EformsignDocsChangedEvent {
   if (!(event instanceof MessageEvent) || typeof event.data !== "string") {
@@ -28,6 +29,14 @@ function parseDocsChangedEvent(event: Event): EformsignDocsChangedEvent {
   } catch {
     return {};
   }
+}
+
+function getDocsChangedEventKey(event: EformsignDocsChangedEvent): string {
+  return [
+    event.branchId ?? "",
+    event.documentId ?? "",
+    event.reason ?? "",
+  ].join("\u001f");
 }
 
 export function useEformsignDocumentEvents({
@@ -47,6 +56,8 @@ export function useEformsignDocumentEvents({
     let source: EventSource | null = null;
     let reconnectTimer: number | null = null;
     let invalidateTimer: number | null = null;
+    let lastDeliveredEventKey: string | null = null;
+    let lastDeliveredAt = 0;
     let disposed = false;
 
     const clearReconnectTimer = () => {
@@ -79,6 +90,18 @@ export function useEformsignDocumentEvents({
       clearInvalidateTimer();
       invalidateTimer = window.setTimeout(() => {
         invalidateTimer = null;
+        const eventKey = getDocsChangedEventKey(payload);
+        const now = Date.now();
+        if (
+          lastDeliveredEventKey === eventKey &&
+          now - lastDeliveredAt < DUPLICATE_EVENT_SUPPRESSION_MS
+        ) {
+          lastDeliveredAt = now;
+          return;
+        }
+
+        lastDeliveredEventKey = eventKey;
+        lastDeliveredAt = now;
         onDocsChangedRef.current(payload);
       }, INVALIDATE_DEBOUNCE_MS);
     };
