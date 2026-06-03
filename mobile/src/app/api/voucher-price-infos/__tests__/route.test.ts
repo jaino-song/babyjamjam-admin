@@ -1,17 +1,12 @@
 /**
  * @jest-environment node
  */
-import { jwtDecode } from "jwt-decode";
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { GET as getVoucherPriceInfosByType } from "../type/route";
 import { GET as getVoucherPriceYears } from "../years/route";
 import { POST as bulkUpdateVoucherPrices } from "../bulk-update/route";
-
-jest.mock("jwt-decode", () => ({
-  jwtDecode: jest.fn(),
-}));
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -20,7 +15,6 @@ jest.mock("@/lib/api/server", () => ({
   },
 }));
 
-const mockJwtDecode = jwtDecode as jest.Mock;
 const mockGet = serverAPIClient.get as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
 
@@ -39,7 +33,6 @@ describe("voucher price info API routes", () => {
   let consoleErrorSpy: jest.SpyInstance;
 
   beforeEach(() => {
-    mockJwtDecode.mockReset();
     mockGet.mockReset();
     mockPost.mockReset();
     consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -76,8 +69,6 @@ describe("voucher price info API routes", () => {
   });
 
   it("rejects malformed bulk update JSON before proxying", async () => {
-    mockJwtDecode.mockReturnValue({ role: "owner" });
-
     const response = await bulkUpdateVoucherPrices(
       createRequest("/api/voucher-price-infos/bulk-update", {
         method: "POST",
@@ -94,7 +85,6 @@ describe("voucher price info API routes", () => {
   });
 
   it("does not return or log raw rejected backend bulk update errors", async () => {
-    mockJwtDecode.mockReturnValue({ role: "owner" });
     mockPost.mockRejectedValue({
       response: {
         status: 409,

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jwtDecode } from "jwt-decode";
 import { serverAPIClient } from "@/lib/api/server";
 import {
   backendJsonResponse,
@@ -8,35 +7,20 @@ import {
   readJsonObjectBody,
 } from "@/lib/api/route-utils";
 
-interface TokenPayload {
-  role?: string | null;
-}
-
 function getAuthToken(request: NextRequest): string | null {
   return request.cookies.get("auth_token")?.value || null;
-}
-
-function isOwnerToken(token: string): boolean {
-  try {
-    return jwtDecode<TokenPayload>(token).role === "owner";
-  } catch {
-    return false;
-  }
 }
 
 /**
  * POST /api/voucher-price-infos/bulk-update
  * 파싱된 바우처 가격 정보 일괄 업데이트
- * Owner role only.
+ * Backend enforces owner/admin authorization.
  */
 export async function POST(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (!isOwnerToken(token)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const body = await readJsonObjectBody(request);

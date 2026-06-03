@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { BACKEND_BASE_URL } from '@/lib/api/server';
-import { isAdminToken } from './admin-auth';
 
 const API_BASE_URL = BACKEND_BASE_URL;
 
@@ -10,9 +9,6 @@ export async function GET(request: NextRequest) {
   const token = cookieStore.get('auth_token')?.value;
   if (!token) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  if (!isAdminToken(token)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   
   const { searchParams } = new URL(request.url);

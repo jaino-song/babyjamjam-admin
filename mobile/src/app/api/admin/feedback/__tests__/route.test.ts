@@ -2,7 +2,6 @@
  * @jest-environment node
  */
 import { cookies } from "next/headers";
-import { jwtDecode } from "jwt-decode";
 import { NextRequest } from "next/server";
 
 import { GET as getFeedbackList } from "../route";
@@ -13,12 +12,7 @@ jest.mock("next/headers", () => ({
   cookies: jest.fn(),
 }));
 
-jest.mock("jwt-decode", () => ({
-  jwtDecode: jest.fn(),
-}));
-
 const mockCookies = cookies as jest.Mock;
-const mockJwtDecode = jwtDecode as jest.Mock;
 const mockFetch = jest.fn();
 const originalFetch = global.fetch;
 
@@ -49,35 +43,48 @@ describe("admin feedback API authorization", () => {
 
   beforeEach(() => {
     mockCookies.mockReset();
-    mockJwtDecode.mockReset();
     mockFetch.mockReset();
   });
 
-  it("rejects non-admin users before listing feedback", async () => {
+  it("proxies backend authorization denials when listing feedback", async () => {
     setAuthCookie("user-token");
-    mockJwtDecode.mockReturnValue({ role: "manager" });
+    mockFetch.mockResolvedValue({ ok: false, status: 403 });
 
     const response = await getFeedbackList(createRequest("/api/admin/feedback"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
-    expect(mockFetch).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch feedback" });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/admin/feedback?page=1&limit=20"),
+      {
+        headers: {
+          Authorization: "Bearer user-token",
+        },
+      },
+    );
   });
 
-  it("rejects non-admin users before reading feedback stats", async () => {
+  it("proxies backend authorization denials when reading feedback stats", async () => {
     setAuthCookie("user-token");
-    mockJwtDecode.mockReturnValue({ role: "manager" });
+    mockFetch.mockResolvedValue({ ok: false, status: 403 });
 
     const response = await getFeedbackStats();
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
-    expect(mockFetch).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch feedback stats" });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/admin/feedback/stats"),
+      {
+        headers: {
+          Authorization: "Bearer user-token",
+        },
+      },
+    );
   });
 
-  it("rejects non-admin users before reading feedback details", async () => {
+  it("proxies backend authorization denials when reading feedback details", async () => {
     setAuthCookie("user-token");
-    mockJwtDecode.mockReturnValue({ role: "manager" });
+    mockFetch.mockResolvedValue({ ok: false, status: 403 });
 
     const response = await getFeedbackDetail(
       createRequest("/api/admin/feedback/fb-1"),
@@ -85,13 +92,19 @@ describe("admin feedback API authorization", () => {
     );
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
-    expect(mockFetch).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch feedback" });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/admin/feedback/fb-1"),
+      {
+        headers: {
+          Authorization: "Bearer user-token",
+        },
+      },
+    );
   });
 
-  it("allows owner users to proxy feedback list requests", async () => {
+  it("proxies feedback list requests with the auth token", async () => {
     setAuthCookie("owner-token");
-    mockJwtDecode.mockReturnValue({ role: "owner" });
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ items: [] }),

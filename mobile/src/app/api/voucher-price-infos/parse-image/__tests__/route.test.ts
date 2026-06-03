@@ -1,16 +1,11 @@
 /**
  * @jest-environment node
  */
-import { jwtDecode } from "jwt-decode";
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 
 import { POST } from "../route";
-
-jest.mock("jwt-decode", () => ({
-    jwtDecode: jest.fn(),
-}));
 
 jest.mock("@/lib/api/server", () => ({
     serverAPIClient: {
@@ -18,7 +13,6 @@ jest.mock("@/lib/api/server", () => ({
     },
 }));
 
-const mockJwtDecode = jwtDecode as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
 
 function createRequest(): NextRequest {
@@ -38,7 +32,6 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
     let consoleErrorSpy: jest.SpyInstance;
 
     beforeEach(() => {
-        mockJwtDecode.mockReset();
         mockPost.mockReset();
         consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     });
@@ -48,7 +41,6 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
     });
 
     it("forwards multipart uploads without overriding the form-data boundary", async () => {
-        mockJwtDecode.mockReturnValue({ role: "owner" });
         mockPost.mockResolvedValue({
             status: 200,
             data: { parsedData: [], hasValidationWarnings: false, warnings: [] },
@@ -70,7 +62,6 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
     });
 
     it("preserves backend status and payload", async () => {
-        mockJwtDecode.mockReturnValue({ role: "owner" });
         mockPost.mockResolvedValue({
             status: 422,
             data: { error: "이미지를 파싱할 수 없습니다" },
@@ -85,7 +76,6 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
     });
 
     it("does not return or log raw rejected backend parse errors", async () => {
-        mockJwtDecode.mockReturnValue({ role: "owner" });
         mockPost.mockRejectedValue({
             response: {
                 status: 422,

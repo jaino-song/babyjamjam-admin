@@ -61,11 +61,13 @@ describe("middleware API route protection", () => {
     mockJwtDecode.mockReturnValue({
       sub: "user-1",
       role: "manager",
-      branchId: "branch-1",
       type: "access",
     });
 
-    const response = await middleware(createRequest("/api/clients", "auth_token=session-token"));
+    const response = await middleware(createRequest(
+      "/api/clients",
+      "auth_token=session-token; selected_branch_id=branch-1",
+    ));
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-middleware-next")).toBe("1");
