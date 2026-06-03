@@ -5,6 +5,7 @@ import {
     getAuthHeaders,
     getAuthToken,
     getRefreshToken,
+    sanitizeUpstreamClientError,
     setAuthCookies,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
@@ -48,8 +49,10 @@ export async function POST(request: NextRequest) {
         });
 
         if (response.status >= 400) {
-            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
-            return NextResponse.json({ error: errorMessage }, { status: response.status });
+            return NextResponse.json(
+                sanitizeUpstreamClientError(response.data, "Failed to refresh access token"),
+                { status: response.status }
+            );
         }
 
         const { accessToken, refreshToken: newRefreshToken } = extractTokenPair(response.data);

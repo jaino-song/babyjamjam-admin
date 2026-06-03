@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
+import { getAuthHeaders, getAuthToken, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
 import {
   deriveDashboardAnalyticsFromClients,
   normalizeDashboardAnalyticsPayload,
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
     if (response.status >= 400) {
       if (backendAnalytics) return NextResponse.json(backendAnalytics);
       return NextResponse.json(
-        { error: response.data?.message || "Failed to fetch dashboard analytics" },
+        sanitizeUpstreamClientError(response.data, "Failed to fetch dashboard analytics"),
         { status: response.status },
       );
     }

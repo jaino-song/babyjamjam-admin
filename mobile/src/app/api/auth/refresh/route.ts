@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+import { logUpstreamError, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
 
 interface TokenPayload {
     role: string | null;
@@ -115,9 +116,15 @@ export async function POST() {
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
             const status = axiosError.response?.status || 500;
-            const message = axiosError.response?.data?.message || "Failed to refresh authentication";
+            logUpstreamError("refresh authentication", error);
 
-            const response = NextResponse.json({ error: message }, { status });
+            const response = NextResponse.json(
+                sanitizeUpstreamClientError(
+                    axiosError.response?.data,
+                    "Failed to refresh authentication"
+                ),
+                { status }
+            );
             if (status === 401 || status === 403) {
                 clearAuthCookies(response);
             }

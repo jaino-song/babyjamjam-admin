@@ -267,8 +267,10 @@ export async function proxyGetRequest(
 
         // Check for backend error responses
         if (response.status >= 400) {
-            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
-            return NextResponse.json({ error: errorMessage }, { status: response.status });
+            return NextResponse.json(
+                sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                { status: response.status }
+            );
         }
 
         return NextResponse.json(response.data);
@@ -309,8 +311,10 @@ export async function proxyPostRequest(
 
         // Check for backend error responses
         if (response.status >= 400) {
-            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
-            return NextResponse.json({ error: errorMessage }, { status: response.status });
+            return NextResponse.json(
+                sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                { status: response.status }
+            );
         }
 
         return NextResponse.json(response.data);
@@ -365,8 +369,10 @@ export async function proxyDeleteRequest(
         });
 
         if (response.status >= 400) {
-            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
-            return NextResponse.json({ error: errorMessage }, { status: response.status });
+            return NextResponse.json(
+                sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                { status: response.status }
+            );
         }
 
         return NextResponse.json(response.data);

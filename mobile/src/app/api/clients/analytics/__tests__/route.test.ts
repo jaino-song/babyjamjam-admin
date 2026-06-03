@@ -23,11 +23,15 @@ function createRequest(): NextRequest {
 }
 
 describe("clients analytics route", () => {
+  let consoleErrorSpy: jest.SpyInstance;
+
   beforeEach(() => {
     mockServerGet.mockReset();
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
+    consoleErrorSpy.mockRestore();
     jest.useRealTimers();
   });
 
@@ -92,5 +96,37 @@ describe("clients analytics route", () => {
       upcomingThisMonth: 2,
       upcomingNextMonth: 5,
     });
+  });
+
+  it("does not expose raw backend details when client-derived analytics fail", async () => {
+    mockServerGet.mockImplementation(async (path: string) => {
+      if (path === "/clients/analytics") {
+        return { status: 404, data: { message: "missing analytics endpoint" } };
+      }
+
+      return {
+        status: 502,
+        data: {
+          message: "database host analytics.internal returned /tmp/clients",
+          code: "CLIENT_ANALYTICS_ERROR",
+          diagnostics: { host: "analytics.internal" },
+        },
+      };
+    });
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to fetch dashboard analytics",
+      code: "CLIENT_ANALYTICS_ERROR",
+    });
+
+    const logged = consoleErrorSpy.mock.calls
+      .flat()
+      .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))
+      .join(" ");
+    expect(logged).not.toContain("/tmp/clients");
+    expect(logged).not.toContain("analytics.internal");
   });
 });
