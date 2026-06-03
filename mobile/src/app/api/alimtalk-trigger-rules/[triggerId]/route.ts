@@ -1,29 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
+import {
+  backendJsonResponse,
+  errorResponse,
+  getAuthHeaders,
+  getAuthToken,
+  invalidJsonResponse,
+  readJsonObjectBody,
+  unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 type RouteContext = {
   params: Promise<{ triggerId: string }>;
 };
 
+function isValidTriggerId(triggerId: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(triggerId);
+}
+
+function invalidTriggerIdResponse(): NextResponse {
+  return NextResponse.json({ error: "Invalid trigger id" }, { status: 400 });
+}
+
+function triggerRulePath(triggerId: string): string {
+  return `/alimtalk-trigger-rules/${encodeURIComponent(triggerId)}`;
+}
+
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
     const { triggerId } = await context.params;
-    const response = await serverAPIClient.get(`/alimtalk-trigger-rules/${triggerId}`, {
+    if (!isValidTriggerId(triggerId)) {
+      return invalidTriggerIdResponse();
+    }
+
+    const response = await serverAPIClient.get(triggerRulePath(triggerId), {
       headers: getAuthHeaders(token),
     });
-    return NextResponse.json(response.data);
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error fetching alimtalk trigger rule:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch alimtalk trigger rule" },
-      { status: 500 },
-    );
+    return errorResponse(error, "fetch alimtalk trigger rule");
   }
 }
 
@@ -31,21 +51,26 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
-    const body = await request.json();
     const { triggerId } = await context.params;
-    const response = await serverAPIClient.patch(`/alimtalk-trigger-rules/${triggerId}`, body, {
+    if (!isValidTriggerId(triggerId)) {
+      return invalidTriggerIdResponse();
+    }
+
+    const body = await readJsonObjectBody(request);
+    const response = await serverAPIClient.patch(triggerRulePath(triggerId), body, {
       headers: getAuthHeaders(token),
     });
-    return NextResponse.json(response.data);
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error updating alimtalk trigger rule:", error);
-    return NextResponse.json(
-      { error: "Failed to update alimtalk trigger rule" },
-      { status: 500 },
-    );
+    const invalidJson = invalidJsonResponse(error);
+    if (invalidJson) {
+      return invalidJson;
+    }
+
+    return errorResponse(error, "update alimtalk trigger rule");
   }
 }
 
@@ -53,19 +78,19 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
     const { triggerId } = await context.params;
-    await serverAPIClient.delete(`/alimtalk-trigger-rules/${triggerId}`, {
+    if (!isValidTriggerId(triggerId)) {
+      return invalidTriggerIdResponse();
+    }
+
+    const response = await serverAPIClient.delete(triggerRulePath(triggerId), {
       headers: getAuthHeaders(token),
     });
-    return NextResponse.json({ success: true });
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error deleting alimtalk trigger rule:", error);
-    return NextResponse.json(
-      { error: "Failed to delete alimtalk trigger rule" },
-      { status: 500 },
-    );
+    return errorResponse(error, "delete alimtalk trigger rule");
   }
 }
