@@ -13,16 +13,24 @@ import {
   FileSignature,
   FileText,
   MessageCircle,
+  MoreVertical,
   Send,
   SquarePen,
+  Trash2,
+  UserPlus,
   X,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { isAxiosError } from "axios";
+import { useRouter } from "next/navigation";
 
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useEformsignDocumentEvents } from "@/hooks/useEformsignDocumentEvents";
-import { useEformsignDocumentsByType, eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
+import {
+  useDeleteEformsignDocument,
+  useEformsignDocumentsByType,
+  eformsignQueryKeys,
+} from "@/hooks/useEformsignDocuments";
 import { useEformsign } from "@/hooks/useEformsign";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { useToast } from "@/hooks/use-toast";
@@ -45,9 +53,16 @@ import {
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
+import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { eformsignApi, type EformsignDocClientSummary } from "@/services/api";
 import { Badge, ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import { ActivityTimeline } from "@/components/app/v3";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   DetailTabPills,
   type BadgeTone,
@@ -61,6 +76,7 @@ import {
   MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { useClientDialogStore, type ClientWizardPrefill } from "@/stores/client-dialog-store";
 import "@/components/app/mobile-redesign/redesign.css";
 
 const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
@@ -397,18 +413,6 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
   );
 }
 
-function isDocumentViewPending(doc: EformsignDocument, category: ContractCategory): boolean {
-  return (
-    category !== "completed" &&
-    category !== "rejected" &&
-    category !== "unknown" &&
-    !hasDocumentSendFailure(doc) &&
-    !isReviewNeeded(doc) &&
-    !hasOpenedDocument(doc) &&
-    !hasCustomerSignatureDocument(doc)
-  );
-}
-
 function progressLabel(doc: EformsignDocument): string {
   const category = categorize(doc);
   if (category === "completed") return "6/6 - 계약서 완료";
@@ -509,6 +513,96 @@ function providerName(doc: EformsignDocument, metadata?: EformsignDocClientSumma
 
 function normalizePhone(value: string | null | undefined): string {
   return (value ?? "").replace(/\D/g, "");
+}
+
+function formatClientPhone(value: string | null | undefined): string | undefined {
+  const digits = normalizePhone(value);
+  if (digits.length <= 0) return undefined;
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+}
+
+function normalizeDateToYymmdd(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 6) return digits;
+  if (digits.length >= 8) {
+    return `${digits.slice(2, 4)}${digits.slice(4, 6)}${digits.slice(6, 8)}`;
+  }
+  return undefined;
+}
+
+function numericText(value: string | null | undefined): string | undefined {
+  const digits = (value ?? "").replace(/\D/g, "");
+  return digits || undefined;
+}
+
+function parseDuration(value: string | null | undefined): number | null | undefined {
+  const digits = numericText(value);
+  if (!digits) return undefined;
+  const duration = Number(digits);
+  return Number.isFinite(duration) && duration > 0 ? duration : undefined;
+}
+
+function contractRecipientPhone(doc: EformsignDocument): string | null {
+  const recipients = doc.current_status?.step_recipients ?? [];
+  const customer = customerName(doc);
+  const customerRecipient =
+    recipients.find((recipient) => recipient.name?.trim() === customer && recipient.sms?.trim()) ??
+    recipients.find((recipient) => recipient.recipient_type !== "01" && recipient.sms?.trim()) ??
+    recipients.find((recipient) => recipient.sms?.trim());
+  return customerRecipient?.sms ?? null;
+}
+
+function buildClientPrefillFromContract(
+  doc: EformsignDocument,
+  metadata?: EformsignDocClientSummary,
+): ClientWizardPrefill {
+  const prefill: ClientWizardPrefill = {};
+  const name = metadata?.clientName?.trim() || customerName(doc);
+  const phone = formatClientPhone(
+    metadata?.clientPhone?.trim() ||
+      contractRecipientPhone(doc) ||
+      documentFieldValue(doc, ["연락처", "휴대폰", "전화번호", "customerContact", "customerPhone"]),
+  );
+
+  if (name && name !== "고객 미지정") prefill.name = name;
+  if (phone) prefill.phone = phone;
+
+  const birthday = normalizeDateToYymmdd(
+    documentFieldValue(doc, ["생년월일", "주민번호 앞자리", "customerDOB", "customerBirthDate", "birthday"]),
+  );
+  const dueDate = normalizeDateToYymmdd(
+    documentFieldValue(doc, ["출산 예정일", "출산예정일", "dueDate", "expectedBirthDate"]),
+  );
+  const startDate = normalizeDateToYymmdd(
+    documentFieldValue(doc, ["서비스 시작일", "서비스시작일", "startDate", "contractStartDate"]),
+  );
+  const endDate = normalizeDateToYymmdd(
+    documentFieldValue(doc, ["서비스 종료일", "서비스종료일", "endDate", "contractEndDate"]),
+  );
+  const address = documentFieldValue(doc, ["주소", "customerAddress", "address"]);
+  const type = documentFieldValue(doc, ["유형", "서비스 유형", "서비스유형", "type", "serviceType"]);
+  const duration = parseDuration(
+    documentFieldValue(doc, ["기간", "일수", "서비스 기간", "서비스기간", "days", "duration", "contractDuration"]),
+  );
+  const fullPrice = numericText(documentFieldValue(doc, ["총액", "서비스 총액", "fullPrice"]));
+  const grant = numericText(documentFieldValue(doc, ["정부지원금", "지원금", "grant"]));
+  const actualPrice = numericText(documentFieldValue(doc, ["본인부담금", "실결제금액", "actualPrice"]));
+
+  if (birthday) prefill.birthday = birthday;
+  if (dueDate) prefill.dueDate = dueDate;
+  if (address) prefill.address = address;
+  if (type) prefill.type = type;
+  if (duration !== undefined) prefill.duration = duration;
+  if (fullPrice) prefill.fullPrice = fullPrice;
+  if (grant) prefill.grant = grant;
+  if (actualPrice) prefill.actualPrice = actualPrice;
+  if (startDate) prefill.startDate = startDate;
+  if (endDate) prefill.endDate = endDate;
+
+  return prefill;
 }
 
 function notificationChannelLabel(log: NotificationLogRecord): "알림톡" | "메시지" {
@@ -693,6 +787,8 @@ function ContractDetailContent({
   activeTab,
   onTabChange,
   onFinalize,
+  onOpenClient,
+  onDeleteRequest,
 }: {
   doc: EformsignDocument;
   metadata?: EformsignDocClientSummary;
@@ -700,6 +796,8 @@ function ContractDetailContent({
   activeTab: DetailTabId;
   onTabChange: (id: DetailTabId) => void;
   onFinalize?: (doc: EformsignDocument) => void;
+  onOpenClient: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
+  onDeleteRequest: (doc: EformsignDocument) => void;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -708,7 +806,9 @@ function ContractDetailContent({
   const category = categorize(doc);
   const tones = categoryTones(category);
   const reviewNeeded = isReviewNeeded(doc);
-  const shouldReRequest = isDocumentViewPending(doc, category) && canReRequestDocument(doc);
+  const shouldReRequest =
+    category === "drafting" && !hasDocumentSendFailure(doc) && canReRequestDocument(doc);
+  const shouldShareReceipt = category === "completed";
   const contractNum = contractNumber(doc);
   const name = contractDisplayName(doc, true);
   const downloadUrl = eformsignApi.getDocumentDownloadUrl(doc.id);
@@ -817,6 +917,46 @@ function ContractDetailContent({
         avatarTone="primary"
         title={name}
         badges={[{ label: tones.badge, tone: tones.badgeMini as BadgeTone }]}
+        menu={
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-v3-text-muted transition-colors hover:bg-v3-dim-white [&_svg]:pointer-events-none"
+                aria-label="계약 옵션"
+                data-component="mobile-contracts-detail-menu-trigger"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <MoreVertical size={20} strokeWidth={2} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              sideOffset={4}
+              className="z-[200] w-max min-w-[5.5rem] rounded-md p-0"
+              data-component="mobile-contracts-detail-menu"
+            >
+              <DropdownMenuItem
+                onClick={() => onOpenClient(doc, metadata)}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                data-component="mobile-contracts-detail-menu-client"
+              >
+                <UserPlus className="size-[15px]" strokeWidth={2} />
+                {metadata?.clientId ? "고객 수정" : "고객 등록"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => onDeleteRequest(doc)}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                data-component="mobile-contracts-detail-menu-delete"
+              >
+                <Trash2 className="size-[15px]" strokeWidth={2} />
+                삭제
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        }
       />
 
       {!isPreviewOpen || (reviewNeeded && onFinalize) ? (
@@ -831,20 +971,24 @@ function ContractDetailContent({
                     onClick: () => setPreviewDocumentId(doc.id),
                     dataComponent: "mobile-contracts-preview",
                   },
-                  {
-                    label: shouldReRequest
-                      ? isReRequesting
-                        ? "재알림 보내는 중"
-                        : "재알림 보내기"
-                      : "영수증 공유",
-                    variant: "primary" as const,
-                    onClick: shouldReRequest ? handleDocumentReRequest : handleReceiptShare,
-                    disabled: shouldReRequest ? isReRequesting : false,
-                    busy: shouldReRequest ? isReRequesting : false,
-                    dataComponent: shouldReRequest
-                      ? "mobile-contracts-rerequest"
-                      : "mobile-contracts-receipt-share",
-                  },
+                  ...(shouldReRequest || shouldShareReceipt
+                    ? [
+                        {
+                          label: shouldReRequest
+                            ? isReRequesting
+                              ? "재알림 보내는 중"
+                              : "재알림 보내기"
+                            : "영수증 공유",
+                          variant: "primary" as const,
+                          onClick: shouldReRequest ? handleDocumentReRequest : handleReceiptShare,
+                          disabled: shouldReRequest ? isReRequesting : false,
+                          busy: shouldReRequest ? isReRequesting : false,
+                          dataComponent: shouldReRequest
+                            ? "mobile-contracts-rerequest"
+                            : "mobile-contracts-receipt-share",
+                        },
+                      ]
+                    : []),
                 ]
               : []),
             ...(reviewNeeded && onFinalize
@@ -987,13 +1131,19 @@ function ContractDetailContent({
 }
 
 export default function ContractsPage() {
+  const router = useRouter();
+  const { toast } = useToast();
+  const setPrefillClient = useClientDialogStore((state) => state.setPrefillClient);
+  const clearPrefillClient = useClientDialogStore((state) => state.clearPrefillClient);
   const [activeFilter, setActiveFilter] = useState<FilterKey>("전체");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDoc, setSelectedDoc] = useState<EformsignDocument | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTabId>("basic");
+  const [deleteTargetDoc, setDeleteTargetDoc] = useState<EformsignDocument | null>(null);
 
   // Finalize (mode:"02" — staff completion) flow state
   const queryClient = useQueryClient();
+  const deleteDocument = useDeleteEformsignDocument();
   const { isLoaded: isEformsignLoaded, openDocument } = useEformsign();
   const [finalizeDoc, setFinalizeDoc] = useState<EformsignDocument | null>(null);
   const [finalizeEndDateInput, setFinalizeEndDateInput] = useState("");
@@ -1056,6 +1206,38 @@ export default function ContractsPage() {
 
   const closeFinalizeDialog = () => {
     setIsFinalizeDialogOpen(false);
+  };
+
+  const handleOpenClientFromContract = (
+    doc: EformsignDocument,
+    metadata?: EformsignDocClientSummary,
+  ) => {
+    if (metadata?.clientId) {
+      clearPrefillClient();
+      router.push(`/clients/new?clientId=${metadata.clientId}`);
+      return;
+    }
+
+    setPrefillClient(buildClientPrefillFromContract(doc, metadata));
+    router.push("/clients/new");
+  };
+
+  const handleDeleteDocumentConfirm = async () => {
+    if (!deleteTargetDoc) return;
+    try {
+      await deleteDocument.mutateAsync(deleteTargetDoc.id);
+      await queryClient.invalidateQueries({ queryKey: ["eformsign-doc-client-names"] });
+      setSelectedDoc(null);
+      setDeleteTargetDoc(null);
+      toast({
+        description: `${contractDisplayName(deleteTargetDoc, true)}를 삭제했습니다.`,
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        description: requestErrorMessage(error, "계약서 삭제 중 오류가 발생했습니다."),
+      });
+    }
   };
 
   const handleFinalizeSubmit = async () => {
@@ -1495,6 +1677,8 @@ export default function ContractsPage() {
             activeTab={activeTab}
             onTabChange={setActiveTab}
             onFinalize={openFinalize}
+            onOpenClient={handleOpenClientFromContract}
+            onDeleteRequest={setDeleteTargetDoc}
           />
         ) : (
           <div className="detail-body" />
@@ -1506,6 +1690,22 @@ export default function ContractsPage() {
   return (
     <>
       {mainSheet}
+
+      <ConfirmActionModal
+        open={deleteTargetDoc !== null}
+        title="계약서 삭제"
+        description="선택한 계약서를 삭제할까요?"
+        cancelLabel="취소"
+        confirmLabel="삭제"
+        loading={deleteDocument.isPending}
+        onOpenChange={(open) => {
+          if (!open && !deleteDocument.isPending) {
+            setDeleteTargetDoc(null);
+          }
+        }}
+        onCancel={() => setDeleteTargetDoc(null)}
+        onConfirm={handleDeleteDocumentConfirm}
+      />
 
       {isFinalizeDialogOpen && finalizeDoc ? (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 p-6" data-component="mobile-contracts-finalize-dialog">

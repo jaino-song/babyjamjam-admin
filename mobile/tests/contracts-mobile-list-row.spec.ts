@@ -554,6 +554,7 @@ test.describe("Mobile contracts list rows", () => {
     await page.locator('[data-component="mobile-contracts-row"]', { hasText: "대기고객" }).click();
     await expect(page.locator('[data-component="mobile-contracts-preview"]')).toBeVisible();
     await expect(page.locator('[data-component="mobile-contracts-sign"]')).toHaveCount(0);
+    await expect(page.locator('[data-component="mobile-contracts-receipt-share"]')).toHaveCount(0);
 
     await page.locator(".sheet-close").click();
     await page.locator('[data-component="mobile-contracts-row"]', { hasText: "검토 담당자" }).click();
@@ -561,6 +562,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(page.locator('[data-component="mobile-contracts-preview"]')).toBeVisible();
     await expect(signAction).toBeVisible();
     await expect(signAction).toHaveText("지금 서명");
+    await expect(page.locator('[data-component="mobile-contracts-receipt-share"]')).toHaveCount(0);
   });
 
   test("shows the PDF preview below contract actions", async ({ page }) => {
@@ -719,7 +721,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(timeline).not.toContainText("서명을 완료했습니다");
   });
 
-  test("replaces receipt share with re-request for documents waiting on user view", async ({ page }) => {
+  test("replaces receipt share with re-request for documents waiting on user action", async ({ page }) => {
     await page.route("**/api/access-token", async (route) => {
       await route.fulfill({
         status: 200,
@@ -748,6 +750,14 @@ test.describe("Mobile contracts list rows", () => {
         body: JSON.stringify({ status: "ok" }),
       });
     });
+    await page.route("**/api/eformsign/documents/doc-opened/re-request", async (route) => {
+      reRequestPayload = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "ok" }),
+      });
+    });
 
     await page.goto("/contracts");
 
@@ -764,6 +774,21 @@ test.describe("Mobile contracts list rows", () => {
       comment: "재요청입니다.",
     });
     await expect(page.locator('[data-component="toast"]')).toContainText("대기고객님에게 전자문서 작성을 재요청했습니다.");
+
+    reRequestPayload = null;
+    await page.locator(".sheet-close").click();
+    await page.locator('[data-component="mobile-contracts-row"]', { hasText: "열람고객" }).click();
+
+    await expect(page.getByRole("button", { name: "재알림 보내기" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "영수증 공유" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "재알림 보내기" }).click();
+
+    await expect.poll(() => reRequestPayload).toEqual({
+      stepType: "05",
+      stepSeq: "1",
+      comment: "재요청입니다.",
+    });
   });
 
   test("shows a burgundy X stage when user document send fails", async ({ page }) => {

@@ -12,6 +12,24 @@ function clampVisibleCount(count: number, totalItems: number): number {
   return Math.min(Math.max(count, 0), Math.max(totalItems, 0));
 }
 
+function resolveVisibleCount({
+  hasInteracted,
+  visibleCount,
+  initialVisibleCount,
+  totalItems,
+}: {
+  hasInteracted: boolean;
+  visibleCount: number;
+  initialVisibleCount: number;
+  totalItems: number;
+}): number {
+  if (!hasInteracted && visibleCount === 0 && totalItems > 0) {
+    return initialVisibleCount;
+  }
+
+  return clampVisibleCount(visibleCount, totalItems);
+}
+
 /**
  * Teaser → tap-to-expand → infinite scroll 패턴.
  *
@@ -48,7 +66,12 @@ export function useListInfiniteScroll({
   const isReset = visibilityState.resetKey !== resetKey;
   const visibleCount = isReset
     ? initialVisibleCount
-    : clampVisibleCount(visibilityState.visibleCount, totalItems);
+    : resolveVisibleCount({
+        hasInteracted: visibilityState.hasInteracted,
+        visibleCount: visibilityState.visibleCount,
+        initialVisibleCount,
+        totalItems,
+      });
   const hasInteracted = isReset ? false : visibilityState.hasInteracted;
 
   // Measure how many rows fit and adjust visibleCount while still in initial state.
@@ -101,7 +124,12 @@ export function useListInfiniteScroll({
     setVisibilityState((current) => {
       const currentVisibleCount =
         current.resetKey === resetKey
-          ? clampVisibleCount(current.visibleCount, totalItems)
+          ? resolveVisibleCount({
+              hasInteracted: current.hasInteracted,
+              visibleCount: current.visibleCount,
+              initialVisibleCount,
+              totalItems,
+            })
           : initialVisibleCount;
 
       return {
@@ -113,7 +141,7 @@ export function useListInfiniteScroll({
         hasInteracted: true,
       };
     });
-  }, [initialVisibleCount, resetKey, totalItems]);
+  }, [initialVisibleCount, resetKey, setVisibilityState, totalItems]);
 
   useEffect(() => {
     if (!hasMore || isInitialLoad) return;

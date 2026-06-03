@@ -46,4 +46,29 @@ describe("useListInfiniteScroll", () => {
     expect(result.current.visibleCount).toBe(2);
     expect(result.current.hasMore).toBe(false);
   });
+
+  it("restores the initial visible count when items load after an empty first render", () => {
+    const { result, rerender } = renderHook(
+      ({ totalItems }) =>
+        useListInfiniteScroll({
+          resetKey: "all",
+          totalItems,
+          fallbackInitialCount: 6,
+        }),
+      {
+        initialProps: {
+          totalItems: 0,
+        },
+      },
+    );
+
+    expect(result.current.visibleCount).toBe(0);
+
+    rerender({
+      totalItems: 113,
+    });
+
+    expect(result.current.visibleCount).toBe(6);
+    expect(result.current.hasMore).toBe(true);
+  });
 });

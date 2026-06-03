@@ -6096,8 +6096,6 @@ body:has([data-component="contracts"]) [data-component="app-providers"] {
   [data-component="app-root"],
   body.mobile-all-route [data-component="app-root"],
   body:has([data-component="all-page"]) [data-component="app-root"],
-  body.mobile-contracts-route [data-component="app-root"],
-  body:has([data-component="contracts"]) [data-component="app-root"],
   body:has([data-component="consultations"]) [data-component="app-root"],
   body:has([data-component="clients"]) [data-component="app-root"],
   body:has([data-component="employees"]) [data-component="app-root"],

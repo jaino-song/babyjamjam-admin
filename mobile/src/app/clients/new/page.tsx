@@ -110,7 +110,9 @@ export default function NewClientPage() {
   const updateClient = useUpdateClient();
   const { data: editingClient } = useClient(editingClientId ?? 0);
   const prefillName = useClientDialogStore((s) => s.prefillName);
+  const prefillClient = useClientDialogStore((s) => s.prefillClient);
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
+  const clearPrefillClient = useClientDialogStore((s) => s.clearPrefillClient);
 
   const store = useClientWizardStore();
   const { currentStep, pricesManuallyEdited, setField, setCurrentStep, setPricesManuallyEdited, reset } = store;
@@ -192,11 +194,54 @@ export default function NewClientPage() {
   }, [formSessionKey, reset]);
 
   useEffect(() => {
-    if (prefillName) {
-      setField("name", prefillName);
+    if (!prefillName) return;
+
+    if (isEditMode) {
       clearPrefillName();
+      return;
     }
-  }, [prefillName, clearPrefillName, setField]);
+
+    setField("name", prefillName);
+    clearPrefillName();
+  }, [prefillName, clearPrefillName, isEditMode, setField]);
+
+  useEffect(() => {
+    if (!prefillClient) return;
+
+    if (isEditMode) {
+      clearPrefillClient();
+      return;
+    }
+
+    reset();
+
+    if (prefillClient.name !== undefined) setField("name", prefillClient.name);
+    if (prefillClient.birthday !== undefined) setField("birthday", prefillClient.birthday);
+    if (prefillClient.dueDate !== undefined) setField("dueDate", prefillClient.dueDate);
+    if (prefillClient.address !== undefined) setField("address", prefillClient.address);
+    if (prefillClient.phone !== undefined) setField("phone", prefillClient.phone);
+    if (prefillClient.type !== undefined) setField("type", prefillClient.type);
+    if (prefillClient.duration !== undefined) setField("duration", prefillClient.duration);
+    if (prefillClient.fullPrice !== undefined) setField("fullPrice", prefillClient.fullPrice);
+    if (prefillClient.grant !== undefined) setField("grant", prefillClient.grant);
+    if (prefillClient.actualPrice !== undefined) setField("actualPrice", prefillClient.actualPrice);
+    if (prefillClient.startDate !== undefined) setField("startDate", prefillClient.startDate);
+    if (prefillClient.endDate !== undefined) setField("endDate", prefillClient.endDate);
+    if (prefillClient.careCenter !== undefined) setField("careCenter", prefillClient.careCenter);
+    if (prefillClient.voucherClient !== undefined) setField("voucherClient", prefillClient.voucherClient);
+    if (prefillClient.breastPump !== undefined) setField("breastPump", prefillClient.breastPump);
+    if (prefillClient.serviceStatus !== undefined) setField("serviceStatus", prefillClient.serviceStatus);
+
+    if (
+      prefillClient.fullPrice !== undefined ||
+      prefillClient.grant !== undefined ||
+      prefillClient.actualPrice !== undefined
+    ) {
+      setPricesManuallyEdited(true);
+    }
+
+    clearPrefillClient();
+  }, [prefillClient, clearPrefillClient, isEditMode, reset, setField, setPricesManuallyEdited]);
 
   // 편집 모드: 기존 client 데이터를 wizard store에 1회 하이드레이트 (editingClient.id 변경 시 재실행).
   // pricesManuallyEdited=true 로 두어 voucherPriceInfos 자동 입력 effect가 저장된 요금을 덮어쓰지 못하게 한다.
