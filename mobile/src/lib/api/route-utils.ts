@@ -88,6 +88,17 @@ export function backendJsonResponse(response: { data: unknown; status?: number }
     return NextResponse.json(response.data ?? {}, { status });
 }
 
+export function getUpstreamErrorStatus(error: unknown, fallbackStatus = 500): number {
+    if (error && typeof error === "object" && "response" in error) {
+        const status = (error as { response?: { status?: unknown } }).response?.status;
+        if (typeof status === "number" && status >= 400 && status <= 599) {
+            return status;
+        }
+    }
+
+    return fallbackStatus;
+}
+
 export function upstreamJsonErrorResponse(
     status = 502,
     fallbackMessage = "Backend request failed"

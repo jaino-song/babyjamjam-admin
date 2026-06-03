@@ -3,6 +3,7 @@ import { jwtDecode } from "jwt-decode";
 import { serverAPIClient } from "@/lib/api/server";
 import {
   backendJsonResponse,
+  getUpstreamErrorStatus,
   invalidJsonResponse,
   readJsonObjectBody,
 } from "@/lib/api/route-utils";
@@ -75,22 +76,12 @@ export async function POST(request: NextRequest) {
     const invalidJson = invalidJsonResponse(error);
     if (invalidJson) return invalidJson;
 
-    console.error("[API] Error bulk updating voucher prices:", error);
-
-    // axios 에러 처리
-    if (error && typeof error === "object" && "response" in error) {
-      const axiosError = error as { response?: { status: number; data: unknown } };
-      if (axiosError.response) {
-        return NextResponse.json(
-          axiosError.response.data || { error: "업데이트 실패" },
-          { status: axiosError.response.status },
-        );
-      }
-    }
+    const status = getUpstreamErrorStatus(error);
+    console.error("[API] Error bulk updating voucher prices:", { status });
 
     return NextResponse.json(
       { error: "바우처 가격 정보 업데이트에 실패했습니다" },
-      { status: 500 },
+      { status },
     );
   }
 }

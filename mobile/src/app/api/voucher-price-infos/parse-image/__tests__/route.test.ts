@@ -35,9 +35,16 @@ function createRequest(): NextRequest {
 }
 
 describe("POST /api/voucher-price-infos/parse-image", () => {
+    let consoleErrorSpy: jest.SpyInstance;
+
     beforeEach(() => {
         mockJwtDecode.mockReset();
         mockPost.mockReset();
+        consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        consoleErrorSpy.mockRestore();
     });
 
     it("forwards multipart uploads without overriding the form-data boundary", async () => {
@@ -75,5 +82,30 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
         await expect(response.json()).resolves.toEqual({
             error: "이미지를 파싱할 수 없습니다",
         });
+    });
+
+    it("does not return or log raw rejected backend parse errors", async () => {
+        mockJwtDecode.mockReturnValue({ role: "owner" });
+        mockPost.mockRejectedValue({
+            response: {
+                status: 422,
+                data: {
+                    error: "internal parser path /tmp/voucher-prices",
+                },
+            },
+        });
+
+        const response = await POST(createRequest());
+
+        expect(response.status).toBe(422);
+        await expect(response.json()).resolves.toEqual({
+            error: "바우처 이미지 파싱에 실패했습니다",
+        });
+
+        const logged = consoleErrorSpy.mock.calls
+            .flat()
+            .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))
+            .join(" ");
+        expect(logged).not.toContain("/tmp/voucher-prices");
     });
 });

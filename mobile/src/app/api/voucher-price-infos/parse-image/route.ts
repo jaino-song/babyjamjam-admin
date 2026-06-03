@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtDecode } from "jwt-decode";
 import { serverAPIClient } from "@/lib/api/server";
-import { backendJsonResponse } from "@/lib/api/route-utils";
+import { backendJsonResponse, getUpstreamErrorStatus } from "@/lib/api/route-utils";
 
 interface TokenPayload {
   role?: string | null;
@@ -69,22 +69,12 @@ export async function POST(request: NextRequest) {
 
     return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error parsing voucher image:", error);
-
-    // axios 에러 처리
-    if (error && typeof error === "object" && "response" in error) {
-      const axiosError = error as { response?: { status: number; data: unknown } };
-      if (axiosError.response) {
-        return NextResponse.json(
-          axiosError.response.data || { error: "파싱 실패" },
-          { status: axiosError.response.status },
-        );
-      }
-    }
+    const status = getUpstreamErrorStatus(error);
+    console.error("[API] Error parsing voucher image:", { status });
 
     return NextResponse.json(
       { error: "바우처 이미지 파싱에 실패했습니다" },
-      { status: 500 },
+      { status },
     );
   }
 }

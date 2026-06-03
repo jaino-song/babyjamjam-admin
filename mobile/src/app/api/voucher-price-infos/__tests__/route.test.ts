@@ -36,10 +36,17 @@ function createRequest(path: string, init: { method?: string; headers?: Record<s
 }
 
 describe("voucher price info API routes", () => {
+  let consoleErrorSpy: jest.SpyInstance;
+
   beforeEach(() => {
     mockJwtDecode.mockReset();
     mockGet.mockReset();
     mockPost.mockReset();
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
   });
 
   it("preserves backend status and payload when fetching voucher price infos by type", async () => {
@@ -84,5 +91,36 @@ describe("voucher price info API routes", () => {
       error: "Request body must be valid JSON",
     });
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("does not return or log raw rejected backend bulk update errors", async () => {
+    mockJwtDecode.mockReturnValue({ role: "owner" });
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          error: "internal bulk update path /tmp/voucher-prices",
+        },
+      },
+    });
+
+    const response = await bulkUpdateVoucherPrices(
+      createRequest("/api/voucher-price-infos/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year: 2026, items: [{ id: 1 }] }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "바우처 가격 정보 업데이트에 실패했습니다",
+    });
+
+    const logged = consoleErrorSpy.mock.calls
+      .flat()
+      .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))
+      .join(" ");
+    expect(logged).not.toContain("/tmp/voucher-prices");
   });
 });
