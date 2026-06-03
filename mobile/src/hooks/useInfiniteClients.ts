@@ -42,7 +42,7 @@ export function useInfiniteClients({
   });
 
   const allClients = useMemo(() => query.data?.data ?? [], [query.data?.data]);
-  const total = query.data?.total || 0;
+  const total = query.data?.total ?? allClients.length;
 
   const allFilteredClients = useMemo(() => {
     let list = allClients;

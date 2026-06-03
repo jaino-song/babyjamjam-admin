@@ -87,4 +87,19 @@ describe("useInfiniteClients", () => {
     expect(result.current.clients).toHaveLength(12);
     expect(result.current.hasNextPage).toBe(false);
   });
+
+  it("falls back to loaded client count when the API omits total", async () => {
+    const responseWithoutTotal = createResponse(3) as Partial<PaginatedResponse<Client>>;
+    delete responseWithoutTotal.total;
+    mockedApiGet.mockResolvedValue({ data: responseWithoutTotal as PaginatedResponse<Client> });
+
+    const { result } = renderHook(() => useInfiniteClients(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.allClients).toHaveLength(3);
+    expect(result.current.total).toBe(3);
+  });
 });
