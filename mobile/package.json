@@ -9,6 +9,7 @@
     "lint": "eslint",
     "type-check": "tsc --noEmit",
     "test": "jest",
+    "test:e2e": "playwright test",
     "test:screenshots": "playwright test tests/screenshots"
   },
   "dependencies": {

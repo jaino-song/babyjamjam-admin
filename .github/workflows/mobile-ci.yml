@@ -3,20 +3,20 @@ name: Mobile CI
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master, develop, dev, preview, "feature/**" ]
+    branches: [ main, dev, preview, "feature/**", "fix/**" ]
     paths:
       - 'mobile/**'
       - '.github/workflows/mobile-ci.yml'
   pull_request:
-    branches: [ main, master, develop, dev, preview ]
+    branches: [ main, dev, preview, "feature/**", "fix/**" ]
     paths:
       - 'mobile/**'
       - '.github/workflows/mobile-ci.yml'
 
 jobs:
   verify:
-    name: type-check · lint · test
-    timeout-minutes: 20
+    name: type-check · lint · test · build · e2e
+    timeout-minutes: 60
     runs-on: ubuntu-latest
 
     steps:
@@ -48,3 +48,22 @@ jobs:
         run: pnpm --filter babyjamjam-admin test
         env:
           CI: true
+
+      - name: Build
+        run: pnpm --filter babyjamjam-admin run build
+
+      - name: Install Playwright browsers
+        run: pnpm --filter babyjamjam-admin exec playwright install --with-deps chromium
+
+      - name: Playwright tests
+        run: pnpm --filter babyjamjam-admin run test:e2e
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-playwright-report
+          path: mobile/playwright-report/
+          retention-days: 30

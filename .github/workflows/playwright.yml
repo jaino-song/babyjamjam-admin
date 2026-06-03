@@ -1,4 +1,4 @@
-name: Playwright Tests
+name: Frontend Playwright Tests
 
 on:
   workflow_dispatch:
@@ -9,6 +9,7 @@ on:
 
 jobs:
   test:
+    name: frontend
     timeout-minutes: 60
     runs-on: ubuntu-latest
     defaults:
