@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
+import { upstreamJsonErrorResponse } from "@/lib/api/route-utils";
 
 const BACKEND_URL = BACKEND_BASE_URL;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -41,12 +42,22 @@ export async function GET(
         return invalidSessionIdResponse();
     }
 
-    const backendResponse = await fetch(sessionUrl, {
-        method: "GET",
-        headers: {
-            Authorization: `Bearer ${authToken.value}`,
-        },
-    });
+    let backendResponse: Response;
+    try {
+        backendResponse = await fetch(sessionUrl, {
+            method: "GET",
+            headers: {
+                Authorization: `Bearer ${authToken.value}`,
+            },
+        });
+    } catch {
+        return upstreamJsonErrorResponse(502);
+    }
+
+    if (!backendResponse.ok) {
+        await backendResponse.text().catch(() => "");
+        return upstreamJsonErrorResponse(backendResponse.status);
+    }
 
     const data = await backendResponse.json();
 
@@ -70,15 +81,25 @@ export async function DELETE(
         return invalidSessionIdResponse();
     }
 
-    const backendResponse = await fetch(sessionUrl, {
-        method: "DELETE",
-        headers: {
-            Authorization: `Bearer ${authToken.value}`,
-        },
-    });
+    let backendResponse: Response;
+    try {
+        backendResponse = await fetch(sessionUrl, {
+            method: "DELETE",
+            headers: {
+                Authorization: `Bearer ${authToken.value}`,
+            },
+        });
+    } catch {
+        return upstreamJsonErrorResponse(502);
+    }
 
     if (backendResponse.status === 204) {
         return new Response(null, { status: 204 });
+    }
+
+    if (!backendResponse.ok) {
+        await backendResponse.text().catch(() => "");
+        return upstreamJsonErrorResponse(backendResponse.status);
     }
 
     const data = await backendResponse.json();

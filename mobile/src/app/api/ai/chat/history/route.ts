@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
+import { upstreamJsonErrorResponse } from "@/lib/api/route-utils";
 
 const BACKEND_URL = BACKEND_BASE_URL;
 
@@ -82,17 +83,13 @@ export async function GET(request: NextRequest) {
                 },
             }
         );
-    } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Failed to fetch chat history";
-        return NextResponse.json({ error: errorMessage }, { status: 502 });
+    } catch {
+        return upstreamJsonErrorResponse(502);
     }
 
     if (!backendResponse.ok) {
-        const errorText = await backendResponse.text();
-        return NextResponse.json(
-            { error: errorText },
-            { status: backendResponse.status }
-        );
+        await backendResponse.text().catch(() => "");
+        return upstreamJsonErrorResponse(backendResponse.status);
     }
 
     const data = await backendResponse.json();

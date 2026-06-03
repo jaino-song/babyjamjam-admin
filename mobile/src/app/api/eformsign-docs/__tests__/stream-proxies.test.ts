@@ -31,7 +31,7 @@ describe("eformsign SSE proxy routes", () => {
     mockFetch.mockReset();
   });
 
-  it("preserves upstream error JSON for document events", async () => {
+  it("maps upstream error JSON for document events without returning raw backend details", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ error: "tenant blocked" }), {
         status: 403,
@@ -43,7 +43,10 @@ describe("eformsign SSE proxy routes", () => {
 
     expect(response.status).toBe(403);
     expect(response.headers.get("Content-Type")).toContain("application/json");
-    await expect(response.json()).resolves.toEqual({ error: "tenant blocked" });
+    await expect(response.json()).resolves.toEqual({
+      error: "Unable to open eformsign document event stream",
+      code: "UPSTREAM_ERROR",
+    });
   });
 
   it("maps document event transport failures to a structured response", async () => {
@@ -53,10 +56,13 @@ describe("eformsign SSE proxy routes", () => {
 
     expect(response.status).toBe(502);
     expect(response.headers.get("Content-Type")).toContain("application/json");
-    await expect(response.json()).resolves.toEqual({ error: "backend unavailable" });
+    await expect(response.json()).resolves.toEqual({
+      error: "Unable to open eformsign document event stream",
+      code: "UPSTREAM_ERROR",
+    });
   });
 
-  it("preserves upstream error text for dispatch progress", async () => {
+  it("maps upstream error text for dispatch progress without returning raw backend details", async () => {
     mockFetch.mockResolvedValue(
       new Response("progress stream unavailable", {
         status: 503,
@@ -69,8 +75,11 @@ describe("eformsign SSE proxy routes", () => {
     );
 
     expect(response.status).toBe(503);
-    expect(response.headers.get("Content-Type")).toContain("text/plain");
-    await expect(response.text()).resolves.toBe("progress stream unavailable");
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    await expect(response.json()).resolves.toEqual({
+      error: "Unable to open dispatch progress stream",
+      code: "UPSTREAM_ERROR",
+    });
   });
 
   it("maps dispatch progress transport failures to a structured response", async () => {
@@ -82,10 +91,13 @@ describe("eformsign SSE proxy routes", () => {
 
     expect(response.status).toBe(502);
     expect(response.headers.get("Content-Type")).toContain("application/json");
-    await expect(response.json()).resolves.toEqual({ error: "dispatch backend unavailable" });
+    await expect(response.json()).resolves.toEqual({
+      error: "Unable to open dispatch progress stream",
+      code: "UPSTREAM_ERROR",
+    });
   });
 
-  it("preserves upstream error JSON for finalize progress", async () => {
+  it("maps upstream error JSON for finalize progress without returning raw backend details", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ message: "progress not found" }), {
         status: 404,
@@ -99,7 +111,10 @@ describe("eformsign SSE proxy routes", () => {
 
     expect(response.status).toBe(404);
     expect(response.headers.get("Content-Type")).toContain("application/json");
-    await expect(response.json()).resolves.toEqual({ message: "progress not found" });
+    await expect(response.json()).resolves.toEqual({
+      error: "Unable to open finalize progress stream",
+      code: "UPSTREAM_ERROR",
+    });
   });
 
   it("maps finalize progress transport failures to a structured response", async () => {
@@ -111,6 +126,9 @@ describe("eformsign SSE proxy routes", () => {
 
     expect(response.status).toBe(502);
     expect(response.headers.get("Content-Type")).toContain("application/json");
-    await expect(response.json()).resolves.toEqual({ error: "finalize backend unavailable" });
+    await expect(response.json()).resolves.toEqual({
+      error: "Unable to open finalize progress stream",
+      code: "UPSTREAM_ERROR",
+    });
   });
 });

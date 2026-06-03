@@ -93,6 +93,26 @@ describe("AI chat API routes", () => {
     await expect(response.json()).resolves.toEqual({ queued: true });
   });
 
+  it("maps persist upstream errors without returning raw backend text", async () => {
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response("stack trace from /internal/chat", {
+        status: 500,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    );
+
+    const response = await persistChat(
+      createRequest("/api/ai/chat/persist", JSON.stringify({ message: "hello" })),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Backend request failed",
+      code: "UPSTREAM_ERROR",
+    });
+  });
+
   it("rejects malformed stream JSON before proxying", async () => {
     setAuthCookie("auth-token");
 
@@ -115,7 +135,27 @@ describe("AI chat API routes", () => {
 
     expect(response.status).toBe(502);
     expect(response.headers.get("Content-Type")).toContain("text/event-stream");
-    await expect(response.text()).resolves.toContain("backend unavailable");
+    await expect(response.text()).resolves.toContain("Streaming unavailable");
+  });
+
+  it("maps stream upstream errors without returning raw backend text", async () => {
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response("stream stack from /internal/chat", {
+        status: 502,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    );
+
+    const response = await streamChat(
+      createRequest("/api/ai/chat/stream", JSON.stringify({ message: "hello" })),
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Content-Type")).toContain("text/event-stream");
+    const body = await response.text();
+    expect(body).toContain("Streaming unavailable");
+    expect(body).not.toContain("/internal/chat");
   });
 
   it("rejects out-of-range history limits before proxying", async () => {
@@ -161,6 +201,24 @@ describe("AI chat API routes", () => {
     );
   });
 
+  it("maps history upstream errors without returning raw backend text", async () => {
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response("history stack from /internal/chat", {
+        status: 503,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    );
+
+    const response = await getChatHistory(createGetRequest("/api/ai/chat/history"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "Backend request failed",
+      code: "UPSTREAM_ERROR",
+    });
+  });
+
   it("rejects unsafe session IDs before fetching a session", async () => {
     setAuthCookie("auth-token");
 
@@ -185,6 +243,48 @@ describe("AI chat API routes", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "Invalid session id" });
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("maps session fetch upstream errors without returning raw backend JSON", async () => {
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "session stack from /internal/chat" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await getChatSession(
+      createGetRequest("/api/ai/chat/sessions/session-1"),
+      createSessionParams("session-1"),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Backend request failed",
+      code: "UPSTREAM_ERROR",
+    });
+  });
+
+  it("maps session delete upstream errors without returning raw backend JSON", async () => {
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "delete stack from /internal/chat" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await deleteChatSession(
+      createGetRequest("/api/ai/chat/sessions/session-1"),
+      createSessionParams("session-1"),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "Backend request failed",
+      code: "UPSTREAM_ERROR",
+    });
   });
 
   it("rejects malformed feedback JSON before proxying", async () => {

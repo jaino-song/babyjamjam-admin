@@ -88,44 +88,50 @@ export function backendJsonResponse(response: { data: unknown; status?: number }
     return NextResponse.json(response.data ?? {}, { status });
 }
 
+export function upstreamJsonErrorResponse(
+    status = 502,
+    fallbackMessage = "Backend request failed"
+): NextResponse {
+    return NextResponse.json(
+        { error: fallbackMessage, code: "UPSTREAM_ERROR" },
+        { status }
+    );
+}
+
+export function upstreamSseErrorResponse(
+    status = 502,
+    fallbackMessage = "Streaming unavailable"
+): Response {
+    return new Response(
+        `event: error\ndata: ${JSON.stringify({ type: "error", error: fallbackMessage })}\n\n`,
+        {
+            status,
+            headers: {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                Connection: "keep-alive",
+            },
+        }
+    );
+}
+
 export async function upstreamStreamErrorResponse(
     upstream: Response,
     fallbackMessage = "Upstream stream request failed"
 ): Promise<Response> {
     const status = upstream.ok ? 502 : upstream.status;
-    const body = await upstream.text().catch(() => "");
-    const contentType = upstream.headers.get("Content-Type");
+    await upstream.text().catch(() => "");
 
-    if (body) {
-        const headers = new Headers();
-        if (contentType) {
-            headers.set("Content-Type", contentType);
-        }
-        return new Response(body, { status, headers });
-    }
-
-    return new Response(JSON.stringify({ error: fallbackMessage }), {
-        status,
-        headers: {
-            "Content-Type": "application/json",
-        },
-    });
+    return upstreamJsonErrorResponse(status, fallbackMessage);
 }
 
 export function upstreamStreamTransportErrorResponse(
     error: unknown,
     fallbackMessage = "Upstream stream request failed"
 ): Response {
-    const errorMessage = error instanceof Error && error.message
-        ? error.message
-        : fallbackMessage;
+    void error;
 
-    return new Response(JSON.stringify({ error: errorMessage }), {
-        status: 502,
-        headers: {
-            "Content-Type": "application/json",
-        },
-    });
+    return upstreamJsonErrorResponse(502, fallbackMessage);
 }
 
 /**

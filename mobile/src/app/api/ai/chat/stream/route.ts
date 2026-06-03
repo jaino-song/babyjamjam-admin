@@ -1,24 +1,9 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
-import { invalidJsonResponse, readJsonObjectBody } from "@/lib/api/route-utils";
+import { invalidJsonResponse, readJsonObjectBody, upstreamSseErrorResponse } from "@/lib/api/route-utils";
 
 const BACKEND_URL = BACKEND_BASE_URL;
-
-function streamErrorResponse(error: unknown, status = 502): Response {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return new Response(
-        `event: error\ndata: ${JSON.stringify({ type: "error", error: errorMessage })}\n\n`,
-        {
-            status,
-            headers: {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                Connection: "keep-alive",
-            },
-        }
-    );
-}
 
 export async function POST(request: NextRequest) {
     const cookieStore = await cookies();
@@ -44,8 +29,8 @@ export async function POST(request: NextRequest) {
         });
 
         if (!backendResponse.ok) {
-            const errorText = await backendResponse.text();
-            return streamErrorResponse(errorText, backendResponse.status);
+            await backendResponse.text().catch(() => "");
+            return upstreamSseErrorResponse(backendResponse.status);
         }
 
         return new Response(backendResponse.body, {
@@ -61,6 +46,6 @@ export async function POST(request: NextRequest) {
             return invalidJson;
         }
 
-        return streamErrorResponse(error);
+        return upstreamSseErrorResponse();
     }
 }

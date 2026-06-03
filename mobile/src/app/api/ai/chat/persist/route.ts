@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
-import { invalidJsonResponse, readJsonObjectBody } from "@/lib/api/route-utils";
+import { invalidJsonResponse, readJsonObjectBody, upstreamJsonErrorResponse } from "@/lib/api/route-utils";
 
 const BACKEND_URL = BACKEND_BASE_URL;
 
@@ -28,11 +28,8 @@ export async function POST(request: NextRequest) {
         });
 
         if (!backendResponse.ok) {
-            const errorText = await backendResponse.text();
-            return new Response(JSON.stringify({ error: errorText }), {
-                status: backendResponse.status,
-                headers: { "Content-Type": "application/json" },
-            });
+            await backendResponse.text().catch(() => "");
+            return upstreamJsonErrorResponse(backendResponse.status);
         }
 
         const responseBody = await backendResponse.text();
@@ -46,10 +43,6 @@ export async function POST(request: NextRequest) {
             return invalidJson;
         }
 
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        return new Response(JSON.stringify({ error: errorMessage }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-        });
+        return upstreamJsonErrorResponse(502);
     }
 }
