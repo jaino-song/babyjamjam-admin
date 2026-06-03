@@ -27,6 +27,7 @@ import {
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
 import { t } from "@/lib/i18n/translations";
+import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { toast } from "@/hooks/use-toast";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
@@ -122,7 +123,7 @@ export default function ClientsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
-  const clientIdParam = searchParams.get("id");
+  const selectedClientIdFromParam = parsePositiveIntQueryParam(searchParams.get("id"));
 
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [detailSheetTab, setDetailSheetTab] = useState<DetailTabId>("basic");
@@ -162,8 +163,8 @@ export default function ClientsPage() {
   const deleteClient = useDeleteClient();
   const { data: employees = [] } = useEmployees();
   const { data: areaTemplates = [] } = useAreaTemplates();
-  const { data: clientFromParam } = useClient(clientIdParam ? Number(clientIdParam) : 0);
-  const detailClient = selectedClient ?? (clientIdParam ? clientFromParam ?? null : null);
+  const { data: clientFromParam } = useClient(selectedClientIdFromParam ?? 0);
+  const detailClient = selectedClient ?? (selectedClientIdFromParam !== null ? clientFromParam ?? null : null);
   const { data: notificationLogsData = [], isLoading: isNotificationLogsLoading } = useQuery<ClientNotificationLogRecord[]>({
     queryKey: ["alimtalk", "logs", 200],
     queryFn: async () => {
@@ -196,7 +197,7 @@ export default function ClientsPage() {
 
   const handleCloseDetailSheet = () => {
     setSelectedClient(null);
-    if (clientIdParam) {
+    if (selectedClientIdFromParam !== null) {
       router.replace("/clients");
     }
   };

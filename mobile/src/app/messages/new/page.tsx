@@ -8,6 +8,7 @@ import { ChevronLeft, MessageCircle, X } from "lucide-react";
 
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { api } from "@/lib/api/client";
+import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { cn } from "@/lib/utils";
 
 import styles from "./page.module.css";
@@ -37,7 +38,7 @@ type Channel = "alimtalk" | "sms";
 interface NewMessageFormProps {
   initialBody: string;
   initialTemplateId: string;
-  initialClientId: number;
+  initialClientId: number | null;
 }
 
 const PHONE_REGEX = /^[0-9,\-\s]+$/;
@@ -127,7 +128,7 @@ export default function NewMessagePage() {
   const searchParams = useSearchParams();
   const initialBody = searchParams.get("body") ?? DEFAULT_BODY;
   const initialTemplateId = searchParams.get("template") ?? FALLBACK_TEMPLATE_OPTIONS[0].id;
-  const initialClientId = Number(searchParams.get("clientId"));
+  const initialClientId = parsePositiveIntQueryParam(searchParams.get("clientId"));
   const routeSeedKey = `${initialBody}\u0000${initialTemplateId}`;
 
   return (
@@ -208,7 +209,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
         channel,
         msgType: channel === "sms" ? "SMS" : "AUTO",
       };
-      if (Number.isFinite(initialClientId) && initialClientId > 0) payload.clientId = initialClientId;
+      if (initialClientId !== null) payload.clientId = initialClientId;
       if (title.trim()) payload.title = title.trim();
       if (recipientName.trim()) payload.recipientName = recipientName.trim();
       const res = await api.post<SendResponse>("/message-deliveries/sms", payload);

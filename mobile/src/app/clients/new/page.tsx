@@ -19,6 +19,7 @@ import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { cn } from "@/lib/utils";
 import styles from "./page.module.css";
 
@@ -101,14 +102,13 @@ const isoToYymmdd = (iso: string | null | undefined): string => {
 export default function NewClientPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const clientIdParam = searchParams.get("clientId");
-  const editingClientId = clientIdParam ? Number(clientIdParam) : 0;
-  const isEditMode = editingClientId > 0;
+  const editingClientId = parsePositiveIntQueryParam(searchParams.get("clientId"));
+  const isEditMode = editingClientId !== null;
 
   const locale = useLocale();
   const createClient = useCreateClient();
   const updateClient = useUpdateClient();
-  const { data: editingClient } = useClient(isEditMode ? editingClientId : 0);
+  const { data: editingClient } = useClient(editingClientId ?? 0);
   const prefillName = useClientDialogStore((s) => s.prefillName);
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
 
@@ -442,7 +442,7 @@ export default function NewClientPage() {
         breastPump: store.breastPump,
         serviceStatus: store.serviceStatus || null,
       };
-      if (isEditMode) {
+      if (editingClientId !== null) {
         await updateClient.mutateAsync({ id: editingClientId, dto: dto as UpdateClientDto });
       } else {
         await createClient.mutateAsync(dto);
@@ -466,7 +466,7 @@ export default function NewClientPage() {
   const isLastStep = activeStep === WIZARD_STEPS.length - 1;
   const activeStepMeta = WIZARD_STEPS[activeStep];
   const progress = ((activeStep + 1) / WIZARD_STEPS.length) * 100;
-  const clientsReturnHref = isEditMode ? `/clients?id=${editingClientId}` : "/clients";
+  const clientsReturnHref = editingClientId !== null ? `/clients?id=${editingClientId}` : "/clients";
   const goBackToClients = () => {
     router.push(clientsReturnHref);
   };

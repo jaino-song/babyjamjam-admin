@@ -85,6 +85,22 @@ describe("NewMessagePage", () => {
     });
   });
 
+  it("excludes decimal client ids from the delivery payload", async () => {
+    mockSearchParams = new URLSearchParams({ clientId: "1.2" });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "2명에게 발송" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/message-deliveries/sms",
+        expect.not.objectContaining({
+          clientId: expect.anything(),
+        }),
+      );
+    });
+  });
+
   it("blocks submissions with more than 50 recipients", async () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "박서연 수신자 제거" }));
