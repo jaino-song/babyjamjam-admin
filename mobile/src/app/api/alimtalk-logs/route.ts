@@ -1,12 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
+import {
+  backendJsonResponse,
+  errorResponse,
+  getAuthHeaders,
+  getAuthToken,
+  unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 export async function GET(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
     const searchParams = request.nextUrl.searchParams;
@@ -16,12 +22,8 @@ export async function GET(request: NextRequest) {
         limit: searchParams.get("limit") ?? undefined,
       },
     });
-    return NextResponse.json(response.data);
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error fetching alimtalk logs:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch alimtalk logs" },
-      { status: 500 },
-    );
+    return errorResponse(error, "fetch alimtalk logs");
   }
 }
