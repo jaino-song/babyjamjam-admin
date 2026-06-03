@@ -1,15 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { searchParams } = new URL(request.url);
@@ -20,15 +23,11 @@ export async function GET(request: NextRequest) {
 
         const response = await serverAPIClient.get("/documents", {
             params,
-            headers: { Authorization: `Bearer ${token}` },
+            headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[file-storage/documents] GET error:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch documents" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch documents");
     }
 }
 
@@ -36,7 +35,7 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const formData = await request.formData();
@@ -73,25 +72,12 @@ export async function POST(request: NextRequest) {
             timeout: 120000,
             headers: {
                 "Content-Type": undefined,
-                Authorization: `Bearer ${token}`,
+                ...getAuthHeaders(token),
             },
         });
 
-        return NextResponse.json(response.data, { status: 201 });
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[file-storage/documents] POST error:", error);
-        if (error && typeof error === "object" && "response" in error) {
-            const axiosError = error as { response?: { status: number; data: unknown } };
-            if (axiosError.response) {
-                return NextResponse.json(
-                    axiosError.response.data || { error: "Upload failed" },
-                    { status: axiosError.response.status }
-                );
-            }
-        }
-        return NextResponse.json(
-            { error: "Failed to upload document" },
-            { status: 500 }
-        );
+        return errorResponse(error, "upload document");
     }
 }
