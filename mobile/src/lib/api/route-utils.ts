@@ -231,14 +231,13 @@ export function unauthorizedResponse(message = "Access token is required. Please
  */
 export function errorResponse(error: unknown, context: string) {
     const axiosError = error as AxiosError<{ error?: string; message?: string }>;
-    const message = axiosError.response?.data?.error
-        || axiosError.response?.data?.message
-        || axiosError.message
-        || `Failed to ${context}`;
     const status = axiosError.response?.status || 500;
 
-    console.error(`[${context}] Error:`, message);
-    return NextResponse.json({ error: message }, { status });
+    logUpstreamError(context, error);
+    return NextResponse.json(
+        sanitizeUpstreamClientError(axiosError.response?.data, `Failed to ${context}`),
+        { status }
+    );
 }
 
 /**

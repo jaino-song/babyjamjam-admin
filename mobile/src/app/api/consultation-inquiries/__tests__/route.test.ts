@@ -37,7 +37,7 @@ describe("consultation inquiry API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("preserves backend error status and payload when listing inquiries", async () => {
+  it("preserves backend error status and sanitizes payload when listing inquiries", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 403,
@@ -50,7 +50,7 @@ describe("consultation inquiry API routes", () => {
     );
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "inquiry access denied" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch consultation inquiries" });
   });
 
   it("rejects unsafe inquiry IDs before proxying read updates", async () => {
@@ -64,7 +64,7 @@ describe("consultation inquiry API routes", () => {
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
-  it("preserves backend read-update error status and payload", async () => {
+  it("preserves backend read-update error status and sanitizes payload", async () => {
     mockPatch.mockRejectedValue({
       response: {
         status: 404,
@@ -78,6 +78,6 @@ describe("consultation inquiry API routes", () => {
     );
 
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "inquiry not found" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to mark consultation inquiry as read" });
   });
 });

@@ -46,7 +46,7 @@ describe("Alimtalk API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("preserves backend error status and payload when listing Alimtalk logs", async () => {
+  it("preserves backend error status and sanitizes payload when listing Alimtalk logs", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 403,
@@ -57,7 +57,7 @@ describe("Alimtalk API routes", () => {
     const response = await listAlimtalkLogs(createRequest("/api/alimtalk-logs"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "log access denied" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk logs" });
   });
 
   it("forwards Alimtalk log limit and skip params", async () => {
@@ -78,7 +78,7 @@ describe("Alimtalk API routes", () => {
     });
   });
 
-  it("preserves backend error status and payload when listing upcoming jobs", async () => {
+  it("preserves backend error status and sanitizes payload when listing upcoming jobs", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 429,
@@ -91,10 +91,10 @@ describe("Alimtalk API routes", () => {
     );
 
     expect(response.status).toBe(429);
-    await expect(response.json()).resolves.toEqual({ error: "too many requests" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch upcoming alimtalk trigger jobs" });
   });
 
-  it("preserves backend error status and payload when listing trigger templates", async () => {
+  it("preserves backend error status and sanitizes payload when listing trigger templates", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 422,
@@ -107,7 +107,7 @@ describe("Alimtalk API routes", () => {
     );
 
     expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toEqual({ error: "invalid provider" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk trigger templates" });
   });
 
   it("preserves backend status and payload when listing Alimtalk templates", async () => {

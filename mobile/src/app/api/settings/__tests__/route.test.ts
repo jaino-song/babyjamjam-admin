@@ -47,7 +47,7 @@ describe("settings API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("preserves backend error status and payload for Alimtalk provider settings", async () => {
+  it("preserves backend error status and sanitizes payload for Alimtalk provider settings", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 403,
@@ -60,7 +60,7 @@ describe("settings API routes", () => {
     );
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "settings access denied" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk provider" });
   });
 
   it("preserves backend status and payload when updating Alimtalk provider settings", async () => {

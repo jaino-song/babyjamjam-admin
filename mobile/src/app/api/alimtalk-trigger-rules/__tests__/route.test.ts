@@ -51,7 +51,7 @@ describe("Alimtalk trigger rule API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("preserves backend error status and payload when listing rules", async () => {
+  it("preserves backend error status and sanitizes payload when listing rules", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 403,
@@ -62,7 +62,7 @@ describe("Alimtalk trigger rule API routes", () => {
     const response = await listRules(createRequest("/api/alimtalk-trigger-rules"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "trigger access denied" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk trigger rules" });
   });
 
   it("preserves backend status and payload when creating rules", async () => {

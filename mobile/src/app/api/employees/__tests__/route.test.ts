@@ -51,7 +51,7 @@ describe("employee API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("preserves backend error status and payload when listing employees", async () => {
+  it("preserves backend error status and sanitizes payload when listing employees", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 403,
@@ -62,7 +62,7 @@ describe("employee API routes", () => {
     const response = await listEmployees(createRequest("/api/employees"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "employee access denied" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch employees" });
   });
 
   it("preserves backend status and payload when creating employees", async () => {

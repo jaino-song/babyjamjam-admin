@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { setAuthCookies, errorResponse, getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
+import {
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    sanitizeUpstreamClientError,
+    setAuthCookies,
+} from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
@@ -21,16 +27,22 @@ export async function POST(request: NextRequest) {
 
         // Check for error response (serverAPIClient doesn't throw on HTTP errors)
         if (response.status >= 400) {
-            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
-            console.error("[access-token] Backend error:", errorMessage);
-            return NextResponse.json({ error: errorMessage }, { status: response.status });
+            const safeError = sanitizeUpstreamClientError(response.data, "Failed to get access token");
+            console.error("[access-token] Backend error:", {
+                status: response.status,
+                code: safeError.code,
+            });
+            return NextResponse.json(safeError, { status: response.status });
         }
 
         const { oauth_token } = response.data;
 
         // Validate response structure
         if (!oauth_token?.access_token || !oauth_token?.refresh_token) {
-            console.error("[access-token] Invalid response structure:", response.data);
+            console.error("[access-token] Invalid response structure:", {
+                status: response.status,
+                hasOauthToken: Boolean(response.data?.oauth_token),
+            });
             return NextResponse.json(
                 { error: "Invalid response from authentication service" },
                 { status: 500 }

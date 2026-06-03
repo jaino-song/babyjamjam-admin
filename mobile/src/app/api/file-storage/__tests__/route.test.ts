@@ -70,7 +70,7 @@ describe("file-storage API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("preserves backend error status and payload when listing files", async () => {
+  it("preserves backend error status and sanitizes payload when listing files", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 403,
@@ -81,7 +81,7 @@ describe("file-storage API routes", () => {
     const response = await listFiles(createGetRequest("/api/file-storage/files"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "document access denied" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch documents" });
   });
 
   it("preserves backend status and payload when uploading files", async () => {
@@ -120,7 +120,7 @@ describe("file-storage API routes", () => {
     expect(mockPut).not.toHaveBeenCalled();
   });
 
-  it("preserves backend delete error status and payload", async () => {
+  it("preserves backend delete error status and sanitizes payload", async () => {
     mockDelete.mockRejectedValue({
       response: {
         status: 409,
@@ -134,7 +134,7 @@ describe("file-storage API routes", () => {
     );
 
     expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({ error: "document is locked" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to delete document" });
   });
 
   it("rejects unsafe download IDs before proxying", async () => {

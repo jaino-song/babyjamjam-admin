@@ -77,7 +77,7 @@ describe("system-template nested API routes", () => {
         });
     });
 
-    it("proxies rollback requests and preserves backend failure status", async () => {
+    it("proxies rollback requests and sanitizes backend failure payload", async () => {
         mockPost.mockRejectedValue({
             response: {
                 status: 409,
@@ -91,7 +91,7 @@ describe("system-template nested API routes", () => {
         );
 
         expect(response.status).toBe(409);
-        await expect(response.json()).resolves.toEqual({ error: "Version is already current" });
+        await expect(response.json()).resolves.toEqual({ error: "Failed to rollback system template" });
         expect(mockPost).toHaveBeenCalledWith(
             "/system-templates/GREETING/rollback/2",
             {},

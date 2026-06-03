@@ -40,7 +40,7 @@ describe("document category API route", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("preserves backend error status and payload when listing categories", async () => {
+  it("preserves backend error status and sanitizes payload when listing categories", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 403,
@@ -51,7 +51,7 @@ describe("document category API route", () => {
     const response = await listCategories(createRequest("/api/document-categories"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "category access denied" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch document categories" });
   });
 
   it("preserves backend status and payload when creating categories", async () => {
