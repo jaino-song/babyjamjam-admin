@@ -1,13 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 const ALLOWED_QUERY_KEYS = ["page", "limit", "search", "phone", "status", "readState"] as const;
 
@@ -15,7 +14,7 @@ export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const searchParams = request.nextUrl.searchParams;
@@ -31,12 +30,8 @@ export async function GET(request: NextRequest) {
             params,
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data, { status: response.status });
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error fetching consultation inquiries:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch consultation inquiries" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch consultation inquiries");
     }
 }
