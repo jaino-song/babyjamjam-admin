@@ -3,9 +3,9 @@ name: Playwright Tests
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master, develop, dev, preview, "feature/**" ]
+    branches: [ main, dev, preview, "feature/**", "fix/**" ]
   pull_request:
-    branches: [ main, master, develop, dev, preview ]
+    branches: [ main, dev, preview, "feature/**", "fix/**" ]
 
 jobs:
   test:
