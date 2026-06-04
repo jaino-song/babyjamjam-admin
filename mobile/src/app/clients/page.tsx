@@ -5,35 +5,23 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { User } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { clientQueryKeys, useClient, useDeleteClient } from "@/hooks/useClients";
-import { useAreaTemplates } from "@/hooks";
+import { clientQueryKeys, fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { fetchAllAlimtalkLogs } from "@/lib/alimtalk/logs";
 import { Client } from "@/lib/client/types";
-import { buildClientContractData } from "@/lib/contracts/client-contract-data";
-import {
-  CONTRACT_CREATION_PROGRESS_STEPS,
-  INITIAL_HEADLESS_PROGRESS,
-  createHeadlessProgressId,
-  getSafeHeadlessFailureMessage,
-  isHeadlessProgressStepKey,
-  resolveFailedHeadlessProgress,
-  resolveNextHeadlessProgress,
-  type HeadlessProgressEvent,
-  type HeadlessProgressState,
-} from "@/lib/eformsign/headless-progress";
+import { getStatusCategory } from "@/lib/eformsign/status-codes";
 import { useLocale } from "@/providers/LocaleProvider";
-import { eformsignApi } from "@/services/api";
+import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { t } from "@/lib/i18n/translations";
+import { todayIsoDate } from "@/lib/contracts/date-input";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { toast } from "@/hooks/use-toast";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
-import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
+import { useFormStore } from "@/stores/form-store";
 import {
   Badge,
   ListCard,
@@ -64,28 +52,53 @@ function primaryEmployeeMeta(c: Client) {
   return c.primaryEmployee?.name ?? "제공인력 미배정";
 }
 
-function formatMonthDay(dateStr: string | null | undefined): string | null {
+function compactDateToIsoDate(value: string | null | undefined): string | null {
+  const digits = (value ?? "").replace(/\D/g, "");
+  if (digits.length < 8) return null;
+
+  const year = digits.slice(0, 4);
+  const month = digits.slice(4, 6);
+  const day = digits.slice(6, 8);
+  const iso = `${year}-${month}-${day}`;
+  const date = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : iso;
+}
+
+function yymmddToIsoDate(value: string | null | undefined): string | null {
+  const digits = (value ?? "").replace(/\D/g, "");
+  if (digits.length !== 6) return null;
+
+  const yy = Number(digits.slice(0, 2));
+  const month = digits.slice(2, 4);
+  const day = digits.slice(4, 6);
+  const year = yy >= 70 ? 1900 + yy : 2000 + yy;
+  const iso = `${year}-${month}-${day}`;
+  const date = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : iso;
+}
+
+function formatKoreanDate(dateStr: string | null | undefined): string | null {
   if (!dateStr) return null;
 
   const dateOnlyMatch = dateStr.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (dateOnlyMatch) {
-    const month = Number(dateOnlyMatch[2]);
-    const day = Number(dateOnlyMatch[3]);
-    if (Number.isFinite(month) && Number.isFinite(day)) {
-      return `${month}/${day}`;
-    }
+    const year = dateOnlyMatch[1];
+    const month = dateOnlyMatch[2].padStart(2, "0");
+    const day = dateOnlyMatch[3].padStart(2, "0");
+    return `${year}년 ${month}월 ${day}일`;
   }
 
-  const date = new Date(dateStr);
+  const normalized = compactDateToIsoDate(dateStr) ?? yymmddToIsoDate(dateStr) ?? dateStr;
+  const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "numeric",
-    day: "numeric",
-  }).format(date);
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}년 ${month}월 ${day}일`;
 }
 
 function labeledDateMeta(label: string, dateStr: string | null | undefined, c: Client): string {
-  const date = formatMonthDay(dateStr);
+  const date = formatKoreanDate(dateStr);
   return `${label} ${date ?? "-"} · ${primaryEmployeeMeta(c)}`;
 }
 
@@ -111,6 +124,19 @@ function clientRecency(c: Client): number {
   return Number.isFinite(t) ? t : 0;
 }
 
+function documentStatusFromStatusType(statusType: string | null | undefined): Client["documentStatus"] {
+  const normalized = statusType?.trim().padStart(3, "0");
+  if (!normalized) return null;
+
+  const category = getStatusCategory(normalized);
+  if (category === "completed") return "completed";
+  if (category === "rejected") return "rejected";
+  if (normalized === "020") return "opened";
+  if (["001", "002", "010", "043"].includes(normalized)) return "created";
+  if (["030", "060", "070"].includes(normalized)) return "requested";
+  return null;
+}
+
 export function buildAllClientRowsForList(clients: Client[]): Client[] {
   return [...clients].sort((a, b) => clientRecency(b) - clientRecency(a) || b.id - a.id);
 }
@@ -133,6 +159,13 @@ function normalizePhone(value: string | null | undefined): string {
   return (value ?? "").replace(/\D/g, "");
 }
 
+function contractPrefillDate(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+
+  const dateOnlyMatch = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  return dateOnlyMatch?.[1] ?? compactDateToIsoDate(value) ?? yymmddToIsoDate(value) ?? undefined;
+}
+
 export default function ClientsPage() {
   const locale = useLocale();
   const router = useRouter();
@@ -146,21 +179,14 @@ export default function ClientsPage() {
   const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
-  const [isIssuingContract, setIsIssuingContract] = useState(false);
-  const [isIssueProgressOpen, setIsIssueProgressOpen] = useState(false);
-  const [issueProgress, setIssueProgress] = useState<HeadlessProgressState>(INITIAL_HEADLESS_PROGRESS);
-  const [issueProgressErrorHint, setIssueProgressErrorHint] = useState<string | null>(null);
-  const issueProgressSourceRef = useRef<EventSource | null>(null);
+  const selectClientRequestRef = useRef(0);
+  const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
 
   useEffect(() => {
     document.body.classList.add(CLIENTS_ROUTE_BODY_CLASS);
     return () => {
       document.body.classList.remove(CLIENTS_ROUTE_BODY_CLASS);
     };
-  }, []);
-
-  useEffect(() => () => {
-    issueProgressSourceRef.current?.close();
   }, []);
 
   const { allClients, allFilteredClients, total, isLoading, isFetching } = useInfiniteClients({
@@ -177,7 +203,6 @@ export default function ClientsPage() {
 
   const deleteClient = useDeleteClient();
   const { data: employees = [] } = useEmployees();
-  const { data: areaTemplates = [] } = useAreaTemplates();
   const { data: clientFromParam } = useClient(selectedClientIdFromParam ?? 0);
   const detailClient = selectedClient ?? (selectedClientIdFromParam !== null ? clientFromParam ?? null : null);
   const { data: notificationLogsData = [], isLoading: isNotificationLogsLoading } = useQuery<ClientNotificationLogRecord[]>({
@@ -186,6 +211,55 @@ export default function ClientsPage() {
     enabled: Boolean(detailClient),
     staleTime: 1000 * 60,
   });
+  const { data: syncedContractDoc } = useQuery({
+    queryKey: ["eformsign-docs", "sync-status", detailClient?.eDocId],
+    queryFn: async () => {
+      if (!detailClient?.eDocId) {
+        throw new Error("documentId is required");
+      }
+      return withEformsignReauth(() => eformsignApi.syncDocumentStatus(detailClient.eDocId!));
+    },
+    enabled: Boolean(detailClient?.eDocId && detailSheetTab === "contracts"),
+    staleTime: 1000 * 30,
+    retry: 1,
+  });
+  const { data: detailContractDocument } = useQuery({
+    queryKey: ["eformsign-docs", "document", detailClient?.eDocId],
+    queryFn: async () => {
+      if (!detailClient?.eDocId) {
+        throw new Error("documentId is required");
+      }
+      return withEformsignReauth(() => eformsignApi.getDocument(detailClient.eDocId!));
+    },
+    enabled: Boolean(detailClient?.eDocId && (detailSheetTab === "basic" || detailSheetTab === "contracts")),
+    staleTime: 1000 * 60,
+    retry: 1,
+  });
+
+  const syncedDetailClient = useMemo(() => {
+    if (!detailClient) return null;
+
+    const documentStatus = documentStatusFromStatusType(syncedContractDoc?.statusType);
+    if (!documentStatus || syncedContractDoc?.documentId !== detailClient.eDocId) {
+      return detailClient;
+    }
+
+    return {
+      ...detailClient,
+      documentStatus,
+      hasSigned: documentStatus === "completed" ? true : detailClient.hasSigned,
+    };
+  }, [detailClient, syncedContractDoc]);
+
+  useEffect(() => {
+    if (!detailClient || syncedContractDoc?.documentId !== detailClient.eDocId) return;
+
+    const documentStatus = documentStatusFromStatusType(syncedContractDoc.statusType);
+    if (!documentStatus) return;
+
+    queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
+    queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(detailClient.id) });
+  }, [detailClient, queryClient, syncedContractDoc]);
 
   const detailNotificationLogs = useMemo(() => {
     if (!detailClient || !Array.isArray(notificationLogsData)) return [];
@@ -200,12 +274,46 @@ export default function ClientsPage() {
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [detailClient, notificationLogsData]);
 
-  const handleSelectClient = (client: Client) => {
+  const handleSelectClient = async (client: Client) => {
+    const requestId = selectClientRequestRef.current + 1;
+    selectClientRequestRef.current = requestId;
     setSelectedClient(client);
     setDetailSheetTab("basic");
+
+    try {
+      const freshClient = await queryClient.fetchQuery({
+        queryKey: clientQueryKeys.detail(client.id),
+        queryFn: () => fetchClient(client.id),
+        staleTime: 0,
+      });
+      if (selectClientRequestRef.current !== requestId) return;
+
+      setSelectedClient(freshClient);
+
+      if (!freshClient.eDocId || freshClient.documentStatus === "completed") return;
+
+      const syncedDoc = await withEformsignReauth(() =>
+        eformsignApi.syncDocumentStatus(freshClient.eDocId!),
+      );
+      if (selectClientRequestRef.current !== requestId) return;
+
+      const documentStatus = documentStatusFromStatusType(syncedDoc.statusType);
+      if (!documentStatus || syncedDoc.documentId !== freshClient.eDocId) return;
+
+      setSelectedClient({
+        ...freshClient,
+        documentStatus,
+        hasSigned: documentStatus === "completed" ? true : freshClient.hasSigned,
+      });
+      queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(freshClient.id) });
+    } catch {
+      // Keep the already-open list row detail. Row selection should not be blocked by refresh failures.
+    }
   };
 
   const handleCloseDetailSheet = () => {
+    selectClientRequestRef.current += 1;
     setSelectedClient(null);
     if (selectedClientIdFromParam !== null) {
       router.replace("/clients");
@@ -222,119 +330,32 @@ export default function ClientsPage() {
     router.push(`/messages?clientId=${client.id}`);
   };
 
-  const handleIssueContract = async (client: Client) => {
-    if (isIssuingContract) return;
+  const handleIssueContract = (client: Client) => {
+    const primaryEmployee =
+      employees.find((employee) => employee.id === client.primaryEmployee?.id) ??
+      employees.find((employee) => employee.name.trim() === client.primaryEmployee?.name?.trim());
 
-    setIsIssuingContract(true);
-    setIssueProgressErrorHint(null);
-
-    let progressSource: EventSource | null = null;
-    try {
-      const { contractData } = buildClientContractData({
-        client,
-        employees,
-        areaTemplates,
-      });
-
-      const authResult = await eformsignApi.authenticate(Date.now());
-      if (!authResult.success) {
-        throw new Error("eformsign 인증에 실패했습니다.");
-      }
-
-      const progressId = createHeadlessProgressId("client-contract");
-      setIssueProgress({ step: "client-started", completed: false, failed: false });
-      setIsIssueProgressOpen(true);
-
-      progressSource = new EventSource(
-        `/api/eformsign-docs/dispatch-headless/progress?progressId=${encodeURIComponent(progressId)}`,
-      );
-      issueProgressSourceRef.current = progressSource;
-      progressSource.addEventListener("progress", (event) => {
-        let data: HeadlessProgressEvent;
-        try {
-          data = JSON.parse((event as MessageEvent).data) as HeadlessProgressEvent;
-        } catch {
-          return;
-        }
-
-        if (data.step === "failed") {
-          const errorHint = getSafeHeadlessFailureMessage(data.reason);
-          setIssueProgress((current) => {
-            const next = resolveFailedHeadlessProgress(
-              current,
-              data.failedStep,
-              CONTRACT_CREATION_PROGRESS_STEPS,
-            );
-            if (next !== current) {
-              setIssueProgressErrorHint(errorHint);
-            }
-            return next;
-          });
-          return;
-        }
-
-        if (!isHeadlessProgressStepKey(data.step, CONTRACT_CREATION_PROGRESS_STEPS)) return;
-        const nextStep = data.step;
-        setIssueProgress((current) =>
-          resolveNextHeadlessProgress(current, nextStep, CONTRACT_CREATION_PROGRESS_STEPS),
-        );
-      });
-
-      const headless = await eformsignApi.dispatchHeadless(contractData, client.id, progressId);
-
-      if (!headless.ok) {
-        const errorHint = getSafeHeadlessFailureMessage(headless.reason);
-        setIssueProgress((current) => {
-          const next = resolveFailedHeadlessProgress(
-            current,
-            headless.failedStep,
-            CONTRACT_CREATION_PROGRESS_STEPS,
-          );
-          if (next !== current) {
-            setIssueProgressErrorHint(errorHint);
-          }
-          return next;
-        });
-        toast({
-          title: "계약서 자동 발급 실패",
-          description: errorHint,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      setIssueProgress({ step: "sent", completed: true, failed: false });
-      if (headless.documentId) {
-        setSelectedClient((current) =>
-          current?.id === client.id
-            ? { ...current, eDocId: headless.documentId ?? current.eDocId, documentStatus: "created" }
-            : current,
-        );
-      }
-      queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
-      queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
-      queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(client.id) });
-      toast({
-        title: "계약서 자동 발급 완료",
-        description: `${client.name}님 계약서가 발송되었습니다.`,
-      });
-      setTimeout(() => {
-        setIsIssueProgressOpen(false);
-      }, 800);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "계약서 자동 발급 중 오류가 발생했습니다.";
-      setIsIssueProgressOpen(false);
-      setIssueProgress(INITIAL_HEADLESS_PROGRESS);
-      toast({
-        title: "계약서 자동 발급 실패",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      progressSource?.close();
-      issueProgressSourceRef.current = null;
-      setIsIssuingContract(false);
-    }
+    prefillContractCreation({
+      clientId: client.id,
+      name: client.name,
+      phone: client.phone ?? "",
+      birthday: client.birthday ?? "",
+      dueDate: contractPrefillDate(client.dueDate),
+      address: client.address ?? "",
+      employeeId: primaryEmployee?.id ?? client.primaryEmployee?.id ?? null,
+      employeeName: primaryEmployee?.name ?? client.primaryEmployee?.name ?? "",
+      employeePhone: primaryEmployee?.phone ?? "",
+      startDate: contractPrefillDate(client.startDate),
+      endDate: contractPrefillDate(client.endDate),
+      fullPrice: client.fullPrice ?? "",
+      grant: client.grant ?? "",
+      actualPrice: client.actualPrice ?? "",
+      paymentDate: todayIsoDate(),
+      voucherType: client.type ?? "",
+      voucherDuration: client.duration != null ? String(client.duration) : "",
+      area: "",
+    });
+    router.push("/contracts/new");
   };
 
   const handleDeleteRequest = (id: number) => {
@@ -557,13 +578,14 @@ export default function ClientsPage() {
         detail={
           detailClient ? (
             <ClientDetailContent
-              client={detailClient}
+              client={syncedDetailClient ?? detailClient}
+              contractDocument={detailContractDocument ?? null}
               activeTab={detailSheetTab}
               notificationLogs={detailNotificationLogs}
               isNotificationLogsLoading={isNotificationLogsLoading}
-              isIssuingContract={isIssuingContract}
+              isIssuingContract={false}
               onTabChange={setDetailSheetTab}
-              onMessage={() => handleMessage(detailClient)}
+              onMessage={() => handleMessage(syncedDetailClient ?? detailClient)}
               onIssueContract={handleIssueContract}
               onEdit={handleEdit}
               onDelete={handleDeleteRequest}
@@ -596,20 +618,6 @@ export default function ClientsPage() {
         }}
         onCancel={() => setDeleteTargetClientId(null)}
         onConfirm={handleDeleteConfirm}
-      />
-
-      <HeadlessProgressModal
-        open={isIssueProgressOpen}
-        title="계약서 자동 발급 중"
-        subtitle={
-          issueProgress.failed
-            ? "자동 발급에 실패했습니다. 고객 정보와 계약서 유형을 확인해 주세요."
-            : undefined
-        }
-        steps={CONTRACT_CREATION_PROGRESS_STEPS}
-        progress={issueProgress}
-        errorHint={issueProgressErrorHint}
-        dataComponentPrefix="mobile-clients-contract-issue-progress"
       />
 
     </>

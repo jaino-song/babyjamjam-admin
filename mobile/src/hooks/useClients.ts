@@ -24,6 +24,11 @@ function isValidClientId(id: number): boolean {
     return Number.isInteger(id) && id > 0;
 }
 
+export async function fetchClient(id: number): Promise<Client> {
+    const { data } = await api.get(`/clients/${id}`);
+    return data;
+}
+
 // Fetch all clients (paginated)
 export function useClients(page: number = 1, limit: number = 10, search?: string) {
     return useQuery<PaginatedResponse<Client>>({
@@ -57,10 +62,7 @@ export function useAllClients() {
 export function useClient(id: number) {
     return useQuery<Client>({
         queryKey: clientQueryKeys.detail(id),
-        queryFn: async () => {
-            const { data } = await api.get(`/clients/${id}`);
-            return data;
-        },
+        queryFn: () => fetchClient(id),
         enabled: isValidClientId(id),
     });
 }

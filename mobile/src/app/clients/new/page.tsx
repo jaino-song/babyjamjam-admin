@@ -4,14 +4,15 @@ import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { useQuery } from "@tanstack/react-query";
 import { useClient, useCreateClient, useUpdateClient } from "@/hooks/useClients";
-import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
+import { useAllVoucherPrices, useVoucherPriceInfos, type VoucherPriceInfo } from "@/hooks/useVoucherData";
 import type { CreateClientDto, ServiceStatus, UpdateClientDto } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
-import type { Employee } from "@/hooks/useEmployees";
+import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -20,6 +21,8 @@ import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
+import { buildClientEditPrefillFromEformsignDocument } from "@/lib/eformsign/client-prefill";
+import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { cn } from "@/lib/utils";
 import styles from "./page.module.css";
 
@@ -32,6 +35,12 @@ const WIZARD_STEPS = [
   { title: "서비스 설정", desc: "바우처와 제공인력, 요금 정보를 확인해주세요." },
   { title: "계약 정보", desc: "계약 상태와 서비스 기간을 입력해주세요." },
 ] as const;
+const VOUCHER_TYPE_OPTIONS = Object.values(voucherOptions.voucherOptions).flatMap((types) =>
+  Object.entries(types).map(([value, typeData]) => ({
+    value,
+    label: typeData.label,
+  })),
+);
 
 type HelperTone = "muted" | "ok" | "err" | "pending";
 
@@ -99,6 +108,54 @@ const isoToYymmdd = (iso: string | null | undefined): string => {
   return `${m[1].slice(2)}${m[2]}${m[3]}`;
 };
 
+const normalizeOptionToken = (value: string): string => value.replace(/[\s_-]+/g, "").toLowerCase();
+
+const resolveVoucherTypeValue = (value: string | null | undefined): string | undefined => {
+  const normalized = normalizeOptionToken(value ?? "");
+  if (!normalized) return undefined;
+
+  return VOUCHER_TYPE_OPTIONS.find((option) => (
+    normalizeOptionToken(option.value) === normalized ||
+    normalizeOptionToken(option.label) === normalized
+  ))?.value;
+};
+
+const normalizePhoneDigits = (value: string | null | undefined): string => (value ?? "").replace(/\D/g, "");
+
+const findEmployeeByContractPrefill = (
+  employees: readonly Employee[],
+  name: string | undefined,
+  phone: string | undefined,
+): Employee | undefined => {
+  if (!name) return undefined;
+  const trimmedName = name.trim();
+  const phoneDigits = normalizePhoneDigits(phone);
+
+  return employees.find((employee) => {
+    if (employee.name.trim() !== trimmedName) return false;
+    return !phoneDigits || normalizePhoneDigits(employee.phone) === phoneDigits;
+  }) ?? employees.find((employee) => employee.name.trim() === trimmedName);
+};
+
+const normalizePriceDigits = (value: string | null | undefined): string => (value ?? "").replace(/\D/g, "");
+
+const findVoucherPriceByAmounts = (
+  voucherPrices: readonly VoucherPriceInfo[],
+  amounts: { fullPrice?: string; grant?: string; actualPrice?: string },
+): VoucherPriceInfo | undefined => {
+  const fullPrice = normalizePriceDigits(amounts.fullPrice);
+  const grant = normalizePriceDigits(amounts.grant);
+  const actualPrice = normalizePriceDigits(amounts.actualPrice);
+  if (!fullPrice && !grant && !actualPrice) return undefined;
+
+  return voucherPrices.find((price) => {
+    if (fullPrice && normalizePriceDigits(price.fullPrice) !== fullPrice) return false;
+    if (grant && normalizePriceDigits(price.grant) !== grant) return false;
+    if (actualPrice && normalizePriceDigits(price.actualPrice) !== actualPrice) return false;
+    return true;
+  });
+};
+
 export default function NewClientPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -109,6 +166,13 @@ export default function NewClientPage() {
   const createClient = useCreateClient();
   const updateClient = useUpdateClient();
   const { data: editingClient } = useClient(editingClientId ?? 0);
+  const { data: employees = [], isLoading: isEmployeesLoading } = useEmployees();
+  const voucherLookupYear = isEditMode ? new Date().getFullYear() : undefined;
+  const {
+    data: allVoucherPrices = [],
+    isLoading: isAllVoucherPricesLoading,
+    isFetching: isAllVoucherPricesFetching,
+  } = useAllVoucherPrices(voucherLookupYear);
   const prefillName = useClientDialogStore((s) => s.prefillName);
   const prefillClient = useClientDialogStore((s) => s.prefillClient);
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
@@ -128,6 +192,21 @@ export default function NewClientPage() {
   const floatingErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastInitializedFormKeyRef = useRef<string | null>(null);
   const lastHydratedIdRef = useRef<number | null>(null);
+  const lastHydratedContractDocIdRef = useRef<string | null>(null);
+
+  const { data: editingContractDocument } = useQuery({
+    queryKey: ["eformsign-docs", "document", editingClient?.eDocId],
+    queryFn: async () => {
+      const documentId = editingClient?.eDocId;
+      if (!documentId) {
+        throw new Error("documentId is required");
+      }
+      return withEformsignReauth(() => eformsignApi.getDocument(documentId));
+    },
+    enabled: Boolean(isEditMode && editingClient?.eDocId),
+    staleTime: 1000 * 60,
+    retry: 1,
+  });
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
   const originalPhoneDigits = useMemo(
@@ -190,6 +269,7 @@ export default function NewClientPage() {
     if (lastInitializedFormKeyRef.current === formSessionKey) return;
     lastInitializedFormKeyRef.current = formSessionKey;
     lastHydratedIdRef.current = null;
+    lastHydratedContractDocIdRef.current = null;
     reset();
   }, [formSessionKey, reset]);
 
@@ -268,8 +348,88 @@ export default function NewClientPage() {
     setField("voucherClient", editingClient.voucherClient);
     setField("breastPump", editingClient.breastPump);
     setField("serviceStatus", editingClient.serviceStatus ?? "waiting");
-    setPricesManuallyEdited(true);
+    setPricesManuallyEdited(Boolean(editingClient.fullPrice || editingClient.grant || editingClient.actualPrice));
   }, [editingClient, setField, setPricesManuallyEdited]);
+
+  useEffect(() => {
+    if (!editingClient?.eDocId || !editingContractDocument) return;
+    if (lastHydratedContractDocIdRef.current === editingClient.eDocId) return;
+
+    const prefill = buildClientEditPrefillFromEformsignDocument(editingContractDocument);
+    const hasPricePrefill = Boolean(prefill.fullPrice || prefill.grant || prefill.actualPrice);
+    const initialVoucherType = resolveVoucherTypeValue(prefill.type);
+
+    if ((prefill.primaryEmployeeName || prefill.secondaryEmployeeName) && isEmployeesLoading) {
+      return;
+    }
+
+    if (
+      hasPricePrefill &&
+      (isAllVoucherPricesLoading || isAllVoucherPricesFetching || allVoucherPrices.length === 0)
+    ) {
+      return;
+    }
+
+    lastHydratedContractDocIdRef.current = editingClient.eDocId;
+
+    const matchedVoucherPrice = hasPricePrefill
+      ? findVoucherPriceByAmounts(allVoucherPrices, prefill)
+      : undefined;
+    const matchedDuration = matchedVoucherPrice?.duration ? Number(matchedVoucherPrice.duration) : undefined;
+    const voucherType = initialVoucherType ?? resolveVoucherTypeValue(matchedVoucherPrice?.type);
+    const voucherDuration = Number.isFinite(matchedDuration) ? matchedDuration : prefill.duration;
+    const primaryEmployee = findEmployeeByContractPrefill(
+      employees,
+      prefill.primaryEmployeeName,
+      prefill.primaryEmployeePhone,
+    );
+    const secondaryEmployee = findEmployeeByContractPrefill(
+      employees,
+      prefill.secondaryEmployeeName,
+      prefill.secondaryEmployeePhone,
+    );
+
+    if (!store.birthday && prefill.birthday) setField("birthday", prefill.birthday);
+    if (!store.dueDate && prefill.dueDate) setField("dueDate", prefill.dueDate);
+    if (!store.address && prefill.address) setField("address", prefill.address);
+    if (!store.phone && prefill.phone) setField("phone", prefill.phone);
+    if (!store.type && voucherType) setField("type", voucherType);
+    if (store.duration == null && voucherDuration != null) setField("duration", voucherDuration);
+    if (!store.fullPrice && prefill.fullPrice) setField("fullPrice", prefill.fullPrice);
+    if (!store.grant && prefill.grant) setField("grant", prefill.grant);
+    if (!store.actualPrice && prefill.actualPrice) setField("actualPrice", prefill.actualPrice);
+    if (!store.startDate && prefill.startDate) setField("startDate", prefill.startDate);
+    if (!store.endDate && prefill.endDate) setField("endDate", prefill.endDate);
+    if (store.primaryEmployeeId == null && primaryEmployee) setField("primaryEmployeeId", primaryEmployee.id);
+    if (store.secondaryEmployeeId == null && secondaryEmployee) setField("secondaryEmployeeId", secondaryEmployee.id);
+
+    if (hasPricePrefill) {
+      setPricesManuallyEdited(true);
+    }
+  }, [
+    editingClient?.eDocId,
+    editingContractDocument,
+    allVoucherPrices,
+    employees,
+    isAllVoucherPricesFetching,
+    isAllVoucherPricesLoading,
+    isEmployeesLoading,
+    setField,
+    setPricesManuallyEdited,
+    store.actualPrice,
+    store.address,
+    store.birthday,
+    store.dueDate,
+    store.duration,
+    store.endDate,
+    store.fullPrice,
+    store.grant,
+    store.phone,
+    store.primaryEmployeeId,
+    store.secondaryEmployeeId,
+    store.startDate,
+    store.type,
+  ]);
 
   useEffect(() => {
     if (phoneDigits.length !== 11) {
@@ -360,11 +520,25 @@ export default function NewClientPage() {
     const durations = [...new Set(voucherPriceInfos.map((i) => Number(i.duration)))];
     return durations.sort((a, b) => a - b);
   }, [voucherPriceInfos]);
+  const hasValidStoreDuration = store.duration != null && availableDurations.includes(store.duration);
+
+  const inferredDurationFromPrices = useMemo(() => {
+    if (!voucherPriceInfos || hasValidStoreDuration) return null;
+
+    const matchedVoucherPrice = findVoucherPriceByAmounts(voucherPriceInfos, {
+      fullPrice: store.fullPrice,
+      grant: store.grant,
+      actualPrice: store.actualPrice,
+    });
+    const matchedDuration = matchedVoucherPrice?.duration ? Number(matchedVoucherPrice.duration) : undefined;
+    return matchedDuration !== undefined && Number.isFinite(matchedDuration) ? matchedDuration : null;
+  }, [hasValidStoreDuration, store.actualPrice, store.fullPrice, store.grant, voucherPriceInfos]);
+  const effectiveDuration = hasValidStoreDuration ? store.duration : inferredDurationFromPrices;
 
   const selectedPriceInfo = useMemo(() => {
-    if (!voucherPriceInfos || !store.duration) return null;
-    return voucherPriceInfos.find((i) => Number(i.duration) === store.duration);
-  }, [voucherPriceInfos, store.duration]);
+    if (!voucherPriceInfos || !effectiveDuration) return null;
+    return voucherPriceInfos.find((i) => Number(i.duration) === effectiveDuration);
+  }, [effectiveDuration, voucherPriceInfos]);
 
   useEffect(() => {
     if (selectedPriceInfo && !pricesManuallyEdited) {
@@ -374,17 +548,40 @@ export default function NewClientPage() {
     }
   }, [selectedPriceInfo, pricesManuallyEdited, setField]);
 
+  useEffect(() => {
+    if (!store.type || hasValidStoreDuration || !voucherPriceInfos) return;
+
+    const matchedVoucherPrice = findVoucherPriceByAmounts(voucherPriceInfos, {
+      fullPrice: store.fullPrice,
+      grant: store.grant,
+      actualPrice: store.actualPrice,
+    });
+    const matchedDuration = matchedVoucherPrice?.duration ? Number(matchedVoucherPrice.duration) : undefined;
+    if (matchedDuration !== undefined && Number.isFinite(matchedDuration)) {
+      setField("duration", matchedDuration);
+    }
+  }, [
+    hasValidStoreDuration,
+    setField,
+    store.actualPrice,
+    store.duration,
+    store.fullPrice,
+    store.grant,
+    store.type,
+    voucherPriceInfos,
+  ]);
+
   // 시작일(YYMMDD) + 바우처 기간이 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/duration이 다시 바뀌어야만 덮어쓴다.
   useEffect(() => {
-    if (!store.startDate || !store.duration) return;
+    if (!store.startDate || !effectiveDuration) return;
     if (!/^\d{6}$/.test(store.startDate)) return;
     const startIso = `20${store.startDate.slice(0, 2)}-${store.startDate.slice(2, 4)}-${store.startDate.slice(4, 6)}`;
-    const endIso = calcEndDateBusinessDays(startIso, store.duration);
+    const endIso = calcEndDateBusinessDays(startIso, effectiveDuration);
     if (!endIso) return;
     const endYymmdd = `${endIso.slice(2, 4)}${endIso.slice(5, 7)}${endIso.slice(8, 10)}`;
     setField("endDate", endYymmdd);
-  }, [store.startDate, store.duration, setField]);
+  }, [effectiveDuration, store.startDate, setField]);
 
   const handleTypeChange = (newType: string) => {
     setField("type", newType);
@@ -476,7 +673,7 @@ export default function NewClientPage() {
         primaryEmployeeId: store.primaryEmployeeId,
         secondaryEmployeeId: store.secondaryEmployeeId,
         type: store.type || null,
-        duration: store.duration || null,
+        duration: effectiveDuration || null,
         fullPrice: store.fullPrice || null,
         grant: store.grant || null,
         actualPrice: store.actualPrice || null,
@@ -649,7 +846,7 @@ export default function NewClientPage() {
                         placeholder="YYMMDD"
                       />
                     </Field>
-                    <Field label="출산 예정일" helper="출산 예정일 또는 서비스 시작 희망일">
+                    <Field label="출산 예정일">
                       <input
                         className={styles.formInput}
                         value={store.dueDate}
@@ -699,7 +896,7 @@ export default function NewClientPage() {
                       <div className={cn(styles.selectWrap, isPriceLoading ? styles.loadingSelect : !store.type && styles.disabledSelect)} data-component="clients-new-duration-select-wrap">
                         <select
                           className={styles.formInput}
-                          value={store.duration?.toString() || ""}
+                          value={effectiveDuration?.toString() || ""}
                           onChange={(e) => {
                             setField("duration", e.target.value ? Number(e.target.value) : null);
                             setPricesManuallyEdited(false);
