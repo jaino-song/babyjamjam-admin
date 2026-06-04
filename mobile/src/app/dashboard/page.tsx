@@ -259,7 +259,7 @@ export default function DashboardPage() {
     setFormDialogOpen(true);
   }, []);
   const handleMessage = useCallback((c: Client) => router.push(`/messages?clientId=${c.id}`), [router]);
-  const handleIssueContract = useCallback(() => router.push("/contracts/creation"), [router]);
+  const handleIssueContract = useCallback(() => router.push("/contracts/new"), [router]);
   const handleDeleteRequest = useCallback((id: number) => setDeleteTargetClientId(id), []);
   const handleDeleteConfirm = async () => {
     if (deleteTargetClientId == null) return;
