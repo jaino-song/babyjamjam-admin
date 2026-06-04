@@ -1,4 +1,4 @@
-import { isStrictIsoDate, isoToYymmdd, normalizeIsoDate, yymmddToIso } from "../date-input";
+import { isStrictIsoDate, isoToYymmdd, normalizeIsoDate, todayIsoDate, yymmddToIso } from "../date-input";
 
 describe("contract date input helpers", () => {
   it("converts valid YYMMDD input to ISO dates", () => {
@@ -27,5 +27,9 @@ describe("contract date input helpers", () => {
   it("converts normalized ISO values back to YYMMDD display input", () => {
     expect(isoToYymmdd("2026-06-03T00:00:00.000Z")).toBe("260603");
     expect(isoToYymmdd("2026-02-30T00:00:00.000Z")).toBe("");
+  });
+
+  it("formats today's local calendar date as ISO", () => {
+    expect(todayIsoDate(new Date(2026, 5, 4))).toBe("2026-06-04");
   });
 });

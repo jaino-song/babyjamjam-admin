@@ -209,7 +209,7 @@
     "full-price-label": "서비스 금액",
     "grant-label": "정부지원금",
     "actual-price-label": "본인부담금",
-    "payment-date-label": "본인부담금 결제일",
+    "payment-date-label": "본인부담금 수령 날짜",
     "payment-date-placeholder": "2025-01-01",
     "contract-creation": "전자계약서 생성",
     "price-placeholder": "원",

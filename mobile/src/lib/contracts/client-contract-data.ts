@@ -8,12 +8,12 @@ import type { ContractDataDto } from "@/services/api";
 
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SERVICE_CONTRACT_RE = /서비스\s*계약서/;
+const CONTRACT_TEMPLATE_RE = /계약서/;
 
 export interface BuildClientContractDataParams {
   client: Client;
   employees: readonly Employee[];
   areaTemplates: readonly AreaTemplate[];
-  today?: string | Date;
 }
 
 export interface BuiltClientContractData {
@@ -62,8 +62,8 @@ export function resolveContractAreaTemplateId(
     throw new Error("계약서 템플릿 정보를 불러오지 못했습니다.");
   }
 
-  const serviceTemplates = templates.filter((template) => SERVICE_CONTRACT_RE.test(template.templateName ?? ""));
-  const candidates = serviceTemplates.length > 0 ? serviceTemplates : templates;
+  const contractTemplates = templates.filter((template) => CONTRACT_TEMPLATE_RE.test(template.templateName ?? ""));
+  const candidates = contractTemplates.length > 0 ? contractTemplates : templates;
   const address = client.address?.trim() ?? "";
 
   const matched = candidates
@@ -92,7 +92,6 @@ export function buildClientContractData({
   client,
   employees,
   areaTemplates,
-  today,
 }: BuildClientContractDataParams): BuiltClientContractData {
   const customerName = requireText(client.name, "고객 이름");
   const customerContact = requireText(client.phone, "고객 연락처");
@@ -115,8 +114,6 @@ export function buildClientContractData({
   const start = dayjs(startDate);
   const end = dayjs(endDate);
   const payment = dayjs(startDate);
-  const receipt = dayjs(today);
-  const receiptDate = receipt.isValid() ? receipt : dayjs();
   const areaId = resolveContractAreaTemplateId(client, areaTemplates);
 
   return {
@@ -143,9 +140,6 @@ export function buildClientContractData({
       paymentYear: payment.format("YY"),
       paymentMonth: payment.format("MM"),
       paymentDay: payment.format("DD"),
-      receiptYear: receiptDate.format("YY"),
-      receiptMonth: receiptDate.format("MM"),
-      receiptDay: receiptDate.format("DD"),
       fullPrice: requireText(client.fullPrice, "총 서비스 금액"),
       grant: requireText(client.grant, "정부지원금"),
       actualPrice: requireText(client.actualPrice, "본인부담금"),

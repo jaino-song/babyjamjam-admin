@@ -1,4 +1,7 @@
-import { buildClientContractData, resolveContractAreaTemplateId } from "@/lib/contracts/client-contract-data";
+import {
+  buildClientContractData,
+  resolveContractAreaTemplateId,
+} from "@/lib/contracts/client-contract-data";
 import type { Client } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
 import type { AreaTemplate } from "@/hooks/useVoucherData";
@@ -53,7 +56,6 @@ describe("buildClientContractData", () => {
       client: baseClient,
       employees,
       areaTemplates,
-      today: "2026-06-01",
     });
 
     expect(result.areaId).toBe("area_namdong");
@@ -68,9 +70,8 @@ describe("buildClientContractData", () => {
       startDate: "2026-06-03",
       endDate: "2026-06-23",
       paymentYear: "26",
-      receiptYear: "26",
-      receiptMonth: "06",
-      receiptDay: "01",
+      paymentMonth: "06",
+      paymentDay: "03",
     });
   });
 });

@@ -69,9 +69,6 @@ interface ContractDataDto {
   paymentYear: string;
   paymentMonth: string;
   paymentDay: string;
-  receiptYear: string;
-  receiptMonth: string;
-  receiptDay: string;
   fullPrice: string;
   grant: string;
   actualPrice: string;
@@ -95,6 +92,9 @@ const COMPLETED_PILL =
 
 const SELECT_CLS =
   "w-full px-4 py-3 rounded-2xl border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
+
+const MANUAL_CLIENT_CREATION_CONFIRM_MESSAGE =
+  "선택된 기존 고객이 없습니다. 입력한 이용자 정보를 새 고객으로 등록한 뒤 계약서를 생성할까요?";
 
 // // Set Korean as the global locale
 // dayjs.locale("ko");
@@ -391,13 +391,17 @@ export const ContractCreationForm = () => {
       let finalClientId = clientId;
 
       if (isManualEntry && !clientId) {
+        if (!window.confirm(MANUAL_CLIENT_CREATION_CONFIRM_MESSAGE)) {
+          return;
+        }
+
         // Create new client from manual entry data
         const newClient = await createClientMutation.mutateAsync({
           name,
           phone,
           birthday: birthday || undefined,
           address: address || undefined,
-          dueDate: dueDate || undefined,
+          dueDate: dueDate || startDate || undefined,
           primaryEmployeeId: null,
           careCenter: false,
           voucherClient: true,
@@ -418,7 +422,6 @@ export const ContractCreationForm = () => {
       const start = dayjs(startDate);
       const end = dayjs(endDate);
       const payment = dayjs(paymentDate);
-      const today = dayjs();
 
       const contractData: ContractDataDto = {
         customerName: name,
@@ -442,9 +445,6 @@ export const ContractCreationForm = () => {
         paymentYear: payment.format("YY"),
         paymentMonth: payment.format("MM"),
         paymentDay: payment.format("DD"),
-        receiptYear: today.format("YY"),
-        receiptMonth: today.format("MM"),
-        receiptDay: today.format("DD"),
         fullPrice: fullPrice,
         grant: grant,
         actualPrice: actualPrice,
@@ -532,7 +532,7 @@ export const ContractCreationForm = () => {
       return "바우처 유형/기간과 금액 정보를 입력해 주세요.";
     }
     if (step === 3 && !isStep4Valid) {
-      return "계약 시작일, 종료일, 결제일을 입력해 주세요.";
+      return "계약 시작일, 종료일, 본인부담금 수령 날짜를 입력해 주세요.";
     }
     return null;
   };
@@ -1018,7 +1018,7 @@ export const ContractCreationForm = () => {
           {paymentDate && (
             <span className={COMPLETED_PILL}>
               <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              결제일 {paymentDate}
+              본인부담금 수령일 {paymentDate}
             </span>
           )}
         </div>

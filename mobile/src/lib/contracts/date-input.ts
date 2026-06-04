@@ -2,6 +2,10 @@ const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})/;
 const EXACT_ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const YYMMDD_PATTERN = /^\d{6}$/;
 
+function twoDigit(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
 export function isStrictIsoDate(value: string): boolean {
   if (!EXACT_ISO_DATE_PATTERN.test(value)) {
     return false;
@@ -51,4 +55,8 @@ export function isoToYymmdd(value: string | null | undefined): string {
   }
 
   return `${isoDate.slice(2, 4)}${isoDate.slice(5, 7)}${isoDate.slice(8, 10)}`;
+}
+
+export function todayIsoDate(date = new Date()): string {
+  return `${date.getFullYear()}-${twoDigit(date.getMonth() + 1)}-${twoDigit(date.getDate())}`;
 }
