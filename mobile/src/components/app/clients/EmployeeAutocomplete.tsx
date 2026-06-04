@@ -25,24 +25,32 @@ interface EmployeeAutocompleteProps {
     "data-testid"?: string;
     value: number | null;
     onChange: (employeeId: number | null, employee: Employee | null) => void;
+    inputValue?: string;
+    onInputValueChange?: (value: string) => void;
     label: string;
     required?: boolean;
     error?: boolean;
     helperText?: string;
     excludeIds?: number[];
     allowManualEntry?: boolean;
+    manualEntryLabel?: string;
+    manualEntryDescription?: string;
     onManualEntry?: (inputValue?: string) => void;
 }
 
 export function EmployeeAutocomplete({
     value,
     onChange,
+    inputValue,
+    onInputValueChange,
     label,
     required = false,
     error = false,
     helperText,
     excludeIds = [],
     allowManualEntry = false,
+    manualEntryLabel,
+    manualEntryDescription,
     onManualEntry,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
@@ -64,6 +72,8 @@ export function EmployeeAutocomplete({
             name="employee"
             value={selectedEmployee}
             onChange={(emp) => onChange(emp?.id ?? null, emp)}
+            inputValue={inputValue}
+            onInputValueChange={onInputValueChange}
             items={availableEmployees}
             isLoading={isLoading}
             getItemKey={(e) => e.id}
@@ -109,8 +119,8 @@ export function EmployeeAutocomplete({
             manualEntry={
                 allowManualEntry
                     ? {
-                          label: t(locale, "contract-msg.employee-manual-entry"),
-                          description: t(locale, "contract-msg.employee-manual-entry-description"),
+                          label: manualEntryLabel ?? t(locale, "contract-msg.employee-manual-entry"),
+                          description: manualEntryDescription ?? t(locale, "contract-msg.employee-manual-entry-description"),
                           icon: <UserPlus className="h-4 w-4" />,
                           onSelect: (query) => {
                               setPrefillName(query);

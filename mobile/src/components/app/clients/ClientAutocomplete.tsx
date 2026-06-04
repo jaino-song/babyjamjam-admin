@@ -14,26 +14,38 @@ import { Autocomplete } from "@/components/app/ui/Autocomplete";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 
 interface ClientAutocompleteProps {
+    inputId?: string;
     value: number | null;
     onChange: (clientId: number | null, client: Client | null) => void;
+    inputValue?: string;
+    onInputValueChange?: (value: string) => void;
+    placeholder?: string;
     label: string;
     required?: boolean;
     error?: boolean;
     helperText?: string;
     excludeIds?: number[];
     allowManualEntry?: boolean;
-    onManualEntry?: () => void;
+    manualEntryLabel?: string;
+    manualEntryDescription?: string;
+    onManualEntry?: (query: string) => void;
 }
 
 export function ClientAutocomplete({
+    inputId,
     value,
     onChange,
+    inputValue,
+    onInputValueChange,
+    placeholder,
     label,
     required = false,
     error = false,
     helperText,
     excludeIds = [],
     allowManualEntry = false,
+    manualEntryLabel,
+    manualEntryDescription,
     onManualEntry,
 }: ClientAutocompleteProps) {
     const locale = useLocale();
@@ -53,8 +65,11 @@ export function ClientAutocomplete({
     return (
         <Autocomplete<Client>
             name="clients"
+            inputId={inputId}
             value={selectedClient}
             onChange={(c) => onChange(c?.id ?? null, c)}
+            inputValue={inputValue}
+            onInputValueChange={onInputValueChange}
             items={availableClients}
             isLoading={isLoading}
             getItemKey={(c) => c.id}
@@ -80,7 +95,7 @@ export function ClientAutocomplete({
                     ? c.address.toLowerCase().includes(q.toLowerCase())
                     : false)
             }
-            placeholder={t(locale, "contract-msg.client-search-placeholder")}
+            placeholder={placeholder ?? t(locale, "contract-msg.client-search-placeholder")}
             label={label}
             required={required}
             error={error}
@@ -89,12 +104,12 @@ export function ClientAutocomplete({
             manualEntry={
                 allowManualEntry
                     ? {
-                          label: t(locale, "contract-msg.manual-entry"),
-                          description: t(locale, "contract-msg.manual-entry-description"),
+                          label: manualEntryLabel ?? t(locale, "contract-msg.manual-entry"),
+                          description: manualEntryDescription ?? t(locale, "contract-msg.manual-entry-description"),
                           icon: <UserPlus className="h-4 w-4" />,
                           onSelect: (query) => {
                               setPrefillName(query);
-                              onManualEntry?.();
+                              onManualEntry?.(query);
                           },
                       }
                     : undefined

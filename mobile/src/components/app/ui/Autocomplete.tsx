@@ -27,8 +27,11 @@ export interface AutocompleteItemContext {
 
 export interface AutocompleteProps<T> {
     name: string;
+    inputId?: string;
     value: T | null;
     onChange: (item: T | null) => void;
+    inputValue?: string;
+    onInputValueChange?: (value: string) => void;
     items: T[];
     isLoading?: boolean;
     getItemKey: (item: T) => string | number;
@@ -48,8 +51,11 @@ export interface AutocompleteProps<T> {
 
 export function Autocomplete<T>({
     name,
+    inputId,
     value,
     onChange,
+    inputValue: controlledInputValue,
+    onInputValueChange,
     items,
     isLoading = false,
     getItemKey,
@@ -66,15 +72,28 @@ export function Autocomplete<T>({
     manualEntry,
     className,
 }: AutocompleteProps<T>) {
-    const [inputValue, setInputValue] = useState("");
+    const [uncontrolledInputValue, setUncontrolledInputValue] = useState("");
     const [isFocused, setIsFocused] = useState(false);
     const [isToggledOpen, setIsToggledOpen] = useState(false);
     const [highlightedIndex, setHighlightedIndex] = useState(-1);
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const suppressedClickTokenRef = useRef<string | null>(null);
     const selectedInputValue = value ? getItemLabel(value) : "";
+    const currentInputValue = controlledInputValue ?? uncontrolledInputValue;
+    const isInputControlled = controlledInputValue !== undefined;
+    const updateInputValue = (next: string) => {
+        if (!isInputControlled) setUncontrolledInputValue(next);
+        onInputValueChange?.(next);
+    };
+    const openDropdown = () => {
+        setIsFocused(true);
+        setIsToggledOpen(true);
+    };
     const isEditingInput = isFocused || isToggledOpen;
-    const displayInputValue = isEditingInput ? inputValue : selectedInputValue;
+    const displayInputValue = isEditingInput
+        ? currentInputValue
+        : selectedInputValue || currentInputValue;
 
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
@@ -96,14 +115,13 @@ export function Autocomplete<T>({
         );
     }, [items, displayInputValue, filter, getItemLabel]);
 
-    const showDropdown =
-        (isFocused && displayInputValue.trim().length > 0) || isToggledOpen;
+    const showDropdown = isFocused || isToggledOpen;
     const optionCount = filteredItems.length + (manualEntry ? 1 : 0);
     const activeHighlightedIndex =
         highlightedIndex >= 0 && highlightedIndex < optionCount ? highlightedIndex : -1;
 
     const handleSelect = (item: T) => {
-        setInputValue(getItemLabel(item));
+        updateInputValue(getItemLabel(item));
         onChange(item);
         setIsFocused(false);
         setIsToggledOpen(false);
@@ -111,16 +129,34 @@ export function Autocomplete<T>({
     };
 
     const handleClear = () => {
-        setInputValue("");
+        updateInputValue("");
         onChange(null);
         inputRef.current?.focus();
     };
 
     const handleManualEntry = () => {
-        const query = inputValue;
+        const query = currentInputValue;
         setIsFocused(false);
         setIsToggledOpen(false);
         setTimeout(() => manualEntry?.onSelect(query), 100);
+    };
+
+    const markSuppressedClick = (token: string) => {
+        suppressedClickTokenRef.current = token;
+        window.setTimeout(() => {
+            if (suppressedClickTokenRef.current === token) {
+                suppressedClickTokenRef.current = null;
+            }
+        }, 0);
+    };
+
+    const shouldSkipClick = (token: string) => {
+        if (suppressedClickTokenRef.current !== token) {
+            return false;
+        }
+
+        suppressedClickTokenRef.current = null;
+        return true;
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -134,11 +170,20 @@ export function Autocomplete<T>({
         } else if (e.key === "ArrowUp") {
             e.preventDefault();
             setHighlightedIndex((prev) => (prev - 1 + total) % total);
-        } else if (e.key === "Enter" && activeHighlightedIndex >= 0) {
-            e.preventDefault();
-            if (activeHighlightedIndex < filteredItems.length) {
-                handleSelect(filteredItems[activeHighlightedIndex]);
-            } else if (manualEntry) {
+        } else if (e.key === "Enter") {
+            if (activeHighlightedIndex >= 0) {
+                e.preventDefault();
+                if (activeHighlightedIndex < filteredItems.length) {
+                    handleSelect(filteredItems[activeHighlightedIndex]);
+                } else if (manualEntry) {
+                    handleManualEntry();
+                }
+            } else if (
+                manualEntry &&
+                filteredItems.length === 0 &&
+                currentInputValue.trim().length > 0
+            ) {
+                e.preventDefault();
                 handleManualEntry();
             }
         } else if (e.key === "Escape") {
@@ -153,6 +198,7 @@ export function Autocomplete<T>({
     const toggleDc = `${name}-autocomplete-toggle`;
     const dropdownDc = `${name}-autocomplete-dropdown`;
     const addBtnDc = `${name}-autocomplete-add-button`;
+    const resolvedInputId = inputId ?? name;
 
     return (
         <div
@@ -161,29 +207,38 @@ export function Autocomplete<T>({
             className={cn("space-y-2", className)}
         >
             {label && (
-                <Label className={cn(error && "text-destructive")}>
+                <Label htmlFor={resolvedInputId} className={cn(error && "text-destructive")}>
                     {label}
                     {required && <span className="text-destructive ml-1">*</span>}
                 </Label>
             )}
             <div ref={containerRef} className="relative">
                 <Input
+                    id={resolvedInputId}
                     ref={inputRef}
                     type="text"
                     value={displayInputValue}
                     onChange={(e) => {
-                        setInputValue(e.target.value);
+                        updateInputValue(e.target.value);
                         setHighlightedIndex(-1);
+                        openDropdown();
                     }}
+                    onClick={openDropdown}
                     onFocus={() => {
-                        setInputValue(selectedInputValue);
+                        updateInputValue(selectedInputValue || currentInputValue);
                         setHighlightedIndex(-1);
-                        setIsFocused(true);
+                        openDropdown();
                     }}
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     data-component={inputDc}
-                    className={cn("pr-16", error && "border-destructive")}
+                    data-state={showDropdown ? "open" : "closed"}
+                    className={cn(
+                        "h-[42px] pr-16 data-[state=open]:!rounded-b-none data-[state=open]:!shadow-none",
+                        !error &&
+                            "data-[state=open]:!border-v3-border data-[state=open]:focus:!border-v3-border data-[state=open]:focus-visible:!border-v3-border",
+                        error && "border-destructive"
+                    )}
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                     {value && !isLoading && (
@@ -207,7 +262,7 @@ export function Autocomplete<T>({
                                 setIsFocused(false);
                                 inputRef.current?.blur();
                             } else {
-                                setInputValue(selectedInputValue);
+                                updateInputValue(selectedInputValue || currentInputValue);
                                 setHighlightedIndex(-1);
                                 setIsToggledOpen(true);
                                 inputRef.current?.focus();
@@ -230,7 +285,8 @@ export function Autocomplete<T>({
                     <div
                         data-component={dropdownDc}
                         data-testid={dropdownDc}
-                        className="absolute top-full left-0 right-0 z-50 rounded-2xl bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] overflow-hidden animate-in fade-in-0 zoom-in-95"
+                        data-state="open"
+                        className="absolute top-full left-0 right-0 z-50 overflow-hidden rounded-2xl !rounded-t-none border !border-v3-border bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] animate-in fade-in-0 zoom-in-95"
                     >
                         {isLoading ? (
                             <div className="flex items-center justify-center py-6">
@@ -253,8 +309,16 @@ export function Autocomplete<T>({
                                     return (
                                         <div
                                             key={getItemKey(item)}
-                                            onMouseDown={(e) => {
+                                            onPointerDown={(e) => {
                                                 e.preventDefault();
+                                                markSuppressedClick(`item:${getItemKey(item)}`);
+                                                handleSelect(item);
+                                            }}
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                if (shouldSkipClick(`item:${getItemKey(item)}`)) {
+                                                    return;
+                                                }
                                                 handleSelect(item);
                                             }}
                                             onMouseEnter={() => setHighlightedIndex(index)}
@@ -296,8 +360,16 @@ export function Autocomplete<T>({
                             <>
                                 <div className="h-px bg-v3-border" />
                                 <div
-                                    onMouseDown={(e) => {
+                                    onPointerDown={(e) => {
                                         e.preventDefault();
+                                        markSuppressedClick("manual-entry");
+                                        handleManualEntry();
+                                    }}
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        if (shouldSkipClick("manual-entry")) {
+                                            return;
+                                        }
                                         handleManualEntry();
                                     }}
                                     onMouseEnter={() =>
