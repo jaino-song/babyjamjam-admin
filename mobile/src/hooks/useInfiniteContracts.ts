@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
-import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
+import { getStatusCategory, isDeletedStatusCode, DocumentFilterType } from "@/lib/eformsign/status-codes";
 
 const INITIAL_VISIBLE_COUNT = 6; // First load: teaser view (4 full + 2 fading)
 const PAGE_SIZE = 6; // How many more to show each time
@@ -14,8 +14,9 @@ function filterByActualStatus(
   docs: EformsignDocument[],
   type: DocumentFilterType
 ): EformsignDocument[] {
-  if (type === null) return docs;
-  return docs.filter(
+  const visibleDocs = docs.filter((doc) => !isDeletedStatusCode(doc.current_status?.status_type));
+  if (type === null) return visibleDocs;
+  return visibleDocs.filter(
     (doc) => getStatusCategory(doc.current_status?.status_type) === type
   );
 }

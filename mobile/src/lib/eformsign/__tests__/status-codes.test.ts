@@ -1,6 +1,7 @@
 import {
   getStatusCategory,
   getStatusColor,
+  isDeletedStatusCode,
   mapStatusToLabel,
   normalizeStatusCode,
 } from "../status-codes";
@@ -20,6 +21,13 @@ describe("eformsign status code helpers", () => {
   it("classifies completed and rejected status codes by eformsign buckets", () => {
     expect(getStatusCategory("003")).toBe("completed");
     expect(getStatusCategory("080")).toBe("rejected");
+  });
+
+  it("keeps deleted document codes out of rejected expiration buckets", () => {
+    expect(isDeletedStatusCode("047")).toBe(true);
+    expect(isDeletedStatusCode("049")).toBe(true);
+    expect(getStatusCategory("049")).toBe("unknown");
+    expect(mapStatusToLabel("049")).toBe("알 수 없음");
   });
 
   it("classifies unsupported, blank, and missing status codes as unknown", () => {

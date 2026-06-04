@@ -18,6 +18,12 @@ export const COMPLETED_CODES = [
   "092", // 대면서명 완료
 ] as const;
 
+// 삭제됨 (Deleted) codes
+export const DELETED_CODES = [
+  "047", // doc_request_delete: 문서 삭제 요청
+  "049", // doc_delete: 문서 삭제
+] as const;
+
 // 거부/반려/취소 (Rejected/Cancelled) codes
 export const REJECTED_CODES = [
   "011", // doc_reject_approval: 문서 결재 반려
@@ -26,8 +32,6 @@ export const REJECTED_CODES = [
   "040", // doc_request_revoke: 문서 취소 요청
   "042", // doc_revoke: 문서 취소
   "045", // doc_request_reject: 문서 반려 요청
-  "047", // doc_request_delete: 문서 삭제 요청
-  "049", // doc_delete: 문서 삭제
   "061", // doc_reject_participant: 참여자 반려
   "071", // doc_reject_reviewer: 검토자 반려
   "080", // doc_expired: 문서 만료
@@ -59,11 +63,20 @@ export function normalizeStatusCode(code: string | undefined | null): string {
   return code?.trim()?.padStart(3, "0") || "000";
 }
 
+export function isDeletedStatusCode(statusCode: string | undefined | null): boolean {
+  const normalized = normalizeStatusCode(statusCode);
+  return DELETED_CODES.includes(normalized as typeof DELETED_CODES[number]);
+}
+
 /**
  * Get document status category from status code
  */
 export function getStatusCategory(statusCode: string | undefined | null): DocumentStatusCategory {
   const normalized = normalizeStatusCode(statusCode);
+
+  if (isDeletedStatusCode(normalized)) {
+    return "unknown";
+  }
   
   if (COMPLETED_CODES.includes(normalized as typeof COMPLETED_CODES[number])) {
     return "completed";
