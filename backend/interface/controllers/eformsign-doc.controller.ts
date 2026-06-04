@@ -12,6 +12,7 @@ import {
     FetchDocumentsDto,
     FetchDocumentByIdDto,
     CreateEformsignDocLocalDto,
+    SyncEformsignDocStatusDto,
     DispatchHeadlessRequestDto,
     DispatchHeadlessResponseDto,
     FinalizeHeadlessRequestDto,
@@ -210,6 +211,22 @@ export class EformsignDocController {
     @Post("fetch")
     fetchFromApi(@Body() dto: FetchDocumentByIdDto) {
         return this.eformsignDocService.fetchFromApi(dto.accessToken, dto.documentId);
+    }
+
+    /**
+     * POST /eformsign-docs/sync-status
+     * Fetch current eformsign status and update the local eformsign_doc row.
+     */
+    @Post("sync-status")
+    syncStatusFromApi(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: SyncEformsignDocStatusDto
+    ) {
+        return this.eformsignDocService.syncStatusFromApi(
+            tenant.branchId ?? "",
+            dto.accessToken,
+            dto.documentId
+        );
     }
 
     /**

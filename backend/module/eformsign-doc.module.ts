@@ -8,6 +8,7 @@ import {
     RefreshEformsignAccessTokenUsecase,
     FetchAllEformsignDocsFromApiUsecase,
     FetchEformsignDocFromApiUsecase,
+    UpdateEformsignDocStatusUsecase,
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
     ListClientNamesByBranchUsecase,
@@ -40,6 +41,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FindEformsignDocsByClientIdUsecase,
         ListEformsignDocsUsecase,
         CreateEformsignDocUsecase,
+        UpdateEformsignDocStatusUsecase,
         ListClientNamesByBranchUsecase,
         SyncClientEndDateUsecase,
         // Use cases - External API

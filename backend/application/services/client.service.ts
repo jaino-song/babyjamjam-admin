@@ -17,12 +17,19 @@ import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
 const FILTER_DAYS_THRESHOLD = 7;
 const ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS = 2;
 const ACTION_REQUIRED_SEND_THRESHOLD_DAYS = 6;
+const COMPLETED_DOCUMENT_STATUS_TYPES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
+const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
+const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["040", "042", "045", "090"]);
+const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
+const OPENED_DOCUMENT_STATUS_TYPES = new Set(["020"]);
+const CREATED_DOCUMENT_STATUS_TYPES = new Set(["001", "002", "010", "043"]);
+const REQUESTED_DOCUMENT_STATUS_TYPES = new Set(["030", "060", "070"]);
 
 // Document status type for eformsign documents
 // Maps to eformsign_doc.statusType values:
+// - 003/050: completed (완료)
 // - 010: created (문서 생성됨)
 // - 020: opened (서명 페이지 열림)
-// - 050: completed (완료)
 // - 060: requested (서명 요청됨/진행중)
 // - 080: rejected (거부됨)
 // - 090: revoked (철회됨)
@@ -386,16 +393,17 @@ export class ClientService {
     }
 
     private mapStatusTypeToDocumentStatus(statusType?: string): DocumentStatusType {
-        switch (statusType) {
-            case '010': return 'created';
-            case '020': return 'opened';
-            case '050': return 'completed';
-            case '060': return 'requested';
-            case '080': return 'rejected';
-            case '090': return 'revoked';
-            case '099': return 'deleted';
-            default: return null;
-        }
+        const normalized = statusType?.trim().padStart(3, "0");
+        if (!normalized) return null;
+
+        if (COMPLETED_DOCUMENT_STATUS_TYPES.has(normalized)) return "completed";
+        if (REJECTED_DOCUMENT_STATUS_TYPES.has(normalized)) return "rejected";
+        if (REVOKED_DOCUMENT_STATUS_TYPES.has(normalized)) return "revoked";
+        if (DELETED_DOCUMENT_STATUS_TYPES.has(normalized)) return "deleted";
+        if (OPENED_DOCUMENT_STATUS_TYPES.has(normalized)) return "opened";
+        if (CREATED_DOCUMENT_STATUS_TYPES.has(normalized)) return "created";
+        if (REQUESTED_DOCUMENT_STATUS_TYPES.has(normalized)) return "requested";
+        return null;
     }
 
     async update(branchid: string, id: number, params: {

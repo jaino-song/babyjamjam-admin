@@ -118,18 +118,6 @@ class ContractDataRequestDto {
 
     @IsString()
     @IsNotEmpty()
-    receiptYear!: string;
-
-    @IsString()
-    @IsNotEmpty()
-    receiptMonth!: string;
-
-    @IsString()
-    @IsNotEmpty()
-    receiptDay!: string;
-
-    @IsString()
-    @IsNotEmpty()
     fullPrice!: string;
 
     @IsString()

@@ -24,14 +24,14 @@ export interface ContractDataDto {
   paymentYear: string;
   paymentMonth: string;
   paymentDay: string;
-  receiptYear: string;
-  receiptMonth: string;
-  receiptDay: string;
   fullPrice: string;
   grant: string;
   actualPrice: string;
 }
 import { safeStorageSetItem } from "@/lib/safe-storage";
+
+const HEADLESS_DISPATCH_TIMEOUT_MS = 180_000;
+const HEADLESS_FINALIZE_TIMEOUT_MS = 60_000;
 
 // Auth API response types
 export interface HeadlessDispatchResponse {
@@ -77,6 +77,17 @@ export interface EformsignDocClientSummary {
     clientName: string;
     clientPhone: string | null;
     providerName: string | null;
+}
+
+export interface SyncedEformsignDocResponse {
+    id?: number;
+    documentId: string;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepIndex: string;
+    stepName: string;
+    expired?: boolean;
 }
 
 // Auth API
@@ -184,6 +195,8 @@ export const eformsignApi = {
             contractData,
             clientId,
             progressId,
+        }, {
+            timeout: HEADLESS_DISPATCH_TIMEOUT_MS,
         });
         return data;
     },
@@ -213,6 +226,8 @@ export const eformsignApi = {
             documentId,
             prefillEndDate,
             progressId,
+        }, {
+            timeout: HEADLESS_FINALIZE_TIMEOUT_MS,
         });
         return data;
     },
@@ -236,6 +251,10 @@ export const eformsignApi = {
     },
     getDocumentClientNames: async (): Promise<EformsignDocClientSummary[]> => {
         const { data } = await api.get('/eformsign-docs/client-names');
+        return data;
+    },
+    syncDocumentStatus: async (documentId: string): Promise<SyncedEformsignDocResponse> => {
+        const { data } = await api.post('/eformsign-docs/sync-status', { documentId });
         return data;
     },
     // Documents APIs - token is read from httpOnly cookie on server
