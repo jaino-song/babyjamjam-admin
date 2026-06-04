@@ -153,6 +153,9 @@
 }
 
 .formScroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -165,7 +168,9 @@
 }
 
 .formCard {
-  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   padding: 14px;
   border-radius: 16px;
   background: white;
@@ -176,7 +181,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 0 12px;
+  margin: 0;
   color: hsl(var(--v3-text-muted));
   font-size: 0.7rem;
   font-weight: 700;
@@ -207,11 +212,9 @@
 }
 
 .formRow {
-  margin-bottom: 14px;
-}
-
-.formRow:last-child {
-  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .formGrid2 {
@@ -222,7 +225,7 @@
 
 .formLabel {
   display: block;
-  margin-bottom: 6px;
+  margin: 0;
   color: hsl(var(--v3-text-muted));
   font-size: 0.7rem;
   font-weight: 700;
@@ -265,7 +268,7 @@
 }
 
 .formHelper {
-  margin-top: 5px;
+  margin: 0;
   color: hsl(var(--v3-text-muted));
   font-size: 0.66rem;
 }
@@ -362,6 +365,15 @@
   border-radius: 12px;
 }
 
+.toggleText {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 2px;
+  text-align: left;
+}
+
 .toggleLabel {
   color: hsl(var(--v3-dark));
   font-size: 0.85rem;
@@ -369,7 +381,6 @@
 }
 
 .toggleSub {
-  margin-top: 2px;
   color: hsl(var(--v3-text-muted));
   font-size: 0.68rem;
 }
@@ -409,7 +420,6 @@
 }
 
 .dashedDivider {
-  margin: 12px 0;
   height: 0;
   border-top: 1px dashed hsl(var(--v3-border));
 }
@@ -548,4 +558,3 @@
   border: 0;
   background: white;
 }
-

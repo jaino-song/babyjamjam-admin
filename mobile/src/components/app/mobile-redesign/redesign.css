@@ -1880,6 +1880,15 @@ body.mobile-all-route .menu-row {
   color: hsl(var(--v3-text-muted));
   margin-top: 2px;
 }
+.doc-meta-line {
+  display: block;
+}
+.doc-meta-line + .doc-meta-line {
+  margin-top: 2px;
+}
+.doc-meta-id {
+  word-break: break-all;
+}
 
 /* ===== Files page — page-files.html fidelity overrides ===== */
 [data-component="files"] {

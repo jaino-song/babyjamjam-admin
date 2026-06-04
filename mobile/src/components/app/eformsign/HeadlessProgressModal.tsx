@@ -37,13 +37,14 @@ export function HeadlessProgressModal({
         ? "처리에 실패했습니다. 잠시 후 수동 입력 화면으로 전환됩니다."
         : progress.completed
             ? "완료되었습니다."
-            : "백엔드에서 자동으로 처리하고 있어요.";
+            : null;
+    const progressSubtitle = subtitle ?? defaultSub;
 
     return (
         <div className={styles.progressModal} data-component={`${dataComponentPrefix}-modal`}>
             <div className={styles.progressCard}>
                 <h2 className={styles.progressTitle}>{title}</h2>
-                <p className={styles.progressSub}>{subtitle ?? defaultSub}</p>
+                {progressSubtitle ? <p className={styles.progressSub}>{progressSubtitle}</p> : null}
                 <div className={styles.progressList}>
                     {steps.map((step, idx) => {
                         const isFailedHere = progress.failed && currentIdx === idx;

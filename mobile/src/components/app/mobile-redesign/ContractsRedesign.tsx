@@ -27,7 +27,7 @@ export function ContractsRedesign({
   filters,
   total,
   actionLabel = "계약 작성",
-  actionHref = "/contracts/creation",
+  actionHref = "/contracts/new",
   emptyMessage,
 }: ContractsRedesignProps) {
   const hasRows = sections.some((s) => s.rows.length > 0);
