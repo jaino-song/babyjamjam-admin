@@ -224,10 +224,17 @@ describe("AligoApiClient", () => {
         it("should send sms to the official send endpoint", async () => {
             mockFetch.mockResolvedValueOnce({
                 ok: true,
-                json: () => Promise.resolve({ result_code: 1, message: "", msg_type: "LMS" }),
+                json: () => Promise.resolve({
+                    result_code: "1",
+                    message: "success",
+                    msg_id: "123",
+                    success_cnt: "1",
+                    error_cnt: "0",
+                    msg_type: "LMS",
+                }),
             } as Response);
 
-            await client.sendSms({
+            const result = await client.sendSms({
                 receiver: "010-1111-2222",
                 message: "장문 테스트 메시지",
                 title: "안내",
@@ -259,6 +266,14 @@ describe("AligoApiClient", () => {
             expect(body.get("rdate")).toBe("20260309");
             expect(body.get("rtime")).toBe("2019");
             expect(body.get("testmode_yn")).toBe("Y");
+            expect(result).toEqual({
+                result_code: 1,
+                message: "success",
+                msg_id: 123,
+                success_cnt: 1,
+                error_cnt: 0,
+                msg_type: "LMS",
+            });
         });
 
         it("should throw when sms request returns a non-ok response", async () => {

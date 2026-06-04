@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MessageCircle, ThumbsUp } from "lucide-react";
 
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
@@ -207,6 +208,7 @@ function getFilterCount(rows: MessageThreadRow[], filter: MessageFilter): string
 }
 
 export default function MessagesPage() {
+  const router = useRouter();
   const [activeFilter, setActiveFilter] = useState<MessageFilter>("전체");
   const [selectedMessage, setSelectedMessage] = useState<MessageThreadRow | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -273,19 +275,29 @@ export default function MessagesPage() {
     setIsDetailOpen(true);
   };
 
+  const handleNewMessageClick = () => {
+    router.push("/messages/new");
+  };
+
   return (
-    <MobileDetailSheet
-      name="messages"
-      isOpen={isDetailOpen}
-      onClose={() => setIsDetailOpen(false)}
-      list={
+    <>
+      <MobileDetailSheet
+        name="messages"
+        isOpen={isDetailOpen}
+        onClose={() => setIsDetailOpen(false)}
+        list={
         <div className="shell-content" data-component="mobile-messages-content">
           <div className="list-card pop-up" data-component="mobile-messages-list-card">
             <div className="list-title" data-component="mobile-messages-title">
               <span className="list-title-text">메시지</span>
-              <Link href="/messages/new" className="list-action" data-component="mobile-messages-new">
+              <button
+                type="button"
+                className="list-action"
+                data-component="mobile-messages-new"
+                onClick={handleNewMessageClick}
+              >
                 + 새 메시지
-              </Link>
+              </button>
             </div>
 
             <div className="messages-hub-wrap" data-component="mobile-messages-hub-wrap">
@@ -404,8 +416,8 @@ export default function MessagesPage() {
             )}
           </div>
         </div>
-      }
-      detail={
+        }
+        detail={
         detailMessage ? (
           <MobileDetailPage name="messages" dataComponent="mobile-messages-detail-body">
             <MobileDetailHeader
@@ -501,7 +513,9 @@ export default function MessagesPage() {
             </MobileDetailTabPanel>
           </MobileDetailPage>
         ) : null
-      }
-    />
+        }
+      />
+
+    </>
   );
 }

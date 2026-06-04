@@ -1,4 +1,5 @@
 import {
+    BadGatewayException,
     BadRequestException,
     Body,
     Controller,
@@ -32,9 +33,20 @@ export class MessageDeliveryController {
         @Body() dto: SendSmsMessageDto,
     ) {
         const triggerType = dto.triggerType ?? "immediate";
-        const senderPhone = await this.messageSenderApprovalService.ensureApproved(
-            tenant.branchId ?? "",
+        const branchId = tenant.branchId ?? "";
+        this.logger.log(
+            `[SMS] Request received: branchId=${branchId || "unknown"}, triggerType=${triggerType}, recipientCount=${this.countSmsRecipients(dto.receiver)}`,
         );
+
+        let senderPhone: string;
+        try {
+            senderPhone = await this.messageSenderApprovalService.ensureApproved(branchId);
+        } catch (error) {
+            this.logger.warn(
+                `[SMS] Sender approval check failed: branchId=${branchId || "unknown"}, error=${error instanceof Error ? error.message : String(error)}`,
+            );
+            throw error;
+        }
 
         if (triggerType === "scheduled") {
             this.assertScheduledAtLeastTenMinutesAhead(
@@ -60,9 +72,18 @@ export class MessageDeliveryController {
             scheduledTime,
             testMode: dto.testMode,
         });
-        await this.recordSmsLog(tenant.branchId ?? "", dto, result, triggerType).catch((error) => {
+        this.logger.log(
+            `[SMS] Aligo response received: branchId=${branchId || "unknown"}, resultCode=${result.response.result_code}, errorCount=${result.response.error_cnt ?? 0}`,
+        );
+        await this.recordSmsLog(branchId, dto, result, triggerType).catch((error) => {
             this.logger.warn(`Failed to record SMS delivery log: ${error instanceof Error ? error.message : String(error)}`);
         });
+
+        if (!this.isAcceptedSmsResult(result)) {
+            throw new BadGatewayException(
+                result.response.message || "문자 발송 요청이 실패했습니다.",
+            );
+        }
 
         return {
             provider: "aligo",
@@ -94,9 +115,7 @@ export class MessageDeliveryController {
         result: Awaited<ReturnType<AligoService["sendSms"]>>,
         triggerType: string,
     ) {
-        const isAccepted =
-            result.response.result_code === 1 &&
-            (result.response.error_cnt ?? 0) === 0;
+        const isAccepted = this.isAcceptedSmsResult(result);
         const status = isAccepted
             ? triggerType === "scheduled" ? "pending" : "sent"
             : "failed";
@@ -123,6 +142,24 @@ export class MessageDeliveryController {
                 lastAttemptAt: new Date(),
             },
         });
+    }
+
+    private isAcceptedSmsResult(
+        result: Awaited<ReturnType<AligoService["sendSms"]>>,
+    ) {
+        const resultCode = Number(result.response.result_code);
+        const errorCount = Number(result.response.error_cnt ?? 0);
+        return (
+            resultCode === 1 &&
+            errorCount === 0
+        );
+    }
+
+    private countSmsRecipients(receiver: string): number {
+        return receiver
+            .split(",")
+            .map((phone) => phone.trim())
+            .filter(Boolean).length;
     }
 
     private assertScheduledAtLeastTenMinutesAhead(
