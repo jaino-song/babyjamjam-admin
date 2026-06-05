@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Put, Request, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Put, Request, UseGuards } from "@nestjs/common";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
@@ -124,6 +124,23 @@ export class SystemSettingController {
         return MessageSenderApprovalResponseDto.from({
             ...state,
             canRequest: this.messageSenderApprovalService.canRequest(tenant.branchRole),
+        });
+    }
+
+    @Post("message-sender-approval/:branchId/approve")
+    @UseGuards(OwnerGuard)
+    async approveMessageSenderApproval(
+        @Param("branchId") branchId: string,
+        @Request() request: { user: { userId: string } },
+    ): Promise<MessageSenderApprovalResponseDto> {
+        const state = await this.messageSenderApprovalService.approvePendingRequest({
+            branchId,
+            userId: request.user.userId,
+        });
+
+        return MessageSenderApprovalResponseDto.from({
+            ...state,
+            canRequest: false,
         });
     }
 }

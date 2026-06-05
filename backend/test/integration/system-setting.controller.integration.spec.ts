@@ -14,6 +14,7 @@ import { SystemSettingEntity, AlimtalkProvider } from "domain/entities/system-se
 describe("SystemSettingController (Integration)", () => {
     let app: INestApplication;
     let systemSettingService: jest.Mocked<SystemSettingService>;
+    let messageSenderApprovalService: jest.Mocked<MessageSenderApprovalService>;
 
     beforeEach(async () => {
         const mockSystemSettingService = {
@@ -21,6 +22,9 @@ describe("SystemSettingController (Integration)", () => {
             getAlimtalkProviderSetting: jest.fn(),
             setAlimtalkProvider: jest.fn(),
             isAlimtalkEnabled: jest.fn(),
+        };
+        const mockMessageSenderApprovalService = {
+            approvePendingRequest: jest.fn(),
         };
 
         const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -32,12 +36,22 @@ describe("SystemSettingController (Integration)", () => {
                 },
                 {
                     provide: MessageSenderApprovalService,
-                    useValue: {},
+                    useValue: mockMessageSenderApprovalService,
                 },
             ],
         })
             .overrideGuard(JwtGuard)
-            .useValue({ canActivate: () => true })
+            .useValue({
+                canActivate: (context: {
+                    switchToHttp: () => {
+                        getRequest: () => { user?: { userId: string; role: string } };
+                    };
+                }) => {
+                    const req = context.switchToHttp().getRequest();
+                    req.user = { userId: "owner-user-id", role: "owner" };
+                    return true;
+                },
+            })
             .overrideGuard(TenantGuard)
             .useValue({ canActivate: () => true })
             .overrideGuard(OwnerGuard)
@@ -51,6 +65,7 @@ describe("SystemSettingController (Integration)", () => {
         await app.init();
 
         systemSettingService = moduleFixture.get(SystemSettingService);
+        messageSenderApprovalService = moduleFixture.get(MessageSenderApprovalService);
     });
 
     afterEach(async () => {
@@ -194,6 +209,42 @@ describe("SystemSettingController (Integration)", () => {
                 .send({ provider: "" });
 
             expect(response.status).toBe(400);
+        });
+    });
+
+    describe("POST /settings/message-sender-approval/:branchId/approve", () => {
+        it("should approve a pending message sender request as owner", async () => {
+            const approvedAt = new Date("2026-06-05T00:00:00.000Z");
+            messageSenderApprovalService.approvePendingRequest.mockResolvedValue({
+                senderPhone: "01012345678",
+                approvalStatus: "approved",
+                requestedAt: new Date("2026-06-04T09:00:00.000Z"),
+                approvedAt,
+            });
+
+            const response = await request(app.getHttpServer())
+                .post("/settings/message-sender-approval/branch-1/approve");
+
+            expect(response.status).toBe(201);
+            expect(messageSenderApprovalService.approvePendingRequest).toHaveBeenCalledWith({
+                branchId: "branch-1",
+                userId: expect.any(String),
+            });
+            expect(response.body).toMatchObject({
+                senderPhone: "01012345678",
+                approvalStatus: "approved",
+                isApproved: true,
+                approvedAt: approvedAt.toISOString(),
+            });
+        });
+
+        it("should require owner privileges", () => {
+            const guards = Reflect.getMetadata(
+                GUARDS_METADATA,
+                SystemSettingController.prototype.approveMessageSenderApproval,
+            ) ?? [];
+
+            expect(guards).toContain(OwnerGuard);
         });
     });
 });
