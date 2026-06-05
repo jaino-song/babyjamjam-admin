@@ -6,7 +6,13 @@ import { ChevronLeft, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { useClient, useCreateClient, useUpdateClient } from "@/hooks/useClients";
-import { useAllVoucherPrices, useVoucherPriceInfos, type VoucherPriceInfo } from "@/hooks/useVoucherData";
+import {
+  useAllVoucherPrices,
+  useBankAccountInfos,
+  useVoucherPriceInfos,
+  type BankAccountInfo,
+  type VoucherPriceInfo,
+} from "@/hooks/useVoucherData";
 import type { CreateClientDto, ServiceStatus, UpdateClientDto } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
@@ -18,6 +24,7 @@ import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
+import bankAccountOptions from "@/components/app/messages/templates/json/bank-account.json";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
@@ -41,6 +48,17 @@ const VOUCHER_TYPE_OPTIONS = Object.values(voucherOptions.voucherOptions).flatMa
     label: typeData.label,
   })),
 );
+
+const getBankAccountAreaLabel = (areaId: string): string => (
+  bankAccountOptions[areaId as keyof typeof bankAccountOptions]?.area ?? areaId
+);
+
+const getBankAccountOptionLabel = (account: BankAccountInfo): string => {
+  const areaLabel = getBankAccountAreaLabel(account.area);
+  const accountText = [account.bankName, account.accNum].filter(Boolean).join(" ");
+
+  return accountText ? `${areaLabel} · ${accountText}` : areaLabel;
+};
 
 type HelperTone = "muted" | "ok" | "err" | "pending";
 
@@ -173,6 +191,7 @@ export default function NewClientPage() {
     isLoading: isAllVoucherPricesLoading,
     isFetching: isAllVoucherPricesFetching,
   } = useAllVoucherPrices(voucherLookupYear);
+  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
   const prefillName = useClientDialogStore((s) => s.prefillName);
   const prefillClient = useClientDialogStore((s) => s.prefillClient);
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
@@ -311,6 +330,7 @@ export default function NewClientPage() {
     if (prefillClient.voucherClient !== undefined) setField("voucherClient", prefillClient.voucherClient);
     if (prefillClient.breastPump !== undefined) setField("breastPump", prefillClient.breastPump);
     if (prefillClient.serviceStatus !== undefined) setField("serviceStatus", prefillClient.serviceStatus);
+    if (prefillClient.areaId !== undefined) setField("areaId", prefillClient.areaId ?? "");
 
     if (
       prefillClient.fullPrice !== undefined ||
@@ -348,6 +368,7 @@ export default function NewClientPage() {
     setField("voucherClient", editingClient.voucherClient);
     setField("breastPump", editingClient.breastPump);
     setField("serviceStatus", editingClient.serviceStatus ?? "waiting");
+    setField("areaId", editingClient.areaId ?? "");
     setPricesManuallyEdited(Boolean(editingClient.fullPrice || editingClient.grant || editingClient.actualPrice));
   }, [editingClient, setField, setPricesManuallyEdited]);
 
@@ -683,6 +704,7 @@ export default function NewClientPage() {
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
         serviceStatus: store.serviceStatus || null,
+        areaId: store.areaId || null,
       };
       if (editingClientId !== null) {
         await updateClient.mutateAsync({ id: editingClientId, dto: dto as UpdateClientDto });
@@ -907,6 +929,41 @@ export default function NewClientPage() {
                           {availableDurations.map((d) => (
                             <option key={d} value={String(d)}>
                               {d}일
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-bank-account-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">계좌번호</div>
+                    <Field label="계좌번호">
+                      <div
+                        className={cn(
+                          styles.selectWrap,
+                          isBankAccountInfosLoading ? styles.loadingSelect : bankAccountInfos.length === 0 && styles.disabledSelect,
+                        )}
+                        data-component="clients-new-bank-account-select-wrap"
+                      >
+                        <select
+                          className={styles.formInput}
+                          value={store.areaId}
+                          onChange={(e) => setField("areaId", e.target.value)}
+                          disabled={isBankAccountInfosLoading || bankAccountInfos.length === 0}
+                          data-component="clients-new-bank-account-select"
+                        >
+                          <option value="">
+                            {isBankAccountInfosLoading ? "불러오는 중" : "계좌번호 선택"}
+                          </option>
+                          {store.areaId && !bankAccountInfos.some((account) => account.area === store.areaId) ? (
+                            <option value={store.areaId}>
+                              {getBankAccountAreaLabel(store.areaId)}
+                            </option>
+                          ) : null}
+                          {bankAccountInfos.map((account) => (
+                            <option key={account.area} value={account.area}>
+                              {getBankAccountOptionLabel(account)}
                             </option>
                           ))}
                         </select>

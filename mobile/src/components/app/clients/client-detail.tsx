@@ -417,9 +417,12 @@ export interface ClientNotificationLogRecord {
   status: "pending" | "sent" | "failed" | string;
   createdAt: string;
   ruleName: string | null;
+  variables?: Record<string, unknown> | null;
 }
 
 type DetailRowTone = "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
+const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
+const CLIENT_GREETING_SMS_TITLE = "인사 메시지";
 
 function DetailDocRow({
   icon,
@@ -452,14 +455,51 @@ function DetailDocRow({
   );
 }
 
-function notificationChannelLabel(log: ClientNotificationLogRecord): "알림톡" | "메시지" {
-  return log.provider.toLowerCase().includes("sms") ? "메시지" : "알림톡";
+function notificationChannelLabel(log: ClientNotificationLogRecord): "알림톡" | "SMS" {
+  return log.provider.toLowerCase().includes("sms") ? "SMS" : "알림톡";
+}
+
+function notificationVariables(log: ClientNotificationLogRecord): Record<string, unknown> {
+  return isRecord(log.variables) ? log.variables : {};
 }
 
 function notificationTitle(log: ClientNotificationLogRecord): string {
   if (log.ruleName?.trim()) return log.ruleName;
+  const variables = notificationVariables(log);
+  const variableTitle = stringFromUnknown(variables.title);
+  if (variableTitle) return variableTitle;
+  if (log.templateKey === CLIENT_GREETING_SMS_TEMPLATE_KEY) return CLIENT_GREETING_SMS_TITLE;
   if (log.templateKey === "manual_sms") return "수동 메시지";
   return log.templateKey || "발송 내역";
+}
+
+function isClientGreetingSmsLog(log: ClientNotificationLogRecord): boolean {
+  const variables = notificationVariables(log);
+  return (
+    log.templateKey === CLIENT_GREETING_SMS_TEMPLATE_KEY ||
+    variables.automationKey === "CLIENT_GREETING_SMS" ||
+    variables.systemTemplateKey === "GREETING"
+  );
+}
+
+function notificationReceiverKey(receiver: string | null): string {
+  return (receiver ?? "").replace(/\D/g, "");
+}
+
+function visibleNotificationLogs(logs: ClientNotificationLogRecord[]): ClientNotificationLogRecord[] {
+  const sortedLogs = [...logs].sort((a, b) => {
+    const bTime = new Date(b.createdAt).getTime();
+    const aTime = new Date(a.createdAt).getTime();
+    return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
+  });
+  const seenGreetingKeys = new Set<string>();
+
+  return sortedLogs.filter((log) => {
+    const key = `${notificationChannelLabel(log)}:${notificationReceiverKey(log.receiver)}:${notificationTitle(log)}`;
+    if (seenGreetingKeys.has(key)) return false;
+    if (isClientGreetingSmsLog(log)) seenGreetingKeys.add(key);
+    return true;
+  });
 }
 
 function notificationStatusLabel(status: string): string {
@@ -503,10 +543,6 @@ function formatNotificationTime(createdAt: string): string {
   return `${year}년 ${month}월 ${day}일 ${time}`;
 }
 
-function notificationReceiverLabel(receiver: string | null): string {
-  return receiver?.trim() || "수신자 미확인";
-}
-
 export function ClientDetailContent({
   client,
   contractDocument,
@@ -538,6 +574,7 @@ export function ClientDetailContent({
   const docTone = documentStatusTone(client.documentStatus);
   const hasContractDocument = Boolean(client.eDocId);
   const showMissingContractBadge = shouldShowMissingContractBadge(client);
+  const displayNotificationLogs = visibleNotificationLogs(notificationLogs);
   const birthDate = firstValue(
     client.birthday,
     documentFieldValue(contractDocument, [
@@ -1030,8 +1067,8 @@ export function ClientDetailContent({
             <div className="detail-empty-state" data-component="mobile-clients-alimtalk-loading">
               발송 내역을 불러오는 중입니다.
             </div>
-          ) : notificationLogs.length > 0 ? (
-            notificationLogs.map((log) => {
+          ) : displayNotificationLogs.length > 0 ? (
+            displayNotificationLogs.map((log) => {
               const tone = notificationStatusTone(log.status);
               const channel = notificationChannelLabel(log);
               return (
@@ -1045,7 +1082,7 @@ export function ClientDetailContent({
                     )
                   }
                   title={`${channel} · ${notificationTitle(log)}`}
-                  meta={`${formatNotificationTime(log.createdAt)} · ${notificationReceiverLabel(log.receiver)}`}
+                  meta={formatNotificationTime(log.createdAt)}
                   badge={notificationStatusLabel(log.status)}
                   tone={tone}
                 />

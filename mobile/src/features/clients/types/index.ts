@@ -31,6 +31,7 @@ export interface Client {
     breastPump: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
     eDocId: string | null;
+    areaId?: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
 }
@@ -55,6 +56,8 @@ export interface CreateClientDto {
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus?: ServiceStatus | null;
+    areaId?: string | null;
+    suppressGreetingSms?: boolean;
 }
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId
@@ -77,6 +80,7 @@ export interface UpdateClientDto {
     voucherClient?: boolean;
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;
+    areaId?: string | null;
 }
 
 // DTO for terminating service

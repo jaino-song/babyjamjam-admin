@@ -8,6 +8,7 @@ import {
     invalidJsonResponse,
     readJsonObjectBody,
     unauthorizedResponse,
+    withNoStore,
 } from "@/lib/api/route-utils";
 
 // GET /api/clients - Get all clients (with optional pagination)
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
             params,
             headers: getAuthHeaders(token),
         });
-        return backendJsonResponse(response);
+        return withNoStore(backendJsonResponse(response));
     } catch (error) {
         return errorResponse(error, "fetch clients");
     }

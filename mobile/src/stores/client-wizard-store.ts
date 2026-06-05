@@ -20,6 +20,7 @@ interface ClientWizardFormData {
   voucherClient: boolean;
   breastPump: boolean;
   serviceStatus: ServiceStatus;
+  areaId: string;
 }
 
 interface ClientWizardStore extends ClientWizardFormData {
@@ -51,6 +52,7 @@ const INITIAL_FORM: ClientWizardFormData = {
   voucherClient: true,
   breastPump: false,
   serviceStatus: "waiting",
+  areaId: "",
 };
 
 export const useClientWizardStore = create<ClientWizardStore>((set) => ({

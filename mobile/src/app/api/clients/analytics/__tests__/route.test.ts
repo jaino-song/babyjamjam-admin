@@ -89,6 +89,7 @@ describe("clients analytics route", () => {
     const response = await GET(createRequest());
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
     await expect(response.json()).resolves.toMatchObject({
       activeClients: 11,
       contractsNotSent: 2,
@@ -96,6 +97,29 @@ describe("clients analytics route", () => {
       upcomingThisMonth: 2,
       upcomingNextMonth: 5,
     });
+  });
+
+  it("uses the backend-safe clients page limit when deriving analytics locally", async () => {
+    mockServerGet.mockImplementation(async (path: string) => {
+      if (path === "/clients/analytics") {
+        return { status: 404, data: { message: "missing analytics endpoint" } };
+      }
+
+      return {
+        status: 200,
+        data: { data: [] },
+      };
+    });
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockServerGet).toHaveBeenCalledWith(
+      "/clients",
+      expect.objectContaining({
+        params: { page: 1, limit: 100 },
+      }),
+    );
   });
 
   it("does not expose raw backend details when client-derived analytics fail", async () => {
@@ -117,6 +141,7 @@ describe("clients analytics route", () => {
     const response = await GET(createRequest());
 
     expect(response.status).toBe(502);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
     await expect(response.json()).resolves.toEqual({
       error: "Failed to fetch dashboard analytics",
       code: "CLIENT_ANALYTICS_ERROR",

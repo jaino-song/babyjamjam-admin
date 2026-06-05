@@ -48,6 +48,7 @@ describe("client API routes", () => {
     const response = await getClients(createRequest("/api/clients?page=2&limit=10"));
 
     expect(response.status).toBe(403);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
     await expect(response.json()).resolves.toEqual({ error: "branch access denied" });
   });
 

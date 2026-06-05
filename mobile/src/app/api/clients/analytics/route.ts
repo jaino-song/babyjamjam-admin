@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthHeaders, getAuthToken, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+import {
+  getAuthHeaders,
+  getAuthToken,
+  sanitizeUpstreamClientError,
+  withNoStore,
+} from "@/lib/api/route-utils";
 import {
   deriveDashboardAnalyticsFromClients,
   normalizeDashboardAnalyticsPayload,
   type DashboardAnalytics,
   type DashboardAnalyticsClient,
 } from "@/lib/dashboard/analytics";
+
+const CLIENTS_ANALYTICS_PAGE_LIMIT = 100;
 
 function readClients(payload: unknown): DashboardAnalyticsClient[] {
   if (Array.isArray(payload)) return payload as DashboardAnalyticsClient[];
@@ -18,10 +25,17 @@ function readClients(payload: unknown): DashboardAnalyticsClient[] {
   return [];
 }
 
+function readNumber(payload: unknown, key: string): number | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 export async function GET(request: NextRequest) {
   const token = getAuthToken(request);
   if (!token) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return withNoStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
   }
 
   const headers = getAuthHeaders(token);
@@ -37,31 +51,63 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const response = await serverAPIClient.get("/clients", {
-      params: { page: 1, limit: 10000 },
-      headers,
-    });
+    const clients: DashboardAnalyticsClient[] = [];
+    let page = 1;
 
-    if (response.status >= 400) {
-      if (backendAnalytics) return NextResponse.json(backendAnalytics);
-      return NextResponse.json(
-        sanitizeUpstreamClientError(response.data, "Failed to fetch dashboard analytics"),
-        { status: response.status },
-      );
+    while (true) {
+      const response = await serverAPIClient.get("/clients", {
+        params: { page, limit: CLIENTS_ANALYTICS_PAGE_LIMIT },
+        headers,
+      });
+
+      if (response.status >= 400) {
+        if (backendAnalytics) return withNoStore(NextResponse.json(backendAnalytics));
+        return withNoStore(
+          NextResponse.json(
+            sanitizeUpstreamClientError(response.data, "Failed to fetch dashboard analytics"),
+            { status: response.status },
+          ),
+        );
+      }
+
+      const pageClients = readClients(response.data);
+      clients.push(...pageClients);
+
+      if (Array.isArray(response.data) || pageClients.length === 0) {
+        break;
+      }
+
+      const total = readNumber(response.data, "total");
+      const responsePage = readNumber(response.data, "page") ?? page;
+      const responseLimit = readNumber(response.data, "limit") ?? CLIENTS_ANALYTICS_PAGE_LIMIT;
+
+      if (total !== undefined && responsePage * responseLimit >= total) {
+        break;
+      }
+
+      if (pageClients.length < CLIENTS_ANALYTICS_PAGE_LIMIT) {
+        break;
+      }
+
+      page += 1;
     }
 
-    const derivedAnalytics = deriveDashboardAnalyticsFromClients(readClients(response.data));
-    return NextResponse.json({
-      ...(backendAnalytics ?? derivedAnalytics),
-      contractsNotSent: derivedAnalytics.contractsNotSent,
-      upcomingThisMonth: derivedAnalytics.upcomingThisMonth,
-    });
+    const derivedAnalytics = deriveDashboardAnalyticsFromClients(clients);
+    return withNoStore(
+      NextResponse.json({
+        ...(backendAnalytics ?? derivedAnalytics),
+        contractsNotSent: derivedAnalytics.contractsNotSent,
+        upcomingThisMonth: derivedAnalytics.upcomingThisMonth,
+      }),
+    );
   } catch (error) {
-    if (backendAnalytics) return NextResponse.json(backendAnalytics);
+    if (backendAnalytics) return withNoStore(NextResponse.json(backendAnalytics));
     console.error("[API] Error fetching dashboard analytics:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch dashboard analytics" },
-      { status: 500 },
+    return withNoStore(
+      NextResponse.json(
+        { error: "Failed to fetch dashboard analytics" },
+        { status: 500 },
+      ),
     );
   }
 }

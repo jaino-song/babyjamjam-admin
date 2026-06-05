@@ -19,6 +19,7 @@ export type ClientWizardPrefill = Partial<{
   voucherClient: boolean;
   breastPump: boolean;
   serviceStatus: ServiceStatus;
+  areaId: string | null;
 }>;
 
 interface ClientDialogStore {

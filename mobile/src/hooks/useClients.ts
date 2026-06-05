@@ -9,6 +9,11 @@ import type {
     PaginatedResponse 
 } from "@/lib/client/types";
 
+interface UseClientsOptions {
+    refetchOnMount?: boolean | "always";
+    staleTime?: number;
+}
+
 // Query keys - using factory pattern for proper invalidation
 export const clientQueryKeys = {
     all: ["clients"] as const,
@@ -30,7 +35,12 @@ export async function fetchClient(id: number): Promise<Client> {
 }
 
 // Fetch all clients (paginated)
-export function useClients(page: number = 1, limit: number = 10, search?: string) {
+export function useClients(
+    page: number = 1,
+    limit: number = 10,
+    search?: string,
+    options: UseClientsOptions = {},
+) {
     return useQuery<PaginatedResponse<Client>>({
         queryKey: clientQueryKeys.list(page, limit, search),
         queryFn: async () => {
@@ -42,7 +52,8 @@ export function useClients(page: number = 1, limit: number = 10, search?: string
             const { data } = await api.get(`/clients?${params.toString()}`);
             return data;
         },
-        staleTime: 1000 * 60 * 5, // 5 minutes
+        refetchOnMount: options.refetchOnMount,
+        staleTime: options.staleTime ?? 1000 * 60 * 5, // 5 minutes
     });
 }
 

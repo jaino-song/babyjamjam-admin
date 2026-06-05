@@ -16,6 +16,8 @@ const COOKIE_OPTIONS = {
     path: "/",
 };
 
+export const NO_STORE_CACHE_CONTROL = "no-store, max-age=0";
+
 class InvalidJsonBodyError extends Error {
     constructor() {
         super("Request body must be valid JSON");
@@ -86,6 +88,11 @@ export function backendJsonResponse(response: { data: unknown; status?: number }
     }
 
     return NextResponse.json(response.data ?? {}, { status });
+}
+
+export function withNoStore(response: NextResponse): NextResponse {
+    response.headers.set("Cache-Control", NO_STORE_CACHE_CONTROL);
+    return response;
 }
 
 export function getUpstreamErrorStatus(error: unknown, fallbackStatus = 500): number {
