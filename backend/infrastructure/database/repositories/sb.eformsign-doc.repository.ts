@@ -50,7 +50,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
     async findClientNamesByBranch(branchid: string): Promise<EformsignDocClientSummary[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
             where: { branchId: branchid },
-            select: { documentId: true, clientId: true },
+            select: { documentId: true, clientId: true, stepRecipientName: true },
         });
         const clientIds = Array.from(
             new Set(docs.map((d) => d.clientId).filter((id): id is number => id != null)),
@@ -82,10 +82,11 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             .filter((d) => d.documentId && d.clientId != null && clientById.has(d.clientId))
             .map((d) => {
                 const client = clientById.get(d.clientId!)!;
+                const contractRecipientName = d.stepRecipientName.trim();
                 return {
                     documentId: d.documentId,
                     clientId: client.id,
-                    clientName: client.name,
+                    clientName: contractRecipientName || client.name,
                     clientPhone: client.phone ?? null,
                     providerName: providerByClientId.get(d.clientId!) ?? null,
                 };

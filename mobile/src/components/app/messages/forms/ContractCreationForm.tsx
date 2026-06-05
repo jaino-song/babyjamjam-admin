@@ -406,6 +406,7 @@ export const ContractCreationForm = () => {
           careCenter: false,
           voucherClient: true,
           breastPump: false,
+          suppressGreetingSms: true,
         });
         finalClientId = newClient.id;
         setClientId(newClient.id);

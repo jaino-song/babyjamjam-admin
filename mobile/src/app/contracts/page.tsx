@@ -44,6 +44,12 @@ import {
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import {
+  UNKNOWN_CUSTOMER_NAME,
+  contractDisplayName,
+  customerName,
+  mergeDocumentForDisplayData,
+} from "@/lib/eformsign/display-name";
+import {
   CONTRACT_FINALIZE_PROGRESS_STEPS,
   INITIAL_HEADLESS_PROGRESS,
   createHeadlessProgressId,
@@ -118,10 +124,6 @@ const CONTRACT_ROUTE_BODY_CLASS = "mobile-contracts-route";
 const FILTER_LABELS: FilterKey[] = ["전체", "대기", "검토 필요", "완료", "기간 만료", "상태 확인"];
 const CONTRACT_LIST_INITIAL_VISIBLE_COUNT = 9;
 const DROPDOWN_DIALOG_HANDOFF_DELAY_MS = 100;
-const UNKNOWN_CUSTOMER_NAME = "고객 미지정";
-const GENERIC_CONTRACT_DOCUMENT_NAMES = new Set([
-  "산모신생아건강관리서비스 계약서",
-]);
 const CONTRACT_OPEN_CODES = new Set(["034", "064", "074", "076"]);
 const CONTRACT_OPEN_KEYWORDS = ["doc_open", "open_participant", "open_outsider", "open_reviewer", "open_reader", "열람"];
 const CONTRACT_SIGNATURE_CODES = new Set(["032", "062", "092"]);
@@ -162,20 +164,6 @@ const CONTRACT_EVENT_TYPE_KEYS = [
   "action",
   "event",
 ] as const;
-const CUSTOMER_NAME_FIELD_IDS = [
-  "이용자 성명",
-  "이용자성명",
-  "고객 성명",
-  "고객성명",
-  "고객명",
-  "산모 성명",
-  "산모성명",
-  "산모명",
-  "성명",
-  "customerName",
-  "clientName",
-  "userName",
-] as const;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -199,36 +187,6 @@ function ContractListLoadingRows() {
       ))}
     </>
   );
-}
-
-function customerName(doc: EformsignDocument, metadata?: EformsignDocClientSummary): string {
-  const metadataName = metadata?.clientName?.trim();
-  if (metadataName) return metadataName;
-
-  const fieldName = documentFieldValue(doc, CUSTOMER_NAME_FIELD_IDS);
-  if (fieldName) return fieldName;
-
-  const recipients = doc.current_status?.step_recipients;
-  const outsiderRecipient = recipients?.find(
-    (recipient) => recipient.recipient_type !== "01" && recipient.name?.trim(),
-  );
-  if (outsiderRecipient?.name) return outsiderRecipient.name.trim();
-
-  const historicalRecipient = collectRecords(doc.recipients)
-    .map((record) => {
-      const recipientType = stringFromUnknown(record.recipient_type);
-      const name = stringFromUnknown(record.name);
-      return recipientType && recipientType !== "01" ? name : null;
-    })
-    .find((name): name is string => Boolean(name));
-  if (historicalRecipient) return historicalRecipient;
-
-  const anyRecipient = recipients?.find((recipient) => recipient.name?.trim());
-  if (anyRecipient?.name) return anyRecipient.name.trim();
-
-  if (doc.last_editor?.recipient_type !== "01" && doc.last_editor?.name) return doc.last_editor.name;
-  if (doc.creator?.recipient_type !== "01" && doc.creator?.name) return doc.creator.name;
-  return UNKNOWN_CUSTOMER_NAME;
 }
 
 function categorize(doc: EformsignDocument): ContractCategory {
@@ -314,24 +272,6 @@ function contractNumber(doc: EformsignDocument): string {
 
 function templateName(doc: EformsignDocument): string {
   return doc.template?.name?.replace(/\s*계약서$/, "") || "";
-}
-
-function isGenericContractDocumentName(value: string | undefined | null): boolean {
-  const normalized = value?.replace(/\s+/g, " ").trim();
-  return !normalized || GENERIC_CONTRACT_DOCUMENT_NAMES.has(normalized);
-}
-
-function contractDisplayName(
-  doc: EformsignDocument,
-  metadata?: EformsignDocClientSummary,
-  includeSuffix = false,
-): string {
-  const customer = customerName(doc, metadata);
-  const base = customer !== UNKNOWN_CUSTOMER_NAME || isGenericContractDocumentName(doc.document_name)
-    ? customer
-    : (doc.document_name || customer);
-  if (!includeSuffix || base.endsWith("계약서")) return base;
-  return `${base} 계약서`;
 }
 
 function formatDate(value: string | number | undefined | null): string {
@@ -1807,18 +1747,63 @@ export default function ContractsPage() {
     enabled: isAuthenticated && Boolean(selectedDoc?.id),
     staleTime: 1000 * 60,
   });
+
+  const documentClientSummaryById = useMemo(
+    () => new Map(documentClientSummaries.map((summary) => [summary.documentId, summary])),
+    [documentClientSummaries],
+  );
+
+  const missingCustomerNameDocumentIds = useMemo(
+    () =>
+      (allData?.documents ?? [])
+        .filter((doc) => !isDeletedStatusCode(doc.current_status?.status_type))
+        .filter((doc) => customerName(doc, documentClientSummaryById.get(doc.id)) === UNKNOWN_CUSTOMER_NAME)
+        .map((doc) => doc.id)
+        .filter((id): id is string => Boolean(id)),
+    [allData?.documents, documentClientSummaryById],
+  );
+
+  const { data: missingCustomerNameDetails = [] } = useQuery<EformsignDocument[]>({
+    queryKey: ["eformsign-document-details", "missing-customer-names", missingCustomerNameDocumentIds],
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        missingCustomerNameDocumentIds.map((documentId) => eformsignApi.getDocument(documentId)),
+      );
+
+      return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    },
+    enabled: isAuthenticated && missingCustomerNameDocumentIds.length > 0,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const missingCustomerNameDetailById = useMemo(
+    () => new Map(missingCustomerNameDetails.map((doc) => [doc.id, doc])),
+    [missingCustomerNameDetails],
+  );
+
+  const displayDocuments = useMemo(
+    () =>
+      (allData?.documents ?? []).map((doc) =>
+        mergeDocumentForDisplayData(doc, missingCustomerNameDetailById.get(doc.id)),
+      ),
+    [allData?.documents, missingCustomerNameDetailById],
+  );
+
   const selectedListDoc = useMemo(() => {
     if (!selectedDoc?.id) return null;
-    return (allData?.documents ?? []).find((doc) => doc.id === selectedDoc.id) ?? null;
-  }, [allData?.documents, selectedDoc?.id]);
+    return displayDocuments.find((doc) => doc.id === selectedDoc.id) ?? null;
+  }, [displayDocuments, selectedDoc?.id]);
+
   const documentIdsSignature = useMemo(
     () => (allData?.documents ?? []).map((doc) => doc.id).join("|"),
     [allData?.documents],
   );
+
   useEffect(() => {
     if (!isAuthenticated || !documentIdsSignature) return;
     void queryClient.invalidateQueries({ queryKey: ["eformsign-doc-client-names"] });
   }, [documentIdsSignature, isAuthenticated, queryClient]);
+
   const selectedDetailDoc = useMemo(() => {
     if (!selectedDoc) return null;
     return {
@@ -1828,10 +1813,6 @@ export default function ContractsPage() {
     };
   }, [selectedDoc, selectedDocDetail, selectedListDoc]);
 
-  const documentClientSummaryById = useMemo(
-    () => new Map(documentClientSummaries.map((summary) => [summary.documentId, summary])),
-    [documentClientSummaries],
-  );
   const selectedDocMetadata = useMemo(() => {
     const selectedIds = [selectedDoc?.id, selectedDetailDoc?.id, selectedListDoc?.id];
     for (const id of selectedIds) {
@@ -1844,12 +1825,12 @@ export default function ContractsPage() {
 
   const allDocuments = useMemo(
     () =>
-      (allData?.documents ?? []).filter((doc) => {
+      displayDocuments.filter((doc) => {
         if (isDeletedStatusCode(doc.current_status?.status_type)) return false;
         const metadata = documentClientSummaryById.get(doc.id);
         return !EXCLUDED_CUSTOMER_NAMES.includes(customerName(doc, metadata));
       }),
-    [allData?.documents, documentClientSummaryById],
+    [displayDocuments, documentClientSummaryById],
   );
 
   const filteredDocuments = useMemo(() => {

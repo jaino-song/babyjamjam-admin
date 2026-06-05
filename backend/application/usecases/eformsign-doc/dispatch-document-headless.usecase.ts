@@ -146,8 +146,8 @@ export class DispatchDocumentHeadlessUsecase {
                     stepIndex: createdDocumentStatus.stepIndex,
                     stepName: createdDocumentStatus.stepName,
                     stepRecipientType: "01",
-                    stepRecipientName: client?.name ?? params.contractData.customerName,
-                    stepRecipientSms: client?.phone ?? params.contractData.customerContact,
+                    stepRecipientName: params.contractData.customerName,
+                    stepRecipientSms: params.contractData.customerContact || client?.phone || "",
                     expiredDate: createdDocumentStatus.expiredDate,
                     linkToClient: true,
                 }).catch((error) => {

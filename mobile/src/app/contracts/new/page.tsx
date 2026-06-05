@@ -712,6 +712,7 @@ export default function ContractCreationPage() {
           careCenter: false,
           voucherClient: true,
           breastPump: false,
+          suppressGreetingSms: true,
         });
         finalClientId = newClient.id;
         setClientId(newClient.id);
