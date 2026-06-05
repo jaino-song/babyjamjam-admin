@@ -18,6 +18,7 @@ import { useEmployees } from "@/hooks/useEmployees";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useUnreadCount, usePushNotification } from "@/hooks/usePushNotification";
 import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSettingsRedesign";
+import { UI_ONLY_AUTOMATION_TRIGGER_COUNT } from "@/components/app/mobile-redesign/AlimtalkAutomationPage";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
 import { useAlimtalkTriggerRules } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
 
@@ -33,6 +34,7 @@ export default function AllMenuPage() {
   const employees = employeesQuery.data ?? [];
   const messageTemplates = messageTemplatesQuery.data ?? [];
   const alimtalkTriggerRules = alimtalkTriggerRulesQuery.data ?? [];
+  const automationTriggerCount = alimtalkTriggerRules.length + UI_ONLY_AUTOMATION_TRIGGER_COUNT;
   const unreadNotifCount = unreadCountQuery.data ?? 0;
   const isClientsInitialLoading = clientsQuery.isLoading && !clientsQuery.data;
   const isEmployeesInitialLoading = employeesQuery.isLoading && !employeesQuery.data;
@@ -104,11 +106,11 @@ export default function AllMenuPage() {
             valueSkeletonWidth: "32px",
           },
           {
-            label: "알림톡",
+            label: "발송 자동화",
             href: "/alimtalk",
             icon: Send,
             tone: "gold",
-            value: isAlimtalkRulesInitialLoading ? undefined : `${alimtalkTriggerRules.length}종`,
+            value: isAlimtalkRulesInitialLoading ? undefined : `${automationTriggerCount}개`,
             valueLoading: isAlimtalkRulesInitialLoading,
             valueSkeletonWidth: "28px",
           },
@@ -133,7 +135,7 @@ export default function AllMenuPage() {
     clients.length,
     employees.length,
     messageTemplates.length,
-    alimtalkTriggerRules.length,
+    automationTriggerCount,
     unreadNotifCount,
     isClientsInitialLoading,
     isEmployeesInitialLoading,
