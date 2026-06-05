@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { Check, Send, UserCheck, UserPlus, type LucideIcon } from "lucide-react";
+import { Check, MessageSquareText, Send, UserCheck, UserPlus, type LucideIcon } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   useAlimtalkTriggerRules,
   useUpdateAlimtalkTriggerRule,
@@ -22,87 +23,132 @@ interface AlimtalkLogRecord {
   templateKey: string;
   status: "pending" | "sent" | "failed";
   createdAt: string;
+  ruleId: string | null;
   ruleName: string | null;
-  eventType: string | null;
+  eventType: TriggerEventType | null;
 }
 
-interface TriggerDefinition {
-  templateKey: TriggerTemplateKey;
-  eventType: TriggerEventType;
-  title: string;
-  timingLabel: string;
+interface TriggerEventMeta {
+  label: string;
   icon: LucideIcon;
   tone: "primary" | "orange" | "green" | "purple";
-  fallbackMonthlyCount: number;
-  fallbackActive: boolean;
 }
 
-interface TriggerDisplayRow extends TriggerDefinition {
+interface BaseTriggerDisplayRow {
+  title: string;
+  timingLabel: string;
+  channelLabel: "알림톡" | "SMS";
+  icon: LucideIcon;
+  tone: TriggerEventMeta["tone"];
+  monthlyCount: number | null;
+  failedCount: number | null;
+}
+
+interface LiveTriggerDisplayRow extends BaseTriggerDisplayRow {
+  kind: "live";
+  rule: AlimtalkTriggerRule;
+}
+
+interface UiTriggerDisplayRow extends BaseTriggerDisplayRow {
+  kind: "ui";
+  id: string;
   isActive: boolean;
-  monthlyCount: number;
-  failedCount: number;
-  rule: AlimtalkTriggerRule | null;
 }
 
-const TRIGGER_DEFINITIONS: TriggerDefinition[] = [
-  {
-    templateKey: "CLIENT_WELCOME",
-    eventType: "CLIENT_CREATED",
-    title: "고객 등록 환영",
-    timingLabel: "고객 신규 등록 즉시",
-    icon: UserPlus,
-    tone: "primary",
-    fallbackMonthlyCount: 12,
-    fallbackActive: true,
-  },
-  {
-    templateKey: "SERVICE_START_REMINDER",
-    eventType: "SERVICE_START",
-    title: "서비스 시작 D-1 안내",
-    timingLabel: "서비스 시작 1일 전",
-    icon: Send,
-    tone: "orange",
-    fallbackMonthlyCount: 8,
-    fallbackActive: true,
-  },
-  {
-    templateKey: "SERVICE_END_REMINDER",
-    eventType: "SERVICE_END",
-    title: "서비스 종료 안내",
-    timingLabel: "서비스 종료일 당일",
-    icon: Check,
-    tone: "green",
-    fallbackMonthlyCount: 6,
-    fallbackActive: true,
-  },
-  {
-    templateKey: "EMPLOYEE_ASSIGNED",
-    eventType: "EMPLOYEE_ASSIGNED",
-    title: "제공인력 배정 안내",
-    timingLabel: "제공인력 배정 즉시",
-    icon: UserCheck,
-    tone: "purple",
-    fallbackMonthlyCount: 7,
-    fallbackActive: false,
-  },
-];
+type TriggerDisplayRow = LiveTriggerDisplayRow | UiTriggerDisplayRow;
 
-const DEFAULT_TRIGGER_ACTIVE: Record<TriggerTemplateKey, boolean> = {
-  CLIENT_WELCOME: true,
-  SERVICE_START_REMINDER: true,
-  SERVICE_END_REMINDER: true,
-  EMPLOYEE_ASSIGNED: false,
+export const UI_ONLY_AUTOMATION_TRIGGER_COUNT = 1;
+
+const CLIENT_GREETING_SMS_TRIGGER: UiTriggerDisplayRow = {
+  kind: "ui",
+  id: "client-greeting-sms",
+  title: "신규 고객 인사 SMS",
+  timingLabel: "고객 등록 즉시 · 고객 번호",
+  channelLabel: "SMS",
+  icon: MessageSquareText,
+  tone: "primary",
+  monthlyCount: 0,
+  failedCount: 0,
+  isActive: true,
 };
 
-function findMatchingRule(
-  rules: AlimtalkTriggerRule[],
-  definition: TriggerDefinition,
-): AlimtalkTriggerRule | null {
-  return (
-    rules.find((rule) => rule.templateKey === definition.templateKey)
-    ?? rules.find((rule) => rule.eventType === definition.eventType)
-    ?? null
-  );
+const EVENT_META: Record<TriggerEventType, TriggerEventMeta> = {
+  CLIENT_CREATED: {
+    label: "고객 등록",
+    icon: UserPlus,
+    tone: "primary",
+  },
+  SERVICE_START: {
+    label: "서비스 시작",
+    icon: Send,
+    tone: "orange",
+  },
+  SERVICE_END: {
+    label: "서비스 종료",
+    icon: Check,
+    tone: "green",
+  },
+  EMPLOYEE_ASSIGNED: {
+    label: "제공인력 배정",
+    icon: UserCheck,
+    tone: "purple",
+  },
+};
+
+const EVENT_SORT_ORDER: Record<TriggerEventType, number> = {
+  CLIENT_CREATED: 0,
+  SERVICE_START: 1,
+  SERVICE_END: 2,
+  EMPLOYEE_ASSIGNED: 3,
+};
+
+const RECIPIENT_LABEL: Record<AlimtalkTriggerRule["recipientType"], string> = {
+  CLIENT: "고객",
+  PRIMARY_EMPLOYEE: "주 담당 제공인력",
+  SECONDARY_EMPLOYEE: "보조 제공인력",
+};
+
+const TEMPLATE_LABEL: Record<TriggerTemplateKey, string> = {
+  CLIENT_WELCOME: "고객 등록 환영",
+  SERVICE_START_REMINDER: "서비스 시작 안내",
+  SERVICE_INFO: "서비스 안내",
+  SERVICE_END_REMINDER: "서비스 종료 안내",
+  EMPLOYEE_ASSIGNED: "제공인력 배정 안내",
+};
+
+function getRuleTitle(rule: AlimtalkTriggerRule) {
+  return rule.name.trim() || TEMPLATE_LABEL[rule.templateKey];
+}
+
+function getRuleTimingLabel(rule: AlimtalkTriggerRule) {
+  const eventLabel = EVENT_META[rule.eventType].label;
+
+  if (rule.offsetType === "IMMEDIATE") {
+    return `${eventLabel} 즉시`;
+  }
+
+  if (rule.offsetType === "SAME_DAY") {
+    return `${eventLabel} 당일`;
+  }
+
+  const dayLabel = `${Math.max(rule.offsetDays, 0)}일`;
+  if (rule.offsetType === "BEFORE_DAYS") {
+    return `${eventLabel} ${dayLabel} 전`;
+  }
+
+  return `${eventLabel} ${dayLabel} 후`;
+}
+
+function getRuleChannelLabel(rule: AlimtalkTriggerRule): BaseTriggerDisplayRow["channelLabel"] {
+  return rule.templateKey === "SERVICE_INFO" ? "SMS" : "알림톡";
+}
+
+function getRuleIcon(rule: AlimtalkTriggerRule, eventMeta: TriggerEventMeta): LucideIcon {
+  return rule.templateKey === "SERVICE_INFO" ? MessageSquareText : eventMeta.icon;
+}
+
+function getRuleTone(rule: AlimtalkTriggerRule, eventMeta: TriggerEventMeta): TriggerEventMeta["tone"] {
+  return rule.templateKey === "SERVICE_INFO" ? "primary" : eventMeta.tone;
 }
 
 function isCurrentMonthLog(log: AlimtalkLogRecord) {
@@ -116,11 +162,17 @@ function isCurrentMonthLog(log: AlimtalkLogRecord) {
   );
 }
 
-function matchesTriggerLog(log: AlimtalkLogRecord, definition: TriggerDefinition) {
+function matchesTriggerLog(log: AlimtalkLogRecord, rule: AlimtalkTriggerRule) {
+  if (log.ruleId) {
+    return log.ruleId === rule.id;
+  }
+
   return (
-    log.templateKey === definition.templateKey
-    || log.eventType === definition.eventType
-    || log.ruleName === definition.title
+    log.ruleName === rule.name
+    || (
+      log.templateKey === rule.templateKey
+      && log.eventType === rule.eventType
+    )
   );
 }
 
@@ -128,15 +180,29 @@ function getMonthLabel() {
   return new Intl.DateTimeFormat("ko-KR", { month: "numeric" }).format(new Date());
 }
 
-export function AlimtalkAutomationPage() {
-  const [fixtureActive, setFixtureActive] = useState<Record<TriggerTemplateKey, boolean>>(
-    DEFAULT_TRIGGER_ACTIVE,
-  );
+function compareTriggerRules(first: AlimtalkTriggerRule, second: AlimtalkTriggerRule) {
+  const eventOrder = EVENT_SORT_ORDER[first.eventType] - EVENT_SORT_ORDER[second.eventType];
+  if (eventOrder !== 0) return eventOrder;
 
-  const { data: rulesResponse = [] } = useAlimtalkTriggerRules();
+  const offsetOrder = first.offsetDays - second.offsetDays;
+  if (offsetOrder !== 0) return offsetOrder;
+
+  return getRuleTitle(first).localeCompare(getRuleTitle(second), "ko-KR");
+}
+
+export function AlimtalkAutomationPage() {
+  const {
+    data: rulesResponse = [],
+    isError: isRulesError,
+    isLoading: isRulesLoading,
+  } = useAlimtalkTriggerRules();
   const updateRuleMutation = useUpdateAlimtalkTriggerRule();
 
-  const { data: logsResponse = [] } = useQuery<unknown>({
+  const {
+    data: logsResponse = [],
+    isError: isLogsError,
+    isLoading: isLogsLoading,
+  } = useQuery<AlimtalkLogRecord[]>({
     queryKey: ["alimtalk", "logs", "all"],
     queryFn: () => fetchAllAlimtalkLogs<AlimtalkLogRecord>(),
   });
@@ -149,36 +215,41 @@ export function AlimtalkAutomationPage() {
     Array.isArray(logsResponse) ? logsResponse : []
   ), [logsResponse]);
 
-  const hasLiveLogs = logs.length > 0;
   const monthLabel = useMemo(() => getMonthLabel(), []);
 
   const displayRows = useMemo<TriggerDisplayRow[]>(() => {
-    return TRIGGER_DEFINITIONS.map((definition) => {
-      const rule = findMatchingRule(rules, definition);
+    return [...rules].sort(compareTriggerRules).map((rule) => {
+      const eventMeta = EVENT_META[rule.eventType];
       const matchingLogs = logs.filter((log) => (
-        isCurrentMonthLog(log) && matchesTriggerLog(log, definition)
+        isCurrentMonthLog(log) && matchesTriggerLog(log, rule)
       ));
 
       return {
-        ...definition,
+        kind: "live",
         rule,
-        isActive: rule?.isActive ?? fixtureActive[definition.templateKey],
-        monthlyCount: hasLiveLogs ? matchingLogs.length : definition.fallbackMonthlyCount,
-        failedCount: matchingLogs.filter((log) => log.status === "failed").length,
+        title: getRuleTitle(rule),
+        timingLabel: `${getRuleTimingLabel(rule)} · ${RECIPIENT_LABEL[rule.recipientType]}`,
+        channelLabel: getRuleChannelLabel(rule),
+        icon: getRuleIcon(rule, eventMeta),
+        tone: getRuleTone(rule, eventMeta),
+        monthlyCount: isLogsLoading || isLogsError ? null : matchingLogs.length,
+        failedCount: isLogsLoading || isLogsError
+          ? null
+          : matchingLogs.filter((log) => log.status === "failed").length,
       };
     });
-  }, [fixtureActive, hasLiveLogs, logs, rules]);
+  }, [isLogsError, isLogsLoading, logs, rules]);
+
+  const allDisplayRows = useMemo<TriggerDisplayRow[]>(() => (
+    [
+      CLIENT_GREETING_SMS_TRIGGER,
+      ...displayRows,
+    ]
+  ), [displayRows]);
 
   const handleToggle = useCallback((row: TriggerDisplayRow) => {
-    const nextActive = !row.isActive;
-
-    if (!row.rule) {
-      setFixtureActive((current) => ({
-        ...current,
-        [row.templateKey]: nextActive,
-      }));
-      return;
-    }
+    if (row.kind === "ui") return;
+    const nextActive = !row.rule.isActive;
 
     updateRuleMutation.mutate({
       id: row.rule.id,
@@ -191,27 +262,34 @@ export function AlimtalkAutomationPage() {
       <div className="shell-content" data-component="alimtalk-content">
         <div className="list-card pop-up alimtalk-trigger-card" data-component="alimtalk-trigger-card">
           <div className="list-title" data-component="alimtalk-trigger-card-title">
-            <span className="list-title-text">알림톡 자동 발송</span>
-            <Link href="/messages/system-templates" className="list-action">
-              템플릿 관리
+            <span className="list-title-text">발송 자동화</span>
+            <Link href="/messages" className="list-action">
+              메시지 관리
             </Link>
           </div>
 
           <div className="list-card-scroll" data-component="alimtalk-trigger-scroll">
             <div className="section-block" data-component="alimtalk-trigger-section">
-              <div className="section-header" data-component="alimtalk-trigger-section-header">자동화</div>
+              <div className="section-header" data-component="alimtalk-trigger-section-header">자동 전송 트리거</div>
 
-              {displayRows.map((row) => {
+              {allDisplayRows.map((row) => {
                 const Icon = row.icon;
+                const rowActive = row.kind === "live" ? row.rule.isActive : row.isActive;
+                const rowKey = row.kind === "live" ? row.rule.id : row.id;
+                const triggerKey = row.kind === "live" ? row.rule.templateKey : row.id;
+                const triggerId = row.kind === "live" ? row.rule.id : row.id;
 
                 return (
                   <button
-                    key={row.templateKey}
+                    key={rowKey}
                     type="button"
                     className="list-item alimtalk-trigger-row"
-                    aria-pressed={row.isActive}
+                    aria-pressed={rowActive}
                     data-component="alimtalk-trigger-row"
-                    data-trigger-key={row.templateKey}
+                    data-trigger-id={triggerId}
+                    data-trigger-key={triggerKey}
+                    data-trigger-channel={row.channelLabel}
+                    disabled={row.kind === "live" && updateRuleMutation.isPending}
                     onClick={() => handleToggle(row)}
                   >
                     <div
@@ -224,18 +302,56 @@ export function AlimtalkAutomationPage() {
                     <div className="trigger-info" data-component="alimtalk-trigger-info">
                       <div className="trigger-title" data-component="alimtalk-trigger-title">{row.title}</div>
                       <div className="trigger-meta" data-component="alimtalk-trigger-meta">
-                        <span className={`send-stat ${row.failedCount > 0 ? "fail" : ""}`}>
-                          {monthLabel} {row.monthlyCount}건
+                        <span className={`send-stat ${row.kind === "live" && (isLogsError || (row.failedCount ?? 0) > 0) ? "fail" : ""}`}>
+                          {isLogsLoading && row.kind === "live" ? (
+                            <span className="alimtalk-count-skeleton" aria-label="발송 건수 집계 중" />
+                          ) : isLogsError && row.kind === "live" ? (
+                            "집계 실패"
+                          ) : (
+                            `${monthLabel} ${row.monthlyCount ?? 0}건`
+                          )}
                         </span>
                         <span className="sep">·</span>
                         <span>{row.timingLabel}</span>
+                        <span className="sep">·</span>
+                        <span>{row.channelLabel}</span>
                       </div>
                     </div>
 
-                    <span className={`toggle ${row.isActive ? "on" : ""}`} aria-hidden="true" />
+                    <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
                   </button>
                 );
               })}
+
+              {isRulesLoading && (
+                Array.from({ length: 4 }).map((_, index) => (
+                  <div
+                    key={`alimtalk-trigger-skeleton-${index}`}
+                    className="list-item alimtalk-trigger-row alimtalk-trigger-row-skeleton"
+                    data-component="alimtalk-trigger-row-skeleton"
+                    aria-hidden="true"
+                  >
+                    <Skeleton className="trigger-icon bg-v3-dim-white animate-pulse" />
+                    <div className="trigger-info" data-component="alimtalk-trigger-skeleton-info">
+                      <Skeleton className="h-4 w-28 bg-v3-dim-white animate-pulse" />
+                      <Skeleton className="mt-2 h-3 w-36 bg-v3-dim-white animate-pulse" />
+                    </div>
+                    <Skeleton className="h-[22px] w-[38px] rounded-full bg-v3-dim-white animate-pulse" />
+                  </div>
+                ))
+              )}
+
+              {!isRulesLoading && isRulesError && (
+                <div className="alimtalk-empty-state" data-component="alimtalk-trigger-error">
+                  자동 전송 트리거를 불러오지 못했습니다.
+                </div>
+              )}
+
+              {!isRulesLoading && !isRulesError && allDisplayRows.length === 0 && (
+                <div className="alimtalk-empty-state" data-component="alimtalk-trigger-empty">
+                  등록된 자동 전송 트리거가 없습니다.
+                </div>
+              )}
             </div>
           </div>
         </div>

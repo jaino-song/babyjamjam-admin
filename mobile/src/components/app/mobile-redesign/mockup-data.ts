@@ -262,7 +262,7 @@ export const menuGroups: MenuGroup[] = [
     rows: [
       { label: "가격표", href: "/prices", icon: Calculator, tone: "orange" },
       { label: "메시지", href: "/messages", icon: MessageSquareText, tone: "primary", value: "36건" },
-      { label: "알림톡", href: "/alimtalk", icon: Send, tone: "gold", value: "4종" },
+      { label: "발송 자동화", href: "/alimtalk", icon: Send, tone: "gold", value: "2개" },
     ],
   },
   {

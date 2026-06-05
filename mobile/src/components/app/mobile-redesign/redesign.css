@@ -3013,6 +3013,19 @@ body:has([data-component="messages"]) .thread-channel.sms {
   background: hsl(var(--v3-primary-light));
 }
 
+body:has([data-component="messages"]) .message-row-status {
+  display: inline-flex;
+  min-width: max-content;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+body:has([data-component="messages"]) .message-row-status .dday-sub {
+  line-height: 1;
+}
+
 body:has([data-component="messages"]) .filter-pill .messages-filter-count-danger {
   color: hsl(var(--v3-burgundy));
   background: hsl(var(--v3-burgundy-light));
@@ -3243,6 +3256,15 @@ body:has([data-component="alimtalk"]) button.alimtalk-trigger-row {
   text-align: left;
 }
 
+body:has([data-component="alimtalk"]) button.alimtalk-trigger-row:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+body:has([data-component="alimtalk"]) .alimtalk-trigger-row-skeleton {
+  padding: 12px 10px;
+}
+
 body:has([data-component="alimtalk"]) .trigger-icon {
   display: flex;
   width: 38px;
@@ -3309,9 +3331,32 @@ body:has([data-component="alimtalk"]) .send-stat {
   font-weight: 700;
 }
 
+body:has([data-component="alimtalk"]) .alimtalk-count-skeleton {
+  display: inline-block;
+  width: 36px;
+  height: 0.6rem;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.18;
+  animation: pulse 0.8s ease-in-out infinite;
+}
+
 body:has([data-component="alimtalk"]) .send-stat.fail {
   color: hsl(var(--v3-burgundy));
   background: hsl(var(--v3-burgundy-light));
+}
+
+body:has([data-component="alimtalk"]) .alimtalk-empty-state {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed hsl(var(--v3-border));
+  border-radius: 18px;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
 }
 
 body:has([data-component="alimtalk"]) .toggle {
