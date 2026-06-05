@@ -23,6 +23,26 @@ describe("middleware API route protection", () => {
     mockJwtDecode.mockReset();
   });
 
+  it("redirects the login page to home when a valid access token exists", async () => {
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      role: "manager",
+      type: "access",
+    });
+
+    const response = await middleware(createRequest("/login", "auth_token=session-token"));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/");
+  });
+
+  it("allows the login page without a valid access token", async () => {
+    const response = await middleware(createRequest("/login"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
   it("allows explicitly public auth API routes without a session", async () => {
     const response = await middleware(createRequest("/api/auth/login"));
 

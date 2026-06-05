@@ -193,6 +193,7 @@ const PUBLIC_API_ROUTES = [
 const AUTH_ONLY_ROUTES = [
   "/select-branch",
 ];
+const LOGIN_ROUTE = "/login";
 
 function isRouteMatch(pathname: string, route: string): boolean {
   return pathname === route || pathname.startsWith(`${route}/`);
@@ -213,13 +214,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Prevent authenticated users from seeing the login screen.
+  let authToken = request.cookies.get("auth_token")?.value;
+  if (
+    isRouteMatch(pathname, LOGIN_ROUTE)
+    && authToken
+    && !isTokenExpired(authToken)
+  ) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+
   // Skip public routes
   if (PUBLIC_ROUTES.some((route) => isRouteMatch(pathname, route))) {
     return NextResponse.next();
   }
 
   // Get auth token
-  let authToken = request.cookies.get("auth_token")?.value;
   const refreshToken = request.cookies.get("refresh_token")?.value;
   const autoLogin = isAutoLoginEnabled(request.cookies.get("auto_login")?.value);
   let refreshedSession: {
