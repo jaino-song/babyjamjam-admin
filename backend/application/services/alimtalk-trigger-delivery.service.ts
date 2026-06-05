@@ -1,23 +1,41 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
+import { AligoService } from "application/services/aligo.service";
+import { SystemTemplateService } from "application/services/system-template.service";
 import { SendAligoAlimtalkUsecase } from "application/usecases/aligo";
 import { SendAlimtalkUsecase as SendChannelTalkAlimtalkUsecase } from "application/usecases/channeltalk";
+import { SendAligoSmsResult } from "application/dto/aligo/send-sms.dto";
 import { UpsertChannelTalkUserDto, CreateChannelTalkEventDto } from "application/dto/channeltalk";
+import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
 import {
     ALIMTALK_TRIGGER_TEMPLATE_CATALOG,
     AlimtalkTriggerTemplateKey,
 } from "domain/constants/alimtalk-trigger-catalog";
 import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
+import { AlimtalkLogEntity, AlimtalkLogStatus } from "domain/entities/alimtalk-log.entity";
+import {
+    ALIMTALK_LOG_REPOSITORY,
+    IAlimtalkLogRepository,
+} from "domain/repositories/alimtalk-log.repository.interface";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
+
+const SERVICE_INFO_SMS_TEMPLATE_KEY = "service_info_sms";
+const SERVICE_INFO_SMS_TITLE = "서비스 안내";
 
 @Injectable()
 export class AlimtalkTriggerDeliveryService {
+    private readonly logger = new Logger(AlimtalkTriggerDeliveryService.name);
+
     constructor(
         private readonly systemSettingService: SystemSettingService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
+        private readonly aligoService: AligoService,
+        private readonly systemTemplateService: SystemTemplateService,
         private readonly sendAligoAlimtalkUsecase: SendAligoAlimtalkUsecase,
         private readonly sendChannelTalkAlimtalkUsecase: SendChannelTalkAlimtalkUsecase,
+        @Inject(ALIMTALK_LOG_REPOSITORY)
+        private readonly logRepository: IAlimtalkLogRepository,
     ) {}
 
     async sendJob(job: AlimtalkTriggerJobEntity): Promise<boolean> {
@@ -25,7 +43,11 @@ export class AlimtalkTriggerDeliveryService {
             return false;
         }
 
-        await this.messageSenderApprovalService.ensureApproved(job.branchId);
+        const senderPhone = await this.messageSenderApprovalService.ensureApproved(job.branchId);
+
+        if (job.templateKey === AlimtalkTriggerTemplateKey.SERVICE_INFO) {
+            return this.sendServiceInfoSmsJob(job, senderPhone);
+        }
 
         const provider = await this.systemSettingService.getAlimtalkProvider();
         if (provider === "none") {
@@ -67,6 +89,133 @@ export class AlimtalkTriggerDeliveryService {
         );
 
         return result !== null;
+    }
+
+    private async sendServiceInfoSmsJob(
+        job: AlimtalkTriggerJobEntity,
+        senderPhone: string,
+    ): Promise<boolean> {
+        const payload = job.payload;
+        const message = await this.resolveServiceInfoSmsMessage(payload.templateVariables);
+        const receiver = payload.recipientPhone;
+
+        try {
+            const result = await this.aligoService.sendSms({
+                senderPhone,
+                receiver,
+                message,
+                recipientName: payload.recipientName,
+                title: SERVICE_INFO_SMS_TITLE,
+                msgType: "AUTO",
+            });
+            const isAccepted = this.isAcceptedSmsResult(result);
+            await this.recordServiceInfoSmsLog({
+                job,
+                message,
+                receiver: result.request.receiver,
+                senderPhone,
+                status: isAccepted ? "sent" : "failed",
+                aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
+                errorMessage: isAccepted ? null : result.response.message,
+                msgType: result.request.msgType,
+            });
+            return isAccepted;
+        } catch (error) {
+            const errorMessage = this.formatErrorMessage(error);
+            await this.recordServiceInfoSmsLog({
+                job,
+                message,
+                receiver,
+                senderPhone,
+                status: "failed",
+                aligoMid: null,
+                errorMessage,
+                msgType: "AUTO",
+            }).catch((logError) => {
+                this.logger.warn(
+                    `Failed to record service info SMS log: ${this.formatErrorMessage(logError)}`,
+                );
+            });
+            throw error;
+        }
+    }
+
+    private async resolveServiceInfoSmsMessage(variables: Record<string, string>): Promise<string> {
+        try {
+            const template = await this.systemTemplateService.getByKey(SystemTemplateKey.SERVICE_INFO);
+            return this.renderTemplate(template.content, variables);
+        } catch (error) {
+            this.logger.warn(
+                `[SMS Automation] Failed to load service info system template, using registry default: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+            );
+            return this.renderTemplate(
+                SYSTEM_TEMPLATE_REGISTRY[SystemTemplateKey.SERVICE_INFO].defaultContent,
+                variables,
+            );
+        }
+    }
+
+    private renderTemplate(template: string, variables: Record<string, string>): string {
+        return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => variables[key] ?? match);
+    }
+
+    private async recordServiceInfoSmsLog(params: {
+        job: AlimtalkTriggerJobEntity;
+        message: string;
+        receiver: string;
+        senderPhone: string;
+        status: AlimtalkLogStatus;
+        aligoMid: string | null;
+        errorMessage: string | null;
+        msgType: string;
+    }): Promise<void> {
+        const now = new Date();
+        await this.logRepository.save(
+            AlimtalkLogEntity.reconstitute(
+                0,
+                params.job.branchId,
+                "aligo_sms",
+                SERVICE_INFO_SMS_TEMPLATE_KEY,
+                params.job.id,
+                params.receiver,
+                params.job.clientId,
+                params.message,
+                {
+                    ...params.job.payload.templateVariables,
+                    automationKey: "SERVICE_INFO_SMS",
+                    systemTemplateKey: SystemTemplateKey.SERVICE_INFO,
+                    recipientName: params.job.payload.recipientName,
+                    title: SERVICE_INFO_SMS_TITLE,
+                    triggerType: "service_start_before_7_days",
+                    msgType: params.msgType,
+                    senderPhone: params.senderPhone,
+                },
+                params.status,
+                params.aligoMid,
+                params.errorMessage,
+                1,
+                now,
+                null,
+                now,
+                now,
+            ),
+        );
+    }
+
+    private isAcceptedSmsResult(result: SendAligoSmsResult): boolean {
+        const resultCode = Number(result.response.result_code);
+        const errorCount = Number(result.response.error_cnt ?? 0);
+        return resultCode === 1 && errorCount === 0;
+    }
+
+    private formatErrorMessage(error: unknown): string {
+        if (error instanceof Error && error.message.trim()) {
+            return error.message;
+        }
+        const message = String(error ?? "").trim();
+        return message || "문자 발송 요청이 실패했습니다.";
     }
 
     private toAligoVariables(

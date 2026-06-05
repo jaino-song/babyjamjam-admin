@@ -26,7 +26,7 @@ export class SbAlimtalkLogRepository implements IAlimtalkLogRepository {
     async findPendingRetries(): Promise<AlimtalkLogEntity[]> {
         const rows = await this.prisma.alimtalk_log.findMany({
             where: {
-                status: "pending",
+                status: { in: ["pending", "failed"] },
                 nextRetryAt: { lte: new Date() },
             },
             orderBy: { nextRetryAt: "asc" },

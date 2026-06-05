@@ -13,6 +13,7 @@ export type TriggerRecipientType = "CLIENT" | "PRIMARY_EMPLOYEE" | "SECONDARY_EM
 export type TriggerTemplateKey =
     | "CLIENT_WELCOME"
     | "SERVICE_START_REMINDER"
+    | "SERVICE_INFO"
     | "SERVICE_END_REMINDER"
     | "EMPLOYEE_ASSIGNED";
 

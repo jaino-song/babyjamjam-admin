@@ -426,6 +426,7 @@ const HISTORY_EVENT_ICON_BY_TYPE: Record<TriggerEventType, typeof MessageCircle>
 const HISTORY_TEMPLATE_LABELS: Record<TriggerTemplateKey, string> = {
   CLIENT_WELCOME: "고객 등록 안내",
   SERVICE_START_REMINDER: "서비스 시작 리마인드",
+  SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 안내",
   EMPLOYEE_ASSIGNED: "직원 배정 완료",
 };

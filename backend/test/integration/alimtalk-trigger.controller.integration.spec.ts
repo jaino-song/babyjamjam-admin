@@ -285,6 +285,45 @@ describe("AlimtalkTriggerController (Integration)", () => {
             );
         });
 
+        it("creates the service information rule for seven days before service start", async () => {
+            const createDto = {
+                name: "서비스 시작 7일 전 서비스 안내",
+                isActive: true,
+                eventType: "SERVICE_START",
+                offsetType: "BEFORE_DAYS",
+                offsetDays: 7,
+                recipientType: "CLIENT",
+                templateKey: "SERVICE_INFO",
+            };
+            triggerService.createRule.mockResolvedValue(
+                createMockRule({
+                    id: "rule-service-info",
+                    name: createDto.name,
+                    eventType: AlimtalkTriggerEventType.SERVICE_START,
+                    offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+                    offsetDays: 7,
+                    templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+                }),
+            );
+
+            const response = await request(app.getHttpServer())
+                .post("/alimtalk-trigger-rules")
+                .send(createDto);
+
+            expect(response.status).toBe(201);
+            expect(triggerService.createRule).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({
+                    name: "서비스 시작 7일 전 서비스 안내",
+                    eventType: "SERVICE_START",
+                    offsetType: "BEFORE_DAYS",
+                    offsetDays: 7,
+                    recipientType: "CLIENT",
+                    templateKey: "SERVICE_INFO",
+                }),
+            );
+        });
+
         it("rejects invalid trigger enums", async () => {
             const response = await request(app.getHttpServer())
                 .post("/alimtalk-trigger-rules")
