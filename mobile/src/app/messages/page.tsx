@@ -96,6 +96,12 @@ const DETAIL_TABS: DetailTab[] = [
 ];
 
 const AVATAR_TONES: AvatarTone[] = ["orange", "primary", "burgundy", "green", "purple"];
+const MESSAGE_TEMPLATE_DISPLAY_NAMES: Record<string, string> = {
+  client_greeting_sms: "인사 메시지",
+  GREETING: "인사 메시지",
+  PRICE_INFO: "비용 안내",
+  SERVICE_INFO: "서비스 안내",
+};
 
 function getInitial(name: string): string {
   const trimmed = name.trim();
@@ -116,6 +122,17 @@ function getStatusTone(status: MessageStatus): InfoTone {
   if (status === "failed") return "burgundy";
   if (status === "pending") return "orange";
   return "green";
+}
+
+function getTemplateDisplayName(log: AlimtalkLogRecord): string {
+  const templateKey = log.templateKey.trim();
+  const ruleName = log.ruleName?.trim();
+
+  if (templateKey in MESSAGE_TEMPLATE_DISPLAY_NAMES) {
+    return MESSAGE_TEMPLATE_DISPLAY_NAMES[templateKey];
+  }
+
+  return ruleName || templateKey;
 }
 
 function getDateSection(iso: string): MessageSection {
@@ -165,20 +182,21 @@ function formatSentAt(iso: string): string {
 
 function mapLogToThread(log: AlimtalkLogRecord, index: number): MessageThreadRow {
   const recipient = log.recipientName ?? log.clientName ?? log.employeeName ?? log.receiver;
+  const templateDisplayName = getTemplateDisplayName(log);
   return {
     id: `log-${log.id}`,
     recipient,
     initial: getInitial(recipient),
     avatarTone: log.status === "failed" ? "burgundy" : AVATAR_TONES[index % AVATAR_TONES.length],
     channel: getChannel(log.provider),
-    title: log.ruleName ?? log.templateKey,
+    title: templateDisplayName,
     timeLabel: formatRelativeTime(log.createdAt),
     section: getDateSection(log.createdAt),
     status: log.status,
     statusLabel: getStatusLabel(log.status),
     receiver: log.receiver,
     messageBody: log.messageBody || "메시지 본문을 불러오지 못했습니다.",
-    templateName: log.ruleName ?? log.templateKey,
+    templateName: templateDisplayName,
     trigger: log.eventType ?? "수동 발송",
     employeeName: log.employeeName ?? "미배정",
     serviceStartDate: "-",
@@ -381,7 +399,25 @@ export default function MessagesPage() {
                         meta={row.title}
                         right={
                           row.status === "failed" ? (
-                            <span className="badge badge-burgundy">실패</span>
+                            <span className="message-row-status" data-component="mobile-messages-row-status">
+                              <span className="badge badge-burgundy">실패</span>
+                              <span
+                                className="dday-sub"
+                                data-component="mobile-messages-row-failed-time"
+                              >
+                                {row.timeLabel}
+                              </span>
+                            </span>
+                          ) : row.status === "sent" ? (
+                            <span className="message-row-status" data-component="mobile-messages-row-status">
+                              <span className="badge badge-green">완료</span>
+                              <span
+                                className="dday-sub"
+                                data-component="mobile-messages-row-sent-time"
+                              >
+                                {row.timeLabel}
+                              </span>
+                            </span>
                           ) : (
                             <span className="dday-sub">{row.timeLabel}</span>
                           )

@@ -11,6 +11,8 @@ const mockReplace = jest.fn();
 const mockUseAllClients = jest.fn();
 const mockUseSystemTemplate = jest.fn();
 const mockGetMessageSenderApproval = jest.fn();
+const mockUseBankAccountInfos = jest.fn();
+const mockUseVoucherPriceInfos = jest.fn();
 let mockSearchParams = new URLSearchParams();
 
 beforeAll(() => {
@@ -44,18 +46,19 @@ const mockClients: Client[] = [
     phone: "01077778888",
     primaryEmployee: null,
     secondaryEmployee: null,
-    type: null,
-    duration: null,
-    fullPrice: null,
-    grant: null,
-    actualPrice: null,
-    startDate: null,
+    type: "A통합-2형",
+    duration: 10,
+    fullPrice: "2196000",
+    grant: "1734000",
+    actualPrice: "462000",
+    startDate: "2026-06-10T00:00:00.000Z",
     endDate: null,
     careCenter: false,
     voucherClient: false,
     breastPump: false,
     serviceStatus: null,
     eDocId: null,
+    areaId: "Seogu",
     hasSigned: false,
     documentStatus: null,
   },
@@ -78,8 +81,14 @@ jest.mock("@/hooks/useClients", () => ({
   useAllClients: () => mockUseAllClients(),
 }));
 
+jest.mock("@/hooks", () => ({
+  useBankAccountInfos: () => mockUseBankAccountInfos(),
+  useVoucherPriceInfos: (type: string, year?: number) => mockUseVoucherPriceInfos(type, year),
+}));
+
 jest.mock("@/lib/api/client", () => ({
   api: {
+    get: jest.fn(),
     post: jest.fn(),
   },
 }));
@@ -140,13 +149,60 @@ describe("NewMessagePage", () => {
     });
     mockUseAllClients.mockReset();
     mockUseAllClients.mockReturnValue({ data: mockClients, isLoading: false });
+    mockUseBankAccountInfos.mockReset();
+    mockUseBankAccountInfos.mockReturnValue({
+      data: [
+        { area: "Seogu", bankName: "농협은행", accNum: "351-1268-7728-43" },
+        { area: "Namdonggu", bankName: "농협은행", accNum: "171777-52-129984" },
+      ],
+      isLoading: false,
+    });
+    mockUseVoucherPriceInfos.mockReset();
+    mockUseVoucherPriceInfos.mockImplementation((type: string) => ({
+      data: type
+        ? [
+          {
+            id: 13,
+            type,
+            duration: "10",
+            fullPrice: "2196000",
+            grant: "1734000",
+            actualPrice: "462000",
+          },
+          {
+            id: 14,
+            type,
+            duration: "15",
+            fullPrice: "2848000",
+            grant: "2114000",
+            actualPrice: "734000",
+          },
+        ]
+        : [],
+      isLoading: false,
+    }));
     mockUseSystemTemplate.mockReset();
     mockUseSystemTemplate.mockImplementation((key: string) => {
-      if (key === "service_info") {
+      if (key === "GREETING") {
+        return {
+          data: {
+            id: "system-greeting",
+            templateKey: "GREETING",
+            name: "인사 메시지",
+            description: "고객 인사 메시지",
+            content: "안녕하세요, 인천 아이미래로 입니다 :)",
+            requiredVariables: [],
+            customVariables: [],
+            updatedAt: "2026-06-04T00:00:00.000Z",
+          },
+        };
+      }
+
+      if (key === "SERVICE_INFO") {
         return {
           data: {
             id: "system-service-info",
-            templateKey: "service_info",
+            templateKey: "SERVICE_INFO",
             name: "서비스 안내",
             description: "서비스 안내 메시지",
             content: "{{name}} 산모님~♡\n서비스 시작일: {{serviceDate}}\n산후관리서비스 관련 안내사항을 보내드립니다 :)",
@@ -170,18 +226,7 @@ describe("NewMessagePage", () => {
         };
       }
 
-      return {
-        data: {
-          id: "system-greeting",
-          templateKey: "GREETING",
-          name: "인사 메시지",
-          description: "고객 인사 메시지",
-          content: "안녕하세요, 인천 아이미래로 입니다 :)",
-          requiredVariables: [],
-          customVariables: [],
-          updatedAt: "2026-06-04T00:00:00.000Z",
-        },
-      };
+      return { data: null };
     });
     (api.post as jest.Mock).mockReset();
     (api.post as jest.Mock).mockResolvedValue({ data: { result: { resultCode: 1, errorCount: 0 } } });
@@ -384,24 +429,136 @@ describe("NewMessagePage", () => {
     );
   });
 
+  it("includes the remaining frontend fallback templates in the template dropdown", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+
+    expect(screen.getByRole("option", { name: "정보 수집" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "금액 및 계좌번호" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "상담 후 리마인더" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "예약 완료" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "모니터링 설문" })).toBeInTheDocument();
+  });
+
+  it("loads a frontend fallback template that requires the client name variable", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "예약 완료" }));
+
+    expect(screen.getByRole("combobox", { name: /템플릿 선택/ })).toHaveTextContent("예약 완료");
+    expect(screen.getByLabelText(/산모명/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/산모명/), { target: { value: "김지니" } });
+
+    expect((screen.getByLabelText("메시지 본문") as HTMLTextAreaElement).value).toContain("김지니 산모님");
+  });
+
+  it("auto-fills price information variables from select controls", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "금액 및 계좌번호" }));
+
+    expect(screen.getByRole("combobox", { name: "바우처 유형 *" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "서비스 기간 *" })).toBeDisabled();
+    expect(screen.queryByLabelText("서비스 주수")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("총 서비스 금액")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/산모명/), { target: { value: "김지니" } });
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "바우처 유형 *" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("option", { name: "A통합-2형" }));
+
+    expect(screen.getByRole("combobox", { name: "서비스 기간 *" })).toBeEnabled();
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "서비스 기간 *" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("option", { name: "10일" }));
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "계좌번호 *" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("option", { name: /서구/ }));
+
+    expect(screen.getByText("2,196,000")).toBeInTheDocument();
+    expect(screen.getByText("462,000")).toBeInTheDocument();
+    expect(screen.getByText("농협은행 351-1268-7728-43")).toBeInTheDocument();
+    const bodyValue = (screen.getByLabelText("메시지 본문") as HTMLTextAreaElement).value;
+    expect(bodyValue).toContain("출퇴근 2주");
+    expect(bodyValue).toContain("평일기준 10일");
+    expect(bodyValue).toContain("2,196,000원");
+    expect(bodyValue).toContain("농협은행 351-1268-7728-43");
+  });
+
+  it("prefills price information variables and account from a selected client recipient", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "금액 및 계좌번호" }));
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "바우처 유형 *" })).toBeInTheDocument();
+    });
+
+    const receiverInput = screen.getByLabelText(/수신자/);
+    fireEvent.focus(receiverInput);
+    fireEvent.change(receiverInput, { target: { value: "박서연" } });
+    fireEvent.click(await screen.findByText("박서연"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "바우처 유형 *" })).toHaveTextContent("A통합-2형");
+      expect((screen.getByLabelText("메시지 본문") as HTMLTextAreaElement).value).toContain("2,196,000원");
+    });
+
+    expect(screen.getByRole("combobox", { name: "계좌번호 *" })).toHaveTextContent("서구");
+
+    const bodyValue = (screen.getByLabelText("메시지 본문") as HTMLTextAreaElement).value;
+    expect(bodyValue).toContain("박서연 산모님");
+    expect(bodyValue).toContain("출퇴근 2주");
+    expect(bodyValue).toContain("평일기준 10일");
+    expect(bodyValue).toContain("A통합2형");
+    expect(bodyValue).toContain("2,196,000원");
+    expect(bodyValue).toContain("462,000원");
+    expect(bodyValue).toContain("농협은행 351-1268-7728-43");
+  });
+
+  it("prefills service information variables from a selected client recipient", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
+
+    const receiverInput = screen.getByLabelText(/수신자/);
+    fireEvent.focus(receiverInput);
+    fireEvent.change(receiverInput, { target: { value: "박서연" } });
+    fireEvent.click(await screen.findByText("박서연"));
+
+    expect(screen.getByLabelText(/산모명/)).toHaveValue("박서연");
+    expect(screen.getByLabelText(/서비스 시작일/)).toHaveValue("2026. 06. 10.");
+    expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+      "박서연 산모님~♡\n서비스 시작일: 2026. 06. 10.\n산후관리서비스 관련 안내사항을 보내드립니다 :)",
+    );
+  });
+
   it("sends long template messages as auto type with an LMS title", async () => {
     mockUseSystemTemplate.mockImplementation((key: string) => {
-      if (key === "service_info") {
+      if (key === "SERVICE_INFO") {
         return { data: null };
       }
 
-      return {
-        data: {
-          id: "system-greeting",
-          templateKey: "GREETING",
-          name: "인사 메시지",
-          description: "고객 인사 메시지",
-          content: "안녕하세요, 인천 아이미래로 입니다. 산모님과 아기의 건강한 회복을 위해 서비스 안내를 드립니다.",
-          requiredVariables: [],
-          customVariables: [],
-          updatedAt: "2026-06-04T00:00:00.000Z",
-        },
-      };
+      if (key === "GREETING") {
+        return {
+          data: {
+            id: "system-greeting",
+            templateKey: "GREETING",
+            name: "인사 메시지",
+            description: "고객 인사 메시지",
+            content: "안녕하세요, 인천 아이미래로 입니다. 산모님과 아기의 건강한 회복을 위해 서비스 안내를 드립니다.",
+            requiredVariables: [],
+            customVariables: [],
+            updatedAt: "2026-06-04T00:00:00.000Z",
+          },
+        };
+      }
+
+      return { data: null };
     });
 
     renderPage();

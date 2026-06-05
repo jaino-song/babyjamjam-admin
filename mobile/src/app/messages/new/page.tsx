@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { isAxiosError } from "axios";
 import { useMutation } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -9,8 +9,15 @@ import { ChevronLeft, X } from "lucide-react";
 import { useMessagesPermissionGuard } from "@/app/messages/MessagesPermissionGuard";
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
 import { MsgField } from "@/components/app/messages/templates/MsgField";
+import bankAccountJSON from "@/components/app/messages/templates/json/bank-account.json";
+import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { greetingMsgTemplate } from "@/components/app/messages/templates/messageTemplate/greetingMsg";
+import { infoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/infoMsg";
+import { priceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/priceInfoMsg";
+import { reminderMsgTemplate } from "@/components/app/messages/templates/messageTemplate/reminderMsg";
 import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/serviceInfoMsg";
+import { surveyMsgTemplate } from "@/components/app/messages/templates/messageTemplate/surveyMsg";
+import { thanksMsgTemplate } from "@/components/app/messages/templates/messageTemplate/thanksMsg";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,9 +37,11 @@ import {
 } from "@/components/ui/select";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import type { CustomVariable, TemplateVariable } from "@/features/system-templates/types";
+import { useBankAccountInfos, useVoucherPriceInfos, type BankAccountInfo } from "@/hooks";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import type { Client } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
+import { normalizeIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { extractVariables, renderTemplate } from "@/lib/template-utils";
@@ -90,7 +99,12 @@ const INVALID_PHONE_ENTRY_MESSAGE = "기존 고객이 없으면 올바른 전화
 const CLIENT_WITHOUT_PHONE_MESSAGE = "선택한 고객에 등록된 연락처가 없습니다.";
 const DEFAULT_LMS_TITLE = "안내";
 const GREETING_TEMPLATE_ID = "GREETING";
-const SERVICE_INFO_TEMPLATE_ID = "service_info";
+const INFO_TEMPLATE_ID = "INFO";
+const PRICE_INFO_TEMPLATE_ID = "PRICE_INFO";
+const REMINDER_TEMPLATE_ID = "REMINDER";
+const SERVICE_INFO_TEMPLATE_ID = "SERVICE_INFO";
+const SURVEY_TEMPLATE_ID = "SURVEY";
+const THANKS_TEMPLATE_ID = "THANKS";
 const CUSTOM_TEMPLATE_ID = "__custom__";
 const CUSTOM_TEMPLATE_OPTION: TemplateOption = {
   id: CUSTOM_TEMPLATE_ID,
@@ -98,6 +112,31 @@ const CUSTOM_TEMPLATE_OPTION: TemplateOption = {
   body: "",
   variables: [],
 };
+const NAME_FALLBACK_VARIABLES: TemplateInputVariable[] = [
+  { key: "name", label: "산모명", required: true, type: "string" },
+];
+const PRICE_INFO_FALLBACK_VARIABLES: TemplateInputVariable[] = [
+  { key: "name", label: "산모명", required: true, type: "string" },
+  { key: "weeks", label: "서비스 주수", required: true, type: "number" },
+  { key: "duration", label: "서비스 기간", required: true, type: "number" },
+  { key: "type", label: "바우처 유형", required: true, type: "string" },
+  { key: "fullPrice", label: "총 서비스 금액", required: true, type: "currency" },
+  { key: "grant", label: "정부지원금", required: true, type: "currency" },
+  { key: "actualPrice", label: "본인부담금", required: true, type: "currency" },
+  { key: "bankName", label: "은행명", required: true, type: "string" },
+  { key: "accNum", label: "계좌번호", required: true, type: "string" },
+];
+const PRICE_INFO_SELECT_CONTROLLED_KEYS = new Set([
+  "weeks",
+  "duration",
+  "type",
+  "fullPrice",
+  "grant",
+  "actualPrice",
+  "bankName",
+  "accNum",
+]);
+const DEFAULT_PRICE_INFO_YEAR = new Date().getFullYear();
 
 function normalizePhone(raw: string) {
   return raw.replace(/[^0-9\-,]/g, "");
@@ -191,14 +230,19 @@ function normalizeTemplateVariables(
   return Array.from(variables.values());
 }
 
+function getFallbackVariables(
+  requiredVariables: TemplateVariable[] | undefined,
+  customVariables: CustomVariable[] | undefined,
+  content: string | undefined,
+  fallbackVariables: TemplateInputVariable[] = [],
+): TemplateInputVariable[] {
+  const variables = normalizeTemplateVariables(requiredVariables, customVariables, content ?? "");
+
+  return variables.length > 0 ? variables : fallbackVariables;
+}
+
 function getServiceInfoFallbackVariables(content?: string): TemplateInputVariable[] {
-  const variables = normalizeTemplateVariables([], [], content ?? "");
-
-  if (variables.length > 0) {
-    return variables;
-  }
-
-  return [{ key: "name", label: "산모명", required: true, type: "string" }];
+  return getFallbackVariables(undefined, undefined, content, NAME_FALLBACK_VARIABLES);
 }
 
 function getVariableInputId(key: string) {
@@ -214,6 +258,204 @@ function getVariablePlaceholder(variable: TemplateInputVariable) {
 
 function getVariableInputMode(variable: TemplateInputVariable): React.HTMLAttributes<HTMLInputElement>["inputMode"] {
   return variable.type === "number" || variable.type === "currency" ? "numeric" : "text";
+}
+
+function getVoucherTypeLabel(type: string) {
+  const voucherGroups = voucherOptions.voucherOptions as Record<string, Record<string, { label: string }>>;
+
+  for (const types of Object.values(voucherGroups)) {
+    const option = types[type];
+    if (option?.label) {
+      return option.label;
+    }
+  }
+
+  return type;
+}
+
+function normalizeVoucherTypeValue(type: string | null | undefined) {
+  if (!type?.trim()) {
+    return "";
+  }
+
+  const normalizedType = type.replace(/[\s-]/g, "");
+  const voucherGroups = voucherOptions.voucherOptions as Record<string, Record<string, { label: string }>>;
+
+  for (const types of Object.values(voucherGroups)) {
+    for (const [typeValue, option] of Object.entries(types)) {
+      if (
+        typeValue.replace(/[\s-]/g, "") === normalizedType ||
+        option.label.replace(/[\s-]/g, "") === normalizedType
+      ) {
+        return typeValue;
+      }
+    }
+  }
+
+  return "";
+}
+
+function getBankAreaLabel(area: string) {
+  return bankAccountJSON[area as keyof typeof bankAccountJSON]?.area ?? area;
+}
+
+function getBankAccountDisplayLabel(area: string, bankAccountInfos: readonly BankAccountInfo[]) {
+  const selectedBankAccount = bankAccountInfos.find((bankAccount) => bankAccount.area === area);
+  const accountText = [selectedBankAccount?.bankName, selectedBankAccount?.accNum].filter(Boolean).join(" ");
+
+  return accountText ? `${getBankAreaLabel(area)} · ${accountText}` : getBankAreaLabel(area);
+}
+
+function formatClientDateVariable(value: string | null | undefined) {
+  if (!value?.trim()) {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  const isoDate = normalizeIsoDate(trimmed) || yymmddToIso(trimmed);
+
+  if (!isoDate) {
+    return trimmed;
+  }
+
+  return `${isoDate.slice(0, 4)}. ${isoDate.slice(5, 7)}. ${isoDate.slice(8, 10)}.`;
+}
+
+function formatCurrencyVariable(value: string | null | undefined) {
+  if (!value?.trim()) {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  const amount = Number.parseInt(trimmed.replace(/[,원\s]/g, ""), 10);
+
+  return Number.isNaN(amount) ? trimmed : amount.toLocaleString("ko-KR");
+}
+
+function parseTemplateNumber(value: string | undefined) {
+  const parsed = Number.parseInt(value?.replace(/[^0-9]/g, "") ?? "", 10);
+
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function getPriceInfoFallbackBody(
+  variables: TemplateInputVariable[],
+  values: Record<string, string>,
+) {
+  const templateValues = buildTemplateValues(variables, values);
+
+  return priceInfoMsgTemplate({
+    name: templateValues.name?.trim() ?? "",
+    weeks: parseTemplateNumber(templateValues.weeks),
+    duration: templateValues.duration?.trim() ?? "",
+    type: templateValues.type?.trim() ?? "",
+    fullPrice: formatCurrencyVariable(templateValues.fullPrice),
+    grant: formatCurrencyVariable(templateValues.grant),
+    actualPrice: formatCurrencyVariable(templateValues.actualPrice),
+    bankName: templateValues.bankName?.trim() ?? "",
+    accNum: templateValues.accNum?.trim() ?? "",
+  });
+}
+
+function getClientVariableValue(key: string, client: Client) {
+  const normalizedKey = key.replace(/[_\-\s]/g, "").toLowerCase();
+
+  if (["name", "clientname", "mothername", "momname"].includes(normalizedKey)) {
+    return client.name;
+  }
+  if (["phone", "clientphone", "recipientphone"].includes(normalizedKey)) {
+    return client.phone ? formatKoreanPhoneNumber(client.phone) : "";
+  }
+  if (["address", "clientaddress"].includes(normalizedKey)) {
+    return client.address ?? "";
+  }
+  if (["servicedate", "startdate", "servicestartdate"].includes(normalizedKey)) {
+    return formatClientDateVariable(client.startDate);
+  }
+  if (["duedate", "birthduedate"].includes(normalizedKey)) {
+    return formatClientDateVariable(client.dueDate);
+  }
+  if (["enddate", "serviceenddate"].includes(normalizedKey)) {
+    return formatClientDateVariable(client.endDate);
+  }
+  if (["birthday", "birthdate"].includes(normalizedKey)) {
+    return client.birthday ?? "";
+  }
+  if (["type", "vouchertype"].includes(normalizedKey)) {
+    return client.type ?? "";
+  }
+  if (["duration", "serviceduration"].includes(normalizedKey)) {
+    return client.duration != null ? String(client.duration) : "";
+  }
+  if (["weeks", "serviceweeks"].includes(normalizedKey)) {
+    return client.duration != null ? String(Math.floor(Number(client.duration) / 5)) : "";
+  }
+  if (["fullprice", "totalprice"].includes(normalizedKey)) {
+    return formatCurrencyVariable(client.fullPrice);
+  }
+  if (["grant", "governmentgrant"].includes(normalizedKey)) {
+    return formatCurrencyVariable(client.grant);
+  }
+  if (["actualprice", "ownprice", "copayment"].includes(normalizedKey)) {
+    return formatCurrencyVariable(client.actualPrice);
+  }
+  if (["primaryemployee", "primaryemployeename", "employee", "employeename"].includes(normalizedKey)) {
+    return client.primaryEmployee?.name ?? "";
+  }
+  if (["secondaryemployee", "secondaryemployeename"].includes(normalizedKey)) {
+    return client.secondaryEmployee?.name ?? "";
+  }
+
+  return "";
+}
+
+function getClientPriceInfoVariableValue(key: string, client: Client) {
+  const normalizedKey = key.replace(/[_\-\s]/g, "").toLowerCase();
+
+  if (["type", "vouchertype"].includes(normalizedKey)) {
+    return normalizeVoucherTypeValue(client.type);
+  }
+  if (["bankname", "accnum", "accountnumber", "bankaccount", "area"].includes(normalizedKey)) {
+    return "";
+  }
+
+  return getClientVariableValue(key, client);
+}
+
+function getBankAccountVariableUpdates(
+  areaId: string | null | undefined,
+  bankAccountInfos: readonly BankAccountInfo[],
+) {
+  if (!areaId) {
+    return {};
+  }
+
+  const selectedBankAccount = bankAccountInfos.find((bankAccount) => bankAccount.area === areaId);
+  if (!selectedBankAccount) {
+    return {};
+  }
+
+  return {
+    area: getBankAreaLabel(areaId),
+    bankName: selectedBankAccount.bankName ?? "",
+    accNum: selectedBankAccount.accNum ?? "",
+  };
+}
+
+function getClientPriceInfoVariableUpdates(
+  client: Client,
+  bankAccountInfos: readonly BankAccountInfo[],
+) {
+  return {
+    name: client.name,
+    type: normalizeVoucherTypeValue(client.type),
+    duration: client.duration != null ? String(client.duration) : "",
+    weeks: client.duration != null ? String(Math.floor(Number(client.duration) / 5)) : "",
+    fullPrice: formatCurrencyVariable(client.fullPrice),
+    grant: formatCurrencyVariable(client.grant),
+    actualPrice: formatCurrencyVariable(client.actualPrice),
+    ...getBankAccountVariableUpdates(client.areaId, bankAccountInfos),
+  };
 }
 
 function buildTemplateValues(
@@ -270,18 +512,31 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
   const [recipients, setRecipients] = useState<RecipientChip[]>([]);
   const [bodyOverride, setBodyOverride] = useState<string | null>(initialBody.trim() ? initialBody : null);
   const [templateVariableValues, setTemplateVariableValues] = useState<Record<string, string>>({});
+  const [priceInfoVoucherYear, setPriceInfoVoucherYear] = useState(DEFAULT_PRICE_INFO_YEAR);
+  const [priceInfoArea, setPriceInfoArea] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(initialTemplateId);
+  const ignoreNextPriceInfoSelectChangeRef = useRef(false);
   const {
     isLoading: isSenderApprovalLoading,
     needsSenderApproval,
   } = useMessagesPermissionGuard();
 
   const { data: greetingSystemTemplate } = useSystemTemplate(GREETING_TEMPLATE_ID);
+  const { data: infoSystemTemplate } = useSystemTemplate(INFO_TEMPLATE_ID);
+  const { data: priceInfoSystemTemplate } = useSystemTemplate(PRICE_INFO_TEMPLATE_ID);
+  const { data: reminderSystemTemplate } = useSystemTemplate(REMINDER_TEMPLATE_ID);
   const { data: serviceInfoSystemTemplate } = useSystemTemplate(SERVICE_INFO_TEMPLATE_ID);
+  const { data: surveySystemTemplate } = useSystemTemplate(SURVEY_TEMPLATE_ID);
+  const { data: thanksSystemTemplate } = useSystemTemplate(THANKS_TEMPLATE_ID);
   const { data: userTemplates = [] } = useMessageTemplates();
+  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
+  const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(
+    selectedTemplateId === PRICE_INFO_TEMPLATE_ID ? templateVariableValues.type ?? "" : "",
+    priceInfoVoucherYear,
+  );
 
   const templateOptions = useMemo<TemplateOption[]>(() => {
     const greetingVariables = normalizeTemplateVariables(
@@ -298,10 +553,11 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
       variables: greetingVariables,
     };
     const serviceInfoVariables = serviceInfoSystemTemplate
-      ? normalizeTemplateVariables(
+      ? getFallbackVariables(
         serviceInfoSystemTemplate.requiredVariables,
         serviceInfoSystemTemplate.customVariables,
         serviceInfoSystemTemplate.content,
+        NAME_FALLBACK_VARIABLES,
       )
       : getServiceInfoFallbackVariables();
     const serviceInfoOption: TemplateOption = {
@@ -317,6 +573,103 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
         : serviceInfoMsgTemplate({ name: templateVariableValues.name?.trim() ?? "" }),
       variables: serviceInfoVariables,
     };
+    const infoVariables = normalizeTemplateVariables(
+      infoSystemTemplate?.requiredVariables,
+      infoSystemTemplate?.customVariables,
+      infoSystemTemplate?.content,
+    );
+    const infoOption: TemplateOption = {
+      id: INFO_TEMPLATE_ID,
+      name: infoSystemTemplate?.name ?? "정보 수집",
+      body: infoSystemTemplate?.content
+        ? renderTemplateWithValues(infoSystemTemplate.content, infoVariables, templateVariableValues, INFO_TEMPLATE_ID)
+        : infoMsgTemplate(),
+      variables: infoVariables,
+    };
+    const priceInfoVariables = priceInfoSystemTemplate
+      ? getFallbackVariables(
+        priceInfoSystemTemplate.requiredVariables,
+        priceInfoSystemTemplate.customVariables,
+        priceInfoSystemTemplate.content,
+        PRICE_INFO_FALLBACK_VARIABLES,
+      )
+      : PRICE_INFO_FALLBACK_VARIABLES;
+    const priceInfoOption: TemplateOption = {
+      id: PRICE_INFO_TEMPLATE_ID,
+      name: priceInfoSystemTemplate?.name ?? "금액 및 계좌번호",
+      body: priceInfoSystemTemplate?.content
+        ? renderTemplateWithValues(
+          priceInfoSystemTemplate.content,
+          priceInfoVariables,
+          templateVariableValues,
+          PRICE_INFO_TEMPLATE_ID,
+        )
+        : getPriceInfoFallbackBody(priceInfoVariables, templateVariableValues),
+      variables: priceInfoVariables,
+    };
+    const reminderVariables = reminderSystemTemplate
+      ? getFallbackVariables(
+        reminderSystemTemplate.requiredVariables,
+        reminderSystemTemplate.customVariables,
+        reminderSystemTemplate.content,
+        NAME_FALLBACK_VARIABLES,
+      )
+      : NAME_FALLBACK_VARIABLES;
+    const reminderOption: TemplateOption = {
+      id: REMINDER_TEMPLATE_ID,
+      name: reminderSystemTemplate?.name ?? "상담 후 리마인더",
+      body: reminderSystemTemplate?.content
+        ? renderTemplateWithValues(
+          reminderSystemTemplate.content,
+          reminderVariables,
+          templateVariableValues,
+          REMINDER_TEMPLATE_ID,
+        )
+        : reminderMsgTemplate({ name: templateVariableValues.name?.trim() ?? "" }),
+      variables: reminderVariables,
+    };
+    const thanksVariables = thanksSystemTemplate
+      ? getFallbackVariables(
+        thanksSystemTemplate.requiredVariables,
+        thanksSystemTemplate.customVariables,
+        thanksSystemTemplate.content,
+        NAME_FALLBACK_VARIABLES,
+      )
+      : NAME_FALLBACK_VARIABLES;
+    const thanksOption: TemplateOption = {
+      id: THANKS_TEMPLATE_ID,
+      name: thanksSystemTemplate?.name ?? "예약 완료",
+      body: thanksSystemTemplate?.content
+        ? renderTemplateWithValues(
+          thanksSystemTemplate.content,
+          thanksVariables,
+          templateVariableValues,
+          THANKS_TEMPLATE_ID,
+        )
+        : thanksMsgTemplate({ name: templateVariableValues.name?.trim() ?? "" }),
+      variables: thanksVariables,
+    };
+    const surveyVariables = surveySystemTemplate
+      ? getFallbackVariables(
+        surveySystemTemplate.requiredVariables,
+        surveySystemTemplate.customVariables,
+        surveySystemTemplate.content,
+        NAME_FALLBACK_VARIABLES,
+      )
+      : NAME_FALLBACK_VARIABLES;
+    const surveyOption: TemplateOption = {
+      id: SURVEY_TEMPLATE_ID,
+      name: surveySystemTemplate?.name ?? "모니터링 설문",
+      body: surveySystemTemplate?.content
+        ? renderTemplateWithValues(
+          surveySystemTemplate.content,
+          surveyVariables,
+          templateVariableValues,
+          SURVEY_TEMPLATE_ID,
+        )
+        : surveyMsgTemplate({ name: templateVariableValues.name?.trim() ?? "" }),
+      variables: surveyVariables,
+    };
     const userOptions = userTemplates.map((template) => ({
       id: template.id,
       name: template.name,
@@ -329,13 +682,40 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
       variables: normalizeTemplateVariables([], [], template.content),
     }));
 
-    return [greetingOption, serviceInfoOption, ...userOptions, CUSTOM_TEMPLATE_OPTION];
-  }, [greetingSystemTemplate, serviceInfoSystemTemplate, templateVariableValues, userTemplates]);
+    return [
+      greetingOption,
+      serviceInfoOption,
+      infoOption,
+      priceInfoOption,
+      reminderOption,
+      thanksOption,
+      surveyOption,
+      ...userOptions,
+      CUSTOM_TEMPLATE_OPTION,
+    ];
+  }, [
+    greetingSystemTemplate,
+    infoSystemTemplate,
+    priceInfoSystemTemplate,
+    reminderSystemTemplate,
+    serviceInfoSystemTemplate,
+    surveySystemTemplate,
+    templateVariableValues,
+    thanksSystemTemplate,
+    userTemplates,
+  ]);
   const selectedTemplate = useMemo(
     () => templateOptions.find((template) => template.id === selectedTemplateId) ?? CUSTOM_TEMPLATE_OPTION,
     [selectedTemplateId, templateOptions],
   );
   const selectedTemplateVariables = selectedTemplate.variables;
+  const renderedTemplateVariables = useMemo(() => {
+    if (selectedTemplate.id !== PRICE_INFO_TEMPLATE_ID) {
+      return selectedTemplateVariables;
+    }
+
+    return selectedTemplateVariables.filter((variable) => !PRICE_INFO_SELECT_CONTROLLED_KEYS.has(variable.key));
+  }, [selectedTemplate.id, selectedTemplateVariables]);
   const body = bodyOverride ?? selectedTemplate.body;
   const payloadClientId = useMemo(() => {
     if (initialClientId !== null) {
@@ -363,6 +743,24 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
 
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
   const previewBody = useMemo(() => body.trim(), [body]);
+  const isPriceInfoTemplateSelected = selectedTemplate.id === PRICE_INFO_TEMPLATE_ID;
+  const selectedPriceInfoSummary = useMemo(() => {
+    if (!isPriceInfoTemplateSelected) {
+      return null;
+    }
+
+    const fullPrice = templateVariableValues.fullPrice?.trim();
+    const grant = templateVariableValues.grant?.trim();
+    const actualPrice = templateVariableValues.actualPrice?.trim();
+    const bankName = templateVariableValues.bankName?.trim();
+    const accNum = templateVariableValues.accNum?.trim();
+
+    if (!fullPrice && !grant && !actualPrice && !bankName && !accNum) {
+      return null;
+    }
+
+    return { fullPrice, grant, actualPrice, bankName, accNum };
+  }, [isPriceInfoTemplateSelected, templateVariableValues]);
 
   const validationError = useMemo(() => {
     if (!receiverPayload) return RECIPIENT_REQUIRED_MESSAGE;
@@ -475,6 +873,41 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
         tone: "primary",
       },
     ]);
+    if (selectedTemplate.id === PRICE_INFO_TEMPLATE_ID) {
+      ignoreNextPriceInfoSelectChangeRef.current = true;
+      window.setTimeout(() => {
+        ignoreNextPriceInfoSelectChangeRef.current = false;
+      }, 0);
+      if (
+        client.areaId &&
+        bankAccountInfos.some((bankAccount) => bankAccount.area === client.areaId)
+      ) {
+        setPriceInfoArea(client.areaId);
+      }
+    }
+    setTemplateVariableValues((current) => {
+      const nextValues = { ...current };
+
+      selectedTemplateVariables.forEach((variable) => {
+        const value = selectedTemplate.id === PRICE_INFO_TEMPLATE_ID
+          ? getClientPriceInfoVariableValue(variable.key, client)
+          : getClientVariableValue(variable.key, client);
+        if (value) {
+          nextValues[variable.key] = value;
+        }
+      });
+
+      if (selectedTemplate.id === PRICE_INFO_TEMPLATE_ID) {
+        Object.entries(getClientPriceInfoVariableUpdates(client, bankAccountInfos)).forEach(([key, value]) => {
+          if (value) {
+            nextValues[key] = value;
+          }
+        });
+      }
+
+      return nextValues;
+    });
+    setBodyOverride(null);
   };
 
   const addManualRecipient = (rawQuery: string) => {
@@ -513,6 +946,75 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
       [key]: value,
     }));
     setBodyOverride(null);
+  };
+
+  const updateTemplateVariables = (updates: Record<string, string>) => {
+    setTemplateVariableValues((current) => ({
+      ...current,
+      ...updates,
+    }));
+    setBodyOverride(null);
+  };
+
+  const handlePriceInfoYearChange = (value: string) => {
+    setPriceInfoVoucherYear(Number(value));
+    updateTemplateVariables({
+      duration: "",
+      weeks: "",
+      fullPrice: "",
+      grant: "",
+      actualPrice: "",
+    });
+  };
+
+  const handlePriceInfoTypeChange = (value: string) => {
+    if (ignoreNextPriceInfoSelectChangeRef.current || !value) {
+      return;
+    }
+
+    if (value === templateVariableValues.type) {
+      return;
+    }
+
+    updateTemplateVariables({
+      type: value,
+      duration: "",
+      weeks: "",
+      fullPrice: "",
+      grant: "",
+      actualPrice: "",
+    });
+  };
+
+  const handlePriceInfoDurationChange = (value: string) => {
+    if (ignoreNextPriceInfoSelectChangeRef.current || !value) {
+      return;
+    }
+
+    if (value === templateVariableValues.duration) {
+      return;
+    }
+
+    const selectedVoucher = voucherPriceInfos.find((voucher) => voucher.duration === value);
+
+    updateTemplateVariables({
+      duration: value,
+      weeks: String(Math.floor(Number(value) / 5)),
+      fullPrice: formatCurrencyVariable(selectedVoucher?.fullPrice),
+      grant: formatCurrencyVariable(selectedVoucher?.grant),
+      actualPrice: formatCurrencyVariable(selectedVoucher?.actualPrice),
+    });
+  };
+
+  const handlePriceInfoAreaChange = (value: string) => {
+    const selectedBankAccount = bankAccountInfos.find((bankAccount) => bankAccount.area === value);
+
+    setPriceInfoArea(value);
+    updateTemplateVariables({
+      area: getBankAreaLabel(value),
+      bankName: selectedBankAccount?.bankName ?? "",
+      accNum: selectedBankAccount?.accNum ?? "",
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -641,7 +1143,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
             {selectedTemplateVariables.length > 0 ? (
               <Card data-component="messages-new-template-variables-card" className={styles.formCard}>
                 <CardContent className={styles.formCardContent}>
-                  {selectedTemplateVariables.map((variable) => {
+                  {renderedTemplateVariables.map((variable) => {
                     const inputId = getVariableInputId(variable.key);
                     return (
                       <div
@@ -667,6 +1169,196 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
                       </div>
                     );
                   })}
+                  {isPriceInfoTemplateSelected ? (
+                    <div
+                      data-component="messages-new-price-info-controls"
+                      className={styles.priceInfoControls}
+                    >
+                      <div
+                        data-component="messages-new-template-variable-row"
+                        data-template-variable-key="voucherYear"
+                        className={styles.formSection}
+                      >
+                        <label id="price-info-year-label" className={styles.formLabel}>
+                          연도 <span className={styles.required}>*</span>
+                        </label>
+                        <Select
+                          value={String(priceInfoVoucherYear)}
+                          onValueChange={handlePriceInfoYearChange}
+                        >
+                          <SelectTrigger
+                            data-component="messages-new-price-info-year-select"
+                            aria-labelledby="price-info-year-label"
+                            className={styles.variableSelectTrigger}
+                          >
+                            <SelectValue placeholder="연도" />
+                          </SelectTrigger>
+                          <SelectContent className={styles.templateSelectContent}>
+                            {[priceInfoVoucherYear - 1, priceInfoVoucherYear, priceInfoVoucherYear + 1].map((year) => (
+                              <SelectItem key={year} value={String(year)}>
+                                {year}년
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div
+                        data-component="messages-new-template-variable-row"
+                        data-template-variable-key="type"
+                        className={styles.formSection}
+                      >
+                        <label id="price-info-type-label" className={styles.formLabel}>
+                          바우처 유형 <span className={styles.required}>*</span>
+                        </label>
+                        <Select
+                          value={templateVariableValues.type ?? ""}
+                          onValueChange={handlePriceInfoTypeChange}
+                        >
+                          <SelectTrigger
+                            data-component="messages-new-price-info-type-select"
+                            aria-labelledby="price-info-type-label"
+                            className={styles.variableSelectTrigger}
+                          >
+                            {templateVariableValues.type ? (
+                              <span data-slot="select-value">{getVoucherTypeLabel(templateVariableValues.type)}</span>
+                            ) : (
+                              <SelectValue placeholder="바우처 유형" />
+                            )}
+                          </SelectTrigger>
+                          <SelectContent className={styles.templateSelectContent}>
+                            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                              <div key={groupName} data-component="messages-new-price-info-type-group">
+                                <div
+                                  data-component="messages-new-price-info-type-group-label"
+                                  className={styles.selectGroupLabel}
+                                >
+                                  {groupName}
+                                </div>
+                                {Object.entries(types).map(([typeValue, typeData]) => (
+                                  <SelectItem key={typeValue} value={typeValue}>
+                                    {typeData.label}
+                                  </SelectItem>
+                                ))}
+                              </div>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div
+                        data-component="messages-new-template-variable-row"
+                        data-template-variable-key="duration"
+                        className={styles.formSection}
+                      >
+                        <label id="price-info-duration-label" className={styles.formLabel}>
+                          서비스 기간 <span className={styles.required}>*</span>
+                        </label>
+                        <Select
+                          value={templateVariableValues.duration ?? ""}
+                          onValueChange={handlePriceInfoDurationChange}
+                          disabled={!templateVariableValues.type || voucherPriceInfos.length === 0}
+                        >
+                          <SelectTrigger
+                            data-component="messages-new-price-info-duration-select"
+                            aria-labelledby="price-info-duration-label"
+                            className={styles.variableSelectTrigger}
+                          >
+                            {templateVariableValues.duration ? (
+                              <span data-slot="select-value">{templateVariableValues.duration}일</span>
+                            ) : (
+                              <SelectValue
+                                placeholder={
+                                  isVoucherPriceInfosLoading
+                                    ? "불러오는 중"
+                                    : "서비스 기간"
+                                }
+                              />
+                            )}
+                          </SelectTrigger>
+                          <SelectContent className={styles.templateSelectContent}>
+                            {voucherPriceInfos.map((voucher) => (
+                              <SelectItem key={voucher.id} value={voucher.duration}>
+                                {voucher.duration}일
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div
+                        data-component="messages-new-template-variable-row"
+                        data-template-variable-key="bankAccount"
+                        className={styles.formSection}
+                      >
+                        <label id="price-info-bank-account-label" className={styles.formLabel}>
+                          계좌번호 <span className={styles.required}>*</span>
+                        </label>
+                        <Select
+                          value={priceInfoArea}
+                          onValueChange={handlePriceInfoAreaChange}
+                          disabled={isBankAccountInfosLoading || bankAccountInfos.length === 0}
+                        >
+                          <SelectTrigger
+                            data-component="messages-new-price-info-bank-account-select"
+                            aria-labelledby="price-info-bank-account-label"
+                            className={styles.variableSelectTrigger}
+                          >
+                            {priceInfoArea ? (
+                              <span data-slot="select-value">{getBankAccountDisplayLabel(priceInfoArea, bankAccountInfos)}</span>
+                            ) : (
+                              <SelectValue
+                                placeholder={
+                                  isBankAccountInfosLoading
+                                    ? "불러오는 중"
+                                    : "계좌번호"
+                                }
+                              />
+                            )}
+                          </SelectTrigger>
+                          <SelectContent className={styles.templateSelectContent}>
+                            {bankAccountInfos.map((bankAccount) => (
+                              <SelectItem key={bankAccount.area} value={bankAccount.area}>
+                                {getBankAccountDisplayLabel(bankAccount.area, bankAccountInfos)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {selectedPriceInfoSummary ? (
+                        <div
+                          data-component="messages-new-price-info-summary"
+                          className={styles.priceInfoSummary}
+                        >
+                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                            <span>바우처</span>
+                            <strong>{getVoucherTypeLabel(templateVariableValues.type ?? "")}</strong>
+                          </div>
+                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                            <span>총 서비스 금액</span>
+                            <strong>{selectedPriceInfoSummary.fullPrice || "-"}</strong>
+                          </div>
+                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                            <span>정부지원금</span>
+                            <strong>{selectedPriceInfoSummary.grant || "-"}</strong>
+                          </div>
+                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                            <span>본인부담금</span>
+                            <strong>{selectedPriceInfoSummary.actualPrice || "-"}</strong>
+                          </div>
+                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                            <span>계좌</span>
+                            <strong>
+                              {selectedPriceInfoSummary.bankName && selectedPriceInfoSummary.accNum
+                                ? `${selectedPriceInfoSummary.bankName} ${selectedPriceInfoSummary.accNum}`
+                                : "-"}
+                            </strong>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
             ) : null}
