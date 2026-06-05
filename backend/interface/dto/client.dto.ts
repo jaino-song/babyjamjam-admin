@@ -73,6 +73,14 @@ export class CreateClientDto {
     @IsOptional()
     @IsString()
     eDocId?: string | null;
+
+    @IsOptional()
+    @IsString()
+    areaId?: string | null;
+
+    @IsOptional()
+    @IsBoolean()
+    suppressGreetingSms?: boolean;
 }
 
 export class UpdateClientDto {
@@ -151,6 +159,10 @@ export class UpdateClientDto {
     @IsOptional()
     @IsString()
     eDocId?: string | null;
+
+    @IsOptional()
+    @IsString()
+    areaId?: string | null;
 }
 
 /**

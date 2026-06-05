@@ -11,6 +11,7 @@ export class SbClientRepository implements IClientRepository {
 
     private async getClientSelect() {
         const supportsCreatedAt = await hasColumn(this.prismaService, "client", "created_at");
+        const supportsAreaId = await hasColumn(this.prismaService, "client", "area_id");
 
         return {
             id: true,
@@ -32,7 +33,30 @@ export class SbClientRepository implements IClientRepository {
             breastPump: true,
             eDocId: true,
             ...(supportsCreatedAt ? { createdAt: true } : {}),
+            ...(supportsAreaId ? { areaId: true } : {}),
         } as const;
+    }
+
+    private async getClientCreateData(client: ClientEntity) {
+        const data = ClientMapper.toPrismaCreate(client);
+        const supportsAreaId = await hasColumn(this.prismaService, "client", "area_id");
+        if (!supportsAreaId) {
+            const { areaId: _areaId, ...withoutAreaId } = data;
+            return withoutAreaId;
+        }
+
+        return data;
+    }
+
+    private async getClientUpdateData(client: ClientEntity) {
+        const data = ClientMapper.toPrismaUpdate(client);
+        const supportsAreaId = await hasColumn(this.prismaService, "client", "area_id");
+        if (!supportsAreaId) {
+            const { areaId: _areaId, ...withoutAreaId } = data;
+            return withoutAreaId;
+        }
+
+        return data;
     }
 
     async findById(branchid: string, id: number): Promise<ClientEntity | null> {
@@ -102,9 +126,10 @@ export class SbClientRepository implements IClientRepository {
 
     async create(branchid: string, client: ClientEntity): Promise<ClientEntity> {
         const select = await this.getClientSelect();
+        const data = await this.getClientCreateData(client);
         const created = await this.prismaService.client.create({
             data: {
-                ...ClientMapper.toPrismaCreate(client),
+                ...data,
                 branchId: branchid,
             },
             select,
@@ -114,9 +139,10 @@ export class SbClientRepository implements IClientRepository {
 
     async update(branchid: string, client: ClientEntity): Promise<ClientEntity> {
         const select = await this.getClientSelect();
+        const data = await this.getClientUpdateData(client);
         const result = await this.prismaService.client.updateMany({
             where: { id: client.id, branchId: branchid },
-            data: ClientMapper.toPrismaUpdate(client),
+            data,
         });
         if (result.count === 0) {
             throw new Error("Client not found for branch");

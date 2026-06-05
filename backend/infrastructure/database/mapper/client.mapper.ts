@@ -20,6 +20,7 @@ type ClientRow = {
     serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
+    areaId?: string | null;
 };
 
 export class ClientMapper {
@@ -44,6 +45,7 @@ export class ClientMapper {
             row.eDocId,
             row.dueDate ?? null,
             row.createdAt ?? null,
+            row.areaId ?? null,
         );
     }
 
@@ -67,6 +69,7 @@ export class ClientMapper {
             serviceStatus: entity.serviceStatus,
             breastPump: entity.breastPump,
             eDocId: entity.eDocId,
+            areaId: entity.areaId,
         };
     }
 
@@ -89,6 +92,7 @@ export class ClientMapper {
             serviceStatus: entity.serviceStatus,
             breastPump: entity.breastPump,
             eDocId: entity.eDocId,
+            areaId: entity.areaId,
         };
     }
 }

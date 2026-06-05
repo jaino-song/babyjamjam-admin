@@ -32,6 +32,8 @@ export class ClientController {
             serviceStatus: dto.serviceStatus ?? null,
             breastPump: dto.breastPump,
             eDocId: dto.eDocId ?? null,
+            areaId: dto.areaId ?? null,
+            suppressGreetingSms: dto.suppressGreetingSms ?? false,
         });
     }
 
@@ -116,6 +118,7 @@ export class ClientController {
             serviceStatus: dto.serviceStatus,
             breastPump: dto.breastPump,
             eDocId: dto.eDocId,
+            areaId: dto.areaId,
         });
     }
 

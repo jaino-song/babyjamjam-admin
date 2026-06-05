@@ -8,6 +8,7 @@ import {
     UpdateClientUsecase,
 } from "../../application/usecases/client";
 import { AlimtalkService } from "../../application/services/alimtalk.service";
+import { ClientGreetingSmsAutomationService } from "../../application/services/client-greeting-sms-automation.service";
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
@@ -61,6 +62,10 @@ describe("ClientService", () => {
         sendClientCreatedAlimtalk: jest.fn().mockResolvedValue(undefined),
     });
 
+    const createMockClientGreetingSmsAutomationService = () => ({
+        sendClientGreetingSms: jest.fn().mockResolvedValue(undefined),
+    });
+
     const createMockClientRepository = (): jest.Mocked<IClientRepository> => ({
         findById: jest.fn(),
         findAll: jest.fn(),
@@ -108,6 +113,7 @@ describe("ClientService", () => {
     let deleteClientUsecase: ReturnType<typeof createMockDeleteClientUsecase>;
     let prismaService: ReturnType<typeof createMockPrismaService>;
     let alimtalkService: ReturnType<typeof createMockAlimtalkService>;
+    let clientGreetingSmsAutomationService: ReturnType<typeof createMockClientGreetingSmsAutomationService>;
     let clientRepository: ReturnType<typeof createMockClientRepository>;
 
     beforeEach(() => {
@@ -119,6 +125,7 @@ describe("ClientService", () => {
         deleteClientUsecase = createMockDeleteClientUsecase();
         prismaService = createMockPrismaService();
         alimtalkService = createMockAlimtalkService();
+        clientGreetingSmsAutomationService = createMockClientGreetingSmsAutomationService();
         clientRepository = createMockClientRepository();
 
         service = new ClientService(
@@ -131,6 +138,8 @@ describe("ClientService", () => {
             prismaService as unknown as PrismaService,
             alimtalkService as unknown as AlimtalkService,
             clientRepository,
+            undefined,
+            clientGreetingSmsAutomationService as unknown as ClientGreetingSmsAutomationService,
         );
     });
 
@@ -216,6 +225,50 @@ describe("ClientService", () => {
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
                 expect(result).toBe(mockClient);
             });
+        });
+
+        it("should trigger the new client greeting SMS automation after client creation", async () => {
+            // Arrange
+            const mockClient = createClientEntity();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+
+            const params = {
+                name: "New Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+            };
+
+            // Act
+            await service.create(branchId, params);
+
+            // Assert
+            expect(clientGreetingSmsAutomationService.sendClientGreetingSms).toHaveBeenCalledWith(
+                branchId,
+                mockClient,
+            );
+        });
+
+        it("should not trigger greeting SMS automation when suppressed by contract creation", async () => {
+            // Arrange
+            const mockClient = createClientEntity();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+
+            const params = {
+                name: "New Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+                suppressGreetingSms: true,
+            };
+
+            // Act
+            await service.create(branchId, params);
+
+            // Assert
+            expect(clientGreetingSmsAutomationService.sendClientGreetingSms).not.toHaveBeenCalled();
         });
 
         describe("given client data with both primary and secondary employees", () => {

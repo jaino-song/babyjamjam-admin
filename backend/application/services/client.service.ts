@@ -13,6 +13,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { AlimtalkService } from "./alimtalk.service";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { ClientGreetingSmsAutomationService } from "./client-greeting-sms-automation.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
 const ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS = 2;
@@ -57,6 +58,7 @@ export interface ClientWithEmployees {
     serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
+    areaId: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatusType;
     primaryEmployee: { id: number; name: string } | null;
@@ -108,6 +110,7 @@ export class ClientService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         @Optional() private readonly triggerService?: AlimtalkTriggerService,
+        @Optional() private readonly clientGreetingSmsAutomationService?: ClientGreetingSmsAutomationService,
     ) {}
 
     private assertAllowedServiceStatus(status: string | null | undefined): void {
@@ -140,6 +143,8 @@ export class ClientService {
         serviceStatus?: string | null;
         breastPump: boolean;
         eDocId?: string | null;
+        areaId?: string | null;
+        suppressGreetingSms?: boolean;
     }): Promise<ClientEntity> {
         const startDate = params.startDate ? new Date(params.startDate) : null;
         const endDate = params.endDate ? new Date(params.endDate) : null;
@@ -165,6 +170,7 @@ export class ClientService {
             serviceStatus: params.serviceStatus ?? null,
             breastPump: params.breastPump,
             eDocId: params.eDocId ?? null,
+            areaId: params.areaId ?? null,
         });
 
         // Then create employee_schedule (optional - only when primary employee is assigned)
@@ -191,6 +197,11 @@ export class ClientService {
         if (this.triggerService) {
             this.triggerService.syncClientRulesForClient(branchid, client.id, true).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
+            });
+        }
+        if (this.clientGreetingSmsAutomationService && !params.suppressGreetingSms) {
+            this.clientGreetingSmsAutomationService.sendClientGreetingSms(branchid, client).catch((error) => {
+                this.logger.error(`Failed to send new client greeting SMS: ${error}`);
             });
         }
         if (createdScheduleId !== null) {
@@ -347,6 +358,7 @@ export class ClientService {
                     serviceStatus: computedStatus, // Return computed status, not stored one
                     breastPump: client.breastPump,
                     eDocId: client.eDocId,
+                    areaId: client.areaId,
                     hasSigned: client.eDocId !== null,
                     documentStatus: this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? '')),
                     primaryEmployee: schedule?.primaryEmployee
@@ -426,6 +438,7 @@ export class ClientService {
         serviceStatus?: string | null;
         breastPump?: boolean;
         eDocId?: string | null;
+        areaId?: string | null;
     }): Promise<ClientEntity> {
         // Get existing client
         const existingClient = await this.findClientByIdUsecase.execute(branchid, id);
@@ -507,6 +520,7 @@ export class ClientService {
             serviceStatus: params.serviceStatus,
             breastPump: params.breastPump,
             eDocId: params.eDocId,
+            areaId: params.areaId,
         });
         if (this.triggerService) {
             this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {

@@ -151,6 +151,35 @@ describe("ClientController (Integration)", () => {
                     }),
                 );
             });
+
+            it("should pass suppressGreetingSms to the service when provided", async () => {
+                // Arrange
+                const createDto = {
+                    name: "Contract Client",
+                    address: "Incheon",
+                    phone: "010-1111-2222",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                    suppressGreetingSms: true,
+                };
+                clientService.create.mockResolvedValue(createMockClient({ id: 6, ...createDto }));
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .post("/clients")
+                    .send(createDto);
+
+                // Assert
+                expect(response.status).toBe(201);
+                expect(clientService.create).toHaveBeenCalledWith(
+                    expect.any(String),
+                    expect.objectContaining({
+                        name: "Contract Client",
+                        suppressGreetingSms: true,
+                    }),
+                );
+            });
         });
 
         describe("given missing required fields", () => {
