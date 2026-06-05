@@ -12,8 +12,13 @@ export const dashboardQueryKeys = {
   analytics: () => ["dashboard", "analytics"] as const,
 };
 
+interface UseDashboardAnalyticsOptions {
+  refetchOnMount?: boolean | "always";
+  staleTime?: number;
+}
+
 async function fetchDashboardAnalytics(): Promise<DashboardAnalytics> {
-  const response = await fetch("/api/clients/analytics");
+  const response = await fetch("/api/clients/analytics", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Failed to fetch dashboard analytics: ${response.status}`);
   }
@@ -25,10 +30,11 @@ async function fetchDashboardAnalytics(): Promise<DashboardAnalytics> {
   return analytics;
 }
 
-export function useDashboardAnalytics() {
+export function useDashboardAnalytics(options: UseDashboardAnalyticsOptions = {}) {
   return useQuery<DashboardAnalytics>({
     queryKey: dashboardQueryKeys.analytics(),
     queryFn: fetchDashboardAnalytics,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnMount: options.refetchOnMount,
+    staleTime: options.staleTime ?? 5 * 60 * 1000, // 5 minutes
   });
 }
