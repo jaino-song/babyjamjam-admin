@@ -113,6 +113,57 @@ export class MessageSenderApprovalService {
         };
     }
 
+    async approvePendingRequest(params: {
+        branchId: string;
+        userId: string;
+    }): Promise<BranchSenderApprovalRecord> {
+        const current = await this.prisma.branch.findUnique({
+            where: { id: params.branchId },
+            select: {
+                smsSenderPhone: true,
+                smsSenderApprovalStatus: true,
+                smsSenderApprovalRequestedAt: true,
+            },
+        });
+
+        if (!current) {
+            throw new NotFoundException("Branch not found");
+        }
+
+        if (
+            this.normalizeStatus(current.smsSenderApprovalStatus) !== "pending"
+            || !current.smsSenderPhone
+        ) {
+            throw new BadRequestException(
+                "승인 대기 중인 메시지 발신번호 신청이 없습니다.",
+            );
+        }
+
+        const branch = await this.prisma.branch.update({
+            where: { id: params.branchId },
+            data: {
+                smsSenderApprovalStatus: "approved",
+                smsSenderApprovalApprovedAt: new Date(),
+                smsSenderApprovalApprovedBy: params.userId,
+            },
+            select: {
+                smsSenderPhone: true,
+                smsSenderApprovalStatus: true,
+                smsSenderApprovalRequestedAt: true,
+                smsSenderApprovalApprovedAt: true,
+            },
+        });
+
+        return {
+            senderPhone: branch.smsSenderPhone ?? null,
+            approvalStatus: this.normalizeStatus(
+                branch.smsSenderApprovalStatus,
+            ),
+            requestedAt: branch.smsSenderApprovalRequestedAt ?? null,
+            approvedAt: branch.smsSenderApprovalApprovedAt ?? null,
+        };
+    }
+
     async ensureApproved(branchId: string): Promise<string> {
         const state = await this.getState(branchId);
         if (state.approvalStatus !== "approved" || !state.senderPhone) {

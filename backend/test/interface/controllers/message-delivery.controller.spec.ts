@@ -219,4 +219,37 @@ describe("MessageDeliveryController", () => {
             }),
         });
     });
+
+    it("should record a failed log and reject when Aligo rejects the SMS request before returning a result body", async () => {
+        aligoService.sendSms.mockRejectedValue(
+            new Error("Aligo SMS API error (403): 등록되지 않은 IP 입니다."),
+        );
+
+        await expect(
+            controller.sendSms(
+                { branchId: "org-1" },
+                {
+                    receiver: "01012345678",
+                    message: "테스트 발송 본문",
+                    title: "안내",
+                    triggerType: "immediate",
+                    msgType: "AUTO",
+                },
+            ),
+        ).rejects.toThrow(BadGatewayException);
+
+        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                branchId: "org-1",
+                provider: "aligo_sms",
+                templateKey: "안내",
+                receiver: "01012345678",
+                messageBody: "테스트 발송 본문",
+                status: "failed",
+                aligoMid: null,
+                errorMessage: "Aligo SMS API error (403): 등록되지 않은 IP 입니다.",
+                attempts: 1,
+            }),
+        });
+    });
 });

@@ -71,6 +71,22 @@ export class MessageDeliveryController {
             scheduledDate,
             scheduledTime,
             testMode: dto.testMode,
+        }).catch(async (error) => {
+            const errorMessage = this.formatErrorMessage(error);
+            this.logger.warn(
+                `[SMS] Aligo request failed: branchId=${branchId || "unknown"}, error=${errorMessage}`,
+            );
+            await this.recordFailedSmsLogFromError(
+                branchId,
+                dto,
+                triggerType,
+                error,
+                scheduledDate,
+                scheduledTime,
+            ).catch((logError) => {
+                this.logger.warn(`Failed to record failed SMS delivery log: ${this.formatErrorMessage(logError)}`);
+            });
+            throw new BadGatewayException(errorMessage);
         });
         this.logger.log(
             `[SMS] Aligo response received: branchId=${branchId || "unknown"}, resultCode=${result.response.result_code}, errorCount=${result.response.error_cnt ?? 0}`,
@@ -144,6 +160,41 @@ export class MessageDeliveryController {
         });
     }
 
+    private async recordFailedSmsLogFromError(
+        branchId: string,
+        dto: SendSmsMessageDto,
+        triggerType: string,
+        error: unknown,
+        scheduledDate?: string,
+        scheduledTime?: string,
+    ) {
+        const errorMessage = this.formatErrorMessage(error);
+        await this.prisma.alimtalk_log.create({
+            data: {
+                branchId: branchId || null,
+                provider: "aligo_sms",
+                templateKey: dto.title?.trim() || "manual_sms",
+                receiver: dto.receiver,
+                clientId: dto.clientId ?? null,
+                messageBody: dto.message,
+                variables: {
+                    recipientName: dto.recipientName ?? null,
+                    title: dto.title ?? null,
+                    triggerType,
+                    msgType: dto.msgType ?? null,
+                    scheduledDate: scheduledDate ?? null,
+                    scheduledTime: scheduledTime ?? null,
+                    providerError: errorMessage,
+                },
+                status: "failed",
+                aligoMid: null,
+                errorMessage,
+                attempts: 1,
+                lastAttemptAt: new Date(),
+            },
+        });
+    }
+
     private isAcceptedSmsResult(
         result: Awaited<ReturnType<AligoService["sendSms"]>>,
     ) {
@@ -184,5 +235,13 @@ export class MessageDeliveryController {
             throw new BadRequestException("예약 발송 일시 형식이 올바르지 않습니다.");
         }
         return scheduledAt;
+    }
+
+    private formatErrorMessage(error: unknown): string {
+        if (error instanceof Error && error.message.trim()) {
+            return error.message;
+        }
+        const message = String(error ?? "").trim();
+        return message || "문자 발송 요청이 실패했습니다.";
     }
 }
