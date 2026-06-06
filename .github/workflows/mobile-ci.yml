@@ -6,17 +6,23 @@ on:
     branches: [ main, dev, preview, "feature/**", "fix/**" ]
     paths:
       - 'mobile/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/mobile-ci.yml'
   pull_request:
     branches: [ main, dev, preview, "feature/**", "fix/**" ]
     paths:
       - 'mobile/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/mobile-ci.yml'
 
 jobs:
   verify:
-    name: type-check · lint · test · build · e2e
-    timeout-minutes: 60
+    name: type-check · lint · test · build
+    timeout-minutes: 30
     runs-on: ubuntu-latest
 
     steps:
@@ -51,6 +57,33 @@ jobs:
 
       - name: Build
         run: pnpm --filter babyjamjam-admin run build
+
+  # Non-blocking until CI has JWT_SECRET for auth setup (tests/global-setup.ts
+  # currently reads it from backend/.env, which only exists locally).
+  e2e:
+    name: playwright e2e (advisory)
+    needs: verify
+    continue-on-error: true
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
         run: pnpm --filter babyjamjam-admin exec playwright install --with-deps chromium
