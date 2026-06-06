@@ -43,10 +43,13 @@ function createGetRequest(path: string): NextRequest {
   });
 }
 
-function createUploadRequest(): NextRequest {
+function createUploadRequest(extraFields: Record<string, string | File> = {}): NextRequest {
   const formData = new FormData();
   formData.append("file", new File(["contents"], "document.txt", { type: "text/plain" }));
   formData.append("name", "Document");
+  for (const [key, value] of Object.entries(extraFields)) {
+    formData.append(key, value);
+  }
 
   return new NextRequest("http://localhost/api/file-storage/files", {
     method: "POST",
@@ -94,6 +97,32 @@ describe("file-storage API routes", () => {
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ queued: true });
+  });
+
+  it("never forwards client-supplied identity fields on upload", async () => {
+    mockPost.mockResolvedValue({ status: 201, data: { id: "doc-1" } });
+
+    const response = await uploadFile(
+      createUploadRequest({ orgId: "another-tenant", uploadedBy: "attacker" }),
+    );
+
+    expect(response.status).toBe(201);
+    const forwardedFormData = mockPost.mock.calls[0][1] as FormData;
+    expect(forwardedFormData.has("orgId")).toBe(false);
+    expect(forwardedFormData.has("uploadedBy")).toBe(false);
+    expect(forwardedFormData.get("name")).toBe("Document");
+  });
+
+  it("rejects non-string upload metadata before proxying", async () => {
+    const response = await uploadFile(
+      createUploadRequest({
+        categoryId: new File(["x"], "sneaky.txt", { type: "text/plain" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid upload metadata" });
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("rejects unsafe file detail IDs before proxying", async () => {

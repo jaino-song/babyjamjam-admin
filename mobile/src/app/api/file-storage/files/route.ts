@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+
 import { serverAPIClient } from "@/lib/api/server";
 import {
     backendJsonResponse,
@@ -7,6 +9,17 @@ import {
     getAuthToken,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
+
+// Identity fields (orgId/uploadedBy) are deliberately NOT part of this
+// whitelist: the backend derives branch + uploader from the JWT
+// (@CurrentTenant), so client-supplied identity is spoofable noise and is
+// never forwarded. Only validated metadata crosses the proxy.
+const uploadMetadataSchema = z.object({
+    name: z.string().trim().min(1).max(255).optional(),
+    description: z.string().max(2000).optional(),
+    categoryId: z.string().trim().min(1).max(100).optional(),
+    tags: z.string().max(2000).optional(),
+});
 
 export async function GET(request: NextRequest) {
     try {
@@ -54,19 +67,24 @@ export async function POST(request: NextRequest) {
         const blob = new Blob([buffer], { type: file.type });
         backendFormData.append("file", blob, file.name);
 
-        const name = formData.get("name");
-        const description = formData.get("description");
-        const categoryId = formData.get("categoryId");
-        const tags = formData.get("tags");
-        const orgId = formData.get("orgId");
-        const uploadedBy = formData.get("uploadedBy");
+        const metadataResult = uploadMetadataSchema.safeParse({
+            name: formData.get("name") ?? undefined,
+            description: formData.get("description") ?? undefined,
+            categoryId: formData.get("categoryId") ?? undefined,
+            tags: formData.get("tags") ?? undefined,
+        });
+        if (!metadataResult.success) {
+            return NextResponse.json(
+                { error: "Invalid upload metadata" },
+                { status: 400 }
+            );
+        }
 
-        if (name) backendFormData.append("name", name as string);
-        if (description) backendFormData.append("description", description as string);
-        if (categoryId) backendFormData.append("categoryId", categoryId as string);
-        if (tags) backendFormData.append("tags", tags as string);
-        if (orgId) backendFormData.append("orgId", orgId as string);
-        if (uploadedBy) backendFormData.append("uploadedBy", uploadedBy as string);
+        const { name, description, categoryId, tags } = metadataResult.data;
+        if (name) backendFormData.append("name", name);
+        if (description) backendFormData.append("description", description);
+        if (categoryId) backendFormData.append("categoryId", categoryId);
+        if (tags) backendFormData.append("tags", tags);
 
         const response = await serverAPIClient.post("/documents/upload", backendFormData, {
             timeout: 120000,
