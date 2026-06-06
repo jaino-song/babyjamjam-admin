@@ -7,6 +7,13 @@ import { TenantGuard } from "infrastructure/tenant";
 import { EformsignController } from "interface/controllers/eformsign.controller";
 import request from "supertest";
 
+// Known transport-level flake (~1/8 full-suite runs under parallel-worker
+// load, observed locally 2026-06-06 and once in CI): a supertest request
+// intermittently dies with "socket hang up" on the early-400 validation
+// paths. Retry masks only the transport race — a deterministic failure
+// still fails on the retry.
+jest.retryTimes(1, { logErrorsBeforeRetry: true });
+
 describe("EformsignController (Integration)", () => {
     let app: INestApplication;
     let eformsignService: jest.Mocked<Pick<
