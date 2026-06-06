@@ -62,7 +62,13 @@ describe("message-template API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "message template conflict" });
   });
 
-  it("preserves backend status and payload when creating message templates", async () => {
+  const validTemplatePayload = {
+    name: "Reminder",
+    content: "안녕하세요 {{name}}",
+    variables: [],
+  };
+
+  it("forwards the validated payload to the backend when creating message templates", async () => {
     mockPost.mockResolvedValue({
       status: 202,
       data: { queued: true },
@@ -72,12 +78,30 @@ describe("message-template API routes", () => {
       createRequest("/api/message-templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "Reminder" }),
+        body: JSON.stringify(validTemplatePayload),
       }),
     );
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ queued: true });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/message-templates",
+      validTemplatePayload,
+      expect.anything(),
+    );
+  });
+
+  it("rejects a create body missing required fields before proxying", async () => {
+    const response = await createMessageTemplate(
+      createRequest("/api/message-templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Reminder" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("rejects malformed create JSON before proxying", async () => {
@@ -109,6 +133,60 @@ describe("message-template API routes", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error: "Request body must be valid JSON",
+    });
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated payload to the backend when updating", async () => {
+    mockPatch.mockResolvedValue({
+      status: 200,
+      data: { id: "24" },
+    });
+
+    const response = await updateMessageTemplate(
+      createRequest("/api/message-templates/24", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Updated" }),
+      }),
+      { params: Promise.resolve({ id: "24" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/message-templates/24",
+      { name: "Updated" },
+      expect.anything(),
+    );
+  });
+
+  it("rejects an update body with a wrong-typed field before proxying", async () => {
+    const response = await updateMessageTemplate(
+      createRequest("/api/message-templates/24", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: 42 }),
+      }),
+      { params: Promise.resolve({ id: "24" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe message template IDs before proxying", async () => {
+    const response = await updateMessageTemplate(
+      createRequest("/api/message-templates/bad%2Fid", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Updated" }),
+      }),
+      { params: Promise.resolve({ id: "bad/id" }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid message template id",
     });
     expect(mockPatch).not.toHaveBeenCalled();
   });

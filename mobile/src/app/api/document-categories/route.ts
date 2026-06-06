@@ -1,14 +1,25 @@
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     backendJsonResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    invalidJsonResponse,
-    readJsonObjectBody,
+    parseBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
+
+// Mirrors backend CreateDocumentCategoryDto: `value`, `label`, `color` are all
+// required strings (@IsString, no @IsOptional). Other fields pass through to the
+// backend's authoritative ValidationPipe.
+const createDocumentCategorySchema = z
+    .object({
+        value: z.string().max(10_000),
+        label: z.string().max(10_000),
+        color: z.string().max(10_000),
+    })
+    .passthrough();
 
 export async function GET(request: NextRequest) {
     try {
@@ -27,23 +38,20 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    try {
-        const token = getAuthToken(request);
-        if (!token) {
-            return unauthorizedResponse("Unauthorized");
-        }
+    const token = getAuthToken(request);
+    if (!token) {
+        return unauthorizedResponse("Unauthorized");
+    }
 
-        const body = await readJsonObjectBody(request);
-        const response = await serverAPIClient.post("/document-categories", body, {
+    const { data, response } = await parseBody(createDocumentCategorySchema, request);
+    if (response) return response;
+
+    try {
+        const backendResponse = await serverAPIClient.post("/document-categories", data, {
             headers: getAuthHeaders(token),
         });
-        return backendJsonResponse(response);
+        return backendJsonResponse(backendResponse);
     } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) {
-            return invalidJson;
-        }
-
         return errorResponse(error, "create document category");
     }
 }

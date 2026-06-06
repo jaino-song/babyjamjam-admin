@@ -1,14 +1,32 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     backendJsonResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    invalidJsonResponse,
-    readJsonObjectBody,
+    parseBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
+
+function isValidTemplateId(id: string): boolean {
+    return /^[A-Za-z0-9_-]+$/.test(id);
+}
+
+function invalidTemplateIdResponse(): NextResponse {
+    return NextResponse.json({ error: "Invalid message template id" }, { status: 400 });
+}
+
+// Mirrors backend UpdateMessageTemplateDto: every field is optional, so this is
+// a passthrough object that only type-checks the known fields when present.
+const updateMessageTemplateSchema = z
+    .object({
+        name: z.string().max(10_000).optional(),
+        content: z.string().max(10_000).optional(),
+        variables: z.array(z.unknown()).optional(),
+    })
+    .passthrough();
 
 export async function GET(
     request: NextRequest,
@@ -41,17 +59,23 @@ export async function PATCH(
         }
 
         const { id } = await params;
-        const body = await readJsonObjectBody(request);
-        const response = await serverAPIClient.patch(`/message-templates/${id}`, body, {
+        if (!isValidTemplateId(id)) {
+            return invalidTemplateIdResponse();
+        }
+
+        const { data, response: invalidBody } = await parseBody(
+            updateMessageTemplateSchema,
+            request,
+        );
+        if (invalidBody) {
+            return invalidBody;
+        }
+
+        const response = await serverAPIClient.patch(`/message-templates/${id}`, data, {
             headers: getAuthHeaders(token),
         });
         return backendJsonResponse(response);
     } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) {
-            return invalidJson;
-        }
-
         return errorResponse(error, "update message template");
     }
 }

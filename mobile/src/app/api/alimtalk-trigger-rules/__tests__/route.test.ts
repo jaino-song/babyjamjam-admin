@@ -65,7 +65,15 @@ describe("Alimtalk trigger rule API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk trigger rules" });
   });
 
-  it("preserves backend status and payload when creating rules", async () => {
+  const validRulePayload = {
+    name: "Reminder",
+    eventType: "SERVICE_START",
+    offsetType: "BEFORE_DAYS",
+    recipientType: "CLIENT",
+    templateKey: "SERVICE_START_REMINDER",
+  };
+
+  it("forwards the validated payload to the backend when creating rules", async () => {
     mockPost.mockResolvedValue({
       status: 202,
       data: { queued: true },
@@ -75,12 +83,30 @@ describe("Alimtalk trigger rule API routes", () => {
       createRequest("/api/alimtalk-trigger-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Reminder" }),
+        body: JSON.stringify({ ...validRulePayload, offsetDays: 3 }),
       }),
     );
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ queued: true });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/alimtalk-trigger-rules",
+      { ...validRulePayload, offsetDays: 3 },
+      expect.anything(),
+    );
+  });
+
+  it("rejects a create body missing required fields before proxying", async () => {
+    const response = await createRule(
+      createRequest("/api/alimtalk-trigger-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Reminder" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("rejects malformed create JSON before proxying", async () => {

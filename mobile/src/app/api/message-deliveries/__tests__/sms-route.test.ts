@@ -37,6 +37,11 @@ describe("SMS delivery API route", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  const validSmsPayload = {
+    receiver: "010-1234-5678",
+    message: "hello",
+  };
+
   it("rejects malformed JSON before proxying", async () => {
     const response = await sendSms(createRequest("{bad-json"));
 
@@ -47,16 +52,28 @@ describe("SMS delivery API route", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it("preserves backend status and payload", async () => {
+  it("rejects an SMS body missing the required receiver before proxying", async () => {
+    const response = await sendSms(createRequest(JSON.stringify({ message: "hello" })));
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated payload to the backend", async () => {
     mockPost.mockResolvedValue({
       status: 202,
       data: { queued: true },
     });
 
-    const response = await sendSms(createRequest(JSON.stringify({ message: "hello" })));
+    const response = await sendSms(createRequest(JSON.stringify(validSmsPayload)));
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ queued: true });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/message-deliveries/sms",
+      validSmsPayload,
+      expect.anything(),
+    );
   });
 
   it("does not return or log raw upstream SMS error payloads", async () => {
@@ -73,7 +90,7 @@ describe("SMS delivery API route", () => {
       name: "AxiosError",
     });
 
-    const response = await sendSms(createRequest(JSON.stringify({ message: "hello" })));
+    const response = await sendSms(createRequest(JSON.stringify(validSmsPayload)));
 
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({

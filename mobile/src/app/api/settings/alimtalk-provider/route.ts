@@ -1,14 +1,24 @@
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     backendJsonResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    invalidJsonResponse,
-    readJsonObjectBody,
+    parseBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
+
+// Mirrors backend UpdateAlimtalkProviderDto: provider is @IsString()
+// @IsNotEmpty() @IsIn(ALIMTALK_PROVIDERS) required. The provider enum mirrors
+// backend ALIMTALK_PROVIDERS = ["channeltalk", "aligo", "none"]. Passthrough
+// preserves any forward-compatible fields.
+const updateAlimtalkProviderSchema = z
+    .object({
+        provider: z.enum(["channeltalk", "aligo", "none"]),
+    })
+    .passthrough();
 
 export async function GET(request: NextRequest) {
     try {
@@ -33,17 +43,16 @@ export async function PUT(request: NextRequest) {
             return unauthorizedResponse("Unauthorized");
         }
 
-        const body = await readJsonObjectBody(request);
-        const response = await serverAPIClient.put("/settings/alimtalk-provider", body, {
+        const { data, response: invalid } = await parseBody(updateAlimtalkProviderSchema, request);
+        if (invalid) {
+            return invalid;
+        }
+
+        const response = await serverAPIClient.put("/settings/alimtalk-provider", data, {
             headers: getAuthHeaders(token),
         });
         return backendJsonResponse(response);
     } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) {
-            return invalidJson;
-        }
-
         return errorResponse(error, "update alimtalk provider");
     }
 }

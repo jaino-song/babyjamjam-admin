@@ -63,7 +63,7 @@ describe("settings API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk provider" });
   });
 
-  it("preserves backend status and payload when updating Alimtalk provider settings", async () => {
+  it("forwards validated Alimtalk provider and preserves backend status", async () => {
     mockPut.mockResolvedValue({
       status: 202,
       data: { queued: true },
@@ -73,12 +73,30 @@ describe("settings API routes", () => {
       createRequest("/api/settings/alimtalk-provider", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: "kakao" }),
+        body: JSON.stringify({ provider: "aligo" }),
       }),
     );
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ queued: true });
+    expect(mockPut).toHaveBeenCalledWith(
+      "/settings/alimtalk-provider",
+      { provider: "aligo" },
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it("rejects Alimtalk provider values outside the allowed enum before proxying", async () => {
+    const response = await updateAlimtalkProvider(
+      createRequest("/api/settings/alimtalk-provider", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "kakao" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPut).not.toHaveBeenCalled();
   });
 
   it("rejects malformed Alimtalk provider JSON before proxying", async () => {
@@ -111,5 +129,40 @@ describe("settings API routes", () => {
       error: "Request body must be valid JSON",
     });
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects message sender approval requests missing senderPhone before proxying", async () => {
+    const response = await requestMessageSenderApproval(
+      createRequest("/api/settings/message-sender-approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("forwards validated message sender approval request to the backend", async () => {
+    mockPost.mockResolvedValue({ status: 200, data: { approvalStatus: "pending" } });
+
+    const approvalBody = { senderPhone: "01012345678" };
+
+    const response = await requestMessageSenderApproval(
+      createRequest("/api/settings/message-sender-approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(approvalBody),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ approvalStatus: "pending" });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/settings/message-sender-approval/request",
+      approvalBody,
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
   });
 });
