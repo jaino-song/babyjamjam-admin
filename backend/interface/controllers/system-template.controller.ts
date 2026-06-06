@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from "@nestjs
 import { SystemTemplateWithRegistryDto } from "application/dto/system-template-with-registry.dto";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerGuard } from "infrastructure/auth/owner.guard";
 import { PreviewTemplateDto, UpdateSystemTemplateDto, ValidateTemplateDto } from "interface/dto/system-template.dto";
 import { parseInteger } from "interface/parse-integer";
 
@@ -21,6 +22,7 @@ export class SystemTemplateController {
     }
 
     @Put(":key")
+    @UseGuards(OwnerGuard)
     update(@Param("key") key: string, @Body() dto: UpdateSystemTemplateDto, @Req() req: any) {
         return this.service.update(key, dto.content, req.user.userId, dto.customVariables);
     }
@@ -58,12 +60,14 @@ export class SystemTemplateController {
     }
 
     @Post(":key/rollback/:versionNumber")
+    @UseGuards(OwnerGuard)
     rollback(@Param("key") key: string, @Param("versionNumber") versionNumber: string, @Req() req: any) {
         const parsedVersionNumber = parseInteger(versionNumber, "versionNumber", { min: 1 });
         return this.service.rollback(key, parsedVersionNumber, req.user.userId);
     }
 
     @Post(":key/reset")
+    @UseGuards(OwnerGuard)
     reset(@Param("key") key: string, @Req() req: any) {
         return this.service.resetToDefault(key, req.user.userId);
     }
