@@ -10,14 +10,11 @@ on:
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - '.github/workflows/backend-ci.yml'
+  # No paths filter on pull_request: this job is a REQUIRED check on dev,
+  # so it must report on every PR — path-filtered required checks block
+  # merges as eternally "expected" when the paths don't match.
   pull_request:
     branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
-    paths:
-      - 'backend/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.github/workflows/backend-ci.yml'
 
 jobs:
   verify:
