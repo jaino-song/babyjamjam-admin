@@ -5,6 +5,7 @@ import { ALIGO_API_PORT, IAligoApiPort } from "domain/ports/aligo-api.port";
 import { ALIGO_TEMPLATES } from "application/dto/aligo";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
 import { AligoService } from "application/services/aligo.service";
+import { maskPhone } from "application/utils/mask";
 import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import {
@@ -74,7 +75,7 @@ export class AlimtalkRetrySchedulerService {
 
                     log.markSent(response.info?.mid?.toString());
                     await this.logRepository.update(log);
-                    this.logger.log(`[Retry] Successfully resent ${log.templateKey} to ${log.receiver}`);
+                    this.logger.log(`[Retry] Successfully resent ${log.templateKey} to ${maskPhone(log.receiver)}`);
                 } catch (error) {
                     log.markFailed(error instanceof Error ? error.message : String(error));
                     await this.logRepository.update(log);
@@ -116,7 +117,7 @@ export class AlimtalkRetrySchedulerService {
 
             log.markSent(result.response.msg_id ? String(result.response.msg_id) : undefined);
             await this.logRepository.update(log);
-            this.logger.log(`[Retry] Successfully resent SMS ${log.templateKey} to ${log.receiver}`);
+            this.logger.log(`[Retry] Successfully resent SMS ${log.templateKey} to ${maskPhone(log.receiver)}`);
         } catch (error) {
             this.markSmsRetryFailed(log, error instanceof Error ? error.message : String(error));
             await this.logRepository.update(log);

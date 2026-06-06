@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemTemplateService } from "application/services/system-template.service";
+import { maskPhone } from "application/utils/mask";
 import { SystemTemplateKey, SYSTEM_TEMPLATE_REGISTRY } from "domain/constants/system-template-registry";
 import { ClientEntity } from "domain/entities/client.entity";
 import { PhoneNumber } from "domain/value-objects/phone-number.vo";
@@ -25,7 +26,7 @@ export class ClientGreetingSmsAutomationService {
     async sendClientGreetingSms(branchId: string, client: ClientEntity): Promise<void> {
         const phone = PhoneNumber.create(client.phone);
         if (!phone) {
-            this.logger.warn(`[SMS Automation] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            this.logger.warn(`[SMS Automation] Invalid or missing phone for client ${client.id}: ${maskPhone(client.phone)}`);
             return;
         }
 

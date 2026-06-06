@@ -13,6 +13,7 @@ import {
     AligoSmsResponse,
     IAligoSmsApiPort,
 } from "domain/ports/aligo-sms-api.port";
+import { maskPhone } from "application/utils/mask";
 
 @Injectable()
 export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
@@ -75,7 +76,7 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
             }
         }
 
-        this.logger.debug(`[Aligo] Sending alimtalk: ${params.tplCode} to ${params.receiver}`);
+        this.logger.debug(`[Aligo] Sending alimtalk: ${params.tplCode} to ${maskPhone(params.receiver)}`);
 
         const response = await fetch(url, {
             method: "POST",
@@ -129,7 +130,7 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
             formData.append("testmode_yn", params.testModeYn);
         }
 
-        this.logger.debug(`[Aligo] Sending sms to ${params.receiver}`);
+        this.logger.debug(`[Aligo] Sending sms to ${maskPhone(params.receiver)}`);
 
         const response = await fetch(url, {
             method: "POST",

@@ -1,6 +1,7 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import { ALIGO_API_PORT, IAligoApiPort, AligoAlimtalkResponse } from "domain/ports/aligo-api.port";
 import { SendAligoAlimtalkDto, AligoMessageBuilder, ALIGO_TEMPLATES } from "application/dto/aligo";
+import { maskPhone } from "application/utils/mask";
 import { ALIMTALK_LOG_REPOSITORY, IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
 import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
 
@@ -37,7 +38,7 @@ export class SendAligoAlimtalkUsecase {
         });
         const savedLog = await this.logRepository.save(log);
 
-        this.logger.debug(`[Aligo] Sending ${dto.templateKey} to ${dto.receiver}`);
+        this.logger.debug(`[Aligo] Sending ${dto.templateKey} to ${maskPhone(dto.receiver)}`);
 
         try {
             const response = await this.aligoApi.sendAlimtalk({
