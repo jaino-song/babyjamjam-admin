@@ -132,3 +132,41 @@ describe("deriveDashboardAnalyticsFromClients", () => {
     expect(analytics.upcomingThisMonth).toBe(2);
   });
 });
+
+describe("KST anchoring (server-timezone independence)", () => {
+  // 2026-06-05T20:00:00Z = 2026-06-06 05:00 KST. The KST ±7d contract window
+  // is [2026-05-30 00:00 KST, 2026-06-13 23:59:59.999 KST], i.e.
+  // [2026-05-29T15:00:00Z, 2026-06-13T14:59:59.999Z]. A server-local
+  // UTC-anchored window would start/end 9 hours later — these cases fail
+  // under local-TZ day math on a UTC runner.
+  const utcEveningNow = new Date("2026-06-05T20:00:00Z");
+
+  it("opens the contract window at KST midnight, not UTC midnight", () => {
+    expect(
+      isContractIncompleteNearServiceStart(
+        client({ startDate: "2026-05-29T20:00:00Z" }),
+        utcEveningNow,
+      ),
+    ).toBe(true);
+  });
+
+  it("closes the contract window at KST end-of-day, not UTC end-of-day", () => {
+    expect(
+      isContractIncompleteNearServiceStart(
+        client({ startDate: "2026-06-13T18:00:00Z" }),
+        utcEveningNow,
+      ),
+    ).toBe(false);
+  });
+
+  it("buckets next-month starts by KST calendar month", () => {
+    // 2026-06-30T16:00:00Z = 2026-07-01 01:00 KST: next month in KST,
+    // still June under UTC bucketing.
+    const analytics = deriveDashboardAnalyticsFromClients(
+      [client({ startDate: "2026-06-30T16:00:00Z" })],
+      utcEveningNow,
+    );
+
+    expect(analytics.upcomingNextMonth).toBe(1);
+  });
+});
