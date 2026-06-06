@@ -227,13 +227,14 @@ function mergeDashboardRows(rows: DashboardStatusRow[]): ListRow[] {
 }
 
 export default function DashboardPage() {
+  // 60s staleTime: dashboard revisits within the window reuse the cache
+  // instead of re-firing analytics + clients (and the eformsign sync burst
+  // their invalidations cascade into) on every mount.
   const { data: analytics, isLoading: analyticsLoading } = useDashboardAnalytics({
-    refetchOnMount: "always",
-    staleTime: 0,
+    staleTime: 60_000,
   });
   const { data: clientsData, isLoading: clientsLoading } = useClients(1, 50, undefined, {
-    refetchOnMount: "always",
-    staleTime: 0,
+    staleTime: 60_000,
   });
   const user = useInitialUser();
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);

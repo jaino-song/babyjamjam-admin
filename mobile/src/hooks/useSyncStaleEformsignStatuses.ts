@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { dashboardQueryKeys } from "@/hooks/useDashboardAnalytics";
@@ -9,6 +9,15 @@ import type { Client } from "@/lib/client/types";
 import { eformsignApi, withEformsignReauth } from "@/services/api";
 
 const DEFAULT_MAX_SYNC_COUNT = 10;
+// Module-level gate: a per-instance ref reset on every mount, so each
+// dashboard visit re-fired the full pending-document sync burst. Documents
+// are retried at most once per interval for the lifetime of the tab.
+const SYNC_RETRY_INTERVAL_MS = 5 * 60 * 1000;
+const lastSyncAttemptAtByDocumentId = new Map<string, number>();
+
+export function __resetEformsignSyncGateForTests(): void {
+  lastSyncAttemptAtByDocumentId.clear();
+}
 
 interface UseSyncStaleEformsignStatusesOptions {
   enabled?: boolean;
@@ -34,7 +43,6 @@ export function useSyncStaleEformsignStatuses(
   options: UseSyncStaleEformsignStatusesOptions = {},
 ) {
   const queryClient = useQueryClient();
-  const syncedDocumentIdsRef = useRef(new Set<string>());
   const enabled = options.enabled ?? true;
   const maxSyncCount = options.maxSyncCount ?? DEFAULT_MAX_SYNC_COUNT;
   const documentIds = useMemo(
@@ -45,13 +53,15 @@ export function useSyncStaleEformsignStatuses(
   useEffect(() => {
     if (!enabled || documentIds.length === 0) return;
 
-    const documentIdsToSync = documentIds.filter(
-      (documentId) => !syncedDocumentIdsRef.current.has(documentId),
-    );
+    const now = Date.now();
+    const documentIdsToSync = documentIds.filter((documentId) => {
+      const lastAttemptAt = lastSyncAttemptAtByDocumentId.get(documentId);
+      return lastAttemptAt === undefined || now - lastAttemptAt >= SYNC_RETRY_INTERVAL_MS;
+    });
     if (documentIdsToSync.length === 0) return;
 
     for (const documentId of documentIdsToSync) {
-      syncedDocumentIdsRef.current.add(documentId);
+      lastSyncAttemptAtByDocumentId.set(documentId, now);
     }
 
     let cancelled = false;
