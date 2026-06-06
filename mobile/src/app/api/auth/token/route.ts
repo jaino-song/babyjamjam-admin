@@ -2,9 +2,19 @@ import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+import { z } from "zod";
 
+import { parseBody } from "@/lib/api/route-utils";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
+
+// Mirrors backend TokenExchangeDto: code is the required authorization code
+// exchanged for tokens. Passthrough preserves forward-compatible fields.
+const tokenExchangeSchema = z
+    .object({
+        code: z.string().min(1),
+    })
+    .passthrough();
 
 interface TokenPayload {
     sub: string;
@@ -56,13 +66,11 @@ function logTokenExchangeFailure(error: unknown): void {
 }
 
 export async function POST(request: NextRequest) {
-    try {
-        const { code } = await request.json();
+    const { data: parsed, response: invalid } = await parseBody(tokenExchangeSchema, request);
+    if (invalid) return invalid;
 
-        if (!code) {
-            console.error("[Token Exchange] No code provided");
-            return NextResponse.json({ error: "Authorization Code Required" }, { status: 400 });
-        }
+    try {
+        const { code } = parsed;
 
         const { data } = await serverAPIClient.post("/auth/token", { code });
 

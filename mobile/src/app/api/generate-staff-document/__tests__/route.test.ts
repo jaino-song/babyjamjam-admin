@@ -15,7 +15,7 @@ jest.mock("@/lib/api/server", () => ({
 
 const mockPost = serverAPIClient.post as jest.Mock;
 
-function createRequest(): NextRequest {
+function createRequest(body: BodyInit = JSON.stringify({ documentId: "doc-1" })): NextRequest {
     return new NextRequest("http://localhost/api/generate-staff-document", {
         method: "POST",
         headers: {
@@ -26,7 +26,7 @@ function createRequest(): NextRequest {
                 "eformsign_refresh_token=refresh-token",
             ].join("; "),
         },
-        body: JSON.stringify({ documentId: "doc-1" }),
+        body,
     });
 }
 
@@ -40,6 +40,32 @@ describe("POST /api/generate-staff-document", () => {
 
     afterEach(() => {
         consoleErrorSpy.mockRestore();
+    });
+
+    it("rejects bodies missing documentId before proxying", async () => {
+        const response = await POST(createRequest(JSON.stringify({})));
+
+        expect(response.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("forwards the validated documentId with cookie tokens to the backend", async () => {
+        mockPost.mockResolvedValue({ status: 200, data: { documentId: "doc-1" } });
+
+        const response = await POST(createRequest());
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toEqual({ documentId: "doc-1" });
+        expect(mockPost).toHaveBeenCalledWith(
+            "/api/generate-staff-document",
+            {
+                documentId: "doc-1",
+                accessToken: "access-token",
+                refreshToken: "refresh-token",
+                prefillEndDate: undefined,
+            },
+            { headers: { Authorization: "Bearer auth-token" } },
+        );
     });
 
     it("does not expose raw backend error details", async () => {

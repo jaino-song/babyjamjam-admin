@@ -1,23 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
+    parseBody,
     sanitizeUpstreamClientError,
     setAuthCookies,
 } from "@/lib/api/route-utils";
 
+// Mirrors backend AccessTokenRequestDto: executionTime is @IsNumber() @Min(0)
+// required; memberEmail is @IsOptional() @IsString() @IsNotEmpty(). The route
+// destructures and forwards exactly these two fields.
+const accessTokenSchema = z
+    .object({
+        executionTime: z.number().min(0),
+        memberEmail: z.string().min(1).optional(),
+    })
+    .passthrough();
+
 export async function POST(request: NextRequest) {
+    const authToken = getAuthToken(request);
+    if (!authToken) {
+        return NextResponse.json({ error: "Unauthorized - please log in first" }, { status: 401 });
+    }
+
+    const { data, response: invalid } = await parseBody(accessTokenSchema, request);
+    if (invalid) {
+        return invalid;
+    }
+
+    const { executionTime, memberEmail } = data;
+
     try {
-        const authToken = getAuthToken(request);
-        if (!authToken) {
-            return NextResponse.json({ error: "Unauthorized - please log in first" }, { status: 401 });
-        }
-
-        const body = await request.json();
-        const { executionTime, memberEmail } = body;
-
         const response = await serverAPIClient.post("/api/access-token", {
             executionTime,
             memberEmail,

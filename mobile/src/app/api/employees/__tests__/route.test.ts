@@ -65,6 +65,14 @@ describe("employee API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Failed to fetch employees" });
   });
 
+  const validCreatePayload = {
+    name: "Kim",
+    workArea: ["서울"],
+    phone: "01000000000",
+    grade: "스탠다드",
+    openToNextWork: true,
+  };
+
   it("preserves backend status and payload when creating employees", async () => {
     mockPost.mockResolvedValue({
       status: 202,
@@ -75,12 +83,66 @@ describe("employee API routes", () => {
       createRequest("/api/employees", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Kim" }),
+        body: JSON.stringify(validCreatePayload),
       }),
     );
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ queued: true });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/employees",
+      validCreatePayload,
+      expect.anything(),
+    );
+  });
+
+  it("rejects a create body missing required fields before proxying", async () => {
+    const response = await createEmployee(
+      createRequest("/api/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Kim" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("forwards a valid partial update body to the backend", async () => {
+    mockPatch.mockResolvedValue({
+      status: 200,
+      data: { id: 10, name: "Lee" },
+    });
+
+    const response = await updateEmployee(
+      createRequest("/api/employees?id=10", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Lee" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ id: 10, name: "Lee" });
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/employees",
+      { name: "Lee" },
+      { params: { id: "10" }, headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it("rejects an update body with a mistyped field before proxying", async () => {
+    const response = await updateEmployee(
+      createRequest("/api/employees?id=10", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: 123 }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPatch).not.toHaveBeenCalled();
   });
 
   it("rejects malformed create JSON before proxying", async () => {

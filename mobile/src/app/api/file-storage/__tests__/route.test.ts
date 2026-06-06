@@ -136,6 +136,44 @@ describe("file-storage API routes", () => {
     expect(mockGet).not.toHaveBeenCalled();
   });
 
+  it("forwards a validated document update to the backend path", async () => {
+    mockPut.mockResolvedValue({
+      status: 200,
+      data: { id: "file_123", name: "Renamed" },
+    });
+
+    const response = await updateFile(
+      createJsonRequest(
+        "/api/file-storage/files/file_123",
+        "PUT",
+        JSON.stringify({ name: "Renamed" }),
+      ),
+      { params: Promise.resolve({ fileId: "file_123" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ id: "file_123", name: "Renamed" });
+    expect(mockPut).toHaveBeenCalledWith(
+      "/documents/file_123",
+      { name: "Renamed" },
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it("rejects an update body with a mistyped field before proxying", async () => {
+    const response = await updateFile(
+      createJsonRequest(
+        "/api/file-storage/files/file_123",
+        "PUT",
+        JSON.stringify({ name: 123 }),
+      ),
+      { params: Promise.resolve({ fileId: "file_123" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed update JSON before proxying", async () => {
     const response = await updateFile(
       createJsonRequest("/api/file-storage/files/file_123", "PUT", "{bad-json"),

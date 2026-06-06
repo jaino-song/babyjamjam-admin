@@ -85,6 +85,23 @@ export async function parseBody<T>(
         };
     }
 
+    const validation = validateBodyWithSchema(schema, body);
+    if (validation.response) {
+        return { data: null, response: validation.response };
+    }
+
+    return { data: validation.data as T, response: null };
+}
+
+/**
+ * Validate an already-parsed body object against a zod schema, returning a
+ * ready 400 NextResponse on failure. Shared by parseBody and the optional
+ * bodySchema branch of the proxy helpers so the 400 shape stays identical.
+ */
+function validateBodyWithSchema<T>(
+    schema: z.ZodType<T>,
+    body: Record<string, unknown>,
+): { data: T; response: null } | { data: null; response: NextResponse } {
     const result = schema.safeParse(body);
     if (!result.success) {
         const issues = result.error.issues
@@ -337,14 +354,29 @@ export async function proxyGetRequest(
 }
 
 /**
+ * Optional configuration for the proxy POST/DELETE helpers.
+ *
+ * - `additionalBody` is merged into the forwarded payload (alongside the
+ *   server-injected accessToken).
+ * - `bodySchema`, when provided, validates the incoming request body with the
+ *   same logic as parseBody and returns a ready 400 before proxying. When
+ *   absent, the body is forwarded unvalidated (behavior unchanged).
+ */
+export interface ProxyBodyOptions {
+    additionalBody?: Record<string, unknown>;
+    bodySchema?: z.ZodType<unknown>;
+}
+
+/**
  * Proxy POST request to backend with access token and JWT auth
  */
 export async function proxyPostRequest(
     request: NextRequest,
     backendPath: string,
     context: string,
-    additionalBody?: Record<string, unknown>
+    options?: ProxyBodyOptions
 ): Promise<NextResponse> {
+    const { additionalBody, bodySchema } = options ?? {};
     const authToken = getAuthToken(request);
     const accessToken = getAccessToken(request);
 
@@ -358,6 +390,14 @@ export async function proxyPostRequest(
 
     try {
         const body = await readJsonObjectBody(request);
+
+        if (bodySchema) {
+            const validation = validateBodyWithSchema(bodySchema, body);
+            if (validation.response) {
+                return validation.response;
+            }
+        }
+
         const response = await serverAPIClient.post(backendPath, {
             ...body,
             ...additionalBody,
@@ -392,8 +432,9 @@ export async function proxyDeleteRequest(
     request: NextRequest,
     backendPath: string,
     context: string,
-    additionalBody?: Record<string, unknown>
+    options?: ProxyBodyOptions
 ): Promise<NextResponse> {
+    const { additionalBody, bodySchema } = options ?? {};
     const authToken = getAuthToken(request);
     const accessToken = getAccessToken(request);
 
@@ -407,6 +448,14 @@ export async function proxyDeleteRequest(
 
     try {
         const body = await readJsonObjectBody(request);
+
+        if (bodySchema) {
+            const validation = validateBodyWithSchema(bodySchema, body);
+            if (validation.response) {
+                return validation.response;
+            }
+        }
+
         const { searchParams } = new URL(request.url);
 
         const params: Record<string, string> = { accessToken };
