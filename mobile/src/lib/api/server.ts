@@ -1,54 +1,34 @@
 import axios from "axios";
 
-type BackendUrlEnv = Partial<Record<
-    "NODE_ENV" | "VERCEL_ENV" | "NEXT_PUBLIC_API_BASE_URL" | "DEVELOPMENT_API_BASE_URL",
-    string
->>;
-
-const LOCAL_BACKEND_BASE_URL = "http://localhost:3001";
+import {
+    type BackendUrlEnv,
+    EnvValidationError,
+    getServerRuntimeConfig,
+    resolveServerBackendBaseUrl,
+} from "@/lib/env";
 
 export class BackendBaseUrlConfigError extends Error {
-    constructor() {
-        super("Backend API base URL is not configured");
+    constructor(message = "Backend API base URL is not configured") {
+        super(message);
         this.name = "BackendBaseUrlConfigError";
     }
 }
 
-function isProductionLike(env: BackendUrlEnv): boolean {
-    return env.NODE_ENV === "production" || env.VERCEL_ENV === "preview";
-}
-
-function normalizeBackendBaseUrl(value: string | undefined): string | null {
-    const trimmed = value?.trim();
-    if (!trimmed) {
-        return null;
-    }
-
+export function resolveBackendBaseUrl(env: BackendUrlEnv = getServerRuntimeConfig().env): string {
     try {
-        const url = new URL(trimmed);
-        if (url.protocol !== "http:" && url.protocol !== "https:") {
-            return null;
+        return resolveServerBackendBaseUrl(env);
+    } catch (error) {
+        if (error instanceof EnvValidationError) {
+            throw new BackendBaseUrlConfigError(error.message);
         }
-        return url.toString().replace(/\/$/, "");
-    } catch {
-        return null;
+
+        throw error;
     }
 }
 
-export function resolveBackendBaseUrl(env: BackendUrlEnv = process.env): string | null {
-    const envUrl = isProductionLike(env)
-        ? env.NEXT_PUBLIC_API_BASE_URL
-        : env.DEVELOPMENT_API_BASE_URL || env.NEXT_PUBLIC_API_BASE_URL || LOCAL_BACKEND_BASE_URL;
-
-    return normalizeBackendBaseUrl(envUrl);
-}
-
-export const BACKEND_BASE_URL = resolveBackendBaseUrl() ?? "";
+export const BACKEND_BASE_URL = resolveBackendBaseUrl();
 
 export function requireBackendBaseUrl(): string {
-    if (!BACKEND_BASE_URL) {
-        throw new BackendBaseUrlConfigError();
-    }
     return BACKEND_BASE_URL;
 }
 

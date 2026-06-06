@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+
+import { serverAPIClient } from "@/lib/api/server";
+import { getServerRuntimeConfig } from "@/lib/env";
 
 // Cookie names for eformsign tokens
 export const COOKIE_NAMES = {
@@ -11,7 +13,7 @@ export const COOKIE_NAMES = {
 // Cookie options
 const COOKIE_OPTIONS = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: getServerRuntimeConfig().isProductionNodeEnv,
     sameSite: "lax" as const,
     path: "/",
 };

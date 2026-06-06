@@ -1,9 +1,11 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+
 import { logUpstreamError, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+import { serverAPIClient } from "@/lib/api/server";
+import { getServerRuntimeConfig } from "@/lib/env";
 
 interface TokenPayload {
     role: string | null;
@@ -48,7 +50,7 @@ function setSessionCookies(response: NextResponse, params: {
     role: string;
     autoLogin: boolean;
 }): void {
-    const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
+    const isSecureCookie = getServerRuntimeConfig().isSecureCookieEnv;
 
     const baseCookieOptions = {
         httpOnly: true,

@@ -59,6 +59,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!mobile/.env.example
 frontend/auth.json
 mobile/auth.json
 

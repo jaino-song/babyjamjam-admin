@@ -1,10 +1,12 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
 import { parse } from "cookie";
+
 import { isPublicAuthPath } from "@/lib/auth/routes";
+import { getServerRuntimeConfig } from "@/lib/env";
 import { safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 
 const API_BASE_URL = typeof window === 'undefined'
-    ? (process.env.NEXT_PUBLIC_API_BASE_URL || process.env.DEVELOPMENT_API_BASE_URL || "http://localhost:3001")
+    ? getServerRuntimeConfig().backendBaseUrl
     : '/api';
 
 export const api = axios.create({

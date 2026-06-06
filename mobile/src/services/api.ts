@@ -1,6 +1,8 @@
 import { api } from "@/lib/api/client";
+import { PUBLIC_BACKEND_BASE_URL } from "@/lib/env";
+import { EformsignDeleteDocumentsResponse, EformsignDocumentsResponse } from "@/lib/eformsign/types";
+import { safeStorageSetItem } from "@/lib/safe-storage";
 import { isAxiosError } from "axios";
-import { EformsignDeleteDocumentsResponse, EformsignDocumentsResponse } from '@/lib/eformsign/types';
 
 export interface ContractDataDto {
   customerName: string;
@@ -28,7 +30,6 @@ export interface ContractDataDto {
   grant: string;
   actualPrice: string;
 }
-import { safeStorageSetItem } from "@/lib/safe-storage";
 
 const HEADLESS_DISPATCH_TIMEOUT_MS = 180_000;
 const HEADLESS_FINALIZE_TIMEOUT_MS = 60_000;
@@ -93,8 +94,7 @@ export interface SyncedEformsignDocResponse {
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
-        const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
-        window.location.href = `${API_BASE_URL}/auth/kakao`;
+        window.location.href = `${PUBLIC_BACKEND_BASE_URL}/auth/kakao`;
     },
 
     // Email authentication

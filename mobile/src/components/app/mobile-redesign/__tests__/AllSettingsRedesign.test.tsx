@@ -1,5 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 
+jest.mock("@/lib/env", () => ({
+  APP_VERSION: "0.1.0",
+}));
+
 import { AllSettingsRedesign } from "../AllSettingsRedesign";
 import { LocaleProvider } from "@/providers/LocaleProvider";
 import { UserProvider } from "@/providers/UserProvider";
@@ -12,19 +16,8 @@ jest.mock("next/navigation", () => ({
 }));
 
 describe("AllSettingsRedesign", () => {
-  const originalAppVersion = process.env.NEXT_PUBLIC_APP_VERSION;
-
   beforeEach(() => {
     mockPush.mockClear();
-    process.env.NEXT_PUBLIC_APP_VERSION = "0.1.0";
-  });
-
-  afterEach(() => {
-    if (originalAppVersion === undefined) {
-      delete process.env.NEXT_PUBLIC_APP_VERSION;
-    } else {
-      process.env.NEXT_PUBLIC_APP_VERSION = originalAppVersion;
-    }
   });
 
   it("renders the localized actual account role in the profile card", () => {

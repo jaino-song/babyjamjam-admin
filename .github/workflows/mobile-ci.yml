@@ -53,6 +53,11 @@ jobs:
           CI: true
 
       - name: Build
+        # The env module (mobile/src/lib/env.ts) fails fast when a production
+        # build has no public backend URL. CI builds are compile-only, so a
+        # placeholder satisfies validation without implying a real target.
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://ci-build.invalid
         run: pnpm --filter babyjamjam-admin run build
 
   # Manual-only until Phase 6 stands up the real backend stack in CI
