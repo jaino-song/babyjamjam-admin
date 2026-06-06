@@ -6,7 +6,10 @@ import { dashboardQueryKeys } from "@/hooks/useDashboardAnalytics";
 import { clientQueryKeys } from "@/hooks/useClients";
 import { eformsignApi, withEformsignReauth } from "@/services/api";
 import type { Client } from "@/lib/client/types";
-import { useSyncStaleEformsignStatuses } from "../useSyncStaleEformsignStatuses";
+import {
+  __resetEformsignSyncGateForTests,
+  useSyncStaleEformsignStatuses,
+} from "../useSyncStaleEformsignStatuses";
 
 jest.mock("@/services/api", () => ({
   eformsignApi: {
@@ -61,6 +64,7 @@ describe("useSyncStaleEformsignStatuses", () => {
   let invalidateSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    __resetEformsignSyncGateForTests();
     queryClient = new QueryClient({
       defaultOptions: {
         queries: {
@@ -129,5 +133,23 @@ describe("useSyncStaleEformsignStatuses", () => {
 
     await waitFor(() => expect(mockedSyncDocumentStatus).toHaveBeenCalledTimes(1));
     expect(mockedSyncDocumentStatus).toHaveBeenCalledWith("doc-2");
+  });
+
+  it("does not re-sync the same document across remounts within the retry interval", async () => {
+    const pendingClients = [client({ eDocId: "doc-1", documentStatus: "requested" })];
+
+    const { unmount } = renderHook(() => useSyncStaleEformsignStatuses(pendingClients), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(mockedSyncDocumentStatus).toHaveBeenCalledTimes(1));
+    unmount();
+
+    renderHook(() => useSyncStaleEformsignStatuses(pendingClients), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await Promise.resolve();
+    expect(mockedSyncDocumentStatus).toHaveBeenCalledTimes(1);
   });
 });
