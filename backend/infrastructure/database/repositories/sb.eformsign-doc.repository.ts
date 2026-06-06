@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import {
+    EformsignDocCompletionClaimParams,
+    EformsignDocCompletionClaimResult,
     EformsignDocClientSummary,
     IEformsignDocRepository,
 } from "domain/repositories/eformsign-doc.repository.interface";
@@ -31,6 +33,42 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             select: { branchId: true },
         });
         return doc?.branchId ?? null;
+    }
+
+    async claimCompletionStatus(
+        branchid: string,
+        params: EformsignDocCompletionClaimParams,
+    ): Promise<EformsignDocCompletionClaimResult> {
+        const result = await this.prismaService.eformsign_doc.updateMany({
+            where: {
+                branchId: branchid,
+                documentId: params.documentId,
+                statusType: { not: params.statusType },
+            },
+            data: {
+                statusType: params.statusType,
+                statusDetail: params.statusDetail,
+                stepType: params.stepType,
+                stepIndex: params.stepIndex,
+                stepName: params.stepName,
+                expired: params.expired,
+                updatedDate: new Date(),
+            },
+        });
+
+        if (result.count === 1) {
+            return "claimed";
+        }
+
+        const existing = await this.prismaService.eformsign_doc.findFirst({
+            where: {
+                branchId: branchid,
+                documentId: params.documentId,
+            },
+            select: { id: true },
+        });
+
+        return existing ? "duplicate" : "missing";
     }
 
     async findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
