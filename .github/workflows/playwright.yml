@@ -1,23 +1,11 @@
 name: Frontend Playwright Tests
 
+# Manual-only until Phase 6 stands up the real backend stack in CI
+# (Postgres container + migrate deploy + seed + NestJS boot). The suites
+# are backend-coupled and time out without it — verified 2026-06-06.
+# Blocking per-PR coverage for the frontend lives in frontend-ci.yml.
 on:
   workflow_dispatch:
-  push:
-    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
-    paths:
-      - 'frontend/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.github/workflows/playwright.yml'
-  pull_request:
-    branches: [ main, dev, preview, "feature/**", "fix/**" ]
-    paths:
-      - 'frontend/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.github/workflows/playwright.yml'
 
 jobs:
   test:
