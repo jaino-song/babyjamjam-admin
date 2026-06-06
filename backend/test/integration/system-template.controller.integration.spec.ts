@@ -10,6 +10,7 @@ import request from "supertest";
 import { SystemTemplateController } from "interface/controllers/system-template.controller";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerGuard } from "infrastructure/auth/owner.guard";
 import { SystemTemplateEntity, VariableValidationResult } from "domain/entities/system-template.entity";
 import { SystemTemplateVersionEntity } from "domain/entities/system-template-version.entity";
 import { SystemTemplateKey, SYSTEM_TEMPLATE_REGISTRY } from "domain/constants/system-template-registry";
@@ -20,12 +21,20 @@ describe("SystemTemplateController (Integration)", () => {
     let service: jest.Mocked<SystemTemplateService>;
 
     const mockUserId = "test-user-id";
+    let currentUser: { userId: string; role: string };
 
     const mockJwtGuard = {
         canActivate: jest.fn((context) => {
             const req = context.switchToHttp().getRequest();
-            req.user = { userId: mockUserId, role: "admin" };
+            req.user = currentUser;
             return true;
+        }),
+    };
+
+    const mockOwnerGuard = {
+        canActivate: jest.fn((context) => {
+            const req = context.switchToHttp().getRequest();
+            return req.user?.role === "owner";
         }),
     };
 
@@ -85,6 +94,8 @@ describe("SystemTemplateController (Integration)", () => {
     };
 
     beforeEach(async () => {
+        currentUser = { userId: mockUserId, role: "admin" };
+
         const mockService = {
             getAll: jest.fn(),
             getByKey: jest.fn(),
@@ -108,6 +119,8 @@ describe("SystemTemplateController (Integration)", () => {
         })
             .overrideGuard(JwtGuard)
             .useValue(mockJwtGuard)
+            .overrideGuard(OwnerGuard)
+            .useValue(mockOwnerGuard)
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -182,6 +195,7 @@ describe("SystemTemplateController (Integration)", () => {
 
     describe("PUT /system-templates/:key", () => {
         it("updates content successfully", async () => {
+            currentUser = { userId: mockUserId, role: "owner" };
             const updated = createMockTemplate({
                 id: "template-reminder",
                 templateKey: SystemTemplateKey.REMINDER,
@@ -204,6 +218,7 @@ describe("SystemTemplateController (Integration)", () => {
         });
 
         it("returns 400 for missing variables", async () => {
+            currentUser = { userId: mockUserId, role: "owner" };
             service.update.mockRejectedValue(new BadRequestException("Missing required variables"));
 
             const response = await request(app.getHttpServer())
@@ -211,6 +226,15 @@ describe("SystemTemplateController (Integration)", () => {
                 .send({ content: "Hello" });
 
             expect(response.status).toBe(400);
+        });
+
+        it("returns 403 for non-owner users", async () => {
+            const response = await request(app.getHttpServer())
+                .put(`/system-templates/${SystemTemplateKey.REMINDER}`)
+                .send({ content: "Updated content {{name}}" });
+
+            expect(response.status).toBe(403);
+            expect(service.update).not.toHaveBeenCalled();
         });
     });
 
@@ -337,6 +361,7 @@ describe("SystemTemplateController (Integration)", () => {
 
     describe("POST /system-templates/:key/rollback/:versionNumber", () => {
         it("rollbacks to version", async () => {
+            currentUser = { userId: mockUserId, role: "owner" };
             const rolledBack = createMockTemplate({
                 id: "rolled-back",
                 templateKey: SystemTemplateKey.INFO,
@@ -353,6 +378,7 @@ describe("SystemTemplateController (Integration)", () => {
         });
 
         it("returns 404 for non-existent", async () => {
+            currentUser = { userId: mockUserId, role: "owner" };
             service.rollback.mockRejectedValue(new NotFoundException("Version not found"));
 
             const response = await request(app.getHttpServer())
@@ -362,16 +388,26 @@ describe("SystemTemplateController (Integration)", () => {
         });
 
         it("returns 400 for invalid version number", async () => {
+            currentUser = { userId: mockUserId, role: "owner" };
             const response = await request(app.getHttpServer())
                 .post(`/system-templates/${SystemTemplateKey.INFO}/rollback/abc`);
 
             expect(response.status).toBe(400);
             expect(service.rollback).not.toHaveBeenCalled();
         });
+
+        it("returns 403 for non-owner users", async () => {
+            const response = await request(app.getHttpServer())
+                .post(`/system-templates/${SystemTemplateKey.INFO}/rollback/2`);
+
+            expect(response.status).toBe(403);
+            expect(service.rollback).not.toHaveBeenCalled();
+        });
     });
 
     describe("POST /system-templates/:key/reset", () => {
         it("resets to default content", async () => {
+            currentUser = { userId: mockUserId, role: "owner" };
             const reset = createMockTemplate({
                 id: "reset-id",
                 templateKey: SystemTemplateKey.GREETING,
@@ -385,6 +421,14 @@ describe("SystemTemplateController (Integration)", () => {
             expect(response.status).toBe(201);
             expect(response.body.content).toBe("Default greeting");
             expect(service.resetToDefault).toHaveBeenCalledWith(SystemTemplateKey.GREETING, mockUserId);
+        });
+
+        it("returns 403 for non-owner users", async () => {
+            const response = await request(app.getHttpServer())
+                .post(`/system-templates/${SystemTemplateKey.GREETING}/reset`);
+
+            expect(response.status).toBe(403);
+            expect(service.resetToDefault).not.toHaveBeenCalled();
         });
     });
 });
