@@ -80,4 +80,17 @@ describe("consultation inquiry API routes", () => {
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({ error: "Failed to mark consultation inquiry as read" });
   });
+
+  describe("auth rejection", () => {
+    it("rejects mark-read without auth_token", async () => {
+      const request = new NextRequest("http://localhost/api/consultation-inquiries/inquiry_123/read", {
+        method: "PATCH",
+      });
+      const response = await markInquiryRead(request, {
+        params: Promise.resolve({ id: "inquiry_123" }),
+      });
+      expect(response.status).toBe(401);
+      expect(mockPatch).not.toHaveBeenCalled();
+    });
+  });
 });

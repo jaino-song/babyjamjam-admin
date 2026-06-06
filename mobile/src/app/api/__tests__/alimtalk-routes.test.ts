@@ -46,6 +46,28 @@ describe("Alimtalk API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  describe("auth rejection", () => {
+    const noAuth = { headers: { cookie: "" } };
+
+    it("rejects alimtalk logs GET without an auth cookie before proxying", async () => {
+      const response = await listAlimtalkLogs(createRequest("/api/alimtalk-logs", noAuth));
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("rejects upcoming jobs GET without an auth cookie before proxying", async () => {
+      const response = await listUpcomingJobs(createRequest("/api/alimtalk-trigger-jobs/upcoming", noAuth));
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("rejects trigger templates GET without an auth cookie before proxying", async () => {
+      const response = await listTriggerTemplates(createRequest("/api/alimtalk-trigger-templates", noAuth));
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+  });
+
   it("preserves backend error status and sanitizes payload when listing Alimtalk logs", async () => {
     mockGet.mockRejectedValue({
       response: {

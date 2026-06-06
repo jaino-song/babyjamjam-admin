@@ -8,7 +8,10 @@ import {
   GET as getAlimtalkProvider,
   PUT as updateAlimtalkProvider,
 } from "../alimtalk-provider/route";
-import { POST as requestMessageSenderApproval } from "../message-sender-approval/route";
+import {
+  GET as getMessageSenderApproval,
+  POST as requestMessageSenderApproval,
+} from "../message-sender-approval/route";
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -45,6 +48,35 @@ describe("settings API routes", () => {
 
   afterEach(() => {
     consoleErrorSpy.mockRestore();
+  });
+
+  function noCookieRequest(path: string, method = "GET"): NextRequest {
+    return new NextRequest(`http://localhost${path}`, { method });
+  }
+
+  it("requires auth before fetching the Alimtalk provider", async () => {
+    const response = await getAlimtalkProvider(noCookieRequest("/api/settings/alimtalk-provider"));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before updating the Alimtalk provider", async () => {
+    const response = await updateAlimtalkProvider(noCookieRequest("/api/settings/alimtalk-provider", "PUT"));
+    expect(response.status).toBe(401);
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before fetching message sender approval status", async () => {
+    const response = await getMessageSenderApproval(noCookieRequest("/api/settings/message-sender-approval"));
+    expect(response.status).toBe(401);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before requesting message sender approval", async () => {
+    const response = await requestMessageSenderApproval(noCookieRequest("/api/settings/message-sender-approval", "POST"));
+    expect(response.status).toBe(401);
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("preserves backend error status and sanitizes payload for Alimtalk provider settings", async () => {

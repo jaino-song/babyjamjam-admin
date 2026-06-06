@@ -7,6 +7,7 @@ import { serverAPIClient } from "@/lib/api/server";
 import { GET as listMessageTemplates, POST as createMessageTemplate } from "../route";
 import {
   DELETE as deleteMessageTemplate,
+  GET as getMessageTemplate,
   PATCH as updateMessageTemplate,
 } from "../[id]/route";
 
@@ -48,6 +49,43 @@ describe("message-template API routes", () => {
 
   afterEach(() => {
     consoleErrorSpy.mockRestore();
+  });
+
+  function noCookieRequest(path: string, method = "GET"): NextRequest {
+    return new NextRequest(`http://localhost${path}`, { method });
+  }
+
+  const idParams = { params: Promise.resolve({ id: "24" }) };
+
+  it("requires auth before listing message templates", async () => {
+    const response = await listMessageTemplates(noCookieRequest("/api/message-templates"));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before creating message templates", async () => {
+    const response = await createMessageTemplate(noCookieRequest("/api/message-templates", "POST"));
+    expect(response.status).toBe(401);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before fetching a single message template", async () => {
+    const response = await getMessageTemplate(noCookieRequest("/api/message-templates/24"), idParams);
+    expect(response.status).toBe(401);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before updating a message template", async () => {
+    const response = await updateMessageTemplate(noCookieRequest("/api/message-templates/24", "PATCH"), idParams);
+    expect(response.status).toBe(401);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before deleting a message template", async () => {
+    const response = await deleteMessageTemplate(noCookieRequest("/api/message-templates/24", "DELETE"), idParams);
+    expect(response.status).toBe(401);
+    expect(mockDelete).not.toHaveBeenCalled();
   });
 
   it("preserves backend status and payload when listing message templates", async () => {

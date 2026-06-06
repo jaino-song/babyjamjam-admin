@@ -10,6 +10,7 @@ import {
   PATCH as updateEmployee,
   POST as createEmployee,
 } from "../route";
+import { GET as checkEmployeePhone } from "../check-phone/route";
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -213,5 +214,14 @@ describe("employee API routes", () => {
 
     expect(response.status).toBe(204);
     await expect(response.text()).resolves.toBe("");
+  });
+
+  describe("auth rejection", () => {
+    it("rejects check-phone without auth_token", async () => {
+      const request = new NextRequest("http://localhost/api/employees/check-phone?phone=01000000000");
+      const response = await checkEmployeePhone(request);
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
   });
 });

@@ -42,6 +42,30 @@ describe("voucher price info API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  function noCookieRequest(path: string, method = "GET"): NextRequest {
+    return new NextRequest(`http://localhost${path}`, { method });
+  }
+
+  it("requires auth before fetching voucher price infos by type", async () => {
+    const response = await getVoucherPriceInfosByType(noCookieRequest("/api/voucher-price-infos/type"));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before fetching voucher price years", async () => {
+    const response = await getVoucherPriceYears(noCookieRequest("/api/voucher-price-infos/years"));
+    expect(response.status).toBe(401);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before bulk updating voucher prices", async () => {
+    const response = await bulkUpdateVoucherPrices(noCookieRequest("/api/voucher-price-infos/bulk-update", "POST"));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
   it("preserves backend status and payload when fetching voucher price infos by type", async () => {
     mockGet.mockResolvedValue({
       status: 409,

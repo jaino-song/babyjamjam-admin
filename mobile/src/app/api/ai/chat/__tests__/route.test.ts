@@ -64,6 +64,60 @@ describe("AI chat API routes", () => {
     mockFetch.mockReset();
   });
 
+  describe("auth rejection", () => {
+    it("rejects stream POST without an auth cookie before proxying", async () => {
+      setAuthCookie();
+      const response = await streamChat(createRequest("/api/ai/chat/stream", JSON.stringify({ message: "hi" })));
+      expect(response.status).toBe(401);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects persist POST without an auth cookie before proxying", async () => {
+      setAuthCookie();
+      const response = await persistChat(
+        createRequest("/api/ai/chat/persist", JSON.stringify({ userMessage: "hi", assistantContent: "yo" })),
+      );
+      expect(response.status).toBe(401);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects feedback POST without an auth cookie before proxying", async () => {
+      setAuthCookie();
+      const response = await submitFeedback(
+        createRequest("/api/ai/chat/feedback", JSON.stringify({ sessionId: "s1", type: "positive" })),
+      );
+      expect(response.status).toBe(401);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects history GET without an auth cookie before proxying", async () => {
+      setAuthCookie();
+      const response = await getChatHistory(createGetRequest("/api/ai/chat/history"));
+      expect(response.status).toBe(401);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects session GET without an auth cookie before proxying", async () => {
+      setAuthCookie();
+      const response = await getChatSession(
+        createGetRequest("/api/ai/chat/sessions/session-1"),
+        createSessionParams("session-1"),
+      );
+      expect(response.status).toBe(401);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects session DELETE without an auth cookie before proxying", async () => {
+      setAuthCookie();
+      const response = await deleteChatSession(
+        createGetRequest("/api/ai/chat/sessions/session-1"),
+        createSessionParams("session-1"),
+      );
+      expect(response.status).toBe(401);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects malformed persist JSON before proxying", async () => {
     setAuthCookie("auth-token");
 

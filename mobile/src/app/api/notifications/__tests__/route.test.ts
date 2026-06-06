@@ -8,6 +8,9 @@ import { GET as getNotifications } from "../route";
 import { POST as subscribeNotifications } from "../subscribe/route";
 import { POST as unsubscribeNotifications } from "../unsubscribe/route";
 import { GET as getVapidKey } from "../vapid-key/route";
+import { PATCH as markAllRead } from "../read-all/route";
+import { GET as getUnreadCount } from "../unread/count/route";
+import { POST as testBroadcast } from "../test-broadcast/route";
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -24,6 +27,7 @@ jest.mock("@/lib/e2e", () => ({
 
 const mockGet = serverAPIClient.get as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
+const mockPatch = serverAPIClient.patch as jest.Mock;
 
 interface TestRequestInit {
   method?: string;
@@ -46,6 +50,51 @@ describe("notification API routes", () => {
   beforeEach(() => {
     mockGet.mockReset();
     mockPost.mockReset();
+    mockPatch.mockReset();
+  });
+
+  function noCookieRequest(path: string, method = "GET"): NextRequest {
+    return new NextRequest(`http://localhost${path}`, { method });
+  }
+
+  it("requires auth before listing notifications", async () => {
+    const response = await getNotifications(noCookieRequest("/api/notifications"));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before marking all notifications read", async () => {
+    const response = await markAllRead(noCookieRequest("/api/notifications/read-all", "PATCH"));
+    expect(response.status).toBe(401);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before subscribing to notifications", async () => {
+    const response = await subscribeNotifications(noCookieRequest("/api/notifications/subscribe", "POST"));
+    expect(response.status).toBe(401);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before unsubscribing from notifications", async () => {
+    const response = await unsubscribeNotifications(noCookieRequest("/api/notifications/unsubscribe", "POST"));
+    expect(response.status).toBe(401);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before fetching the unread count", async () => {
+    const response = await getUnreadCount(noCookieRequest("/api/notifications/unread/count"));
+    expect(response.status).toBe(401);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before sending a test broadcast", async () => {
+    const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(new Response("{}"));
+    const response = await testBroadcast(noCookieRequest("/api/notifications/test-broadcast", "POST"));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 
   it("preserves backend status and payload when listing notifications", async () => {

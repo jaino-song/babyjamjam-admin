@@ -41,6 +41,31 @@ describe("system-template root API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  function noCookieRequest(path: string, method = "GET"): NextRequest {
+    return new NextRequest(`http://localhost${path}`, { method });
+  }
+
+  const keyParams = { params: Promise.resolve({ key: "INTRO" }) };
+
+  it("requires auth before listing system templates", async () => {
+    const response = await listSystemTemplates(noCookieRequest("/api/system-templates"));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before fetching a system template", async () => {
+    const response = await getSystemTemplate(noCookieRequest("/api/system-templates/INTRO"), keyParams);
+    expect(response.status).toBe(401);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before updating a system template", async () => {
+    const response = await updateSystemTemplate(noCookieRequest("/api/system-templates/INTRO", "PUT"), keyParams);
+    expect(response.status).toBe(401);
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
   it("preserves backend status and payload when listing system templates", async () => {
     mockGet.mockResolvedValue({
       status: 403,

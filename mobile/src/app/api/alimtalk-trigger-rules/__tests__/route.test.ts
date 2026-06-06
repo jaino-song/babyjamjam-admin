@@ -51,6 +51,35 @@ describe("Alimtalk trigger rule API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  describe("auth rejection", () => {
+    const noAuth = { headers: { cookie: "" } };
+    const ctx = { params: Promise.resolve({ triggerId: "rule_123" }) };
+
+    it("rejects rule GET without an auth cookie before proxying", async () => {
+      const response = await getRule(createRequest("/api/alimtalk-trigger-rules/rule_123", noAuth), ctx);
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("rejects rule PATCH without an auth cookie before proxying", async () => {
+      const response = await updateRule(
+        createRequest("/api/alimtalk-trigger-rules/rule_123", { method: "PATCH", headers: { cookie: "" } }),
+        ctx,
+      );
+      expect(response.status).toBe(401);
+      expect(mockPatch).not.toHaveBeenCalled();
+    });
+
+    it("rejects rule DELETE without an auth cookie before proxying", async () => {
+      const response = await deleteRule(
+        createRequest("/api/alimtalk-trigger-rules/rule_123", { method: "DELETE", headers: { cookie: "" } }),
+        ctx,
+      );
+      expect(response.status).toBe(401);
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+  });
+
   it("preserves backend error status and sanitizes payload when listing rules", async () => {
     mockGet.mockRejectedValue({
       response: {

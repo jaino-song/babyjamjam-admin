@@ -8,6 +8,7 @@ import { serverAPIClient } from "@/lib/api/server";
 import { POST as rollbackTemplate } from "../[key]/rollback/[version]/route";
 import { POST as validateTemplate } from "../[key]/validate/route";
 import { GET as getTemplateVersions } from "../[key]/versions/route";
+import { GET as getTemplateVersion } from "../[key]/versions/[version]/route";
 
 jest.mock("@/lib/api/server", () => ({
     serverAPIClient: {
@@ -48,6 +49,19 @@ describe("system-template nested API routes", () => {
         const response = await getTemplateVersions(
             createRequest("/api/system-templates/GREETING/versions"),
             { params: Promise.resolve({ key: "GREETING" }) },
+        );
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toEqual({
+            error: "Authentication required. Please log in.",
+        });
+        expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("requires auth before fetching a specific system-template version", async () => {
+        const response = await getTemplateVersion(
+            createRequest("/api/system-templates/GREETING/versions/2"),
+            { params: Promise.resolve({ key: "GREETING", version: "2" }) },
         );
 
         expect(response.status).toBe(401);

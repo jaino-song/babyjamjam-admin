@@ -38,6 +38,20 @@ describe("POST /api/refresh-access-token", () => {
         consoleErrorSpy.mockRestore();
     });
 
+    it("rejects requests without an auth cookie before proxying", async () => {
+        const request = new NextRequest("http://localhost/api/refresh-access-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ executionTime: 1780000000000 }),
+        });
+
+        const response = await POST(request);
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toEqual({ error: "Authentication required. Please log in." });
+        expect(mockServerPost).not.toHaveBeenCalled();
+    });
+
     it("rejects bodies missing executionTime before proxying", async () => {
         const response = await POST(createRequest(JSON.stringify({})));
 
