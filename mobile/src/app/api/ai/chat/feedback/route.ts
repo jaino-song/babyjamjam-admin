@@ -15,7 +15,7 @@ const chatFeedbackSchema = z
         type: z.enum(["positive", "negative"]),
         messageId: z.string().optional(),
         messageIndex: z.number().int().min(0).optional(),
-        comment: z.string().max(10_000).optional(),
+        comment: z.string().optional(),
     })
     .passthrough();
 

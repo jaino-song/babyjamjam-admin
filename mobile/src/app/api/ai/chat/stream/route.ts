@@ -7,11 +7,13 @@ import { parseBody, upstreamSseErrorResponse } from "@/lib/api/route-utils";
 const BACKEND_URL = BACKEND_BASE_URL;
 
 // Mirrors backend ChatStreamDto: `message` is required (@IsNotEmpty @IsString),
-// `sessionId` optional string. Other fields pass through to the backend pipe.
+// `sessionId` optional. useChatStream sends sessionId: null for NEW sessions
+// and class-validator's @IsOptional treats null as absent, so the proxy must
+// accept null too. No message cap: the backend DTO has none.
 const chatStreamSchema = z
     .object({
-        message: z.string().min(1).max(10_000),
-        sessionId: z.string().optional(),
+        message: z.string().min(1),
+        sessionId: z.string().nullable().optional(),
     })
     .passthrough();
 
