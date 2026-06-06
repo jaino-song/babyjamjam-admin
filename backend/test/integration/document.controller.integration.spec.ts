@@ -13,7 +13,10 @@ describe("DocumentController (Integration)", () => {
     let documentService: jest.Mocked<DocumentService>;
     let fileStorage: jest.Mocked<FileStoragePort>;
 
-    function createDocumentEntity(orgId: string): DocumentEntity {
+    function createDocumentEntity(
+        orgId: string,
+        storageUrl: string | null = "https://example.test/contract.pdf",
+    ): DocumentEntity {
         return DocumentEntity.reconstitute(
             "doc-1",
             "Contract",
@@ -23,7 +26,7 @@ describe("DocumentController (Integration)", () => {
             "application/pdf",
             100,
             "documents/contract.pdf",
-            "https://example.test/contract.pdf",
+            storageUrl,
             orgId,
             "user-1",
             new Date("2026-01-01T00:00:00.000Z"),
@@ -64,6 +67,7 @@ describe("DocumentController (Integration)", () => {
                     provide: FILE_STORAGE_PORT,
                     useValue: {
                         upload: jest.fn(),
+                        createSignedUrl: jest.fn(),
                         download: jest.fn(),
                         delete: jest.fn(),
                     },
@@ -103,7 +107,8 @@ describe("DocumentController (Integration)", () => {
     });
 
     it("should use tenant branch as document metadata branch when creating documents", async () => {
-        documentService.create.mockResolvedValue(createDocumentEntity("branch-1"));
+        fileStorage.createSignedUrl.mockResolvedValue("https://example.test/signed-contract.pdf");
+        documentService.create.mockResolvedValue(createDocumentEntity("branch-1", null));
 
         const response = await request(app.getHttpServer())
             .post("/documents")
@@ -121,17 +126,20 @@ describe("DocumentController (Integration)", () => {
 
         expect(response.status).toBe(201);
         expect(response.body.orgId).toBe("branch-1");
+        expect(response.body.storageUrl).toBe("https://example.test/signed-contract.pdf");
         expect(documentService.create).toHaveBeenCalledWith(
             "branch-1",
             expect.objectContaining({
                 branchid: "branch-1",
             }),
         );
+        expect(documentService.create.mock.calls[0]?.[1]).not.toHaveProperty("storageurl");
+        expect(fileStorage.createSignedUrl).toHaveBeenCalledWith("documents/contract.pdf");
     });
 
     it("should use tenant branch as document metadata branch when uploading documents", async () => {
-        fileStorage.upload.mockResolvedValue("https://example.test/contract.pdf");
-        documentService.create.mockResolvedValue(createDocumentEntity("branch-1"));
+        fileStorage.upload.mockResolvedValue("https://example.test/signed-contract.pdf");
+        documentService.create.mockResolvedValue(createDocumentEntity("branch-1", null));
 
         const response = await request(app.getHttpServer())
             .post("/documents/upload")
@@ -143,17 +151,20 @@ describe("DocumentController (Integration)", () => {
 
         expect(response.status).toBe(201);
         expect(response.body.orgId).toBe("branch-1");
+        expect(response.body.storageUrl).toBe("https://example.test/signed-contract.pdf");
         expect(documentService.create).toHaveBeenCalledWith(
             "branch-1",
             expect.objectContaining({
                 branchid: "branch-1",
             }),
         );
+        expect(documentService.create.mock.calls[0]?.[1]).not.toHaveProperty("storageurl");
+        expect(fileStorage.createSignedUrl).not.toHaveBeenCalled();
     });
 
     it("should use tenant user as document uploader when uploading documents", async () => {
-        fileStorage.upload.mockResolvedValue("https://example.test/contract.pdf");
-        documentService.create.mockResolvedValue(createDocumentEntity("branch-1"));
+        fileStorage.upload.mockResolvedValue("https://example.test/signed-contract.pdf");
+        documentService.create.mockResolvedValue(createDocumentEntity("branch-1", null));
 
         const response = await request(app.getHttpServer())
             .post("/documents/upload")
@@ -171,5 +182,18 @@ describe("DocumentController (Integration)", () => {
                 uploadedby: "user-1",
             }),
         );
+    });
+
+    it("should sign stored document paths when returning a document detail", async () => {
+        documentService.findById.mockResolvedValue(
+            createDocumentEntity("branch-1", "https://public.example.test/contract.pdf"),
+        );
+        fileStorage.createSignedUrl.mockResolvedValue("https://example.test/signed-contract.pdf");
+
+        const response = await request(app.getHttpServer()).get("/documents/doc-1");
+
+        expect(response.status).toBe(200);
+        expect(response.body.storageUrl).toBe("https://example.test/signed-contract.pdf");
+        expect(fileStorage.createSignedUrl).toHaveBeenCalledWith("documents/contract.pdf");
     });
 });

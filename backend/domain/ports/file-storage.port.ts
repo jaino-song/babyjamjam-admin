@@ -6,7 +6,7 @@ export interface FileStoragePort {
    * @param file - file buffer
    * @param path - storage path (e.g., "documents/uuid.pdf")
    * @param mimetype - mime type of the file
-   * @returns public url of the uploaded file
+   * @returns signed url of the uploaded file
    */
   upload(file: Buffer, path: string, mimetype: string): Promise<string>;
 
@@ -17,11 +17,12 @@ export interface FileStoragePort {
   delete(path: string): Promise<void>;
 
   /**
-   * get the public url for a file
+   * create a signed url for a file
    * @param path - storage path
-   * @returns public url
+   * @param ttlSeconds - optional signed url ttl in seconds
+   * @returns signed url
    */
-  getPublicUrl(path: string): string;
+  createSignedUrl(path: string, ttlSeconds?: number): Promise<string>;
 
   /**
    * ensure the storage bucket exists, create if not

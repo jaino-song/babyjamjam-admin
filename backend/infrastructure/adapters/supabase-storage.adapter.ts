@@ -3,13 +3,25 @@ import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { FileStoragePort } from '../../domain/ports/file-storage.port';
 
+const DEFAULT_SIGNED_URL_TTL_SECONDS = 300;
+
+export class StorageSignedUrlError extends Error {
+  constructor(path: string, message: string) {
+    super(`Failed to create signed URL for "${path}": ${message}`);
+    this.name = 'StorageSignedUrlError';
+  }
+}
+
 @Injectable()
 export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
   private supabase: SupabaseClient | null = null;
   private readonly bucketName = 'documents';
   private readonly logger = new Logger(SupabaseStorageAdapter.name);
+  private readonly signedUrlTtlSeconds: number;
 
   constructor(private readonly configService: ConfigService) {
+    this.signedUrlTtlSeconds = this.parseSignedUrlTtlSeconds();
+
     const supabaseUrl = this.configService.get<string>('SUPABASE_URL');
     const supabaseServiceKey = this.configService.get<string>(
       'SUPABASE_SERVICE_KEY',
@@ -35,15 +47,13 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
 
   async ensureBucketExists(): Promise<void> {
     const supabase = this.getSupabaseClient();
-    const { data, error } = await supabase.storage.getBucket(
-      this.bucketName,
-    );
+    const { error } = await supabase.storage.getBucket(this.bucketName);
 
     if (error && error.message.includes('not found')) {
       const { error: createError } = await supabase.storage.createBucket(
         this.bucketName,
         {
-          public: true,
+          public: false,
           fileSizeLimit: 25 * 1024 * 1024, // 25MB
         },
       );
@@ -62,7 +72,7 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
     mimetype: string,
   ): Promise<string> {
     const supabase = this.getSupabaseClient();
-    const { data, error } = await supabase.storage
+    const { error } = await supabase.storage
       .from(this.bucketName)
       .upload(path, file, {
         contentType: mimetype,
@@ -73,7 +83,7 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
       throw new Error(`Failed to upload file: ${error.message}`);
     }
 
-    return this.getPublicUrl(path);
+    return this.createSignedUrl(path);
   }
 
   async delete(path: string): Promise<void> {
@@ -87,13 +97,27 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
     }
   }
 
-  getPublicUrl(path: string): string {
+  async createSignedUrl(
+    path: string,
+    ttlSeconds = this.signedUrlTtlSeconds,
+  ): Promise<string> {
     const supabase = this.getSupabaseClient();
-    const { data } = supabase.storage
+    const { data, error } = await supabase.storage
       .from(this.bucketName)
-      .getPublicUrl(path);
+      .createSignedUrl(path, ttlSeconds);
 
-    return data.publicUrl;
+    if (error) {
+      throw new StorageSignedUrlError(path, error.message);
+    }
+
+    if (!data?.signedUrl) {
+      throw new StorageSignedUrlError(
+        path,
+        'Supabase did not return a signed URL.',
+      );
+    }
+
+    return data.signedUrl;
   }
 
   async download(path: string): Promise<Buffer> {
@@ -113,5 +137,25 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
     }
 
     return this.supabase;
+  }
+
+  private parseSignedUrlTtlSeconds(): number {
+    const rawTtl = this.configService.get<string>(
+      'STORAGE_SIGNED_URL_TTL_SECONDS',
+    );
+
+    if (!rawTtl) {
+      return DEFAULT_SIGNED_URL_TTL_SECONDS;
+    }
+
+    const parsedTtl = Number(rawTtl);
+    if (!Number.isInteger(parsedTtl) || parsedTtl <= 0) {
+      this.logger.warn(
+        `Invalid STORAGE_SIGNED_URL_TTL_SECONDS="${rawTtl}". Falling back to ${DEFAULT_SIGNED_URL_TTL_SECONDS} seconds.`,
+      );
+      return DEFAULT_SIGNED_URL_TTL_SECONDS;
+    }
+
+    return parsedTtl;
   }
 }
