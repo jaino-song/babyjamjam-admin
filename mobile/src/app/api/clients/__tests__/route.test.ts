@@ -5,8 +5,10 @@ import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { GET as getClients, POST as createClient } from "../route";
-import { GET as getClient } from "../[id]/route";
+import { GET as getClient, PATCH as updateClient } from "../[id]/route";
+import { PATCH as terminateClient } from "../[id]/terminate/route";
 import { PATCH as requestReplacement } from "../[id]/request-replacement/route";
+import { PATCH as completeReplacement } from "../[id]/complete-replacement/route";
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -132,5 +134,183 @@ describe("client API routes", () => {
       error: "Request body must be valid JSON",
     });
     expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed update-client JSON before proxying", async () => {
+    const response = await updateClient(
+      createRequest("/api/clients/12", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: "{bad-json",
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Request body must be valid JSON",
+    });
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects update-client bodies with wrong field types before proxying", async () => {
+    const response = await updateClient(
+      createRequest("/api/clients/12", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // careCenter must be a boolean per UpdateClientDto
+        body: JSON.stringify({ careCenter: "yes" }),
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated update-client body to the backend", async () => {
+    mockPatch.mockResolvedValue({ status: 200, data: { id: 12 } });
+
+    const payload = { name: "Baby Lee", careCenter: true, primaryEmployeeId: 3 };
+
+    const response = await updateClient(
+      createRequest("/api/clients/12", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ id: 12 });
+    expect(mockPatch).toHaveBeenCalledWith("/clients/12", payload, expect.any(Object));
+  });
+
+  it("rejects malformed terminate JSON before proxying", async () => {
+    const response = await terminateClient(
+      createRequest("/api/clients/12/terminate", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: "{bad-json",
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Request body must be valid JSON",
+    });
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects terminate bodies with a wrong reason type before proxying", async () => {
+    const response = await terminateClient(
+      createRequest("/api/clients/12/terminate", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // reason must be a string per TerminateServiceDto
+        body: JSON.stringify({ reason: 42 }),
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated terminate body to the backend", async () => {
+    mockPatch.mockResolvedValue({ status: 200, data: { status: "terminated" } });
+
+    const payload = { reason: "client moved" };
+
+    const response = await terminateClient(
+      createRequest("/api/clients/12/terminate", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "terminated" });
+    expect(mockPatch).toHaveBeenCalledWith("/clients/12/terminate", payload, expect.any(Object));
+  });
+
+  it("rejects request-replacement bodies missing the required primary employee id", async () => {
+    const response = await requestReplacement(
+      createRequest("/api/clients/12/request-replacement", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // newPrimaryEmployeeId is @IsInt (required) per RequestReplacementDto
+        body: JSON.stringify({ newSecondaryEmployeeId: 5 }),
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated request-replacement body to the backend", async () => {
+    mockPatch.mockResolvedValue({ status: 200, data: { status: "replacement_requested" } });
+
+    const payload = { newPrimaryEmployeeId: 8, newSecondaryEmployeeId: null };
+
+    const response = await requestReplacement(
+      createRequest("/api/clients/12/request-replacement", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "replacement_requested" });
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/clients/12/request-replacement",
+      payload,
+      expect.any(Object),
+    );
+  });
+
+  it("rejects malformed complete-replacement JSON before proxying", async () => {
+    const response = await completeReplacement(
+      createRequest("/api/clients/12/complete-replacement", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: "{bad-json",
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Request body must be valid JSON",
+    });
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("forwards an empty complete-replacement body to the backend", async () => {
+    mockPatch.mockResolvedValue({ status: 200, data: { status: "active" } });
+
+    const response = await completeReplacement(
+      createRequest("/api/clients/12/complete-replacement", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "active" });
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/clients/12/complete-replacement",
+      {},
+      expect.any(Object),
+    );
   });
 });

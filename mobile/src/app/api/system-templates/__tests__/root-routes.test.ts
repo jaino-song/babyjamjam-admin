@@ -68,6 +68,44 @@ describe("system-template root API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "template not found" });
   });
 
+  it("forwards a validated template update to the backend path", async () => {
+    mockPut.mockResolvedValue({
+      status: 200,
+      data: { key: "INTRO", content: "Hello" },
+    });
+
+    const response = await updateSystemTemplate(
+      createRequest("/api/system-templates/INTRO", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "Hello" }),
+      }),
+      { params: Promise.resolve({ key: "INTRO" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ key: "INTRO", content: "Hello" });
+    expect(mockPut).toHaveBeenCalledWith(
+      "/system-templates/INTRO",
+      { content: "Hello" },
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it("rejects an update body missing content before proxying", async () => {
+    const response = await updateSystemTemplate(
+      createRequest("/api/system-templates/INTRO", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customVariables: [] }),
+      }),
+      { params: Promise.resolve({ key: "INTRO" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed update JSON before proxying", async () => {
     const response = await updateSystemTemplate(
       createRequest("/api/system-templates/INTRO", {

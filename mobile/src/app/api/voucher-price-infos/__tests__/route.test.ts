@@ -84,6 +84,77 @@ describe("voucher price info API routes", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
+  it("rejects bulk update with an empty items array using the items message", async () => {
+    const response = await bulkUpdateVoucherPrices(
+      createRequest("/api/voucher-price-infos/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year: 2026, items: [] }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "업데이트할 항목이 없습니다",
+    });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects bulk update with an out-of-range year using the year message", async () => {
+    const response = await bulkUpdateVoucherPrices(
+      createRequest("/api/voucher-price-infos/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year: 1999, items: [{ id: 1 }] }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "유효한 연도를 입력해주세요 (2000-2100)",
+    });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects bulk update with a non-numeric year using the year message", async () => {
+    const response = await bulkUpdateVoucherPrices(
+      createRequest("/api/voucher-price-infos/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: [{ id: 1 }] }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "유효한 연도를 입력해주세요 (2000-2100)",
+    });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated bulk update body to the backend", async () => {
+    mockPost.mockResolvedValue({ status: 200, data: { updated: [1], created: [], errors: [] } });
+
+    const payload = { year: 2026, items: [{ id: 1 }] };
+    const response = await bulkUpdateVoucherPrices(
+      createRequest("/api/voucher-price-infos/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ updated: [1], created: [], errors: [] });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/voucher-price-infos/bulk-update",
+      payload,
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer auth-token" }),
+      }),
+    );
+  });
+
   it("does not return or log raw rejected backend bulk update errors", async () => {
     mockPost.mockRejectedValue({
       response: {

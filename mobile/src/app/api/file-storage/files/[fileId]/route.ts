@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     backendJsonResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    invalidJsonResponse,
-    readJsonObjectBody,
+    parseBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
 import {
@@ -14,6 +14,18 @@ import {
     invalidFileIdResponse,
     isValidFileId,
 } from "../../file-route-utils";
+
+// Mirrors backend UpdateDocumentDto: every field is @IsOptional, so a
+// passthrough object that type-checks known fields is sufficient. The
+// backend's authoritative ValidationPipe owns the full contract.
+const updateDocumentSchema = z
+    .object({
+        name: z.string().optional(),
+        description: z.string().optional(),
+        categoryId: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+    })
+    .passthrough();
 
 export async function GET(
     request: NextRequest,
@@ -53,18 +65,17 @@ export async function PUT(
         return invalidFileIdResponse();
     }
 
+    const { data, response: invalid } = await parseBody(updateDocumentSchema, request);
+    if (invalid) {
+        return invalid;
+    }
+
     try {
-        const body = await readJsonObjectBody(request);
-        const response = await serverAPIClient.put(documentPath(fileId), body, {
+        const response = await serverAPIClient.put(documentPath(fileId), data, {
             headers: getAuthHeaders(token),
         });
         return backendJsonResponse(response);
     } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) {
-            return invalidJson;
-        }
-
         return errorResponse(error, "update document");
     }
 }

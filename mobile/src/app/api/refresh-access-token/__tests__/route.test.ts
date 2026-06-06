@@ -15,14 +15,14 @@ jest.mock("@/lib/api/server", () => ({
 
 const mockServerPost = serverAPIClient.post as jest.Mock;
 
-function createRequest(): NextRequest {
+function createRequest(body: BodyInit = JSON.stringify({ executionTime: 1780000000000 })): NextRequest {
     return new NextRequest("http://localhost/api/refresh-access-token", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             cookie: "auth_token=auth-token; eformsign_refresh_token=old-refresh-token",
         },
-        body: JSON.stringify({ executionTime: 1780000000000 }),
+        body,
     });
 }
 
@@ -36,6 +36,13 @@ describe("POST /api/refresh-access-token", () => {
 
     afterEach(() => {
         consoleErrorSpy.mockRestore();
+    });
+
+    it("rejects bodies missing executionTime before proxying", async () => {
+        const response = await POST(createRequest(JSON.stringify({})));
+
+        expect(response.status).toBe(400);
+        expect(mockServerPost).not.toHaveBeenCalled();
     });
 
     it("sets eformsign cookies from nested oauth_token response", async () => {

@@ -3,6 +3,7 @@
  */
 import { NextRequest } from "next/server";
 import { AxiosError } from "axios";
+import { cookies } from "next/headers";
 
 import { serverAPIClient } from "@/lib/api/server";
 
@@ -17,13 +18,18 @@ jest.mock("@/lib/api/server", () => ({
     },
 }));
 
-const mockPost = serverAPIClient.post as jest.Mock;
+jest.mock("next/headers", () => ({
+    cookies: jest.fn(),
+}));
 
-function createRequest(): NextRequest {
+const mockPost = serverAPIClient.post as jest.Mock;
+const mockCookies = cookies as jest.Mock;
+
+function createRequest(body: BodyInit = JSON.stringify({ code: "oauth-code" })): NextRequest {
     return new NextRequest("http://localhost/api/auth/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: "oauth-code" }),
+        body,
     });
 }
 
@@ -48,11 +54,36 @@ describe("POST /api/auth/token", () => {
 
     beforeEach(() => {
         mockPost.mockReset();
+        mockCookies.mockReset();
+        mockCookies.mockResolvedValue({ set: jest.fn() } as never);
         consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     });
 
     afterEach(() => {
         consoleErrorSpy.mockRestore();
+    });
+
+    it("rejects a body missing the required code without proxying", async () => {
+        const response = await POST(createRequest(JSON.stringify({})));
+
+        expect(response.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("rejects malformed JSON without proxying", async () => {
+        const response = await POST(createRequest("{bad-json"));
+
+        expect(response.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("forwards a valid code to the backend token exchange", async () => {
+        mockPost.mockResolvedValue({ data: { accessToken: "a", refreshToken: "r" } });
+
+        const response = await POST(createRequest());
+
+        expect(response.status).toBe(200);
+        expect(mockPost).toHaveBeenCalledWith("/auth/token", { code: "oauth-code" });
     });
 
     it("does not expose upstream token exchange messages in the response", async () => {

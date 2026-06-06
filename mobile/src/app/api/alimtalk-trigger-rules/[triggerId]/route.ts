@@ -1,14 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
   backendJsonResponse,
   errorResponse,
   getAuthHeaders,
   getAuthToken,
-  invalidJsonResponse,
-  readJsonObjectBody,
+  parseBody,
   unauthorizedResponse,
 } from "@/lib/api/route-utils";
+
+// Mirrors backend UpdateAlimtalkTriggerRuleDto: every field is @IsOptional,
+// so a passthrough object that type-checks known fields is sufficient. The
+// backend's authoritative ValidationPipe owns the enum/@Min constraints.
+const updateTriggerRuleSchema = z
+  .object({
+    name: z.string().optional(),
+    isActive: z.boolean().optional(),
+    eventType: z.string().optional(),
+    offsetType: z.string().optional(),
+    offsetDays: z.number().optional(),
+    recipientType: z.string().optional(),
+    templateKey: z.string().optional(),
+  })
+  .passthrough();
 
 type RouteContext = {
   params: Promise<{ triggerId: string }>;
@@ -48,28 +63,27 @@ export async function GET(request: NextRequest, context: RouteContext) {
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
+  const token = getAuthToken(request);
+  if (!token) {
+    return unauthorizedResponse("Unauthorized");
+  }
+
+  const { triggerId } = await context.params;
+  if (!isValidTriggerId(triggerId)) {
+    return invalidTriggerIdResponse();
+  }
+
+  const { data, response: invalid } = await parseBody(updateTriggerRuleSchema, request);
+  if (invalid) {
+    return invalid;
+  }
+
   try {
-    const token = getAuthToken(request);
-    if (!token) {
-      return unauthorizedResponse("Unauthorized");
-    }
-
-    const { triggerId } = await context.params;
-    if (!isValidTriggerId(triggerId)) {
-      return invalidTriggerIdResponse();
-    }
-
-    const body = await readJsonObjectBody(request);
-    const response = await serverAPIClient.patch(triggerRulePath(triggerId), body, {
+    const response = await serverAPIClient.patch(triggerRulePath(triggerId), data, {
       headers: getAuthHeaders(token),
     });
     return backendJsonResponse(response);
   } catch (error) {
-    const invalidJson = invalidJsonResponse(error);
-    if (invalidJson) {
-      return invalidJson;
-    }
-
     return errorResponse(error, "update alimtalk trigger rule");
   }
 }
