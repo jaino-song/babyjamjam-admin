@@ -1,5 +1,9 @@
 import nextJest from "next/jest.js";
 
+// Date logic (dashboard analytics windows) is KST business-time; pin the test
+// runtime so suites are deterministic on UTC CI runners and non-KST machines.
+process.env.TZ = "Asia/Seoul";
+
 const createJestConfig = nextJest({
   dir: "./",
 });
