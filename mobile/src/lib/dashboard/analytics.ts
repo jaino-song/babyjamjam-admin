@@ -38,16 +38,30 @@ function dateValue(value: string | null) {
   return date;
 }
 
-function startOfDay(date: Date) {
-  const start = new Date(date);
-  start.setHours(0, 0, 0, 0);
-  return start;
+// Business time is KST regardless of server timezone (Vercel runs UTC, so
+// local-TZ setHours() shifted every window by 9 hours in production). KST is
+// a fixed UTC+9 offset with no DST, so day/month boundaries reduce to plain
+// offset arithmetic.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function startOfKstDay(date: Date) {
+  const shifted = new Date(date.getTime() + KST_OFFSET_MS);
+  shifted.setUTCHours(0, 0, 0, 0);
+  return new Date(shifted.getTime() - KST_OFFSET_MS);
 }
 
-function endOfDay(date: Date) {
-  const end = new Date(date);
-  end.setHours(23, 59, 59, 999);
-  return end;
+function endOfKstDay(date: Date) {
+  return new Date(startOfKstDay(date).getTime() + DAY_MS - 1);
+}
+
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * DAY_MS);
+}
+
+function kstMonthIndex(date: Date) {
+  const shifted = new Date(date.getTime() + KST_OFFSET_MS);
+  return shifted.getUTCFullYear() * 12 + shifted.getUTCMonth();
 }
 
 export function isContractIncompleteNearServiceStart(
@@ -61,11 +75,8 @@ export function isContractIncompleteNearServiceStart(
   const startDate = dateValue(client.startDate);
   if (!startDate) return false;
 
-  const windowStart = startOfDay(now);
-  windowStart.setDate(windowStart.getDate() - CONTRACT_START_WINDOW_DAYS);
-
-  const windowEnd = endOfDay(now);
-  windowEnd.setDate(windowEnd.getDate() + CONTRACT_START_WINDOW_DAYS);
+  const windowStart = addDays(startOfKstDay(now), -CONTRACT_START_WINDOW_DAYS);
+  const windowEnd = addDays(endOfKstDay(now), CONTRACT_START_WINDOW_DAYS);
 
   return startDate >= windowStart && startDate <= windowEnd;
 }
@@ -80,9 +91,8 @@ export function isServiceStartingWithinWeek(
   const startDate = dateValue(client.startDate);
   if (!startDate) return false;
 
-  const windowStart = startOfDay(now);
-  const windowEnd = endOfDay(now);
-  windowEnd.setDate(windowEnd.getDate() + SERVICE_START_WINDOW_DAYS);
+  const windowStart = startOfKstDay(now);
+  const windowEnd = addDays(endOfKstDay(now), SERVICE_START_WINDOW_DAYS);
 
   return startDate >= windowStart && startDate <= windowEnd;
 }
@@ -135,10 +145,8 @@ export function deriveDashboardAnalyticsFromClients(
   clients: DashboardAnalyticsClient[],
   now = new Date(),
 ): DashboardAnalytics {
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-  const followingMonth = new Date(today.getFullYear(), today.getMonth() + 2, 1);
+  const today = startOfKstDay(now);
+  const nextMonthIndex = kstMonthIndex(now) + 1;
 
   return clients.reduce<DashboardAnalytics>(
     (acc, client) => {
@@ -152,8 +160,7 @@ export function deriveDashboardAnalyticsFromClients(
       }
 
       if (startDate && client.serviceStatus !== "terminated") {
-        startDate.setHours(0, 0, 0, 0);
-        if (startDate >= nextMonth && startDate < followingMonth) {
+        if (kstMonthIndex(startDate) === nextMonthIndex) {
           acc.upcomingNextMonth += 1;
         }
       }
