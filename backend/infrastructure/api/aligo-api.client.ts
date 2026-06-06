@@ -6,6 +6,7 @@ import {
     AligoAlimtalkResponse,
     AligoCreateTemplateParams,
     AligoTemplateCreateResponse,
+    AligoTemplateListResponse,
 } from "domain/ports/aligo-api.port";
 import {
     AligoSendSmsParams,
@@ -23,6 +24,8 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
     private readonly ALIGO_SENDER_KEY: string;
     private readonly ALIGO_SENDER_PHONE: string;
     private readonly isConfigured: boolean;
+    private readonly TOKEN_LIFETIME_SECONDS = 1800;
+    private cachedToken: { content: string; expiresAt: number } | null = null;
 
     constructor(private readonly configService: ConfigService) {
         this.ALIGO_API_URL = configService.get("ALIGO_API_URL") || "";
@@ -139,7 +142,7 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
             throw new Error(`Aligo SMS API error (${response.status}): ${errorText}`);
         }
 
-        return (await response.json()) as AligoSmsResponse;
+        return this.normalizeSmsResponse(await response.json());
     }
 
     async createTemplate(params: AligoCreateTemplateParams): Promise<AligoTemplateCreateResponse> {
@@ -194,6 +197,103 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
         }
 
         return (await response.json()) as AligoTemplateCreateResponse;
+    }
+
+    async listTemplates(): Promise<AligoTemplateListResponse> {
+        this.assertConfigured();
+        const token = await this.getAligoToken();
+        const url = `${this.ALIGO_API_URL}/akv10/template/list/`;
+
+        const formData = new FormData();
+        formData.append("token", token);
+        formData.append("apikey", this.ALIGO_API_KEY);
+        formData.append("userid", this.ALIGO_USER_ID);
+        formData.append("senderkey", this.ALIGO_SENDER_KEY);
+        formData.append("sender", this.ALIGO_SENDER_PHONE);
+
+        this.logger.debug("[Aligo] Fetching alimtalk template list");
+
+        const response = await fetch(url, {
+            method: "POST",
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            this.logger.error(`[Aligo] Template list API error: ${response.status} - ${errorText}`);
+            throw new Error(`Aligo template list API error (${response.status}): ${errorText}`);
+        }
+
+        return (await response.json()) as AligoTemplateListResponse;
+    }
+
+    private async getAligoToken(): Promise<string> {
+        if (this.cachedToken && Date.now() < this.cachedToken.expiresAt) {
+            return this.cachedToken.content;
+        }
+
+        const url = `${this.ALIGO_API_URL}/akv10/token/create/${this.TOKEN_LIFETIME_SECONDS}/s`;
+        const formData = new FormData();
+        formData.append("apikey", this.ALIGO_API_KEY);
+        formData.append("userid", this.ALIGO_USER_ID);
+
+        const response = await fetch(url, {
+            method: "POST",
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            this.logger.error(`[Aligo] Token issue error: ${response.status} - ${errorText}`);
+            throw new Error(`Aligo token API error (${response.status}): ${errorText}`);
+        }
+
+        const data = (await response.json()) as { code: number; message: string; token?: string };
+        if (data.code !== 0 || !data.token) {
+            throw new Error(`Aligo token issue failed: ${data.message ?? "unknown error"}`);
+        }
+
+        this.cachedToken = {
+            content: data.token,
+            expiresAt: Date.now() + this.TOKEN_LIFETIME_SECONDS * 1000 - 60_000,
+        };
+        return data.token;
+    }
+
+    private normalizeSmsResponse(data: unknown): AligoSmsResponse {
+        const response = data && typeof data === "object"
+            ? data as Record<string, unknown>
+            : {};
+
+        return {
+            result_code: this.toNumber(response["result_code"], 0),
+            message: typeof response["message"] === "string" ? response["message"] : "",
+            msg_id: this.toOptionalNumber(response["msg_id"]),
+            success_cnt: this.toOptionalNumber(response["success_cnt"]),
+            error_cnt: this.toOptionalNumber(response["error_cnt"]),
+            msg_type: this.toSmsMessageType(response["msg_type"]),
+        };
+    }
+
+    private toNumber(value: unknown, fallback: number): number {
+        return this.toOptionalNumber(value) ?? fallback;
+    }
+
+    private toOptionalNumber(value: unknown): number | undefined {
+        if (typeof value === "number" && Number.isFinite(value)) {
+            return value;
+        }
+        if (typeof value === "string" && value.trim()) {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : undefined;
+        }
+        return undefined;
+    }
+
+    private toSmsMessageType(value: unknown): AligoSmsResponse["msg_type"] {
+        return value === "SMS" || value === "LMS" || value === "MMS"
+            ? value
+            : undefined;
     }
 
     private assertConfigured() {

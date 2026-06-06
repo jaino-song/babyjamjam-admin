@@ -1,286 +1,398 @@
 "use client";
 
-import { useRef, useEffect, useCallback, useLayoutEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { ArrowLeft, Trash2, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { cn } from "@/lib/utils";
-import { ChatInput } from "@/components/app/chat/ChatInput";
-import { AssistantMessage } from "@/components/app/chat/AssistantMessage";
-import { useChatStream, ChatMessage, ChatState } from "@/hooks/useChatStream";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, KeyboardEvent } from "react";
+import { Bell, Send, SquarePen } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
-function UserMessage({ message }: { message: ChatMessage }) {
-    return (
-        <div className="flex justify-end mb-4">
-            <div
-                data-component="chat-message-user"
-                className="max-w-[80%] px-4 py-3 rounded-2xl bg-primary text-primary-foreground"
-            >
-                <p className="text-base whitespace-pre-wrap break-words">
-                    {message.content}
-                </p>
+import { Spinner } from "@/components/ui/spinner";
+import { CodeBlock } from "@/components/app/chat/CodeBlock";
+import ClientRegistrationWizard, {
+  type CreatedClient,
+} from "@/components/app/chat/ClientRegistrationWizard";
+import ContractSendWizard from "@/components/app/chat/ContractSendWizard";
+import ContractStatusWizard, {
+  type ContractStatusResult,
+} from "@/components/app/chat/ContractStatusWizard";
+import { useChatStream, type ChatMessage } from "@/hooks/useChatStream";
+import { useInitialUser } from "@/providers/UserProvider";
+
+import styles from "./chat.module.css";
+
+interface ChatDisplayMessage extends ChatMessage {
+  id: string;
+  sources?: string[];
+  timeLabel?: string;
+}
+
+function formatMessageTime(message: ChatDisplayMessage) {
+  if (message.timeLabel) return message.timeLabel;
+
+  const date = new Date(message.timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+function TypingIndicator() {
+  return (
+    <span className={styles.msgTyping} aria-label="응답 작성 중">
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+}
+
+function UserMessage({ message }: { message: ChatDisplayMessage }) {
+  const timeLabel = formatMessageTime(message);
+
+  return (
+    <div className={`${styles.msgRow} ${styles.userRow}`} data-component="chat-message-user">
+      <div className={`${styles.msgAvatar} ${styles.userAvatar}`} data-component="chat-message-user-avatar">송</div>
+      <div data-component="chat-message-user-body">
+        <div className={styles.msgBubble} data-component="chat-message-user-bubble">{message.content}</div>
+        {timeLabel && <div className={styles.msgTime} data-component="chat-message-user-time">{timeLabel}</div>}
+      </div>
+    </div>
+  );
+}
+
+function AssistantMessage({ message }: { message: ChatDisplayMessage }) {
+  const wizardType = message.ui?.type;
+  const [createdClient, setCreatedClient] = useState<CreatedClient | null>(null);
+  const [contractStatus, setContractStatus] = useState<ContractStatusResult | null>(null);
+  const [contractSendDone, setContractSendDone] = useState(false);
+
+  const wizardContent = useMemo(() => {
+    if (!wizardType) return null;
+
+    switch (wizardType) {
+      case "clientRegistrationWizard":
+        if (createdClient) {
+          return (
+            <div data-component="chat-wizard-registration-success">
+              산모 등록 완료: {createdClient.name} (ID: {createdClient.id})
             </div>
-        </div>
-    );
+          );
+        }
+
+        return <ClientRegistrationWizard onCreated={(client) => setCreatedClient(client)} />;
+
+      case "contractSendWizard":
+        if (contractSendDone) {
+          return <div data-component="chat-wizard-contract-send-success">계약서 전송 화면으로 이동했습니다.</div>;
+        }
+
+        return <ContractSendWizard onComplete={() => setContractSendDone(true)} />;
+
+      case "contractStatusWizard":
+        if (contractStatus) {
+          return (
+            <div data-component="chat-wizard-contract-status-result" className={styles.wizardResult}>
+              <div data-component="chat-wizard-contract-status-state">
+                계약서 상태: <strong>{String(contractStatus.documentStatus)}</strong>
+              </div>
+              <div data-component="chat-wizard-contract-status-client">
+                산모: {contractStatus.clientName} (ID: {contractStatus.clientId})
+              </div>
+              {contractStatus.serviceStatus && (
+                <div data-component="chat-wizard-contract-status-service">서비스 상태: {contractStatus.serviceStatus}</div>
+              )}
+            </div>
+          );
+        }
+
+        return <ContractStatusWizard onCheck={(result) => setContractStatus(result)} />;
+
+      default:
+        return null;
+    }
+  }, [wizardType, createdClient, contractSendDone, contractStatus]);
+
+  const timeLabel = formatMessageTime(message);
+  const showTyping = message.isStreaming && !message.content && !wizardContent;
+
+  return (
+    <div className={styles.msgRow} data-component="chat-message-assistant">
+      <div className={`${styles.msgAvatar} ${styles.aiAvatar}`} data-component="chat-message-assistant-avatar">AI</div>
+      <div data-component="chat-message-assistant-body">
+        {showTyping ? (
+          <TypingIndicator />
+        ) : (
+          <div className={styles.msgBubble} data-component="chat-message-assistant-bubble">
+            {wizardContent ? (
+              wizardContent
+            ) : (
+              <div className={styles.chatMarkdown} data-component="chat-markdown">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    code: ({ className, children, ref, ...props }) => {
+                      void ref;
+                      const match = /language-(\w+)/.exec(className || "");
+                      const language = match ? match[1] : "";
+                      const codeString = String(children).replace(/\n$/, "");
+
+                      if (language) {
+                        return <CodeBlock language={language}>{codeString}</CodeBlock>;
+                      }
+
+                      return (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                    table: ({ children }) => (
+                      <div className={styles.tableWrapper} data-component="chat-markdown-table-wrapper">
+                        <table>{children}</table>
+                      </div>
+                    ),
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+        )}
+        {message.sources && (
+          <div className={styles.msgSources} data-component="chat-message-sources">
+            {message.sources.map((source) => (
+              <span className={styles.msgSource} key={source}>
+                {source}
+              </span>
+            ))}
+          </div>
+        )}
+        {timeLabel && !showTyping && (
+          <div className={styles.msgTime} data-component="chat-message-assistant-time">
+            {timeLabel}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ToolExecutingIndicator({ toolName }: { toolName: string | null }) {
-    return (
-        <div className="flex items-center gap-2 mb-4 px-4">
-            <Spinner size="sm" />
-            <p className="text-sm text-muted-foreground">
-                {toolName ? `${toolName} 실행 중...` : "처리 중..."}
-            </p>
-        </div>
-    );
+  return (
+    <div className={styles.stateIndicator} data-component="chat-tool-executing-indicator">
+      <p>{toolName ? `${toolName} 실행 중...` : "처리 중..."}</p>
+    </div>
+  );
 }
 
-function StateIndicator({ state }: { state: ChatState }) {
-    if (state === "connecting") {
-        return (
-            <div className="flex items-center gap-2 mb-4 px-4">
-                <Spinner size="sm" />
-                <p className="text-sm text-muted-foreground">
-                    연결 중...
-                </p>
-            </div>
-        );
-    }
-    return null;
+function ChatComposer({
+  disabled,
+  onSubmit,
+}: {
+  disabled: boolean;
+  onSubmit: (message: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const resizeTextarea = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 100)}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    resizeTextarea();
+  }, [resizeTextarea, value]);
+
+  const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    setValue(event.target.value);
+  };
+
+  const handleSubmit = () => {
+    const trimmed = value.trim();
+    if (!trimmed || disabled) return;
+
+    void onSubmit(trimmed);
+    setValue("");
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey) return;
+
+    event.preventDefault();
+    handleSubmit();
+  };
+
+  return (
+    <div className={styles.chatInputBar} data-component="chat-input-area">
+      <textarea
+        ref={textareaRef}
+        className={styles.chatInput}
+        placeholder="질문을 입력하세요..."
+        rows={1}
+        value={value}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        disabled={disabled}
+        data-component="chat-input"
+      />
+      <button
+        className={styles.chatSend}
+        type="button"
+        onClick={handleSubmit}
+        disabled={disabled || !value.trim()}
+        aria-label="메시지 보내기"
+      >
+        <Send size={16} strokeWidth={2.5} />
+      </button>
+    </div>
+  );
 }
 
 export default function ChatPage() {
-    const router = useRouter();
-    const [isOpen, setIsOpen] = useState(false);
-    const {
-        messages,
-        state,
-        sessionId,
-        sendMessage,
-        clearSession,
-        isToolExecuting,
-        currentTool,
-        loadHistory,
-        isLoadingHistory,
-        hasMoreHistory,
-    } = useChatStream();
+  const user = useInitialUser();
+  const {
+    messages,
+    state,
+    sendMessage,
+    clearSession,
+    isToolExecuting,
+    currentTool,
+    loadHistory,
+    isLoadingHistory,
+    hasMoreHistory,
+  } = useChatStream();
 
-    const handleSubmitFeedback = useCallback(async (
-        messageIndex: number,
-        type: "positive" | "negative",
-        comment?: string
-    ) => {
-        if (!sessionId) return;
-        await fetch("/api/ai/chat/feedback", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                sessionId,
-                messageIndex,
-                type,
-                comment,
-            }),
-        });
-    }, [sessionId]);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const prevScrollHeightRef = useRef(0);
+  const lastMessageRef = useRef<ChatMessage | null>(null);
 
-    const messagesEndRef = useRef<HTMLDivElement>(null);
-    const scrollContainerRef = useRef<HTMLDivElement>(null);
-    const prevScrollHeightRef = useRef(0);
-    const lastMessageRef = useRef<ChatMessage | null>(null);
+  useEffect(() => {
+    loadHistory(0);
+  }, [loadHistory]);
 
-    useEffect(() => {
-        const timer = setTimeout(() => setIsOpen(true), 10);
-        return () => clearTimeout(timer);
-    }, []);
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
 
-    useEffect(() => {
-        loadHistory(0);
-    }, [loadHistory]);
+    if (container.scrollTop < 100 && hasMoreHistory && !isLoadingHistory) {
+      prevScrollHeightRef.current = container.scrollHeight;
+      loadHistory(messages.length);
+    }
+  }, [hasMoreHistory, isLoadingHistory, messages.length, loadHistory]);
 
-    const handleScroll = useCallback(() => {
-        const container = scrollContainerRef.current;
-        if (!container) return;
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
 
-        if (container.scrollTop < 100 && hasMoreHistory && !isLoadingHistory) {
-            prevScrollHeightRef.current = container.scrollHeight;
-            loadHistory(messages.length);
-        }
-    }, [hasMoreHistory, isLoadingHistory, messages.length, loadHistory]);
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [handleScroll]);
 
-    useEffect(() => {
-        const container = scrollContainerRef.current;
-        if (container) {
-            container.addEventListener("scroll", handleScroll);
-            return () => container.removeEventListener("scroll", handleScroll);
-        }
-    }, [handleScroll]);
-
-    useLayoutEffect(() => {
-        const container = scrollContainerRef.current;
-        const lastMessage = messages[messages.length - 1];
-        const isNewMessage = lastMessage !== lastMessageRef.current;
-
-        if (!isNewMessage && container && prevScrollHeightRef.current > 0) {
-            const diff = container.scrollHeight - prevScrollHeightRef.current;
-            if (diff > 0) {
-                requestAnimationFrame(() => {
-                    container.scrollTop = diff;
-                });
-            }
-            prevScrollHeightRef.current = 0;
-        } else if (isNewMessage && messagesEndRef.current) {
-            messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-        }
-
-        lastMessageRef.current = lastMessage || null;
-    }, [messages]);
-
-    const handleBack = () => {
-        setIsOpen(false);
-        setTimeout(() => router.back(), 300);
-    };
-
-    const handleConfirm = () => {
-        sendMessage("확인");
-    };
-
-    const handleCancel = () => {
-        sendMessage("취소");
-    };
-
-    const quickActions = ["산모 등록", "계약서 전송", "계약서 상태 조회"] as const;
-
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
     const lastMessage = messages[messages.length - 1];
-    const showConfirmButtons =
-        lastMessage?.role === "assistant" &&
-        !lastMessage.isStreaming &&
-        (lastMessage.content.includes("하시겠습니까?") ||
-            lastMessage.content.includes("Would you like"));
+    const isNewMessage = lastMessage !== lastMessageRef.current;
 
-    return (
-        <div
-            data-component="chat"
-            className={cn(
-                "fixed inset-0 h-dvh flex flex-col bg-background z-[1200]",
-                "transition-transform duration-300 ease-out",
-                isOpen ? "translate-y-0" : "translate-y-full"
-            )}
-        >
-            {/* Header */}
-            <div data-component="chat-header" className="flex items-center justify-between px-4 py-3 border-b border-border bg-card shrink-0">
-                <div className="flex items-center gap-2">
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={handleBack}
-                        aria-label="뒤로가기"
-                        data-testid="chat-back"
-                    >
-                        <ArrowLeft className="w-5 h-5" />
-                    </Button>
-                    <Sparkles className="w-5 h-5 text-primary" />
-                    <h1 className="text-lg font-semibold text-foreground">
-                        AI 어시스턴트
-                    </h1>
-                </div>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={clearSession}
-                    aria-label="대화 삭제"
-                    data-testid="chat-clear"
-                >
-                    <Trash2 className="w-5 h-5" />
-                </Button>
-            </div>
+    if (!isNewMessage && container && prevScrollHeightRef.current > 0) {
+      const diff = container.scrollHeight - prevScrollHeightRef.current;
+      if (diff > 0) {
+        requestAnimationFrame(() => {
+          container.scrollTop = diff;
+        });
+      }
+      prevScrollHeightRef.current = 0;
+    } else if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: isNewMessage ? "smooth" : "auto" });
+    }
 
-            {/* Messages Area */}
-            <div
-                data-component="chat-messages"
-                ref={scrollContainerRef}
-                className="flex-1 overflow-auto px-4 sm:px-8 py-6 select-text [-webkit-overflow-scrolling:touch]"
-            >
-                {isLoadingHistory && messages.length > 0 && (
-                    <div className="flex justify-center p-4">
-                        <Spinner size="sm" />
-                    </div>
-                )}
-                {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground animate-fade-in">
-                        <Sparkles className="w-12 h-12 mb-4 opacity-50" />
-                        <h2 className="text-lg font-semibold mb-2">
-                            무엇을 도와드릴까요?
-                        </h2>
-                        <p className="text-sm">
-                            고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.
-                        </p>
-                    </div>
-                ) : (
-                    <>
-                        {messages.map((msg: ChatMessage, idx: number) =>
-                            msg.role === "user" ? (
-                                <UserMessage key={idx} message={msg} />
-                            ) : (
-                                <AssistantMessage
-                                    key={idx}
-                                    message={msg}
-                                    messageIndex={idx}
-                                    sessionId={sessionId}
-                                    isToolExecuting={isToolExecuting}
-                                    currentTool={currentTool}
-                                    onSubmitFeedback={handleSubmitFeedback}
-                                />
-                            )
-                        )}
-                        {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
-                        <StateIndicator state={state} />
-                        {showConfirmButtons && (
-                            <div className="flex gap-2 mb-4 px-4">
-                                <Button
-                                    size="sm"
-                                    onClick={handleConfirm}
-                                    disabled={state === "streaming"}
-                                >
-                                    확인
-                                </Button>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={handleCancel}
-                                    disabled={state === "streaming"}
-                                >
-                                    취소
-                                </Button>
-                            </div>
-                        )}
-                        <div ref={messagesEndRef} />
-                    </>
-                )}
-            </div>
+    lastMessageRef.current = lastMessage || null;
+  }, [messages]);
 
-            {/* Input Area */}
-            <div data-component="chat-input-area" className="px-4 sm:px-8 py-4 border-t border-border bg-card shrink-0">
-                <div className="mb-3 flex flex-wrap gap-2">
-                    {quickActions.map((label) => (
-                        <Button
-                            key={label}
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => sendMessage(label)}
-                            disabled={state === "streaming" || state === "connecting"}
-                            className="rounded-full"
-                        >
-                            {label}
-                        </Button>
-                    ))}
-                </div>
-                <ChatInput
-                    onSubmit={sendMessage}
-                    disabled={state === "streaming" || state === "connecting"}
-                />
-            </div>
+  const visibleMessages = useMemo<ChatDisplayMessage[]>(() => {
+    return messages.map((message, index) => ({
+      ...message,
+      id: `live-${index}-${message.timestamp}`,
+    }));
+  }, [messages]);
+
+  const lastMessage = messages[messages.length - 1];
+  const showConfirmButtons =
+    lastMessage?.role === "assistant" &&
+    !lastMessage.isStreaming &&
+    (lastMessage.content.includes("하시겠습니까?") || lastMessage.content.includes("Would you like"));
+
+  const userLabel = user?.name ? `${user.name} 님` : "송진호 님";
+  const branchLabel = user?.branchName ?? "인천점";
+  const isInputDisabled = state === "streaming" || state === "connecting";
+
+  return (
+    <section className={styles.chatShell} data-component="chat">
+      <header className={styles.existingNavbar} data-component="chat-header">
+        <div className={styles.navbarIdentity} data-component="chat-header-identity">
+          <span className={styles.navbarUser}>{userLabel}</span>
+          <span className={styles.navbarBranch}>{branchLabel}</span>
         </div>
-    );
+        <div className={styles.navbarIcons} data-component="chat-header-icons">
+          <button
+            className={styles.navbarIconBtn}
+            type="button"
+            onClick={clearSession}
+            title="새 대화"
+            aria-label="새 대화"
+          >
+            <SquarePen size={18} strokeWidth={2.5} />
+          </button>
+          <button className={styles.navbarIconBtn} type="button" aria-label="알림">
+            <Bell size={18} strokeWidth={2} />
+            <span className={styles.dot} />
+          </button>
+        </div>
+      </header>
+
+      <div className={styles.chatContent} data-component="chat-content">
+        <div className={styles.chatScroll} ref={scrollContainerRef} data-component="chat-messages">
+          {isLoadingHistory && messages.length > 0 && (
+            <div className={styles.historySpinner} data-component="chat-history-spinner">
+              <Spinner size="sm" />
+            </div>
+          )}
+
+          {visibleMessages.map((message) =>
+            message.role === "user" ? (
+              <UserMessage key={message.id} message={message} />
+            ) : (
+              <AssistantMessage key={message.id} message={message} />
+            )
+          )}
+
+          {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
+
+          {showConfirmButtons && (
+            <div className={styles.confirmActions} data-component="chat-confirm-actions">
+              <button type="button" onClick={() => sendMessage("확인")} disabled={isInputDisabled}>
+                확인
+              </button>
+              <button type="button" onClick={() => sendMessage("취소")} disabled={isInputDisabled}>
+                취소
+              </button>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} data-component="chat-messages-end" />
+        </div>
+      </div>
+
+      <ChatComposer onSubmit={sendMessage} disabled={isInputDisabled} />
+    </section>
+  );
 }

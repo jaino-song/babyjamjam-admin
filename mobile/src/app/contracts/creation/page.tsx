@@ -1,5 +1,5 @@
-import { ContractCreationForm } from "@/components/app/messages/forms/ContractCreationForm";
+import { redirect } from "next/navigation";
 
-export default function ContractCreationPage() {
-  return <ContractCreationForm />;
+export default function LegacyContractCreationPage() {
+  redirect("/contracts/new");
 }

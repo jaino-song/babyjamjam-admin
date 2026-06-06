@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useCallback, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -32,24 +32,24 @@ function formatPriceDisplay(value: number): string {
   return value.toLocaleString("ko-KR");
 }
 
+function getPriceFormDefaults(item: ParsedVoucherPriceItem | null) {
+  return {
+    fullPrice: item ? String(parsePrice(item.fullPrice)) : "",
+    grant: item ? String(parsePrice(item.grant)) : "",
+    actualPrice: item ? String(parsePrice(item.actualPrice)) : "",
+  };
+}
+
 export function PriceEditModal({
   open,
   item,
   onClose,
   onSave,
 }: PriceEditModalProps) {
-  const [fullPrice, setFullPrice] = useState("");
-  const [grant, setGrant] = useState("");
-  const [actualPrice, setActualPrice] = useState("");
-
-  // item이 변경되면 폼 값 초기화
-  useEffect(() => {
-    if (item) {
-      setFullPrice(String(parsePrice(item.fullPrice)));
-      setGrant(String(parsePrice(item.grant)));
-      setActualPrice(String(parsePrice(item.actualPrice)));
-    }
-  }, [item]);
+  const defaults = getPriceFormDefaults(item);
+  const [fullPrice, setFullPrice] = useState(defaults.fullPrice);
+  const [grant, setGrant] = useState(defaults.grant);
+  const [actualPrice, setActualPrice] = useState(defaults.actualPrice);
 
   const fullPriceNum = parseInt(fullPrice, 10) || 0;
   const grantNum = parseInt(grant, 10) || 0;

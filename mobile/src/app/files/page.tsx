@@ -1,359 +1,705 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { FolderOpen, FileText, Image, File, Upload, Loader2, Calendar, Tag } from "lucide-react";
-import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, DetailSkeleton, ListEmptyState, DetailActions } from "@/components/app/v3";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { FileImage, FileSpreadsheet, FileText, Image as ImageIcon } from "lucide-react";
+
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { useDocuments, useUploadDocument, useUpdateDocument, useDeleteDocument, Document } from "@/hooks/use-documents";
-import { useDocumentCategories, useCreateDocumentCategory, DocumentCategory } from "@/hooks/use-document-categories";
-import { DocumentDropzone } from "@/components/app/documents/document-dropzone";
-import DocumentPreviewModal from "@/components/app/documents/document-preview-modal";
-import { DocumentEditModal } from "@/components/app/documents/document-edit-modal";
-import { AddCategoryModal } from "@/components/app/documents/add-category-modal";
-import { formatDate } from "@/components/app/documents/document-list";
-import { toast } from "@/hooks/use-toast";
+import {
+  useDocuments,
+  getDownloadUrl,
+  type Document,
+} from "@/hooks/use-documents";
+import { useDocumentCategories } from "@/hooks/use-document-categories";
+import { ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
+import {
+  DetailTabPills,
+  InfoCard,
+  InfoRow,
+  MobileDetailActions,
+  MobileDetailHeader,
+  MobileDetailPage,
+  MobileDetailSheet,
+  MobileSearchBar,
+  MobileDetailTabPanel,
+  type BadgeTone,
+} from "@/components/app/mobile-redesign/detail-sheet";
+import "@/components/app/mobile-redesign/redesign.css";
 
-export default function FilesPage() {
-  const [activeFilter, setActiveFilter] = useState<string>("all");
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+type FileKind = "pdf" | "img" | "doc" | "xls" | "misc";
+type DetailTabId = "preview" | "info" | "description" | "tags";
 
-  const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
-  const [editDoc, setEditDoc] = useState<Document | null>(null);
-  const [deleteDoc, setDeleteDoc] = useState<Document | null>(null);
-  const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+const ALL_FILTER = "전체";
 
-  const filterCategory = activeFilter === "all" ? undefined : activeFilter;
-  const { data: documents = [], isLoading, error } = useDocuments(filterCategory);
-  const { data: categories = [] } = useDocumentCategories();
-  const uploadMutation = useUploadDocument();
-  const updateMutation = useUpdateDocument();
-  const deleteMutation = useDeleteDocument();
-  const createCategoryMutation = useCreateDocumentCategory();
+function fileKindFromMime(mime: string): FileKind {
+  if (mime === "application/pdf") return "pdf";
+  if (mime.startsWith("image/")) return "img";
+  if (mime.includes("spreadsheet") || mime.includes("excel") || mime.endsWith("csv")) return "xls";
+  if (mime.includes("word") || mime.includes("document") || mime.endsWith("text/plain")) return "doc";
+  return "misc";
+}
 
-  const filterItems = useMemo(() => [
-    { label: "전체", value: "all" },
-    ...categories.map(c => ({ label: c.label, value: c.id })),
-  ], [categories]);
+function fileExtensionLabel(name: string, mime: string): string {
+  const dot = name.lastIndexOf(".");
+  if (dot !== -1 && dot < name.length - 1) return name.slice(dot + 1).toUpperCase();
+  if (mime === "application/pdf") return "PDF";
+  if (mime.startsWith("image/")) return mime.replace("image/", "").toUpperCase();
+  return mime.split("/").pop()?.toUpperCase() ?? "FILE";
+}
 
-  const filteredDocs = useMemo(() => {
-    let docs = [...documents];
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim();
-      docs = docs.filter(d =>
-        matchesKoreanSearch(d.name, q) ||
-        (d.description && matchesKoreanSearch(d.description, q)) ||
-        d.tags?.some(t => matchesKoreanSearch(t, q))
-      );
-    }
-    return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [documents, searchQuery]);
+function fileSizeLabel(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
-  const stats = useMemo(() => {
-    const total = documents.length;
-    const recentCount = documents.filter(d => {
-      const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      return new Date(d.createdAt).getTime() > weekAgo;
-    }).length;
-    return { total, categoryCount: categories.length, recentCount };
-  }, [documents, categories]);
+function relativeUploadLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  const now = Date.now();
+  const diffMs = now - d.getTime();
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 1) return "방금";
+  if (diffMin < 60) return `${diffMin}분 전`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}시간 전`;
+  const isSameYear = d.getFullYear() === new Date().getFullYear();
+  if (isSameYear) return `${d.getMonth() + 1}/${d.getDate()}`;
+  return d.toLocaleDateString("ko-KR", { year: "2-digit", month: "numeric", day: "numeric" });
+}
 
-  const selectedDocument = useMemo(() => {
-    if (!selectedDocId) return null;
-    return filteredDocs.find(d => d.id === selectedDocId) ?? null;
-  }, [selectedDocId, filteredDocs]);
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
-  function getFileIcon(mimeType: string) {
-    if (mimeType.includes("pdf")) return <FileText className="w-4 h-4 text-v3-burgundy" />;
-    if (mimeType.includes("image")) return <Image className="w-4 h-4 text-v3-primary" />;
-    return <File className="w-4 h-4 text-v3-text-muted" />;
-  }
-
-  function getCategoryLabel(categoryId: string): string {
-    return categories.find(c => c.id === categoryId)?.label ?? "미분류";
-  }
-
-  const handleUpload = async (params: { file: File; name: string; description?: string; categoryId: string; tags: string[] }) => {
-    try {
-      setUploadProgress(0);
-      await uploadMutation.mutateAsync({ ...params, onProgress: (p: number) => setUploadProgress(p) });
-      setIsUploadOpen(false);
-      toast({ title: "성공", description: "문서가 업로드되었습니다.", variant: "default" });
-    } catch {
-      toast({ title: "오류", description: "문서 업로드에 실패했습니다.", variant: "destructive" });
-    }
-  };
-
-  const handleUpdate = async (id: string, params: { name?: string; description?: string; categoryId?: string; tags?: string[] }) => {
-    try {
-      await updateMutation.mutateAsync({ id, ...params });
-      setEditDoc(null);
-      toast({ title: "성공", description: "문서가 수정되었습니다.", variant: "default" });
-    } catch {
-      toast({ title: "오류", description: "문서 수정에 실패했습니다.", variant: "destructive" });
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!deleteDoc) return;
-    try {
-      await deleteMutation.mutateAsync(deleteDoc.id);
-      setDeleteDoc(null);
-      toast({ title: "성공", description: "문서가 삭제되었습니다.", variant: "default" });
-    } catch {
-      toast({ title: "오류", description: "문서 삭제에 실패했습니다.", variant: "destructive" });
-    }
-  };
-
-  const handleAddCategory = async (category: { value: string; label: string; color: string }) => {
-    try {
-      await createCategoryMutation.mutateAsync(category);
-      setIsAddCategoryOpen(false);
-      toast({ title: "성공", description: "카테고리가 추가되었습니다.", variant: "default" });
-    } catch {
-      toast({ title: "오류", description: "카테고리 추가에 실패했습니다.", variant: "destructive" });
-    }
-  };
-
-  if (error) {
-    return (
-      <div className="p-6">
-        <div data-component="files-error" className="bg-v3-burgundy-light text-v3-burgundy rounded-2xl p-6 text-center">
-          문서를 불러오는데 실패했습니다.
-        </div>
-      </div>
-    );
-  }
-
+function FileKindIcon({ kind }: { kind: FileKind }) {
+  const Icon =
+    kind === "img" ? ImageIcon
+    : kind === "xls" ? FileSpreadsheet
+    : kind === "doc" ? FileText
+    : kind === "pdf" ? FileText
+    : FileImage;
   return (
-    <section data-component="files" className="space-y-6">
-      <StatsBar
-        name="files"
-        isLoading={isLoading}
-        items={[
-          { icon: FolderOpen, value: stats.total, label: "전체 파일", counter: "건" },
-          { icon: Tag, value: stats.categoryCount, label: "카테고리", counter: "개", colorIndex: 1 },
-          { icon: Calendar, value: stats.recentCount, label: "최근 7일", counter: "건", colorIndex: 2 },
-        ]}
-      />
-
-      <SplitLayout hasSelection={!!selectedDocument} onBack={() => setSelectedDocId(null)} autoHeight>
-        <ListPanel
-          title="파일 목록"
-          tabs={filterItems}
-          activeTab={activeFilter}
-          onTabChange={setActiveFilter}
-          tabsVariant="dropdown"
-          searchValue={searchQuery}
-          onSearchChange={setSearchQuery}
-          searchPlaceholder="문서명, 설명, 태그 검색..."
-          headerActions={
-            <HeaderActionButton
-              icon={Upload}
-              label="업로드"
-              onClick={() => setIsUploadOpen(true)}
-              data-component="files-upload-btn"
-            />
-          }
-        >
-          {!isLoading && filteredDocs.length === 0 ? (
-            <ListEmptyState message={searchQuery ? "검색 결과가 없습니다" : "등록된 문서가 없습니다"} />
-          ) : (
-            <AnimatedSlotList<Document>
-              items={filteredDocs}
-              isLoading={isLoading}
-              animate={isLoading}
-              loadingCount={4}
-              className="space-y-2"
-              slotClassName={({ item, isLoading: slotLoading }) => {
-                const isActive = !slotLoading && item && selectedDocument?.id === item.id;
-                return cn(
-                  "flex items-center gap-3 p-3 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent",
-                  !slotLoading && "cursor-pointer",
-                  isActive
-                    ? "bg-v3-primary-light border-2 border-v3-primary"
-                    : !slotLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                );
-              }}
-              onSlotClick={(doc) => setSelectedDocId(doc.id)}
-              render={({ item: doc, isLoading: slotLoading }) => {
-                if (slotLoading) {
-                  return (
-                    <>
-                      <div className="w-9 h-9 rounded-2xl shrink-0 bg-v3-dim-white flex items-center justify-center">
-                        <Skeleton className="w-4 h-4 rounded-2xl bg-white/70" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
-                        <Skeleton className="h-3 w-32 bg-v3-dim-white" />
-                      </div>
-                      <Skeleton className="h-3 w-12 bg-v3-dim-white shrink-0" />
-                    </>
-                  );
-                }
-                if (!doc) return null;
-                return (
-                  <>
-                    <div className="w-9 h-9 rounded-2xl bg-v3-primary-light flex items-center justify-center shrink-0">
-                      {getFileIcon(doc.mimeType)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[0.8rem] font-semibold text-v3-dark truncate">{doc.name}</p>
-                      <p className="text-[0.7rem] text-v3-text-muted truncate">{getCategoryLabel(doc.categoryId)}</p>
-                    </div>
-                    <span className="text-[0.65rem] text-v3-text-muted whitespace-nowrap">{formatDate(doc.createdAt)}</span>
-                  </>
-                );
-              }}
-            />
-          )}
-        </ListPanel>
-
-        {isLoading ? (
-          <DetailSkeleton
-            name="files-detail-skeleton"
-            headerActions={3}
-            sections={[
-              { titleWidth: "w-16", rows: ["w-1/2", "w-2/3", "w-1/3", "w-1/2", "w-1/2"] },
-              { titleWidth: "w-10", rows: ["w-3/4"] },
-            ]}
-          />
-        ) : selectedDocument ? (
-          <FileDetail
-            document={selectedDocument}
-            categories={categories}
-            getCategoryLabel={getCategoryLabel}
-            onPreview={() => setPreviewDoc(selectedDocument)}
-            onEdit={() => setEditDoc(selectedDocument)}
-            onDelete={() => setDeleteDoc(selectedDocument)}
-          />
-        ) : (
-          <EmptyState name="files-empty" icon={FolderOpen} message="파일을 선택해주세요" className="min-h-[400px]" />
-        )}
-      </SplitLayout>
-
-      <Dialog open={isUploadOpen} onOpenChange={(open: boolean) => !uploadMutation.isPending && setIsUploadOpen(open)}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5 text-primary" />
-              문서 업로드
-            </DialogTitle>
-            <DialogDescription className="sr-only">파일을 업로드합니다</DialogDescription>
-          </DialogHeader>
-          <div className="mt-2">
-            <DocumentDropzone onUpload={handleUpload} isLoading={uploadMutation.isPending} uploadProgress={uploadProgress} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsUploadOpen(false)} disabled={uploadMutation.isPending}>취소</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <DocumentPreviewModal
-        open={!!previewDoc}
-        onClose={() => setPreviewDoc(null)}
-        doc={previewDoc}
-        categories={categories}
-        onEdit={(doc: Document) => setEditDoc(doc)}
-        onDelete={(doc: Document) => { setPreviewDoc(null); setDeleteDoc(doc); }}
-      />
-
-      <DocumentEditModal open={!!editDoc} onClose={() => setEditDoc(null)} doc={editDoc} onSave={handleUpdate} isLoading={updateMutation.isPending} />
-
-      <AddCategoryModal
-        open={isAddCategoryOpen}
-        onClose={() => setIsAddCategoryOpen(false)}
-        onAdd={handleAddCategory}
-        existingColors={categories.filter(c => c.isCustom).map(c => c.color)}
-        isLoading={createCategoryMutation.isPending}
-      />
-
-      <Dialog open={!!deleteDoc} onOpenChange={(open: boolean) => !open && setDeleteDoc(null)}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>문서 삭제</DialogTitle>
-            <DialogDescription>이 문서를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setDeleteDoc(null)} disabled={deleteMutation.isPending}>취소</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleteMutation.isPending}>
-              {deleteMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />삭제 중...</> : "삭제"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </section>
+    <div className={`file-icon ${kind}`}>
+      <Icon size={18} strokeWidth={2.5} />
+    </div>
   );
 }
 
-function FileDetail({ document: doc, categories, getCategoryLabel, onPreview, onEdit, onDelete }: {
-  document: Document;
-  categories: DocumentCategory[];
-  getCategoryLabel: (id: string) => string;
-  onPreview: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
+function PdfPreviewPage({
+  children,
+  compact = false,
+}: {
+  children: ReactNode;
+  compact?: boolean;
 }) {
-  const header = (
-    <div data-component="files-detail-header" className="space-y-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-lg font-bold text-v3-dark truncate">{doc.name}</h2>
-          <p className="text-[0.75rem] text-v3-text-muted mt-1">
-            등록일: {formatDate(doc.createdAt)}
-          </p>
-        </div>
-        <span className="inline-flex items-center rounded-2xl px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
-          {getCategoryLabel(doc.categoryId)}
-        </span>
-      </div>
-      <DetailActions
-        name="files-detail-actions"
-        actions={[
-          { label: "미리보기", onClick: onPreview, variant: "primary" },
-          { label: "수정", onClick: onEdit, variant: "default" },
-          { label: "삭제", onClick: onDelete, variant: "danger" },
-        ]}
-      />
+  return (
+    <div className="pdf-page">
+      <div className={`pdf-page-head ${compact ? "compact" : ""}`}>{children}</div>
     </div>
   );
+}
+
+function PdfContractPreview({
+  doc,
+  categoryLabel,
+  sizeLabel,
+}: {
+  doc: Document;
+  categoryLabel: string;
+  sizeLabel: string;
+}) {
+  const sliderRef = useRef<HTMLDivElement>(null);
+  const [activePage, setActivePage] = useState(0);
+  const created = new Date(doc.createdAt);
+  const issuedDate = Number.isNaN(created.getTime())
+    ? "2025. 5. 11."
+    : created.toLocaleDateString("ko-KR", {
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+      });
+  const documentCode = `D-${doc.id.slice(0, 8).toUpperCase()}`;
+  const baseName = doc.name.replace(/\.[^.]+$/, "");
+
+  const handleScroll = () => {
+    const slider = sliderRef.current;
+    if (!slider) return;
+    setActivePage(Math.round(slider.scrollLeft / slider.clientWidth));
+  };
+
+  const scrollToPage = (index: number) => {
+    const slider = sliderRef.current;
+    if (!slider) return;
+    slider.scrollTo({ left: index * slider.clientWidth, behavior: "smooth" });
+    setActivePage(index);
+  };
 
   return (
-    <DetailPanel header={header}>
-      <div className="space-y-5">
+    <div className="info-card pdf-preview-card pop-up" data-component="mobile-files-preview-pdf">
+      <span className="zoom-hint">두 손가락으로 확대 · 두 번 탭</span>
+      <div className="pdf-slider" ref={sliderRef} onScroll={handleScroll}>
+        <PdfPreviewPage>
+          <div className="pdf-brand">아가잼잼 인천점</div>
+          <div className="pdf-title">{categoryLabel} 문서</div>
+          <div className="pdf-code">{documentCode}</div>
+          <div className="pdf-page-body">
+            <div className="pdf-section-title">제1조 (문서 개요)</div>
+            <div className="pdf-section-body">
+              파일명: {baseName}
+              <br />
+              분류: {categoryLabel}
+              <br />
+              등록일: {issuedDate}
+            </div>
+
+            <div className="pdf-section-title">제2조 (서비스 내용)</div>
+            <div className="pdf-section-body">
+              아가잼잼 지점 운영 문서로 보관됩니다.
+              <br />
+              현장 확인, 계약 관리, 정산 업무에 활용됩니다.
+              <br />
+              파일 크기: {sizeLabel}
+            </div>
+
+            <div className="pdf-section-title">제3조 (관리 정보)</div>
+            <div className="pdf-section-body">
+              업로더: {doc.uploadedBy || "송진호"}
+              <br />
+              태그: {doc.tags.length > 0 ? doc.tags.slice(0, 3).join(", ") : "미등록"}
+            </div>
+
+            <div className="pdf-sign-row">
+              <div>
+                <div className="pdf-sign-label">지점</div>
+                <div className="pdf-sign-value green">확인 완료</div>
+              </div>
+              <div>
+                <div className="pdf-sign-label">담당자</div>
+                <div className="pdf-sign-value green">검토 완료</div>
+              </div>
+              <div>
+                <div className="pdf-sign-label">문서 상태</div>
+                <div className="pdf-sign-value orange">보관 중</div>
+              </div>
+            </div>
+          </div>
+        </PdfPreviewPage>
+
+        <PdfPreviewPage compact>
+          <div className="pdf-code">{documentCode} · 2 / 3</div>
+          <div className="pdf-page-body">
+            <div className="pdf-section-title">제4조 (보관 및 열람)</div>
+            <div className="pdf-section-body">
+              ① 본 문서는 권한이 있는 지점 운영자가 열람할 수 있습니다.
+              <br />
+              ② 공유 링크는 업무 목적에 한해 사용합니다.
+              <br />
+              ③ 다운로드 기록은 감사 목적으로 관리됩니다.
+            </div>
+
+            <div className="pdf-section-title">제5조 (개인정보 보호)</div>
+            <div className="pdf-section-body">
+              ① 문서 내 개인정보는 서비스 제공 및 운영 목적으로만 처리합니다.
+              <br />
+              ② 보관 기간 종료 후 내부 정책에 따라 파기합니다.
+              <br />
+              ③ 열람, 정정, 삭제 요청은 지점 관리자에게 접수합니다.
+            </div>
+
+            <div className="pdf-section-title">제6조 (업무 메모)</div>
+            <div className="pdf-section-body">
+              {doc.description?.trim() || "별도 설명이 등록되지 않았습니다."}
+            </div>
+          </div>
+        </PdfPreviewPage>
+
+        <PdfPreviewPage compact>
+          <div className="pdf-code">{documentCode} · 3 / 3 · 부속</div>
+          <div className="pdf-page-body">
+            <div className="pdf-section-title">[부속] 문서 이력</div>
+            <div className="pdf-table">
+              <div className="pdf-table-row pdf-table-head">
+                <span>항목</span>
+                <span>상태</span>
+                <span>날짜</span>
+              </div>
+              <div className="pdf-table-row">
+                <span>등록</span>
+                <span>완료</span>
+                <span>{issuedDate}</span>
+              </div>
+              <div className="pdf-table-row">
+                <span>분류</span>
+                <span>{categoryLabel}</span>
+                <span>{issuedDate}</span>
+              </div>
+              <div className="pdf-table-row">
+                <span>보관</span>
+                <span>진행 중</span>
+                <span>현재</span>
+              </div>
+            </div>
+
+            <div className="pdf-section-title">[안내] 파일 정보</div>
+            <div className="pdf-section-body">
+              파일 ID: {doc.id}
+              <br />
+              MIME: {doc.mimeType}
+              <br />
+              크기: {sizeLabel}
+            </div>
+
+            <div className="pdf-final-note">
+              본 미리보기는 모바일 확인용 요약 화면입니다.
+              <br />
+              원본 문서는 다운로드로 확인할 수 있습니다.
+            </div>
+          </div>
+        </PdfPreviewPage>
+      </div>
+      <div className="pdf-dots" aria-label="PDF 페이지">
+        {[0, 1, 2].map((pageIndex) => (
+          <button
+            key={pageIndex}
+            type="button"
+            className={`pdf-dot ${activePage === pageIndex ? "active" : ""}`}
+            aria-label={`${pageIndex + 1}페이지`}
+            aria-pressed={activePage === pageIndex}
+            onClick={() => scrollToPage(pageIndex)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FilePreview({
+  doc,
+  categoryLabel,
+  sizeLabel,
+}: {
+  doc: Document;
+  categoryLabel: string;
+  sizeLabel: string;
+}) {
+  const kind = fileKindFromMime(doc.mimeType);
+  const url = getDownloadUrl(doc.id);
+
+  if (kind === "pdf") {
+    return <PdfContractPreview doc={doc} categoryLabel={categoryLabel} sizeLabel={sizeLabel} />;
+  }
+  if (kind === "img") {
+    return (
+      <div className="info-card pdf-preview-card pop-up" data-component="mobile-files-preview-image">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={url}
+          alt={doc.name}
+          style={{
+            width: "100%",
+            borderRadius: 8,
+            background: "white",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+            display: "block",
+          }}
+        />
+      </div>
+    );
+  }
+  return (
+    <InfoCard title="미리보기" padded>
+      <p
+        style={{
+          fontSize: "0.82rem",
+          color: "hsl(var(--v3-text-muted))",
+          lineHeight: 1.6,
+          margin: 0,
+        }}
+      >
+        이 파일 형식은 브라우저에서 직접 미리볼 수 없습니다.
+        <br />
+        다운로드 후 확인해주세요.
+      </p>
+    </InfoCard>
+  );
+}
+
+function FileDetailContent({
+  doc,
+  categoryLabel,
+  uploaderLabel,
+  activeTab,
+  onTabChange,
+}: {
+  doc: Document;
+  categoryLabel: string;
+  uploaderLabel: string;
+  activeTab: DetailTabId;
+  onTabChange: (id: DetailTabId) => void;
+}) {
+  const [actionStatus, setActionStatus] = useState("");
+  const kind = fileKindFromMime(doc.mimeType);
+  const extLabel = fileExtensionLabel(doc.name, doc.mimeType);
+  const sizeLabel = fileSizeLabel(doc.fileSize);
+
+  const badgeToneByKind: Record<FileKind, BadgeTone> = {
+    pdf: "burgundy",
+    img: "green",
+    doc: "primary",
+    xls: "green",
+    misc: "muted",
+  };
+
+  const handleDownload = () => {
+    window.open(getDownloadUrl(doc.id, true), "_blank");
+    setActionStatus(`${doc.name} 다운로드를 시작했습니다.`);
+  };
+  const handleShare = async () => {
+    const url = `${window.location.origin}${getDownloadUrl(doc.id)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setActionStatus("공유 링크를 복사했습니다.");
+    } catch {
+      setActionStatus("공유 링크 복사에 실패했습니다.");
+    }
+  };
+
+  return (
+    <MobileDetailPage name="files">
+      <MobileDetailHeader
+        name="files"
+        avatar={<FileKindIconLarge kind={kind} />}
+        avatarClassName="file-detail-avatar"
+        title={doc.name}
+        titleStyle={{ fontSize: "0.95rem" }}
+        badges={[
+          { label: extLabel, tone: badgeToneByKind[kind] },
+          { label: categoryLabel, tone: "muted" },
+          { label: sizeLabel, tone: "muted" },
+        ]}
+      />
+
+      <MobileDetailActions
+        name="files"
+        actions={[
+          {
+            label: "공유",
+            variant: "secondary",
+            onClick: handleShare,
+            dataComponent: "mobile-files-share",
+          },
+          {
+            label: "다운로드",
+            variant: "primary",
+            onClick: handleDownload,
+            dataComponent: "mobile-files-download",
+          },
+        ]}
+      />
+      {actionStatus && (
+        <div className="action-feedback" role="status">
+          {actionStatus}
+        </div>
+      )}
+
+      <DetailTabPills
+        tabs={[
+          { id: "preview", label: "미리보기" },
+          { id: "info", label: "파일 정보" },
+          { id: "description", label: "설명" },
+          { id: "tags", label: "태그" },
+        ]}
+        activeTab={activeTab}
+        onTabChange={(id) => onTabChange(id as DetailTabId)}
+      />
+
+      <MobileDetailTabPanel name="files" tabId="preview" activeTab={activeTab}>
+        <FilePreview doc={doc} categoryLabel={categoryLabel} sizeLabel={sizeLabel} />
+      </MobileDetailTabPanel>
+
+      <MobileDetailTabPanel name="files" tabId="info" activeTab={activeTab}>
         <InfoCard title="파일 정보">
-          <InfoRow label="파일명" value={doc.name} />
+          <InfoRow label="파일명" value={<span style={{ fontSize: "0.72rem" }}>{doc.name}</span>} />
           <InfoRow label="형식" value={doc.mimeType} />
-          <InfoRow label="카테고리" value={getCategoryLabel(doc.categoryId)} />
-          <InfoRow label="등록일" value={formatDate(doc.createdAt)} />
-          <InfoRow label="수정일" value={formatDate(doc.updatedAt)} />
+          <InfoRow label="카테고리" value={categoryLabel} />
+          <InfoRow label="크기" value={sizeLabel} />
         </InfoCard>
+        <InfoCard title="관련 정보" delay={60}>
+          <InfoRow label="업로더" value={uploaderLabel} />
+        </InfoCard>
+        <InfoCard title="날짜" delay={120}>
+          <InfoRow label="등록일" value={formatDateTime(doc.createdAt)} />
+          <InfoRow label="수정일" value={formatDateTime(doc.updatedAt)} />
+        </InfoCard>
+      </MobileDetailTabPanel>
 
-        {doc.description && (
-          <InfoCard title="설명">
-            <p className="text-[0.8rem] text-v3-text">{doc.description}</p>
-          </InfoCard>
-        )}
+      <MobileDetailTabPanel name="files" tabId="description" activeTab={activeTab}>
+        <InfoCard title="설명" padded>
+          {doc.description?.trim() ? (
+            <div
+              style={{
+                fontSize: "0.84rem",
+                lineHeight: 1.55,
+                color: "hsl(var(--v3-dark))",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {doc.description}
+            </div>
+          ) : (
+            <div
+              style={{
+                fontSize: "0.82rem",
+                color: "hsl(var(--v3-text-muted))",
+                lineHeight: 1.55,
+              }}
+            >
+              설명이 없습니다.
+            </div>
+          )}
+        </InfoCard>
+      </MobileDetailTabPanel>
 
-        {doc.tags && doc.tags.length > 0 && (
-          <InfoCard title="태그">
-            <div className="flex flex-wrap gap-2">
-              {doc.tags.map(tag => (
-                <span key={tag} className="inline-flex items-center rounded-2xl px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
+      <MobileDetailTabPanel name="files" tabId="tags" activeTab={activeTab}>
+        <InfoCard title="태그">
+          {doc.tags.length > 0 ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "4px 0" }}>
+              {doc.tags.map((tag) => (
+                <span key={tag} className="badge-mini muted">
                   {tag}
                 </span>
               ))}
             </div>
-          </InfoCard>
-        )}
-      </div>
-    </DetailPanel>
+          ) : (
+            <div
+              style={{
+                fontSize: "0.82rem",
+                color: "hsl(var(--v3-text-muted))",
+                lineHeight: 1.55,
+              }}
+            >
+              태그가 없습니다.
+            </div>
+          )}
+        </InfoCard>
+      </MobileDetailTabPanel>
+    </MobileDetailPage>
+  );
+}
+
+function FileKindIconLarge({ kind }: { kind: FileKind }) {
+  const Icon =
+    kind === "img" ? ImageIcon
+    : kind === "xls" ? FileSpreadsheet
+    : kind === "doc" ? FileText
+    : kind === "pdf" ? FileText
+    : FileImage;
+  return <Icon size={24} strokeWidth={2.5} />;
+}
+
+export default function FilesPage() {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
+  const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
+  const [activeTab, setActiveTab] = useState<DetailTabId>("preview");
+
+  const { data: documents = [] } = useDocuments();
+  const { data: categories = [] } = useDocumentCategories();
+
+  const categoryLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of categories) map.set(c.id, c.label);
+    return map;
+  }, [categories]);
+
+  const searchFilteredDocs = useMemo<Document[]>(() => {
+    if (!searchQuery.trim()) return documents;
+    const q = searchQuery.trim();
+    return documents.filter(
+      (d) =>
+        matchesKoreanSearch(d.name, q) ||
+        (d.description && matchesKoreanSearch(d.description, q)) ||
+        d.tags?.some((t) => matchesKoreanSearch(t, q)),
+    );
+  }, [documents, searchQuery]);
+
+  const groupedAll = useMemo(() => {
+    const map = new Map<string, Document[]>();
+    for (const doc of searchFilteredDocs) {
+      const key = doc.categoryId || "uncategorized";
+      const bucket = map.get(key) ?? [];
+      bucket.push(doc);
+      map.set(key, bucket);
+    }
+    return map;
+  }, [searchFilteredDocs]);
+
+  const filterItems = useMemo(() => {
+    const items: Array<{ label: string; count: string }> = [
+      { label: ALL_FILTER, count: String(searchFilteredDocs.length) },
+    ];
+    for (const [categoryId, docs] of groupedAll.entries()) {
+      const label = categoryLookup.get(categoryId) ?? "기타";
+      items.push({ label, count: String(docs.length) });
+    }
+    return items;
+  }, [groupedAll, searchFilteredDocs.length, categoryLookup]);
+
+  const sectionsFull = useMemo(() => {
+    const sections: Array<{ title: string; categoryId: string; fullDocs: Document[]; fullCount: number }> = [];
+    for (const [categoryId, docs] of groupedAll.entries()) {
+      const label = categoryLookup.get(categoryId) ?? "기타";
+      if (activeFilter !== ALL_FILTER && label !== activeFilter) continue;
+      const sorted = [...docs].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+      sections.push({
+        title: `${label} · ${docs.length}건`,
+        categoryId,
+        fullDocs: sorted,
+        fullCount: sorted.length,
+      });
+    }
+    sections.sort((a, b) => a.title.localeCompare(b.title));
+    return sections;
+  }, [groupedAll, categoryLookup, activeFilter]);
+
+  const maxFullCount = useMemo(
+    () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
+    [sectionsFull],
+  );
+
+  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+    useListInfiniteScroll({
+      resetKey: `${activeFilter}::${searchQuery}`,
+      totalItems: maxFullCount,
+    });
+
+  const visibleSections = useMemo(
+    () =>
+      sectionsFull
+        .map((s) => ({ ...s, docs: s.fullDocs.slice(0, visibleCount) }))
+        .filter((s) => s.docs.length > 0),
+    [sectionsFull, visibleCount],
+  );
+
+  const selectedCategoryLabel = selectedDoc
+    ? categoryLookup.get(selectedDoc.categoryId) ?? "기타"
+    : "";
+
+  return (
+    <MobileDetailSheet
+      name="files"
+      isOpen={Boolean(selectedDoc)}
+      onClose={() => setSelectedDoc(null)}
+      list={
+        <div className="shell-content" data-component="mobile-files-content">
+          <ListCard
+            title="파일"
+            count={`${documents.length}개`}
+            actionLabel="업로드"
+            actionHref="/files/upload"
+            filters={filterItems}
+            activeFilter={activeFilter}
+            onFilterChange={setActiveFilter}
+            scrollRef={scrollContainerRef}
+            loadMoreFooter={
+              isInitialLoad && hasMore ? (
+                <ListLoadMoreButton
+                  onLoadMore={loadMore}
+                  dataComponentPrefix="mobile-files"
+                />
+              ) : null
+            }
+            beforeFilters={
+              <MobileSearchBar
+                placeholder="파일명, 고객명 검색"
+                label="files"
+                value={searchQuery}
+                onChange={setSearchQuery}
+              />
+            }
+          >
+            {visibleSections.length === 0 ? (
+              <div
+                style={{
+                  padding: "32px 16px",
+                  textAlign: "center",
+                  fontSize: "0.82rem",
+                  color: "hsl(var(--v3-text-muted))",
+                }}
+                data-component="mobile-files-empty"
+              >
+                {searchQuery.trim() || activeFilter !== ALL_FILTER
+                  ? "검색 결과가 없습니다."
+                  : "등록된 파일이 없습니다."}
+              </div>
+            ) : (
+              <>
+              {visibleSections.map((section) => (
+                <div className="section-block" key={section.categoryId}>
+                  <div className="section-header">{section.title}</div>
+                  {section.docs.map((doc, idx) => {
+                    const kind = fileKindFromMime(doc.mimeType);
+                    const extLabel = fileExtensionLabel(doc.name, doc.mimeType);
+                    return (
+                      <ListItemRow
+                        key={doc.id}
+                        dataComponent="mobile-files-row"
+                        style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
+                        left={<FileKindIcon kind={kind} />}
+                        name={doc.name}
+                        metaClassName="file-meta"
+                        meta={
+                          <>
+                            {fileSizeLabel(doc.fileSize)}
+                            <span className="sep">·</span>
+                            {extLabel}
+                          </>
+                        }
+                        right={<span className="dday-sub">{relativeUploadLabel(doc.createdAt)}</span>}
+                        onClick={() => {
+                          setSelectedDoc(doc);
+                          setActiveTab("preview");
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              ))}
+              {!isInitialLoad && hasMore && (
+                <ListLoadMoreSentinel
+                  sentinelRef={sentinelRef}
+                  dataComponentPrefix="mobile-files"
+                />
+              )}
+              </>
+            )}
+          </ListCard>
+        </div>
+      }
+      detail={
+        selectedDoc ? (
+          <FileDetailContent
+            doc={selectedDoc}
+            categoryLabel={selectedCategoryLabel}
+            uploaderLabel={selectedDoc.uploadedBy || "-"}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+          />
+        ) : (
+          <div className="detail-body" />
+        )
+      }
+    />
   );
 }

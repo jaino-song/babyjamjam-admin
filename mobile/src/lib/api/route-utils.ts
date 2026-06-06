@@ -16,6 +16,42 @@ const COOKIE_OPTIONS = {
     path: "/",
 };
 
+export const NO_STORE_CACHE_CONTROL = "no-store, max-age=0";
+
+class InvalidJsonBodyError extends Error {
+    constructor() {
+        super("Request body must be valid JSON");
+        this.name = "InvalidJsonBodyError";
+    }
+}
+
+export async function readJsonObjectBody(request: NextRequest): Promise<Record<string, unknown>> {
+    const text = await request.text();
+
+    if (!text.trim()) {
+        return {};
+    }
+
+    try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+        }
+    } catch {
+        throw new InvalidJsonBodyError();
+    }
+
+    throw new InvalidJsonBodyError();
+}
+
+export function invalidJsonResponse(error: unknown): NextResponse | null {
+    if (error instanceof InvalidJsonBodyError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    return null;
+}
+
 /**
  * Get access token from httpOnly cookie
  */
@@ -42,6 +78,133 @@ export function getAuthToken(request: NextRequest): string | null {
  */
 export function getAuthHeaders(token: string | null): Record<string, string> {
     return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export function backendJsonResponse(response: { data: unknown; status?: number }): NextResponse {
+    const status = response.status ?? 200;
+
+    if (status === 204) {
+        return new NextResponse(null, { status });
+    }
+
+    return NextResponse.json(response.data ?? {}, { status });
+}
+
+export function withNoStore(response: NextResponse): NextResponse {
+    response.headers.set("Cache-Control", NO_STORE_CACHE_CONTROL);
+    return response;
+}
+
+export function getUpstreamErrorStatus(error: unknown, fallbackStatus = 500): number {
+    if (error && typeof error === "object" && "response" in error) {
+        const status = (error as { response?: { status?: unknown } }).response?.status;
+        if (typeof status === "number" && status >= 400 && status <= 599) {
+            return status;
+        }
+    }
+
+    return fallbackStatus;
+}
+
+function getUpstreamErrorData(error: unknown): unknown {
+    if (error && typeof error === "object" && "response" in error) {
+        return (error as { response?: { data?: unknown } }).response?.data;
+    }
+
+    return undefined;
+}
+
+function safeErrorCode(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+
+    return /^[A-Z][A-Z0-9_:-]{0,63}$/.test(value) ? value : undefined;
+}
+
+export function sanitizeUpstreamClientError(
+    upstreamData: unknown,
+    fallbackMessage: string
+): { error: string; code?: string; hasKakaoAccount?: boolean } {
+    const payload: { error: string; code?: string; hasKakaoAccount?: boolean } = {
+        error: fallbackMessage,
+    };
+
+    if (upstreamData && typeof upstreamData === "object") {
+        const data = upstreamData as { code?: unknown; hasKakaoAccount?: unknown };
+        const code = safeErrorCode(data.code);
+        if (code) {
+            payload.code = code;
+        }
+        if (typeof data.hasKakaoAccount === "boolean") {
+            payload.hasKakaoAccount = data.hasKakaoAccount;
+        }
+    }
+
+    return payload;
+}
+
+export function logUpstreamError(context: string, error: unknown): void {
+    const data = getUpstreamErrorData(error);
+    const upstreamCode = data && typeof data === "object"
+        ? safeErrorCode((data as { code?: unknown }).code)
+        : undefined;
+    const transportCode = error && typeof error === "object"
+        ? safeErrorCode((error as { code?: unknown }).code)
+        : undefined;
+    const errorName = error instanceof Error ? error.name : undefined;
+
+    console.error(`[${context}] Error:`, {
+        status: getUpstreamErrorStatus(error),
+        code: upstreamCode ?? transportCode,
+        name: errorName,
+    });
+}
+
+export function upstreamJsonErrorResponse(
+    status = 502,
+    fallbackMessage = "Backend request failed"
+): NextResponse {
+    return NextResponse.json(
+        { error: fallbackMessage, code: "UPSTREAM_ERROR" },
+        { status }
+    );
+}
+
+export function upstreamSseErrorResponse(
+    status = 502,
+    fallbackMessage = "Streaming unavailable"
+): Response {
+    return new Response(
+        `event: error\ndata: ${JSON.stringify({ type: "error", error: fallbackMessage })}\n\n`,
+        {
+            status,
+            headers: {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                Connection: "keep-alive",
+            },
+        }
+    );
+}
+
+export async function upstreamStreamErrorResponse(
+    upstream: Response,
+    fallbackMessage = "Upstream stream request failed"
+): Promise<Response> {
+    const status = upstream.ok ? 502 : upstream.status;
+    await upstream.text().catch(() => "");
+
+    return upstreamJsonErrorResponse(status, fallbackMessage);
+}
+
+export function upstreamStreamTransportErrorResponse(
+    error: unknown,
+    fallbackMessage = "Upstream stream request failed"
+): Response {
+    void error;
+
+    return upstreamJsonErrorResponse(502, fallbackMessage);
 }
 
 /**
@@ -75,14 +238,13 @@ export function unauthorizedResponse(message = "Access token is required. Please
  */
 export function errorResponse(error: unknown, context: string) {
     const axiosError = error as AxiosError<{ error?: string; message?: string }>;
-    const message = axiosError.response?.data?.error
-        || axiosError.response?.data?.message
-        || axiosError.message
-        || `Failed to ${context}`;
     const status = axiosError.response?.status || 500;
 
-    console.error(`[${context}] Error:`, message);
-    return NextResponse.json({ error: message }, { status });
+    logUpstreamError(context, error);
+    return NextResponse.json(
+        sanitizeUpstreamClientError(axiosError.response?.data, `Failed to ${context}`),
+        { status }
+    );
 }
 
 /**
@@ -112,8 +274,10 @@ export async function proxyGetRequest(
 
         // Check for backend error responses
         if (response.status >= 400) {
-            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
-            return NextResponse.json({ error: errorMessage }, { status: response.status });
+            return NextResponse.json(
+                sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                { status: response.status }
+            );
         }
 
         return NextResponse.json(response.data);
@@ -143,7 +307,7 @@ export async function proxyPostRequest(
     }
 
     try {
-        const body = await request.json().catch(() => ({}));
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.post(backendPath, {
             ...body,
             ...additionalBody,
@@ -154,12 +318,19 @@ export async function proxyPostRequest(
 
         // Check for backend error responses
         if (response.status >= 400) {
-            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
-            return NextResponse.json({ error: errorMessage }, { status: response.status });
+            return NextResponse.json(
+                sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                { status: response.status }
+            );
         }
 
         return NextResponse.json(response.data);
     } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
         return errorResponse(error, context);
     }
 }
@@ -185,7 +356,7 @@ export async function proxyDeleteRequest(
     }
 
     try {
-        const body = await request.json().catch(() => ({}));
+        const body = await readJsonObjectBody(request);
         const { searchParams } = new URL(request.url);
 
         const params: Record<string, string> = { accessToken };
@@ -205,12 +376,19 @@ export async function proxyDeleteRequest(
         });
 
         if (response.status >= 400) {
-            const errorMessage = response.data?.error || response.data?.message || `Backend returned ${response.status}`;
-            return NextResponse.json({ error: errorMessage }, { status: response.status });
+            return NextResponse.json(
+                sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                { status: response.status }
+            );
         }
 
         return NextResponse.json(response.data);
     } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
         return errorResponse(error, context);
     }
 }

@@ -11,7 +11,8 @@ import {
     Client,
     CreateClientDto,
     UpdateClientDto,
-    SERVICE_STATUS_OPTIONS
+    SERVICE_STATUS_OPTIONS,
+    type ServiceStatus
 } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -156,12 +157,14 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     // Auto-fill prices when type and duration are selected (only if not manually edited)
     useEffect(() => {
         if (selectedPriceInfo && !pricesManuallyEdited) {
-            setFormData(prev => ({
-                ...prev,
-                fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                grant: parsePrice(selectedPriceInfo.grant),
-                actualPrice: parsePrice(selectedPriceInfo.actualPrice),
-            }));
+            queueMicrotask(() => {
+                setFormData(prev => ({
+                    ...prev,
+                    fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                    grant: parsePrice(selectedPriceInfo.grant),
+                    actualPrice: parsePrice(selectedPriceInfo.actualPrice),
+                }));
+            });
         }
     }, [selectedPriceInfo, pricesManuallyEdited]);
 
@@ -182,62 +185,64 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     // Reset form when dialog opens/closes or client changes
     useEffect(() => {
-        if (open) {
-            setPricesManuallyEdited(false); // Reset manual edit flag
-            if (client) {
-                // Employee info now comes directly from client (via backend schedule lookup)
-                setFormData({
-                    name: client.name,
-                    birthday: client.birthday || "",
-                    dueDate: formatDateForInput(client.dueDate),
-                    address: client.address || "",
-                    phone: client.phone || "",
-                    primaryEmployeeId: client.primaryEmployee?.id ?? null,
-                    secondaryEmployeeId: client.secondaryEmployee?.id ?? null,
-                    type: client.type || "",
-                    duration: client.duration,
-                    fullPrice: client.fullPrice || "",
-                    grant: client.grant || "",
-                    actualPrice: client.actualPrice || "",
-                    startDate: formatDateForInput(client.startDate),
-                    endDate: formatDateForInput(client.endDate),
-                    careCenter: client.careCenter,
-                    voucherClient: client.voucherClient,
-                    breastPump: client.breastPump,
-                    serviceStatus: client.serviceStatus || "waiting",
-                });
-                // In edit mode, consider prices as manually set
-                if (client.fullPrice || client.grant || client.actualPrice) {
-                    setPricesManuallyEdited(true);
-                }
-            } else {
-                // In create mode, use prefillName from store if available
-                setFormData({
-                    name: prefillName || "",
-                    birthday: "",
-                    dueDate: "",
-                    address: "",
-                    phone: "",
-                    primaryEmployeeId: null, // null means "not selected yet"
-                    secondaryEmployeeId: null,
-                    type: "",
-                    duration: null,
-                    fullPrice: "",
-                    grant: "",
-                    actualPrice: "",
-                    startDate: "",
-                    endDate: "",
-                    careCenter: false,
-                    voucherClient: true,
-                    breastPump: false,
-                    serviceStatus: "waiting",
-                });
-                // Clear the prefill name after using it
+        if (!open) {
+            return;
+        }
+
+        const nextFormData = client
+            ? {
+                name: client.name,
+                birthday: client.birthday || "",
+                dueDate: formatDateForInput(client.dueDate),
+                address: client.address || "",
+                phone: client.phone || "",
+                primaryEmployeeId: client.primaryEmployee?.id ?? null,
+                secondaryEmployeeId: client.secondaryEmployee?.id ?? null,
+                type: client.type || "",
+                duration: client.duration,
+                fullPrice: client.fullPrice || "",
+                grant: client.grant || "",
+                actualPrice: client.actualPrice || "",
+                startDate: formatDateForInput(client.startDate),
+                endDate: formatDateForInput(client.endDate),
+                careCenter: client.careCenter,
+                voucherClient: client.voucherClient,
+                breastPump: client.breastPump,
+                serviceStatus: client.serviceStatus || "waiting",
+            }
+            : {
+                name: prefillName || "",
+                birthday: "",
+                dueDate: "",
+                address: "",
+                phone: "",
+                primaryEmployeeId: null,
+                secondaryEmployeeId: null,
+                type: "",
+                duration: null,
+                fullPrice: "",
+                grant: "",
+                actualPrice: "",
+                startDate: "",
+                endDate: "",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+                serviceStatus: "waiting" as const,
+            };
+        const nextPricesManuallyEdited = client
+            ? Boolean(client.fullPrice || client.grant || client.actualPrice)
+            : false;
+
+        queueMicrotask(() => {
+            setPricesManuallyEdited(nextPricesManuallyEdited);
+            setFormData(nextFormData);
+            if (!client) {
                 clearPrefillName();
             }
             setError(null);
-        }
-    }, [open, client]);
+        });
+    }, [open, client, prefillName, clearPrefillName]);
 
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setFormData(prev => ({ ...prev, [field]: value }));
@@ -616,7 +621,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 <Label>{t(locale, "clients.form.contract-status")}</Label>
                                 <Select
                                     value={formData.serviceStatus || ""}
-                                    onValueChange={(value) => handleChange("serviceStatus", value)}
+                                    onValueChange={(value) => handleChange("serviceStatus", value as ServiceStatus)}
                                 >
                                     <SelectTrigger>
                                         <SelectValue placeholder={t(locale, "clients.form.contract-status")} />

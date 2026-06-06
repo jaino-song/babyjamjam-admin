@@ -1,31 +1,32 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
-        const body = await request.json();
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.post("/notifications/unsubscribe", body, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[API] Error unsubscribing from notifications:", error.message);
-        return NextResponse.json(
-            { error: "Failed to unsubscribe from notifications" },
-            { status: error.response?.status || 500 }
-        );
+        return backendJsonResponse(response);
+    } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) return invalidJson;
+
+        return errorResponse(error, "unsubscribe from notifications");
     }
 }

@@ -7,6 +7,7 @@ describe("SendAligoAlimtalkUsecase", () => {
     const createMockAligoApi = (): jest.Mocked<IAligoApiPort> => ({
         sendAlimtalk: jest.fn(),
         createTemplate: jest.fn(),
+        listTemplates: jest.fn(),
     });
 
     const createMockLogRepository = (): jest.Mocked<IAlimtalkLogRepository> => ({

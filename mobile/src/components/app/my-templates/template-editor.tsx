@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,30 +31,24 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     const [name, setName] = useState(initialData?.name || "");
     const [content, setContent] = useState(initialData?.content || "");
     const [variables, setVariables] = useState<TemplateVariable[]>(initialData?.variables || []);
-    const [detectedKeys, setDetectedKeys] = useState<string[]>([]);
 
-    useEffect(() => {
-        const keys = extractVariables(content);
-        setDetectedKeys(keys);
-
-        setVariables(prev => {
-            const existingKeys = new Set(prev.map(v => v.key));
-            const newVars = keys
-                .filter(key => !existingKeys.has(key))
-                .map(key => ({
-                    key,
-                    label: key,
-                    type: "text" as const,
-                    required: true
-                }));
-
-            const filtered = prev.filter(v => keys.includes(v.key));
-            return [...filtered, ...newVars];
+    const detectedKeys = useMemo(() => extractVariables(content), [content]);
+    const visibleVariables = useMemo(() => {
+        const existingMap = new Map(variables.map((variable) => [variable.key, variable]));
+        return detectedKeys.map((key) => {
+            const existing = existingMap.get(key);
+            if (existing) return existing;
+            return {
+                key,
+                label: key,
+                type: "text" as const,
+                required: true,
+            };
         });
-    }, [content]);
+    }, [detectedKeys, variables]);
 
     const handleSave = () => {
-        const data = { name, content, variables };
+        const data = { name, content, variables: visibleVariables };
         if (initialData) {
             updateTemplate({ id: initialData.id, request: data }, {
                 onSuccess: () => router.push("/messages/templates")
@@ -67,7 +61,11 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     };
 
     const handleVariableChange = (updatedVar: TemplateVariable) => {
-        setVariables(prev => prev.map(v => v.key === updatedVar.key ? updatedVar : v));
+        setVariables(prev => {
+            const exists = prev.some((variable) => variable.key === updatedVar.key);
+            if (!exists) return [...prev, updatedVar];
+            return prev.map(v => v.key === updatedVar.key ? updatedVar : v);
+        });
     };
 
     const insertVariable = (key: string) => {
@@ -116,13 +114,13 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 </div>
             </ContentPaper>
 
-            {variables.length > 0 && (
+            {visibleVariables.length > 0 && (
                 <div>
                     <h3 className="text-lg font-semibold mb-3 px-1">
                         {t(locale, "template-editor.variable-settings")}
                     </h3>
                     <div className="flex flex-col gap-3">
-                        {variables.map((variable) => (
+                        {visibleVariables.map((variable) => (
                             <VariableConfigurator
                                 key={variable.key}
                                 variable={variable}
@@ -147,7 +145,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                     {t(locale, "template-editor.preview")}
                 </h3>
                 <Separator className="mb-4" />
-                <TemplatePreview content={content} variables={variables} />
+                <TemplatePreview content={content} variables={visibleVariables} />
             </div>
 
             <div className="flex justify-end gap-3 pb-6">

@@ -1,6 +1,8 @@
 // TypeScript declarations for eformsign embedded SDK v2
 // Based on: https://eformsignkr.github.io/developers/help/eformsign_embedding_v2.html
 
+import type { DocumentStatusLabel } from "./status-codes";
+
 export interface EformsignCompanyOption {
   id: string; // Company ID (required)
   country_code?: string; // Country code (e.g., "kr")
@@ -190,5 +192,5 @@ export interface EformsignDocumentView {
   doc_id: string;
   customer_name: string;
   created_date: number;
-  status: "대기" | "완료" | "만료";
+  status: DocumentStatusLabel;
 }

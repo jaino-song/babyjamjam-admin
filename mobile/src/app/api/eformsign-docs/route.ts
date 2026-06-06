@@ -1,26 +1,33 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { errorResponse } from "@/lib/api/route-utils";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
-        const body = await request.json();
+        const body = await readJsonObjectBody(request);
 
         const response = await serverAPIClient.post("/eformsign-docs", body, {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: getAuthHeaders(token),
         });
 
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) return invalidJson;
+
         return errorResponse(error, "create eformsign doc record");
     }
 }

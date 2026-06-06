@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
+import { invalidJsonResponse, readJsonObjectBody, upstreamJsonErrorResponse } from "@/lib/api/route-utils";
 
 const BACKEND_URL = BACKEND_BASE_URL;
 
@@ -15,9 +16,8 @@ export async function POST(request: NextRequest) {
         });
     }
 
-    const body = await request.json();
-
     try {
+        const body = await readJsonObjectBody(request);
         const backendResponse = await fetch(`${BACKEND_URL}/ai/chat/persist`, {
             method: "POST",
             headers: {
@@ -28,23 +28,21 @@ export async function POST(request: NextRequest) {
         });
 
         if (!backendResponse.ok) {
-            const errorText = await backendResponse.text();
-            return new Response(JSON.stringify({ error: errorText }), {
-                status: backendResponse.status,
-                headers: { "Content-Type": "application/json" },
-            });
+            await backendResponse.text().catch(() => "");
+            return upstreamJsonErrorResponse(backendResponse.status);
         }
 
-        const result = await backendResponse.json();
-        return new Response(JSON.stringify(result), {
-            status: 200,
+        const responseBody = await backendResponse.text();
+        return new Response(responseBody || "{}", {
+            status: backendResponse.status,
             headers: { "Content-Type": "application/json" },
         });
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        return new Response(JSON.stringify({ error: errorMessage }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-        });
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
+        return upstreamJsonErrorResponse(502);
     }
 }

@@ -1,6 +1,7 @@
 import type { FrameLocator, Locator, Page } from "playwright-core";
 
 export const EFORMSIGN_GATE_POLL_MS = 500;
+export const EFORMSIGN_CLICK_TIMEOUT_MS = 2_000;
 export const EFORMSIGN_READY_TEXT = "필수 입력 항목을 모두 작성했습니다.";
 // eformsign uses two different popup IDs depending on the SDK mode:
 //   - mode "01" (creation): #requestWithInputCommentPopup
@@ -28,11 +29,64 @@ export async function findVisibleLocator(locator: Locator): Promise<Locator | nu
     return null;
 }
 
+export async function findVisibleEnabledLocator(locator: Locator): Promise<Locator | null> {
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) {
+        const candidate = locator.nth(index);
+        const visible = await candidate.isVisible().catch(() => false);
+        if (!visible) continue;
+        const enabled = await candidate.isEnabled().catch(() => false);
+        if (enabled) {
+            return candidate;
+        }
+    }
+    return null;
+}
+
 export interface GateSnapshot {
     visibleButtons: string[];
     guideButtonLabel: string | null;
     footerMessages: string[];
     requestSendDialogVisible: boolean;
+}
+
+export interface EformsignCallbackState {
+    hasSuccess: boolean;
+    hasError: boolean;
+    success?: unknown;
+    error?: unknown;
+}
+
+export function formatEformsignCallbackPayload(payload: unknown): string {
+    if (payload === null) return "null";
+    if (payload === undefined) return "undefined";
+    if (typeof payload === "string") return payload;
+    try {
+        return JSON.stringify(payload);
+    } catch {
+        return String(payload);
+    }
+}
+
+export async function readEformsignCallbackState(page: Page): Promise<EformsignCallbackState> {
+    return page.evaluate(() => {
+        const w = window as unknown as {
+            __eformsignSuccess?: unknown;
+            __eformsignError?: unknown;
+        };
+        return {
+            hasSuccess: w.__eformsignSuccess !== undefined,
+            hasError: w.__eformsignError !== undefined,
+            success: w.__eformsignSuccess,
+            error: w.__eformsignError,
+        };
+    });
+}
+
+export async function throwIfEformsignErrorLatched(page: Page): Promise<void> {
+    const state = await readEformsignCallbackState(page).catch(() => null);
+    if (!state?.hasError) return;
+    throw new Error(`eformsign SDK error: ${formatEformsignCallbackPayload(state.error)}`);
 }
 
 export async function getEformsignGateSnapshot(eformsignFrame: FrameLocator): Promise<GateSnapshot> {
@@ -87,7 +141,10 @@ export async function getEformsignGateSnapshot(eformsignFrame: FrameLocator): Pr
  */
 export async function isSuccessLatched(page: Page): Promise<boolean> {
     return page
-        .evaluate(() => Boolean((window as unknown as { __eformsignSuccess?: unknown }).__eformsignSuccess))
+        .evaluate(() => {
+            const w = window as unknown as { __eformsignSuccess?: unknown };
+            return w.__eformsignSuccess !== undefined;
+        })
         .catch(() => false);
 }
 

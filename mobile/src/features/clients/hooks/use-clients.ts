@@ -12,6 +12,10 @@ import type {
   PaginatedResponse
 } from '../types';
 
+function isValidClientId(id: number): boolean {
+  return Number.isInteger(id) && id > 0;
+}
+
 /**
  * Fetch paginated clients list
  */
@@ -41,7 +45,7 @@ export function useClient(id: number) {
   return useQuery<Client>({
     queryKey: clientKeys.detail(id),
     queryFn: () => clientsApi.getById(id).then(r => r.data),
-    enabled: !!id,
+    enabled: isValidClientId(id),
   });
 }
 

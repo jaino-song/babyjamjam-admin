@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { backendJsonResponse, getUpstreamErrorStatus } from "@/lib/api/route-utils";
 
-// Helper: 요청에서 토큰 추출
 function getAuthToken(request: NextRequest): string | null {
   return request.cookies.get("auth_token")?.value || null;
 }
@@ -9,6 +9,7 @@ function getAuthToken(request: NextRequest): string | null {
 /**
  * POST /api/voucher-price-infos/parse-image
  * 바우처 요금표 이미지를 백엔드로 전송하여 Gemini API로 파싱
+ * Backend enforces owner/admin authorization.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -44,31 +45,20 @@ export async function POST(request: NextRequest) {
       {
         headers: {
           Authorization: `Bearer ${token}`,
-          "Content-Type": "multipart/form-data",
         },
         // 큰 파일 처리를 위한 타임아웃 연장
         timeout: 120000,
       },
     );
 
-    return NextResponse.json(response.data);
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error parsing voucher image:", error);
-
-    // axios 에러 처리
-    if (error && typeof error === "object" && "response" in error) {
-      const axiosError = error as { response?: { status: number; data: unknown } };
-      if (axiosError.response) {
-        return NextResponse.json(
-          axiosError.response.data || { error: "파싱 실패" },
-          { status: axiosError.response.status },
-        );
-      }
-    }
+    const status = getUpstreamErrorStatus(error);
+    console.error("[API] Error parsing voucher image:", { status });
 
     return NextResponse.json(
       { error: "바우처 이미지 파싱에 실패했습니다" },
-      { status: 500 },
+      { status },
     );
   }
 }

@@ -24,16 +24,33 @@ export interface ContractDataDto {
   paymentYear: string;
   paymentMonth: string;
   paymentDay: string;
-  receiptYear: string;
-  receiptMonth: string;
-  receiptDay: string;
   fullPrice: string;
   grant: string;
   actualPrice: string;
 }
 import { safeStorageSetItem } from "@/lib/safe-storage";
 
+const HEADLESS_DISPATCH_TIMEOUT_MS = 180_000;
+const HEADLESS_FINALIZE_TIMEOUT_MS = 60_000;
+
 // Auth API response types
+export interface HeadlessDispatchResponse {
+    ok: boolean;
+    documentId?: string;
+    durationMs: number;
+    reason?: string;
+    failedStep?: string;
+    fallbackHint?: "iframe";
+}
+
+export interface FinalizeHeadlessResponse {
+    ok: boolean;
+    durationMs: number;
+    reason?: string;
+    failedStep?: string;
+    fallbackHint?: "iframe";
+}
+
 export interface AuthResponse {
     success: boolean;
     message?: string;
@@ -52,6 +69,25 @@ export interface EformsignAuthStatusResponse {
     hasAppAuthToken: boolean;
     hasAccessToken: boolean;
     hasRefreshToken: boolean;
+}
+
+export interface EformsignDocClientSummary {
+    documentId: string;
+    clientId: number;
+    clientName: string;
+    clientPhone: string | null;
+    providerName: string | null;
+}
+
+export interface SyncedEformsignDocResponse {
+    id?: number;
+    documentId: string;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepIndex: string;
+    stepName: string;
+    expired?: boolean;
 }
 
 // Auth API
@@ -128,8 +164,71 @@ export const eformsignApi = {
         const { data } = await api.post('/refresh-access-token', { executionTime });
         return data;
     },
+    reRequestDocument: async (
+        documentId: string,
+        params: {
+            stepType: string;
+            stepSeq: string;
+            comment?: string;
+            recipientPhone?: {
+                countryCode: string;
+                phoneNumber: string;
+            };
+        }
+    ): Promise<{ status?: string; code?: string; message?: string }> => {
+        const { data } = await api.post(`/eformsign/documents/${documentId}/re-request`, params);
+        return data;
+    },
     generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
         const { data } = await api.post('/generate-document', { contractData, clientId });
+        return data;
+    },
+    // BJJ-90: backend-driven creation dispatch. Drives the eformsign iframe gate sequence
+    // (mode:"01") via headless Chromium so staff don't see the iframe. Returns ok:false
+    // with reason on any failure so the caller can fall back to the legacy iframe modal.
+    dispatchHeadless: async (
+        contractData: ContractDataDto,
+        clientId?: number,
+        progressId?: string,
+    ): Promise<HeadlessDispatchResponse> => {
+        const { data } = await api.post('/eformsign-docs/dispatch-headless', {
+            contractData,
+            clientId,
+            progressId,
+        }, {
+            timeout: HEADLESS_DISPATCH_TIMEOUT_MS,
+        });
+        return data;
+    },
+    // Staff completion (mode:"02") — builds iframe options for the staff finalize step.
+    generateStaffDocument: async (
+        documentId: string,
+        accessToken?: string,
+        refreshToken?: string,
+        prefillEndDate?: string,
+    ) => {
+        const { data } = await api.post('/generate-staff-document', {
+            documentId,
+            accessToken,
+            refreshToken,
+            prefillEndDate,
+        });
+        return data;
+    },
+    // BJJ-90: backend-driven finalize. Drives the mode:"02" iframe gate sequence
+    // via headless Chromium. Falls back to iframe (generateStaffDocument) on ok:false.
+    finalizeHeadless: async (
+        documentId: string,
+        prefillEndDate?: string,
+        progressId?: string,
+    ): Promise<FinalizeHeadlessResponse> => {
+        const { data } = await api.post('/eformsign-docs/finalize-headless', {
+            documentId,
+            prefillEndDate,
+            progressId,
+        }, {
+            timeout: HEADLESS_FINALIZE_TIMEOUT_MS,
+        });
         return data;
     },
     // Create eformsign doc record to track document in local DB
@@ -150,6 +249,14 @@ export const eformsignApi = {
         const { data } = await api.post('/eformsign-docs', params);
         return data;
     },
+    getDocumentClientNames: async (): Promise<EformsignDocClientSummary[]> => {
+        const { data } = await api.get('/eformsign-docs/client-names');
+        return data;
+    },
+    syncDocumentStatus: async (documentId: string): Promise<SyncedEformsignDocResponse> => {
+        const { data } = await api.post('/eformsign-docs/sync-status', { documentId });
+        return data;
+    },
     // Documents APIs - token is read from httpOnly cookie on server
     // Note: eformsign routes use /eformsign prefix to avoid conflict with file storage /documents
     // Unified endpoint - fetches all documents in single request (more efficient)
@@ -157,6 +264,16 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/documents', { params });
         return data;
     },
+    getDocument: async (documentId: string): Promise<EformsignDocumentsResponse["documents"][number]> => {
+        const { data } = await api.get(`/eformsign/documents/${documentId}`);
+        return data;
+    },
+    getDocumentDownloadUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document`,
+    getDocumentReceiptDownloadUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&page=7`,
+    getDocumentPreviewUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document#toolbar=0`,
     getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents/in-progress');
         return data;

@@ -1,16 +1,15 @@
-name: Playwright Tests
+name: Frontend Playwright Tests
 
-# TODO: Re-enable when tests are ready
-# Temporarily disabled - only runs manually
 on:
-  workflow_dispatch:  # Manual trigger only
-  # push:
-  #   branches: [ main, master, develop ]
-  # pull_request:
-  #   branches: [ main, master, develop ]
+  workflow_dispatch:
+  push:
+    branches: [ main, dev, preview, "feature/**", "fix/**" ]
+  pull_request:
+    branches: [ main, dev, preview, "feature/**", "fix/**" ]
 
 jobs:
   test:
+    name: frontend
     timeout-minutes: 60
     runs-on: ubuntu-latest
     defaults:
@@ -19,22 +18,28 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        run_install: false
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '20'
-        cache: 'npm'
-        cache-dependency-path: frontend/package-lock.json
+        cache: 'pnpm'
+        cache-dependency-path: pnpm-lock.yaml
     
     - name: Install dependencies
-      run: npm ci
+      run: pnpm install --frozen-lockfile
+      working-directory: .
     
     - name: Install Playwright Browsers
-      run: npx playwright install --with-deps chromium
+      run: pnpm exec playwright install --with-deps chromium
     
     - name: Run Playwright tests
-      run: npx playwright test
+      run: pnpm exec playwright test
       env:
         CI: true
     

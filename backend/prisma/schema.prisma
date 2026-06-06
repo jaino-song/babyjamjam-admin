@@ -15,6 +15,7 @@ model area {
   branchId        String?            @map("branch_id") @db.Uuid
   branch          branch?            @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   bankAccountInfo bank_account_info?
+  clients         client[]
   docTemplates    doc_template[]
 
   @@index([branchId], map: "idx_area_branch")
@@ -95,11 +96,14 @@ model client {
   dueDate              DateTime?           @map("due_date") @db.Date
   createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   branchId             String?             @map("branch_id") @db.Uuid
+  areaId               String?             @map("area_id")
   eformsignDocByEDocId eformsign_doc?      @relation("client_e_doc_idToeformsign_doc", fields: [eDocId], references: [documentId], onUpdate: NoAction)
   branch               branch?             @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  area                 area?               @relation(fields: [areaId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   eformsignDocs        eformsign_doc[]     @relation("eformsign_doc_client_idToclient")
   employeeSchedules    employee_schedule[]
 
+  @@index([areaId], map: "idx_client_area")
   @@index([branchId], map: "idx_client_branch")
   @@index([createdAt], map: "idx_client_created_at")
 }
@@ -386,6 +390,7 @@ model consultation_inquiry {
   referralSource         String    @map("referral_source")
   privacyAcceptedAt      DateTime  @map("privacy_accepted_at") @db.Timestamptz(6)
   selectedServices       Json?     @map("selected_services")
+  additionalNotes        String?   @map("additional_notes")
   source                 String    @default("website")
   status                 String    @default("new")
   readAt                 DateTime? @map("read_at") @db.Timestamptz(6)

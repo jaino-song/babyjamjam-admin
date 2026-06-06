@@ -11,9 +11,12 @@ node_modules/
 # testing
 coverage/
 test-results/
+**/test-results/
 frontend/test-results/
 frontend/playwright-report/
+**/playwright-report/
 .playwright-mcp/
+**/lint_report.txt
 
 # next.js
 **/.next/
@@ -50,6 +53,17 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 frontend/auth.json
+mobile/auth.json
+
+# local audit / verification screenshots (Playwright captures from manual debugging)
+audit-*.png
+verify-*.png
+live-*.png
+mockup-*.png
+chat-*.png
+messages-*.png
+alimtalk-*.png
+pages-index-*.png
 
 # vercel
 .vercel

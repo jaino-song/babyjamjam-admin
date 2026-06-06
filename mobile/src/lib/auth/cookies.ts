@@ -49,17 +49,15 @@ export const getCurrentUser = cache(async () => {
     return res.data;
   } catch (error: unknown) {
     if (axios.isAxiosError(error)) {
-      console.error("[getCurrentUser] Failed to fetch user:", error.message);
-      console.error("[getCurrentUser] Error code:", error.code);
-      console.error("[getCurrentUser] Error status:", error.response?.status);
-      console.error("[getCurrentUser] Request:", {
-        baseURL: error.config?.baseURL,
-        url: error.config?.url,
+      console.error("[getCurrentUser] Failed to fetch user:", {
+        code: error.code,
+        status: error.response?.status,
+        name: error.name,
       });
     } else if (error instanceof Error) {
-      console.error("[getCurrentUser] Failed to fetch user:", error.message);
+      console.error("[getCurrentUser] Failed to fetch user:", { name: error.name });
     } else {
-      console.error("[getCurrentUser] Failed to fetch user:", String(error));
+      console.error("[getCurrentUser] Failed to fetch user");
     }
     return null;
   }

@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+import { getUpstreamErrorStatus, logUpstreamError, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
@@ -9,18 +10,14 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(data, { status });
     } catch (error) {
-        console.error("[Auth Reset Password] Error:", error);
+        logUpstreamError("Auth Reset Password", error);
 
         if (error instanceof AxiosError) {
-            const status = error.response?.status || 500;
+            const status = getUpstreamErrorStatus(error);
             const responseData = error.response?.data;
 
-            if (responseData) {
-                return NextResponse.json(responseData, { status });
-            }
-
             return NextResponse.json(
-                { error: error.message || "Reset failed" },
+                sanitizeUpstreamClientError(responseData, "Reset failed"),
                 { status }
             );
         }

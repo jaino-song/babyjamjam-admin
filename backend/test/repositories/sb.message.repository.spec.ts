@@ -12,7 +12,9 @@ describe("SbMessageRepository", () => {
         findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
         delete: jest.fn(),
+        deleteMany: jest.fn(),
     });
 
     const createMessageRow = (overrides = {}) => ({
@@ -180,13 +182,14 @@ describe("SbMessageRepository", () => {
                     createdAt: createdAt,
                     editedAt: editedAt,
                 });
-                messageModel.update.mockResolvedValue(updatedRow);
+                messageModel.updateMany.mockResolvedValue({ count: 1 });
+                messageModel.findFirst.mockResolvedValue(updatedRow);
 
                 // Act
                 const result = await repository.update(branchId, entity);
 
                 // Assert
-                expect(messageModel.update).toHaveBeenCalledWith({
+                expect(messageModel.updateMany).toHaveBeenCalledWith({
                     where: { id: 3, branchId: branchId },
                     data: {
                         title: "Updated",
@@ -210,7 +213,8 @@ describe("SbMessageRepository", () => {
                     text: "Original text",
                     editedAt: editedAt,
                 });
-                messageModel.update.mockResolvedValue(updatedRow);
+                messageModel.updateMany.mockResolvedValue({ count: 1 });
+                messageModel.findFirst.mockResolvedValue(updatedRow);
 
                 // Act
                 const result = await repository.update(branchId, entity);
@@ -233,7 +237,8 @@ describe("SbMessageRepository", () => {
                     text: "New text",
                     editedAt: editedAt,
                 });
-                messageModel.update.mockResolvedValue(updatedRow);
+                messageModel.updateMany.mockResolvedValue({ count: 1 });
+                messageModel.findFirst.mockResolvedValue(updatedRow);
 
                 // Act
                 const result = await repository.update(branchId, entity);
@@ -252,13 +257,13 @@ describe("SbMessageRepository", () => {
         describe("given a valid message id", () => {
             it("should delete the message", async () => {
                 // Arrange
-                messageModel.delete.mockResolvedValue(undefined);
+                messageModel.deleteMany.mockResolvedValue({ count: 1 });
 
                 // Act
                 await repository.delete(branchId, 4);
 
                 // Assert
-                expect(messageModel.delete).toHaveBeenCalledWith({
+                expect(messageModel.deleteMany).toHaveBeenCalledWith({
                     where: { id: 4, branchId: branchId },
                 });
             });
@@ -267,13 +272,13 @@ describe("SbMessageRepository", () => {
         describe("given different message ids", () => {
             it.each([1, 10, 100, 999])("should delete message with id %i", async (id) => {
                 // Arrange
-                messageModel.delete.mockResolvedValue(undefined);
+                messageModel.deleteMany.mockResolvedValue({ count: 1 });
 
                 // Act
                 await repository.delete(branchId, id);
 
                 // Assert
-                expect(messageModel.delete).toHaveBeenCalledWith({
+                expect(messageModel.deleteMany).toHaveBeenCalledWith({
                     where: { id, branchId: branchId },
                 });
             });

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>알림 설정 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.menu-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scrollbar-width: none;
+}
+.menu-content::-webkit-scrollbar { display: none; }
+.menu-group { }
+.menu-group-title {
+  padding: 10px 18px 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--v3-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 61px;
+  padding: 12px 16px;
+  cursor: default;
+  transition: background 0.15s ease;
+  border-width: 1px 0 0;
+  border-top-style: solid;
+  border-top-color: var(--v3-border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  text-align: left;
+}
+.menu-row:first-of-type { border-top-width: 0; }
+.menu-row-selected,
+.menu-row-selected:hover {
+  background: var(--v3-primary-light);
+  box-shadow: inset 0 0 0 1px var(--v3-primary-medium);
+}
+.menu-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.menu-text { flex: 1; min-width: 0; }
+.menu-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--v3-dark);
+}
+.menu-description {
+  margin-top: 3px;
+  color: var(--v3-text-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.35;
+  word-break: keep-all;
+}
+.menu-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--v3-text-muted);
+}
+.menu-status-pill {
+  border: 1px solid var(--v3-border);
+  border-radius: 999px;
+  background: var(--v3-dim-white);
+  color: var(--v3-text-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+.notification-action-pill {
+  border: 0;
+  color: var(--v3-primary);
+  cursor: pointer;
+}
+.switch {
+  width: 44px;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  padding: 3px;
+  background: hsl(214, 13%, 86%);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.switch::before {
+  content: "";
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 2px 6px hsla(214, 30%, 20%, 0.18);
+  transition: transform 0.18s ease;
+}
+.switch.on { background: var(--v3-primary); }
+.switch.on::before { transform: translateX(18px); }
+.radio {
+  width: 20px;
+  height: 20px;
+  border: 2px solid hsl(214, 18%, 78%);
+  border-radius: 999px;
+  position: relative;
+}
+.menu-row-selected .radio { border-color: var(--v3-primary); }
+.menu-row-selected .radio::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 999px;
+  background: var(--v3-primary);
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list" data-component="mobile-notification-mockup">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="menu-content">
+          <div class="menu-group pop-up">
+            <div class="menu-group-title">알림 설정</div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-dim-white);">
+                <svg width="18" height="18" fill="none" stroke="hsl(214,25%,28%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">앱 알림</div>
+                <div class="menu-description">브라우저에서 알림 권한이 차단되어 있습니다.</div>
+              </div>
+              <div class="menu-right">
+                <button class="switch" aria-pressed="false" onclick="toggleSwitch(this)"></button>
+              </div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-orange-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(34,100%,55%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">이메일 알림</div>
+                <div class="menu-description">wlsghtmeod@gmail.com로 주요 알림을 받습니다.</div>
+              </div>
+              <div class="menu-right">
+                <button class="switch on" aria-pressed="true" onclick="toggleSwitch(this)"></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="menu-group pop-up" style="animation-delay: 120ms;">
+            <div class="menu-group-title">알림톡 서비스</div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-primary-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">알리고 (Aligo)</div>
+                <div class="menu-description">카카오 알림톡 API로 계약, 배정, 서비스 일정 알림을 발송합니다.</div>
+              </div>
+              <div class="menu-right"><span class="radio"></span></div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-orange-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(34,100%,55%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">채널톡 (Channel Talk)</div>
+                <div class="menu-description">채널톡 마케팅 자동화를 통해 알림톡을 발송합니다.</div>
+              </div>
+              <div class="menu-right"><span class="radio"></span></div>
+            </div>
+            <div class="menu-row menu-row-selected">
+              <div class="menu-icon" style="background: var(--v3-dim-white);">
+                <svg width="18" height="18" fill="none" stroke="hsl(214,25%,28%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">사용 안함</div>
+                <div class="menu-description">알림톡 발송을 비활성화합니다.</div>
+              </div>
+              <div class="menu-right"><span class="radio"></span></div>
+            </div>
+          </div>
+
+          <div class="menu-group pop-up" style="animation-delay: 180ms;">
+            <div class="menu-group-title">관리자</div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-primary-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">테스트 알림</div>
+                <div class="menu-description">모든 구독된 디바이스에 테스트 알림을 전송합니다.</div>
+              </div>
+              <div class="menu-right">
+                <button class="menu-status-pill notification-action-pill">발송</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-burgundy-light);"><svg width="15" height="15" fill="none" stroke="hsl(355,36%,45%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg></div><div class="notif-body"><div class="notif-title">계약 검토 요청</div><div class="notif-snippet">송진호 고객님의 계약서 검토가 필요합니다.</div><div class="notif-time">방금 전</div></div></div>
+        </div>
+      </div>
+
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item active">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+    </div>
+  </div>
+</div>
+<div class="variant-label">알림 설정 · /notification</div>
+<script>
+function toggleSwitch(btn){const next=!btn.classList.contains('on');btn.classList.toggle('on',next);btn.setAttribute('aria-pressed',String(next));}
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+</script>
+</body>
+</html>

@@ -1,4 +1,12 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
+
+interface MockAuthUser {
+  id: string;
+  name: string;
+  email: string;
+  profile_image: string;
+  role: string;
+}
 
 // Mock for admin user
 const MOCK_ADMIN_USER = {
@@ -7,15 +15,6 @@ const MOCK_ADMIN_USER = {
   email: 'admin@example.com',
   profile_image: '',
   role: 'admin',
-};
-
-// Mock for regular user
-const MOCK_REGULAR_USER = {
-  id: 'regular-user',
-  name: '일반 사용자',
-  email: 'user@example.com',
-  profile_image: '',
-  role: 'user',
 };
 
 // Mock feedback data
@@ -51,16 +50,16 @@ const MOCK_FEEDBACK_STATS = {
 };
 
 // Helper to setup auth mocks
-const setupAuthMocks = async (page: any, user: any) => {
+const setupAuthMocks = async (page: Page, user: MockAuthUser) => {
   await page.addInitScript(() => {
     (window as typeof window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
   });
   
-  await page.route('**/api/auth/me', async (route: any) => {
+  await page.route('**/api/auth/me', async (route: Route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(user) });
   });
   
-  await page.route('**/auth/me', async (route: any) => {
+  await page.route('**/auth/me', async (route: Route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(user) });
   });
 };

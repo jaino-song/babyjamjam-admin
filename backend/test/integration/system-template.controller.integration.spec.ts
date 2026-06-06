@@ -325,6 +325,14 @@ describe("SystemTemplateController (Integration)", () => {
 
             expect(response.status).toBe(404);
         });
+
+        it("returns 400 for invalid version number", async () => {
+            const response = await request(app.getHttpServer())
+                .get(`/system-templates/${SystemTemplateKey.SERVICE_INFO}/versions/abc`);
+
+            expect(response.status).toBe(400);
+            expect(service.getVersionContent).not.toHaveBeenCalled();
+        });
     });
 
     describe("POST /system-templates/:key/rollback/:versionNumber", () => {
@@ -351,6 +359,14 @@ describe("SystemTemplateController (Integration)", () => {
                 .post(`/system-templates/${SystemTemplateKey.INFO}/rollback/999`);
 
             expect(response.status).toBe(404);
+        });
+
+        it("returns 400 for invalid version number", async () => {
+            const response = await request(app.getHttpServer())
+                .post(`/system-templates/${SystemTemplateKey.INFO}/rollback/abc`);
+
+            expect(response.status).toBe(400);
+            expect(service.rollback).not.toHaveBeenCalled();
         });
     });
 

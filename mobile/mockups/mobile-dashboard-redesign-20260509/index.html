@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>Mobile Dashboard Redesign — 5 Variants</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: -apple-system, "Helvetica Neue", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  background: hsl(220, 25%, 12%);
+  color: white;
+  min-height: 100vh;
+}
+header {
+  padding: 24px 32px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+header h1 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+header p { font-size: 0.85rem; color: rgba(255,255,255,0.6); margin-top: 4px; }
+.cta {
+  font-size: 0.78rem;
+  color: rgba(255,255,255,0.7);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  padding: 8px 14px;
+  border-radius: 999px;
+}
+.cta b { color: hsl(34, 100%, 65%); }
+
+.legend {
+  padding: 16px 32px 0;
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.legend-item {
+  font-size: 0.72rem;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+.legend-item b { color: hsl(214, 90%, 70%); margin-right: 6px; }
+
+.board {
+  display: flex;
+  gap: 32px;
+  padding: 24px 32px 60px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+}
+.col {
+  flex: 0 0 460px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.col-header {
+  text-align: center;
+  margin-bottom: 16px;
+  padding: 0 8px;
+}
+.col-header h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.col-header h2 .letter {
+  display: inline-block;
+  background: hsl(214, 90%, 60%);
+  color: white;
+  border-radius: 8px;
+  padding: 2px 8px;
+  font-size: 0.85rem;
+  margin-right: 6px;
+}
+.col-header p {
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.55);
+  line-height: 1.4;
+}
+
+iframe {
+  width: 414px;
+  height: 920px;
+  border: 0;
+  background: transparent;
+}
+
+.col-footer {
+  margin-top: 12px;
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.5);
+  text-align: center;
+  max-width: 380px;
+  line-height: 1.5;
+}
+.col-footer .pros { color: hsl(137, 50%, 65%); display: block; margin-top: 4px; }
+.col-footer .cons { color: hsl(355, 60%, 70%); display: block; margin-top: 2px; }
+
+.scroll-hint {
+  text-align: center;
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.35);
+  padding: 8px;
+}
+
+@media (max-width: 768px) {
+  .board { padding: 16px; gap: 16px; }
+  .col { flex: 0 0 360px; }
+  iframe { width: 350px; height: 800px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Mobile Dashboard Redesign — 5 Variants</h1>
+    <p>iOS-style slide-to-detail navigation. Tap any list item to see the push animation.</p>
+  </div>
+  <div class="cta">
+    👉 <b>Tap a list item</b> in any preview to see the slide-to-detail interaction
+  </div>
+</header>
+
+<div class="legend">
+  <div class="legend-item"><b>Stats:</b> 4 cards → reduced footprint</div>
+  <div class="legend-item"><b>List:</b> primary surface, fills viewport</div>
+  <div class="legend-item"><b>Detail:</b> iOS push (A/B/C/E) or bottom sheet (D)</div>
+</div>
+
+<div class="board">
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="letter">A</span> Slim Stats Strip</h2>
+      <p>4 stats compress into a single horizontal pill row, ~52px tall. Most conservative — keeps all 4 KPIs visible.</p>
+    </div>
+    <iframe src="variant-A.html?v=frame-removal"></iframe>
+    <div class="col-footer">
+      <span class="pros">+ All KPIs always visible · familiar pattern · zero hidden state</span>
+      <span class="cons">− Horizontal scroll if labels grow · still uses ~70px of vertical</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="letter">B</span> Stats-as-Filter-Tabs</h2>
+      <p>4 stats become functional filter chips at top of list. Stats and tabs unified into one element. Zero wasted pixels.</p>
+    </div>
+    <iframe src="variant-B.html?v=frame-removal"></iframe>
+    <div class="col-footer">
+      <span class="pros">+ Stats become useful · removes redundant tab row · maximum content density</span>
+      <span class="cons">− Loses "passive glance" KPI dashboard feel · changes information architecture</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="letter">C</span> Collapsible Summary</h2>
+      <p>Single colored-dot summary line by default; tap to expand to 2x2 stat grid. Best of both worlds.</p>
+    </div>
+    <iframe src="variant-C.html?v=frame-removal"></iframe>
+    <div class="col-footer">
+      <span class="pros">+ Glanceable totals always visible · full stats one tap away</span>
+      <span class="cons">− Extra tap to see labels · dots-only mode requires color literacy</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="letter">D</span> Pure List + Bottom Sheet</h2>
+      <p>Stats hidden behind header chip; list fills 100% of viewport. Detail rises from bottom (not iOS push).</p>
+    </div>
+    <iframe src="variant-D.html?v=frame-removal"></iframe>
+    <div class="col-footer">
+      <span class="pros">+ Maximum list density · most app-like (Apple Mail/Notion feel) · drag-to-dismiss</span>
+      <span class="cons">− Stats need explicit tap to access · departs from current desktop pattern</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-header">
+      <h2><span class="letter">E</span> Floating Stat Dock</h2>
+      <p>Stats become a frosted-glass dock floating above the list. Always visible, doubles as filter. Most "modern".</p>
+    </div>
+    <iframe src="variant-E.html?v=frame-removal"></iframe>
+    <div class="col-footer">
+      <span class="pros">+ Stats never scroll away · iOS Control Center vibe · count badges</span>
+      <span class="cons">− Dock occludes ~80px of bottom list · novel pattern (less familiar)</span>
+    </div>
+  </div>
+
+</div>
+
+<div class="scroll-hint">← scroll horizontally to see all 5 →</div>
+
+</body>
+</html>

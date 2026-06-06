@@ -13,9 +13,9 @@ describe("Input Component", () => {
   it("renders v3 variant correctly", () => {
     const { container } = render(<Input variant="v3" />);
     const input = container.querySelector("input");
-    expect(input).toHaveClass("h-12");
-    expect(input).toHaveClass("rounded-[16px]");
-    expect(input).toHaveClass("focus-visible:scale-[1.02]");
+    expect(input).toHaveClass("h-10");
+    expect(input).toHaveClass("rounded-2xl");
+    expect(input).toHaveClass("focus-visible:border-v3-primary");
   });
 
   it("renders v3-pill variant correctly", () => {

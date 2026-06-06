@@ -48,6 +48,22 @@ describe("GetSettingUsecase", () => {
         });
     });
 
+    describe("executeEntity", () => {
+        it("should return the setting entity with its updatedAt", async () => {
+            const entity = new SystemSettingEntity(
+                "alimtalk_provider",
+                "aligo",
+                new Date("2026-05-28T12:00:00.000Z")
+            );
+            repository.findByKey.mockResolvedValue(entity);
+
+            const result = await usecase.executeEntity("alimtalk_provider");
+
+            expect(repository.findByKey).toHaveBeenCalledWith("alimtalk_provider");
+            expect(result).toBe(entity);
+        });
+    });
+
     describe("executeWithDefault", () => {
         describe("given setting exists", () => {
             it("should return the setting value", async () => {

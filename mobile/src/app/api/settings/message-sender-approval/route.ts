@@ -1,15 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+  backendJsonResponse,
   errorResponse,
   getAuthHeaders,
   getAuthToken,
+  invalidJsonResponse,
+  readJsonObjectBody,
+  unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
 export async function GET(request: NextRequest) {
   const token = getAuthToken(request);
   if (!token) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthorizedResponse("Unauthorized");
   }
 
   try {
@@ -17,7 +21,7 @@ export async function GET(request: NextRequest) {
       headers: getAuthHeaders(token),
     });
 
-    return NextResponse.json(response.data, { status: response.status });
+    return backendJsonResponse(response);
   } catch (error) {
     return errorResponse(error, "message sender approval fetch");
   }
@@ -26,11 +30,11 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const token = getAuthToken(request);
   if (!token) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthorizedResponse("Unauthorized");
   }
 
   try {
-    const body = await request.json();
+    const body = await readJsonObjectBody(request);
     const response = await serverAPIClient.post(
       "/settings/message-sender-approval/request",
       body,
@@ -39,8 +43,13 @@ export async function POST(request: NextRequest) {
       },
     );
 
-    return NextResponse.json(response.data, { status: response.status });
+    return backendJsonResponse(response);
   } catch (error) {
+    const invalidJson = invalidJsonResponse(error);
+    if (invalidJson) {
+      return invalidJson;
+    }
+
     return errorResponse(error, "message sender approval request");
   }
 }

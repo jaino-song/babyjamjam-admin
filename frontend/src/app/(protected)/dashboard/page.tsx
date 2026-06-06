@@ -69,11 +69,10 @@ const mapServiceStatusToV3 = (status: string | null): StatusType => {
     case "active":
       return "active";
     case "waiting":
-    case "pending":
-    case "replacement_requested":
       return "pending";
+    case "replacement_requested":
+      return "terminated";
     case "terminated":
-    case "cancelled":
       return "terminated";
     case "completed":
       return "completed";
@@ -100,14 +99,12 @@ const getStatusLabel = (status: string | null): string => {
     case "active":
       return "진행중";
     case "waiting":
-    case "pending":
       return "대기";
     case "replacement_requested":
       return "교체 요청";
     case "completed":
       return "완료";
     case "terminated":
-    case "cancelled":
       return "중단";
     default:
       return "-";

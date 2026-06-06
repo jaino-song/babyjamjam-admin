@@ -1,13 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 export async function GET(
     request: NextRequest,
@@ -16,20 +17,16 @@ export async function GET(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { id } = await params;
         const response = await serverAPIClient.get(`/message-templates/${id}`, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error(`[API] Error fetching message template ${request.url}:`, error);
-        return NextResponse.json(
-            { error: "Failed to fetch message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch message template");
     }
 }
 
@@ -40,21 +37,22 @@ export async function PATCH(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { id } = await params;
-        const body = await request.json();
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.patch(`/message-templates/${id}`, body, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error(`[API] Error updating message template ${request.url}:`, error);
-        return NextResponse.json(
-            { error: "Failed to update message template" },
-            { status: 500 }
-        );
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
+        return errorResponse(error, "update message template");
     }
 }
 
@@ -65,19 +63,15 @@ export async function DELETE(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { id } = await params;
-        await serverAPIClient.delete(`/message-templates/${id}`, {
+        const response = await serverAPIClient.delete(`/message-templates/${id}`, {
             headers: getAuthHeaders(token),
         });
-        return new NextResponse(null, { status: 204 });
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error(`[API] Error deleting message template ${request.url}:`, error);
-        return NextResponse.json(
-            { error: "Failed to delete message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "delete message template");
     }
 }

@@ -13,6 +13,7 @@ import {
 import {
     ConsultationInquiryListQueryDto,
     CreatePublicConsultationInquiryDto,
+    UNKNOWN_VOUCHER_TYPE_SENTINEL,
 } from "interface/dto/consultation-inquiry.dto";
 import { NotificationService } from "application/services/notification.service";
 
@@ -50,6 +51,37 @@ function normalizeSelectedServices(
     };
 }
 
+function parsePublicDueDate(value: string): Date {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) {
+        throw new BadRequestException("출산 예정일은 YYYY-MM-DD 형식이어야 합니다.");
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const dueDate = new Date(Date.UTC(year, month - 1, day));
+
+    if (
+        dueDate.getUTCFullYear() !== year ||
+        dueDate.getUTCMonth() !== month - 1 ||
+        dueDate.getUTCDate() !== day
+    ) {
+        throw new BadRequestException("존재하지 않는 출산 예정일입니다.");
+    }
+
+    return dueDate;
+}
+
+function normalizePublicVoucherType(value: string | null | undefined): string | null {
+    const trimmed = value?.trim();
+    if (!trimmed || trimmed === UNKNOWN_VOUCHER_TYPE_SENTINEL) {
+        return null;
+    }
+
+    return trimmed;
+}
+
 @Injectable()
 export class ConsultationInquiryService {
     private readonly logger = new Logger(ConsultationInquiryService.name);
@@ -72,19 +104,22 @@ export class ConsultationInquiryService {
             throw new NotFoundException("상담 가능한 지점을 찾을 수 없습니다.");
         }
 
+        const dueDate = parsePublicDueDate(dto.dueDate);
+
         const params: CreateConsultationInquiryParams = {
             branchId: branch.id,
             publicBranchSlug,
             motherName: dto.motherName,
             phone: dto.phone,
             address: dto.address,
-            dueDate: new Date(dto.dueDate),
+            dueDate,
             birthExperience: dto.birthExperience,
-            voucherType: dto.voucherType?.trim() || null,
+            voucherType: normalizePublicVoucherType(dto.voucherType),
             preferredCaregiverName: dto.preferredCaregiverName?.trim() || null,
             referralSource: dto.referralSource,
             privacyAcceptedAt: new Date(),
             selectedServices: normalizeSelectedServices(dto.selectedServices),
+            additionalNotes: dto.additionalNotes?.trim() || null,
             source: "website",
             status: "new",
         };

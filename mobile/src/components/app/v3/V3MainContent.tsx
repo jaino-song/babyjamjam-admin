@@ -17,7 +17,7 @@ export function V3MainContent({ children }: { children: React.ReactNode }) {
       className={cn(
         "bg-v3-dim-white",
         isLoginRoute
-          ? "h-[100dvh] flex items-center justify-center p-4"
+          ? "h-[100dvh] overflow-hidden"
           : isClientsNewRoute
           ? "h-[100dvh] overflow-hidden p-4 pt-20 pb-4"
           : isForgotPasswordRoute

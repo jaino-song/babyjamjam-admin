@@ -8,15 +8,18 @@ export function Toaster() {
   const { toasts, dismiss } = useToast();
 
   return (
-    <div data-component="toaster" className="fixed top-4 right-4 z-50 flex flex-col gap-2 w-fit max-w-sm">
+    <div
+      data-component="toaster"
+      className="pointer-events-none fixed bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] left-1/2 z-[1000] flex w-[calc(100vw-32px)] max-w-[360px] -translate-x-1/2 flex-col-reverse gap-2"
+    >
       {toasts.map((toast) => (
         <div
           data-component="toast"
           key={toast.id}
           className={cn(
-            "relative flex items-center justify-between gap-4 rounded-2xl border p-4 pr-8 shadow-lg transition-all duration-300",
+            "pointer-events-auto relative flex items-center justify-between gap-4 rounded-2xl border p-4 pr-8 shadow-lg transition-all duration-300",
             toast.open === false
-              ? "animate-out slide-out-to-right-full fade-out-0"
+              ? "animate-out slide-out-to-bottom-2 fade-out-0"
               : "animate-in slide-in-from-bottom-2 fade-in-0",
             toast.variant === "destructive"
               ? "border-destructive/50 bg-destructive text-destructive-foreground"

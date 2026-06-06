@@ -1,9 +1,12 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 import request from "supertest";
 import { BankAccountInfoController } from "interface/controllers/bank-account-info.controller";
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
 import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 
 describe("BankAccountInfoController (Integration)", () => {
     // ============================================
@@ -27,6 +30,13 @@ describe("BankAccountInfoController (Integration)", () => {
         );
     };
 
+    const getMethodGuards = (methodName: "findAll" | "findByArea") => {
+        return Reflect.getMetadata(
+            GUARDS_METADATA,
+            BankAccountInfoController.prototype[methodName],
+        ) ?? [];
+    };
+
     beforeEach(async () => {
         const mockBankAccountInfoService = {
             create: jest.fn(),
@@ -44,7 +54,18 @@ describe("BankAccountInfoController (Integration)", () => {
                     useValue: mockBankAccountInfoService,
                 },
             ],
-        }).compile();
+        })
+            .overrideGuard(JwtGuard)
+            .useValue({
+                canActivate: (context: { switchToHttp: () => { getRequest: () => { user?: unknown } } }) => {
+                    const request = context.switchToHttp().getRequest();
+                    request.user = { userId: "owner-user-id", role: "owner" };
+                    return true;
+                },
+            })
+            .overrideGuard(OwnerOrAdminGuard)
+            .useValue({ canActivate: () => true })
+            .compile();
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));
@@ -124,6 +145,12 @@ describe("BankAccountInfoController (Integration)", () => {
     // GET /bank-account-infos - List All
     // ============================================
     describe("GET /bank-account-infos", () => {
+        it("should require owner/admin authentication", () => {
+            expect(getMethodGuards("findAll")).toEqual(
+                expect.arrayContaining([JwtGuard, OwnerOrAdminGuard]),
+            );
+        });
+
         describe("given bank account infos exist", () => {
             it("should return all bank account infos", async () => {
                 // Arrange
@@ -165,6 +192,12 @@ describe("BankAccountInfoController (Integration)", () => {
     // GET /bank-account-infos/area - Find By Area
     // ============================================
     describe("GET /bank-account-infos/area", () => {
+        it("should require owner/admin authentication", () => {
+            expect(getMethodGuards("findByArea")).toEqual(
+                expect.arrayContaining([JwtGuard, OwnerOrAdminGuard]),
+            );
+        });
+
         describe("given bank account info exists for area", () => {
             it("should return the bank account info", async () => {
                 // Arrange

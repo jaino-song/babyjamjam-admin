@@ -28,7 +28,7 @@ export interface Client {
     careCenter: boolean;
     voucherClient: boolean;
     breastPump: boolean;
-    serviceStatus: string | null;      // Renamed from contractStatus
+    serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
     eDocId: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
@@ -53,7 +53,7 @@ export interface CreateClientDto {
     careCenter: boolean;
     voucherClient: boolean;
     breastPump: boolean;
-    serviceStatus?: string | null;
+    serviceStatus?: ServiceStatus | null;
 }
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId
@@ -75,7 +75,7 @@ export interface UpdateClientDto {
     careCenter?: boolean;
     voucherClient?: boolean;
     breastPump?: boolean;
-    serviceStatus?: string | null;
+    serviceStatus?: ServiceStatus | null;
 }
 
 // DTO for terminating service
@@ -101,10 +101,10 @@ export interface PaginatedResponse<T> {
 // Service status options (renamed from Contract status)
 export const SERVICE_STATUS_OPTIONS = [
     { value: "waiting", label: "대기", labelEn: "Waiting", color: "warning" as const },
+    { value: "replacement_requested", label: "교체 요청", labelEn: "Replacement Requested", color: "error" as const },
     { value: "active", label: "진행중", labelEn: "Active", color: "info" as const },
     { value: "completed", label: "완료", labelEn: "Completed", color: "success" as const },
     { value: "terminated", label: "중단", labelEn: "Terminated", color: "default" as const },
-    { value: "replacement_requested", label: "교체 요청", labelEn: "Replacement Requested", color: "error" as const },
 ] as const;
 
 export type ServiceStatus = typeof SERVICE_STATUS_OPTIONS[number]["value"];

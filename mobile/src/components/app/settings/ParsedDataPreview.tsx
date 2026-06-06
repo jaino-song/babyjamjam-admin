@@ -231,6 +231,7 @@ export function ParsedDataPreview({
 
         {/* 가격 수정 모달 */}
         <PriceEditModal
+          key={modalOpen && editingIndex !== null ? `price-edit-${editingIndex}` : "price-edit-closed"}
           open={modalOpen}
           item={editingIndex !== null ? data[editingIndex] : null}
           onClose={handleCloseModal}

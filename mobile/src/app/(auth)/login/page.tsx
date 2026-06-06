@@ -1,311 +1,255 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { t } from "@/lib/i18n/translations";
-import { useLocale } from "@/providers/LocaleProvider";
+
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { loginWithEmail } from "./actions";
 import { authApi } from "@/services/api";
-import { InputField } from "@/components/app/v3";
-import { CardContainer } from "@/components/auth/card-container";
-import { AlertCard } from "@/components/ui/alert-card";
-import { AuthInlineLink } from "@/components/auth/auth-inline-link";
-import { OAuthButtonIcons, OAuthButtons } from "@/components/auth/oauth-buttons";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
+import "@/components/app/mobile-redesign/redesign.css";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 const LoginPage = () => {
-    const locale = useLocale();
-    const router = useRouter();
+  const router = useRouter();
 
-    const [autoLogin, setAutoLogin] = useState(false);
-    const [rememberId, setRememberId] = useState(false);
-    const [formData, setFormData] = useState<Partial<LoginFormData>>({
-        email: "",
-        password: "",
-    });
-    const [errors, setErrors] = useState<Record<string, string>>({});
-    const [serverError, setServerError] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
-    const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
-    const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [autoLogin, setAutoLogin] = useState(false);
+  const [rememberId, setRememberId] = useState(false);
+  const [formData, setFormData] = useState<Partial<LoginFormData>>({
+    email: "",
+    password: "",
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [serverError, setServerError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
 
-    useEffect(() => {
-        const savedAutoLogin = safeStorageGetItem("local", "login:autoLogin") === "true";
-        const savedRememberId = safeStorageGetItem("local", "login:rememberId") === "true";
-        const savedEmail = safeStorageGetItem("local", "login:savedEmail") || "";
+  useEffect(() => {
+    const savedAutoLogin = safeStorageGetItem("local", "login:autoLogin") === "true";
+    const savedRememberId = safeStorageGetItem("local", "login:rememberId") === "true";
+    const savedEmail = safeStorageGetItem("local", "login:savedEmail") || "";
 
-        setAutoLogin(savedAutoLogin);
-        setRememberId(savedRememberId);
+    setAutoLogin(savedAutoLogin);
+    setRememberId(savedRememberId);
 
-        if (savedRememberId && savedEmail) {
-            setFormData((prev) => ({ ...prev, email: savedEmail }));
+    if (savedRememberId && savedEmail) {
+      setFormData((prev) => ({ ...prev, email: savedEmail }));
+    }
+  }, []);
+
+  const handleChange = (field: keyof LoginFormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormData((prev) => ({ ...prev, [field]: e.target.value }));
+    if (errors[field]) {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    }
+    setServerError(null);
+    setEmailVerificationRequired(false);
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setServerError(null);
+    setErrors({});
+    setEmailVerificationRequired(false);
+
+    const result = loginSchema.safeParse(formData);
+    if (!result.success) {
+      const fieldErrors: Record<string, string> = {};
+      result.error.issues.forEach((issue) => {
+        const field = issue.path[0] as string;
+        if (!fieldErrors[field]) fieldErrors[field] = issue.message;
+      });
+      setErrors(fieldErrors);
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      safeStorageSetItem("local", "login:autoLogin", autoLogin ? "true" : "false");
+      safeStorageSetItem("local", "login:rememberId", rememberId ? "true" : "false");
+      if (rememberId) {
+        safeStorageSetItem("local", "login:savedEmail", result.data.email);
+      } else {
+        safeStorageRemoveItem("local", "login:savedEmail");
+      }
+
+      const response = await loginWithEmail(result.data.email, result.data.password, autoLogin);
+
+      if (response.success) {
+        if (response.requiresBranchSelection) {
+          router.replace("/select-branch");
+        } else {
+          router.replace("/dashboard");
         }
-    }, []);
-
-    const handleChange = (field: keyof LoginFormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
-        setFormData((prev) => ({ ...prev, [field]: e.target.value }));
-        if (errors[field]) {
-            setErrors((prev) => {
-                const newErrors = { ...prev };
-                delete newErrors[field];
-                return newErrors;
-            });
+      } else {
+        setServerError(response.error || "로그인에 실패했습니다.");
+        if (response.emailVerificationRequired) {
+          if (result.data.email) {
+            safeStorageSetItem("local", "auth:verificationEmail", result.data.email);
+          }
+          setEmailVerificationRequired(true);
         }
-        setServerError(null);
-        setEmailVerificationRequired(false);
-    };
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+      setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-        e.preventDefault();
-        setServerError(null);
-        setErrors({});
-        setEmailVerificationRequired(false);
+  const handleResendVerification = async () => {
+    const inputEmail = typeof formData.email === "string" ? formData.email.trim() : "";
+    const savedEmail = safeStorageGetItem("local", "auth:verificationEmail")?.trim() || "";
+    const targetEmail = inputEmail || savedEmail;
 
-        // Validate with Zod
-        const result = loginSchema.safeParse(formData);
-        if (!result.success) {
-            const fieldErrors: Record<string, string> = {};
-            result.error.issues.forEach((issue) => {
-                const field = issue.path[0] as string;
-                if (!fieldErrors[field]) {
-                    fieldErrors[field] = issue.message;
-                }
-            });
-            setErrors(fieldErrors);
-            return;
-        }
+    if (!targetEmail || isResendingVerification) {
+      if (!targetEmail) setServerError("인증 메일을 보낼 이메일을 먼저 입력해 주세요.");
+      return;
+    }
 
-        setIsLoading(true);
+    setIsResendingVerification(true);
+    try {
+      const response = await authApi.resendVerification(targetEmail);
+      if (response.success) {
+        safeStorageSetItem("local", "auth:verificationEmail", targetEmail);
+        setServerError(response.message || "인증 이메일을 재발송했습니다. 메일함을 확인해 주세요.");
+      } else {
+        setServerError(response.message || "인증 이메일 재발송에 실패했습니다.");
+      }
+    } catch {
+      setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+    } finally {
+      setIsResendingVerification(false);
+    }
+  };
 
-        try {
-            safeStorageSetItem("local", "login:autoLogin", autoLogin ? "true" : "false");
-            safeStorageSetItem("local", "login:rememberId", rememberId ? "true" : "false");
-            if (rememberId) {
-                safeStorageSetItem("local", "login:savedEmail", result.data.email);
-            } else {
-                safeStorageRemoveItem("local", "login:savedEmail");
-            }
+  const handleKakao = () => {
+    if (API_BASE_URL) window.location.href = `${API_BASE_URL}/auth/kakao`;
+  };
 
-            const response = await loginWithEmail(result.data.email, result.data.password, autoLogin);
+  return (
+    <div className="auth-page" data-component="auth-login">
+      <div className="auth-brand">
+        <div className="auth-logo">
+          <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
+        </div>
+        <div className="auth-title">아가잼잼 어드민</div>
+        <div className="auth-sub">지점 운영을 더 똑똑하게</div>
+      </div>
 
-            if (response.success) {
-                if (response.requiresBranchSelection) {
-                    router.replace("/select-branch");
-                } else {
-                    router.replace("/dashboard");
-                }
-            } else {
-                setServerError(response.error || "로그인에 실패했습니다.");
-                if (response.emailVerificationRequired) {
-                    if (result.data.email) {
-                        safeStorageSetItem("local", "auth:verificationEmail", result.data.email);
-                    }
-                    setEmailVerificationRequired(true);
-                }
-            }
-        } catch (err) {
-            console.error("Login error:", err);
-            setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
-        } finally {
-            setIsLoading(false);
-        }
-    };
+      {serverError && (
+        <div className="auth-server-error" role="alert" data-component="login-error">
+          {serverError}
+          {emailVerificationRequired && (
+            <button
+              type="button"
+              className="auth-resend-link"
+              onClick={handleResendVerification}
+              disabled={isResendingVerification}
+              data-component="login-error-verify-email-link"
+            >
+              {isResendingVerification ? "재발송 중…" : "인증 이메일 재발송"}
+            </button>
+          )}
+        </div>
+      )}
 
-    const handleResendVerification = async () => {
-        const inputEmail = typeof formData.email === "string" ? formData.email.trim() : "";
-        const savedEmail = safeStorageGetItem("local", "auth:verificationEmail")?.trim() || "";
-        const targetEmail = inputEmail || savedEmail;
+      <form className="auth-form" onSubmit={handleSubmit} data-component="login-form">
+        <input
+          className={`auth-input ${errors.email ? "error" : ""}`}
+          type="email"
+          placeholder="이메일"
+          autoComplete="email"
+          value={formData.email ?? ""}
+          onChange={handleChange("email")}
+          disabled={isLoading}
+          aria-invalid={!!errors.email}
+        />
+        {errors.email && <div className="auth-input-error">{errors.email}</div>}
+        <input
+          className={`auth-input ${errors.password ? "error" : ""}`}
+          type="password"
+          placeholder="비밀번호"
+          autoComplete="current-password"
+          value={formData.password ?? ""}
+          onChange={handleChange("password")}
+          disabled={isLoading}
+          aria-invalid={!!errors.password}
+        />
+        {errors.password && <div className="auth-input-error">{errors.password}</div>}
 
-        if (!targetEmail || isResendingVerification) {
-            if (!targetEmail) {
-                setServerError("인증 메일을 보낼 이메일을 먼저 입력해 주세요.");
-            }
-            return;
-        }
+        <div className="auth-options">
+          <label className="auth-check" htmlFor="login-remember-id">
+            <input
+              id="login-remember-id"
+              type="checkbox"
+              checked={rememberId}
+              onChange={(e) => setRememberId(e.target.checked)}
+              disabled={isLoading}
+            />
+            <span>아이디 저장</span>
+          </label>
+          <label className="auth-check" htmlFor="login-auto-login">
+            <input
+              id="login-auto-login"
+              type="checkbox"
+              checked={autoLogin}
+              onChange={(e) => setAutoLogin(e.target.checked)}
+              disabled={isLoading}
+            />
+            <span>자동 로그인</span>
+          </label>
+        </div>
 
-        setIsResendingVerification(true);
-        try {
-            const response = await authApi.resendVerification(targetEmail);
-            if (response.success) {
-                safeStorageSetItem("local", "auth:verificationEmail", targetEmail);
-                setServerError(response.message || "인증 이메일을 재발송했습니다. 메일함을 확인해 주세요.");
-            } else {
-                setServerError(response.message || "인증 이메일 재발송에 실패했습니다.");
-            }
-        } catch {
-            setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
-        } finally {
-            setIsResendingVerification(false);
-        }
-    };
-
-    const kakaoButton = {
-        title: "카카오로 로그인",
-        icon: <OAuthButtonIcons.kakao className="h-5 w-5" />,
-        onClick: () => {
-            window.location.href = `${API_BASE_URL}/auth/kakao`;
-        },
-        disabled: isLoading,
-    };
-
-    const googleButton = {
-        title: "Google로 로그인",
-        icon: <OAuthButtonIcons.google />,
-        onClick: () => {
-            window.location.href = `${API_BASE_URL}/auth/google`;
-        },
-        disabled: true,
-    };
-
-    return (
-        <CardContainer
-            data-component="auth-login"
-            dataComponents={{
-                container: "auth-login-container",
-                card: "auth-login-card",
-                header: "auth-login-header",
-                title: "auth-login-title",
-                subtitle: "auth-login-subtitle",
-                content: "auth-login-content",
-            }}
-            contentClassName="flex flex-col gap-6"
-            title={t(locale, "login.title")}
-            subtitle={t(locale, "login.subtitle")}
+        <button
+          type="submit"
+          className="auth-btn"
+          disabled={isLoading}
+          data-component="login-submit-button"
         >
-            {/* Error Alert */}
-            {serverError && (
-                <AlertCard
-                    variant="destructive"
-                    data-component="login-error"
-                    dataComponents={{
-                        message: "login-error-message",
-                        actionContainer: "login-error-verify-email",
-                        actionLink: "login-error-verify-email-link",
-                    }}
-                    message={serverError}
-                    messageClassName="pr-2"
-                    actionLabel={emailVerificationRequired ? (isResendingVerification ? "재발송 중..." : "인증 이메일 재발송") : undefined}
-                    actionOnClick={emailVerificationRequired ? handleResendVerification : undefined}
-                />
-            )}
+          {isLoading ? "로그인 중…" : "로그인"}
+        </button>
+      </form>
 
-            {/* Login Form */}
-            <form data-component="login-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
-                <InputField
-                    title="이메일"
-                    message={errors.email}
-                    messageTone="error"
-                    messageId={errors.email ? "login-email-error" : undefined}
-                    className="gap-2"
-                    labelClassName="text-sm"
-                    inputClassName={errors.email ? "border-destructive focus:border-destructive" : undefined}
-                    inputProps={{
-                        id: "login-email",
-                        type: "email",
-                        value: formData.email,
-                        onChange: handleChange("email"),
-                        disabled: isLoading,
-                        autoComplete: "email",
-                        "aria-invalid": !!errors.email,
-                        "aria-describedby": errors.email ? "login-email-error" : undefined,
-                    }}
-                />
+      <div className="auth-divider">또는</div>
 
-                <InputField
-                    title="비밀번호"
-                    message={errors.password}
-                    messageTone="error"
-                    messageId={errors.password ? "login-password-error" : undefined}
-                    className="gap-2"
-                    labelClassName="text-sm"
-                    inputClassName={errors.password ? "border-destructive focus:border-destructive" : undefined}
-                    inputProps={{
-                        id: "login-password",
-                        type: "password",
-                        value: formData.password,
-                        onChange: handleChange("password"),
-                        disabled: isLoading,
-                        autoComplete: "current-password",
-                        "aria-invalid": !!errors.password,
-                        "aria-describedby": errors.password ? "login-password-error" : undefined,
-                    }}
-                />
+      <button
+        type="button"
+        className="auth-oauth"
+        onClick={handleKakao}
+        disabled={isLoading}
+        data-component="login-kakao"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="rgba(0,0,0,0.85)">
+          <path d="M12 3C6.5 3 2 6.5 2 11c0 2.8 1.8 5.3 4.5 6.7L5.4 21l3.5-2.3c1 .2 2 .3 3.1.3 5.5 0 10-3.5 10-8s-4.5-8-10-8z" />
+        </svg>
+        카카오로 시작하기
+      </button>
 
-                <div data-component="login-form-checkboxes" className="flex items-center gap-6">
-                    <div data-component="login-form-checkbox-remember-id" className="flex items-center gap-2">
-                        <Checkbox
-                            id="login-remember-id"
-                            checked={rememberId}
-                            onCheckedChange={(checked) => setRememberId(checked === true)}
-                            disabled={isLoading}
-                        />
-                        <Label htmlFor="login-remember-id" className="text-sm text-muted-foreground select-none">
-                            아이디 저장
-                        </Label>
-                    </div>
+      <div className="auth-links">
+        <Link href="/forgot-password" data-component="login-forgot">
+          비밀번호 찾기
+        </Link>
+        <Link href="/register" data-component="login-register-link">
+          회원가입
+        </Link>
+      </div>
 
-                    <div data-component="login-form-checkbox-auto-login" className="flex items-center gap-2">
-                        <Checkbox
-                            id="login-auto-login"
-                            checked={autoLogin}
-                            onCheckedChange={(checked) => setAutoLogin(checked === true)}
-                            disabled={isLoading}
-                        />
-                        <Label htmlFor="login-auto-login" className="text-sm text-muted-foreground select-none">
-                            자동 로그인
-                        </Label>
-                    </div>
-                </div>
-
-                <Button
-                    data-component="login-submit-button"
-                    type="submit"
-                    size="lg"
-                    className="w-full rounded-2xl"
-                    disabled={isLoading}
-                >
-                    {isLoading ? <Spinner size="sm" /> : "로그인"}
-                </Button>
-            </form>
-
-            {/* Divider */}
-            <div data-component="login-divider" className="relative">
-                <div data-component="login-divider-line" className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t border-border" />
-                </div>
-                <div data-component="login-divider-text" className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-white px-2 text-muted-foreground">
-                        또는
-                    </span>
-                </div>
-            </div>
-
-            {/* OAuth Buttons */}
-            <OAuthButtons kakaoButton={kakaoButton} googleButton={googleButton} />
-
-            <AuthInlineLink
-                dataComponent="login-forgot"
-                href="/forgot-password"
-                prefixText="비밀번호를 잊으셨나요?"
-                linkLabel="비밀번호 찾기"
-            />
-
-            {/* Register Link */}
-            <AuthInlineLink
-                dataComponent="login-register-link"
-                href="/register"
-                prefixText="계정이 없으신가요?"
-                linkLabel="회원가입"
-            />
-        </CardContainer>
-    );
+      <div className="auth-footer">
+        가입 시 <Link href="/terms">이용약관</Link>과 <Link href="/privacy">개인정보처리방침</Link>에 동의합니다.
+      </div>
+    </div>
+  );
 };
 
 export default LoginPage;

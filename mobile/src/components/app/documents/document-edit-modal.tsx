@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { X } from "lucide-react";
 import {
   Dialog,
@@ -40,6 +40,15 @@ interface DocumentEditModalProps {
   isLoading?: boolean;
 }
 
+function getDocumentFormDefaults(doc: Document | null) {
+  return {
+    name: doc?.name || "",
+    description: doc?.description || "",
+    category: doc?.categoryId || "",
+    tags: doc?.tags || [],
+  };
+}
+
 export function DocumentEditModal({
   open,
   onClose,
@@ -47,28 +56,14 @@ export function DocumentEditModal({
   onSave,
   isLoading = false,
 }: DocumentEditModalProps) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
+  const defaults = getDocumentFormDefaults(doc);
+  const [name, setName] = useState(defaults.name);
+  const [description, setDescription] = useState(defaults.description);
+  const [category, setCategory] = useState(defaults.category);
+  const [tags, setTags] = useState<string[]>(defaults.tags);
   const [tagInput, setTagInput] = useState("");
 
   const { data: categories = [] } = useDocumentCategories();
-
-  useEffect(() => {
-    if (doc) {
-      setName(doc.name || "");
-      setDescription(doc.description || "");
-      setCategory(doc.categoryId || "");
-      setTags(doc.tags || []);
-    } else {
-      setName("");
-      setDescription("");
-      setCategory("");
-      setTags([]);
-    }
-    setTagInput("");
-  }, [doc, open]);
 
   const handleSave = async () => {
     if (!doc) return;

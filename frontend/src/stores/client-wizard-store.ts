@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ServiceStatus } from "@/lib/client/types";
 
 interface ClientWizardFormData {
   name: string;
@@ -18,7 +19,7 @@ interface ClientWizardFormData {
   careCenter: boolean;
   voucherClient: boolean;
   breastPump: boolean;
-  serviceStatus: string;
+  serviceStatus: ServiceStatus;
 }
 
 interface ClientWizardStore extends ClientWizardFormData {

@@ -1,9 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
+import {
+    documentPath,
+    invalidFileIdResponse,
+    isValidFileId,
+} from "../../file-route-utils";
 
 export async function GET(
     request: NextRequest,
@@ -11,22 +21,21 @@ export async function GET(
 ) {
     const token = getAuthToken(request);
     if (!token) {
-        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+        return unauthorizedResponse("unauthorized");
     }
 
     const { fileId } = await params;
+    if (!isValidFileId(fileId)) {
+        return invalidFileIdResponse();
+    }
 
     try {
-        const response = await serverAPIClient.get(`/documents/${fileId}`, {
-            headers: { Authorization: `Bearer ${token}` },
+        const response = await serverAPIClient.get(documentPath(fileId), {
+            headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error(`[file-storage/files] get ${fileId} error:`, error);
-        return NextResponse.json(
-            { error: "failed to fetch document" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch document");
     }
 }
 
@@ -36,23 +45,27 @@ export async function PUT(
 ) {
     const token = getAuthToken(request);
     if (!token) {
-        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+        return unauthorizedResponse("unauthorized");
     }
 
     const { fileId } = await params;
+    if (!isValidFileId(fileId)) {
+        return invalidFileIdResponse();
+    }
 
     try {
-        const body = await request.json().catch(() => ({}));
-        const response = await serverAPIClient.put(`/documents/${fileId}`, body, {
-            headers: { Authorization: `Bearer ${token}` },
+        const body = await readJsonObjectBody(request);
+        const response = await serverAPIClient.put(documentPath(fileId), body, {
+            headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error(`[file-storage/files] put ${fileId} error:`, error);
-        return NextResponse.json(
-            { error: "failed to update document" },
-            { status: 500 }
-        );
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
+        return errorResponse(error, "update document");
     }
 }
 
@@ -62,21 +75,20 @@ export async function DELETE(
 ) {
     const token = getAuthToken(request);
     if (!token) {
-        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+        return unauthorizedResponse("unauthorized");
     }
 
     const { fileId } = await params;
+    if (!isValidFileId(fileId)) {
+        return invalidFileIdResponse();
+    }
 
     try {
-        const response = await serverAPIClient.delete(`/documents/${fileId}`, {
-            headers: { Authorization: `Bearer ${token}` },
+        const response = await serverAPIClient.delete(documentPath(fileId), {
+            headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error(`[file-storage/files] delete ${fileId} error:`, error);
-        return NextResponse.json(
-            { error: "failed to delete document" },
-            { status: 500 }
-        );
+        return errorResponse(error, "delete document");
     }
 }

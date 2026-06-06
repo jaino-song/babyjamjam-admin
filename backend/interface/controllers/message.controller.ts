@@ -3,6 +3,7 @@ import { MessageService } from "application/services/message.service";
 import { CreateMessageDto, UpdateMessageDto } from "interface/dto/message.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { parseInteger } from "interface/parse-integer";
 
 @Controller("messages")
 @UseGuards(JwtGuard, TenantGuard)
@@ -21,7 +22,7 @@ export class MessageController {
 
     @Get("id")
     findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
-        return this.messageService.findById(tenant.branchId ?? "", Number(id));
+        return this.messageService.findById(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
     }
 
     @Patch()
@@ -30,11 +31,16 @@ export class MessageController {
         @Query("id") id: string,
         @Body() dto: UpdateMessageDto
     ) {
-        return this.messageService.update(tenant.branchId ?? "", Number(id), dto.title, dto.text);
+        return this.messageService.update(
+            tenant.branchId ?? "",
+            parseInteger(id, "id", { min: 1 }),
+            dto.title,
+            dto.text,
+        );
     }
 
     @Delete()
     delete(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
-        return this.messageService.delete(tenant.branchId ?? "", Number(id));
+        return this.messageService.delete(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
     }
 }

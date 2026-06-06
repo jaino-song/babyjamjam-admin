@@ -6,18 +6,20 @@ import {
     getAuthHeaders,
     getAuthToken,
     getRefreshToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
         const authToken = getAuthToken(request);
-        const body = await request.json();
-        const { contractData, clientId } = body;
-
         if (!authToken) {
             return unauthorizedResponse("Authentication required. Please log in.");
         }
+
+        const body = await readJsonObjectBody(request);
+        const { contractData, clientId } = body;
 
         const accessToken = getAccessToken(request);
         const refreshToken = getRefreshToken(request);
@@ -42,6 +44,11 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(response.data);
     } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
         return errorResponse(error, "generate document");
     }
 }

@@ -18,6 +18,7 @@ interface UpdateClientProps {
     serviceStatus?: string | null;
     breastPump?: boolean;
     eDocId?: string | null;
+    areaId?: string | null;
 }
 
 interface CreateClientProps {
@@ -38,6 +39,7 @@ interface CreateClientProps {
     serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
+    areaId?: string | null;
     createdAt?: Date | null;
 }
 
@@ -62,6 +64,7 @@ export class ClientEntity {
         public eDocId: string | null,
         public dueDate: Date | null = null,
         public createdAt: Date | null = null,
+        public areaId: string | null = null,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -112,6 +115,7 @@ export class ClientEntity {
             props.eDocId,
             props.dueDate,
             props.createdAt ?? new Date(),
+            props.areaId ?? null,
         );
     }
 
@@ -133,6 +137,7 @@ export class ClientEntity {
         this.serviceStatus = props.serviceStatus ?? this.serviceStatus;
         this.breastPump = props.breastPump ?? this.breastPump;
         this.eDocId = props.eDocId ?? this.eDocId;
+        if ("areaId" in props) this.areaId = props.areaId ?? null;
     }
 
     /**
@@ -159,6 +164,7 @@ export class ClientEntity {
         breastPump: boolean,
         eDocId: string | null,
         createdAt: Date | null = null,
+        areaId: string | null = null,
     ): ClientEntity {
         return new ClientEntity(
             id,
@@ -180,6 +186,7 @@ export class ClientEntity {
             eDocId,
             dueDate,
             createdAt,
+            areaId,
         );
     }
 }

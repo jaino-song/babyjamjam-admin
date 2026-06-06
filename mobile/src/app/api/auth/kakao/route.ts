@@ -1,8 +1,15 @@
-import { redirect } from "next/navigation";
+import { NextResponse } from "next/server";
 
-const isProduction = process.env.NODE_ENV === "production";
-const API_URL = isProduction ? process.env.NEXT_PUBLIC_API_URL : process.env.DEVELOPMENT_API_URL;
+import { resolveBackendBaseUrl } from "@/lib/api/server";
 
 export async function GET() {
-    redirect(`${API_URL}/auth/kakao`);
+    const backendBaseUrl = resolveBackendBaseUrl();
+    if (!backendBaseUrl) {
+        return NextResponse.json(
+            { error: "Backend API base URL is not configured" },
+            { status: 500 },
+        );
+    }
+
+    return NextResponse.redirect(new URL("/auth/kakao", backendBaseUrl));
 }

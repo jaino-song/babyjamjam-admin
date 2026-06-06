@@ -43,7 +43,7 @@ beforeEach(() => {
       enabled: false,
     },
     isLoading: false,
-  } as ReturnType<typeof useQuery>);
+  } as unknown as ReturnType<typeof useQuery>);
 
   mockedUseAlimtalkTriggerRules.mockReturnValue({
     data: [
@@ -62,7 +62,7 @@ beforeEach(() => {
       },
     ],
     isLoading: false,
-  } as ReturnType<typeof useAlimtalkTriggerRules>);
+  } as unknown as ReturnType<typeof useAlimtalkTriggerRules>);
 
   mockedUseAlimtalkTriggerTemplates.mockReturnValue({
     data: [
@@ -78,22 +78,22 @@ beforeEach(() => {
         },
       },
     ],
-  } as ReturnType<typeof useAlimtalkTriggerTemplates>);
+  } as unknown as ReturnType<typeof useAlimtalkTriggerTemplates>);
 
   mockedUseCreateAlimtalkTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as ReturnType<typeof useCreateAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useCreateAlimtalkTriggerRule>);
 
   mockedUseUpdateAlimtalkTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as ReturnType<typeof useUpdateAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useUpdateAlimtalkTriggerRule>);
 
   mockedUseDeleteAlimtalkTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as ReturnType<typeof useDeleteAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useDeleteAlimtalkTriggerRule>);
 });
 
 describe("TriggerRulesManager", () => {

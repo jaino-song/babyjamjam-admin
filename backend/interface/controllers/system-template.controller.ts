@@ -3,6 +3,7 @@ import { SystemTemplateWithRegistryDto } from "application/dto/system-template-w
 import { SystemTemplateService } from "application/services/system-template.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { PreviewTemplateDto, UpdateSystemTemplateDto, ValidateTemplateDto } from "interface/dto/system-template.dto";
+import { parseInteger } from "interface/parse-integer";
 
 @Controller("system-templates")
 @UseGuards(JwtGuard)
@@ -46,7 +47,8 @@ export class SystemTemplateController {
 
     @Get(":key/versions/:versionNumber")
     async getVersionContent(@Param("key") key: string, @Param("versionNumber") versionNumber: string) {
-        const version = await this.service.getVersionContent(key, parseInt(versionNumber, 10));
+        const parsedVersionNumber = parseInteger(versionNumber, "versionNumber", { min: 1 });
+        const version = await this.service.getVersionContent(key, parsedVersionNumber);
         return {
             versionNumber: version.versionNumber,
             createdAt: version.createdAt,
@@ -57,7 +59,8 @@ export class SystemTemplateController {
 
     @Post(":key/rollback/:versionNumber")
     rollback(@Param("key") key: string, @Param("versionNumber") versionNumber: string, @Req() req: any) {
-        return this.service.rollback(key, parseInt(versionNumber, 10), req.user.userId);
+        const parsedVersionNumber = parseInteger(versionNumber, "versionNumber", { min: 1 });
+        return this.service.rollback(key, parsedVersionNumber, req.user.userId);
     }
 
     @Post(":key/reset")

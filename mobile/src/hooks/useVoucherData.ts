@@ -1,7 +1,18 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
+import voucherJson from "@/components/app/messages/templates/json/voucher.json";
+
+export const VOUCHER_TYPES: readonly string[] = Object.freeze(
+  Array.from(
+    new Set(
+      Object.values(voucherJson.voucherOptions as Record<string, Record<string, unknown>>).flatMap(
+        (category) => Object.keys(category),
+      ),
+    ),
+  ),
+);
 
 // Types
 export interface BankAccountInfo {
@@ -29,6 +40,7 @@ export interface AreaTemplate {
 // Query keys - centralized for consistency
 export const voucherQueryKeys = {
   bankAccountInfos: ["bank-account-infos"] as const,
+  voucherPriceInfosRoot: ["voucher-price-infos"] as const,
   voucherPriceInfos: (type: string, year?: number) => ["voucher-price-infos", type, year] as const,
   voucherYears: ["voucher-years"] as const,
   areaTemplates: ["area-templates"] as const,
@@ -74,6 +86,30 @@ export function useVoucherYears() {
   });
 }
 
+export function useAllVoucherPrices(year?: number) {
+  const queries = useQueries({
+    queries: VOUCHER_TYPES.map((type) => ({
+      queryKey: voucherQueryKeys.voucherPriceInfos(type, year),
+      queryFn: async () => {
+        const { data } = await api.get("/voucher-price-infos/type", {
+          params: { type, year },
+        });
+        return (data as VoucherPriceInfo[]).map((row) => ({ ...row, type: row.type ?? type }));
+      },
+      enabled: year !== undefined,
+      staleTime: Infinity,
+      gcTime: 1000 * 60 * 60 * 24,
+    })),
+  });
+
+  return {
+    data: queries.flatMap((q) => q.data ?? []),
+    isLoading: queries.some((q) => q.isLoading),
+    isFetching: queries.some((q) => q.isFetching),
+    isError: queries.some((q) => q.isError),
+  };
+}
+
 export function useAreaTemplates() {
   return useQuery<AreaTemplate[]>({
     queryKey: voucherQueryKeys.areaTemplates,
@@ -85,4 +121,3 @@ export function useAreaTemplates() {
     gcTime: 1000 * 60 * 60 * 24, // 24 hours
   });
 }
-

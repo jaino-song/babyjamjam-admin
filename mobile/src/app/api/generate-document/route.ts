@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAccessToken, getRefreshToken, unauthorizedResponse, errorResponse } from "@/lib/api/route-utils";
+import {
+    errorResponse,
+    getAccessToken,
+    getAuthHeaders,
+    getAuthToken,
+    getRefreshToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
-        const body = await request.json();
+        const authToken = getAuthToken(request);
+        if (!authToken) {
+            return unauthorizedResponse("Authentication required. Please log in.");
+        }
+
+        const body = await readJsonObjectBody(request);
         const { contractData, clientId } = body;
 
         const accessToken = getAccessToken(request);
@@ -19,10 +33,17 @@ export async function POST(request: NextRequest) {
             accessToken,
             refreshToken,
             clientId,
+        }, {
+            headers: getAuthHeaders(authToken),
         });
 
-        return NextResponse.json(response.data);
+        return NextResponse.json(response.data, { status: response.status });
     } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
         return errorResponse(error, "generate document");
     }
 }

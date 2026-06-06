@@ -176,7 +176,7 @@ export function DocumentsList() {
               className="gap-2 w-[100px]"
               asChild
             >
-              <Link href="/contracts/creation">
+              <Link href="/contracts/new">
                 <Plus className="h-4 w-4" />
                 추가
               </Link>

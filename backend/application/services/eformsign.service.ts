@@ -14,6 +14,30 @@ export interface EformsignTokenResponse {
 
 const ISO_END_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
+function getDocumentCreatedTimestamp(document: { created_date?: unknown; createdDate?: unknown }): number {
+    const value = document.created_date ?? document.createdDate;
+
+    if (value instanceof Date) {
+        return value.getTime();
+    }
+
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? value : 0;
+    }
+
+    if (typeof value === "string") {
+        const numericValue = Number(value);
+        if (Number.isFinite(numericValue) && value.trim() !== "") {
+            return numericValue;
+        }
+
+        const timestamp = Date.parse(value);
+        return Number.isFinite(timestamp) ? timestamp : 0;
+    }
+
+    return 0;
+}
+
 @Injectable()
 export class EformsignService {
     private readonly logger = new Logger(EformsignService.name);
@@ -167,7 +191,7 @@ export class EformsignService {
                 document_name: "산모신생아건강관리서비스 계약서",
                 fields: [
                     { id: "이용자 성명", value: contractData.customerName, enabled: true },
-                    { id: "이용자 생년월일", value: '', enabled: true },
+                    { id: "이용자 생년월일", value: contractData.customerDOB || "", enabled: true },
                     { id: "이용자 주소", value: contractData.customerAddress, enabled: true },
                     // inputOutsiderNumber (이용자 연락처) — 발급 staff (현재 로그인 계정)의 폰 번호로 prefill.
                     // contractData.issuerPhone 미지정 시 customerContact 으로 fallback (test setup에서 둘이 동일).
@@ -188,9 +212,6 @@ export class EformsignService {
                     { id: "본인부담금 수령 년도", value: contractData.paymentYear },
                     { id: "본인부담금 수령 월", value: contractData.paymentMonth },
                     { id: "본인부담금 수령 일", value: contractData.paymentDay },
-                    { id: "영수증 년도", value: contractData.receiptYear },
-                    { id: "영수증 월", value: contractData.receiptMonth },
-                    { id: "영수증 일", value: contractData.receiptDay },
                     { id: "서비스 기간", value: contractData.contractDuration },
                 ],
                 recipients: [
@@ -204,7 +225,7 @@ export class EformsignService {
                     },
                     {
                         step_idx: "3",
-                        step_type: "01",
+                        step_type: "06",
                         name: "제공기관 확인",
                         id: this.USER_EMAIL,
                         use_mail: false,
@@ -482,8 +503,8 @@ export class EformsignService {
             }
         }
 
-        // Sort by createdDate descending (newest first)
-        uniqueDocuments.sort((a, b) => b.createdDate - a.createdDate);
+        // eformsign list_document returns created_date; local fallbacks may use createdDate.
+        uniqueDocuments.sort((a, b) => getDocumentCreatedTimestamp(b) - getDocumentCreatedTimestamp(a));
 
         return {
             documents: uniqueDocuments,

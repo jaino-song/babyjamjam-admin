@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>직원 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.list-card { background: white; border-radius: 22px; box-shadow: var(--shadow-v3); }
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="shell-content">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="list-title">
+              <span class="list-title-text">제공인력 <span class="list-count">12명</span></span>
+              <button class="list-action">+ 추가</button>
+            </div>
+            <div class="search-bar" style="margin: 4px 12px 8px;">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" placeholder="이름, 근무 지역 검색" />
+            </div>
+            <div class="filter-row">
+              <button class="filter-pill active">전체 <span class="count">12</span></button>
+              <button class="filter-pill">근무 가능 <span class="count">2</span></button>
+              <button class="filter-pill">근무 중 <span class="count">9</span></button>
+              <button class="filter-pill">근무 불가 <span class="count">1</span></button>
+            </div>
+
+            <div class="list-card-scroll">
+              <!-- Section: 근무 가능 -->
+              <div class="section-block">
+                <div class="section-header">근무 가능 · 2명</div>
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-green">한</div>
+                <div class="list-info">
+                  <div class="list-name">한수정</div>
+                  <div class="list-meta">인천 부평구</div>
+                </div>
+                <div class="list-right"><span class="badge badge-orange">근무 가능</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-primary">조</div>
+                <div class="list-info">
+                  <div class="list-name">조민호</div>
+                  <div class="list-meta">인천 서구</div>
+                </div>
+                <div class="list-right"><span class="badge badge-orange">근무 가능</span></div>
+              </div>
+              </div>
+
+              <!-- Section: 근무 중 -->
+              <div class="section-block">
+                <div class="section-header">근무 중 · 9명</div>
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-primary">김</div>
+                <div class="list-info">
+                  <div class="list-name">김민지</div>
+                  <div class="list-meta">인천 부평구 · 박서연</div>
+                </div>
+                <div class="list-right"><span class="badge badge-green">근무 중</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-green">박</div>
+                <div class="list-info">
+                  <div class="list-name">박지민</div>
+                  <div class="list-meta">인천 남동구 · 김도윤</div>
+                </div>
+                <div class="list-right"><span class="badge badge-green">근무 중</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-orange">윤</div>
+                <div class="list-info">
+                  <div class="list-name">윤서아</div>
+                  <div class="list-meta">인천 미추홀구 · 최예린</div>
+                </div>
+                <div class="list-right"><span class="badge badge-green">근무 중</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-burgundy">이</div>
+                <div class="list-info">
+                  <div class="list-name">이지은</div>
+                  <div class="list-meta">인천 연수구 · 장하늘</div>
+                </div>
+                <div class="list-right"><span class="badge badge-green">근무 중</span></div>
+              </div>
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-purple">박</div>
+                <div class="list-info">
+                  <div class="list-name">박지영</div>
+                  <div class="list-meta">인천 부평구 · 이수현</div>
+                </div>
+                <div class="list-right"><span class="badge badge-green">근무 중</span></div>
+              </div>
+              </div>
+
+              <!-- Section: 휴직 -->
+              <div class="section-block">
+                <div class="section-header">근무 불가 · 1명</div>
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="list-avatar av-orange">정</div>
+                <div class="list-info">
+                  <div class="list-name">정현주</div>
+                  <div class="list-meta">복귀 예정 6/1</div>
+                </div>
+                <div class="list-right"><span class="badge" style="background: var(--v3-dim-white); color: var(--v3-text-muted); border-color: var(--v3-border);">근무 불가</span></div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <!-- Bottom sheet detail (employee) -->
+      <div class="nav-page detail">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <button class="sheet-close" onclick="closeDetail()" style="margin-left: auto;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="client-detail-header pop-up">
+            <div class="client-detail-avatar-lg av-primary">김</div>
+            <div class="client-detail-title">
+              <div class="client-detail-name">김민지</div>
+              <div class="client-detail-badges">
+                <span class="badge-mini green">근무 중</span>
+                <span class="badge-mini primary">베스트</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-actions" style="margin-top: 0; padding: 14px 16px;">
+            <button class="btn btn-secondary">메시지</button>
+            <button class="btn btn-primary">일정 배정</button>
+          </div>
+
+          <div class="filter-row detail-tabs" style="padding: 0;">
+            <button class="filter-pill active" data-tab="basic">기본 정보</button>
+            <button class="filter-pill" data-tab="clients">담당 고객</button>
+            <button class="filter-pill" data-tab="history">활동 이력</button>
+          </div>
+
+          <!-- Tab: 기본 정보 -->
+          <div class="tab-content active" data-tab-content="basic">
+            <div class="info-card pop-up">
+              <div class="info-card-title">기본 정보</div>
+              <div class="info-row"><span class="info-row-label">이름</span><span class="info-row-value">김민지</span></div>
+              <div class="info-row"><span class="info-row-label">연락처</span><span class="info-row-value">010-2345-6789</span></div>
+              <div class="info-row"><span class="info-row-label">근무 상태</span><span class="info-row-value" style="color: var(--v3-green);">근무 중</span></div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">업무 정보</div>
+              <div class="info-row"><span class="info-row-label">등급</span><span class="info-row-value">베스트</span></div>
+              <div class="info-row"><span class="info-row-label">근무 가능 여부</span><span class="info-row-value" style="color: var(--v3-green);">근무 가능</span></div>
+              <div class="info-row"><span class="info-row-label">근무 지역</span><span class="info-row-value">인천 부평구, 계양구</span></div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 120ms;">
+              <div class="info-card-title">등록 정보</div>
+              <div class="info-row"><span class="info-row-label">등록일</span><span class="info-row-value">2023. 8. 1.</span></div>
+            </div>
+          </div>
+
+          <!-- Tab: 담당 고객 -->
+          <div class="tab-content" data-tab-content="clients">
+            <div class="info-card pop-up">
+              <div class="info-card-title">현재 담당 · 1명</div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-green-light); color: var(--v3-green);">박</div>
+                <div class="doc-info">
+                  <div class="doc-title">박서연 · A라1형</div>
+                  <div class="doc-meta">4/27 ~ 5/15 (D+12 / 14일)</div>
+                </div>
+                <span class="badge-mini green">진행중</span>
+              </div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">이전 담당 · 13명</div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-dim-white); color: var(--v3-text-muted);">윤</div>
+                <div class="doc-info">
+                  <div class="doc-title">윤정아 · A가1형</div>
+                  <div class="doc-meta">3/15 ~ 3/29 완료 · ★ 5.0</div>
+                </div>
+                <span class="badge-mini muted">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-dim-white); color: var(--v3-text-muted);">최</div>
+                <div class="doc-info">
+                  <div class="doc-title">최가은 · A라1형</div>
+                  <div class="doc-meta">2/20 ~ 3/5 완료 · ★ 4.8</div>
+                </div>
+                <span class="badge-mini muted">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-dim-white); color: var(--v3-text-muted);">한</div>
+                <div class="doc-info">
+                  <div class="doc-title">한지수 · A라1형</div>
+                  <div class="doc-meta">1/30 ~ 2/13 완료 · ★ 4.7</div>
+                </div>
+                <span class="badge-mini muted">완료</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab: 활동 이력 -->
+          <div class="tab-content" data-tab-content="history">
+            <div class="info-card pop-up">
+              <div class="info-card-title">최근 방문 · 박서연</div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-green-light); color: var(--v3-green);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">5월 9일 (오전) 방문</div>
+                  <div class="doc-meta">7시간 활동 · 보고서 제출됨</div>
+                </div>
+                <span class="badge-mini green">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-green-light); color: var(--v3-green);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">5월 8일 (오전) 방문</div>
+                  <div class="doc-meta">8시간 활동 · 보고서 제출됨</div>
+                </div>
+                <span class="badge-mini green">완료</span>
+              </div>
+              <div class="doc-row">
+                <div class="doc-icon" style="background: var(--v3-orange-light); color: var(--v3-orange);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">5월 10일 (오전) 예정</div>
+                  <div class="doc-meta">8시간 · 박서연 자택</div>
+                </div>
+                <span class="badge-mini orange">예정</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-burgundy-light);"><svg width="15" height="15" fill="none" stroke="hsl(355,36%,45%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg></div><div class="notif-body"><div class="notif-title">제공인력 배정 요청</div><div class="notif-snippet">송진호 고객님의 서비스에 제공인력 배정이 필요합니다.</div><div class="notif-time">방금 전</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 전체 — accessed via 전체 hub) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">제공인력 · /employees</div>
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+function openDetail(el){document.getElementById('stack').classList.add('show-detail');}
+function closeDetail(){document.getElementById('stack').classList.remove('show-detail');}
+document.querySelectorAll('.filter-pill').forEach(p=>p.addEventListener('click',()=>{
+  const row=p.closest('.filter-row');
+  row.querySelectorAll('.filter-pill').forEach(x=>x.classList.remove('active'));
+  p.classList.add('active');
+  if(p.dataset.tab){
+    document.querySelectorAll('.tab-content').forEach(c=>c.classList.toggle('active',c.dataset.tabContent===p.dataset.tab));
+  }
+}));
+</script>
+</body>
+</html>
