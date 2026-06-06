@@ -18,9 +18,12 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
   private readonly bucketName = 'documents';
   private readonly logger = new Logger(SupabaseStorageAdapter.name);
   private readonly signedUrlTtlSeconds: number;
+  private readonly storageBootstrapDisabled: boolean;
 
   constructor(private readonly configService: ConfigService) {
     this.signedUrlTtlSeconds = this.parseSignedUrlTtlSeconds();
+    this.storageBootstrapDisabled =
+      this.configService.get<string>('STORAGE_BOOTSTRAP_DISABLED') === '1';
 
     const supabaseUrl = this.configService.get<string>('SUPABASE_URL');
     const supabaseServiceKey = this.configService.get<string>(
@@ -39,6 +42,13 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     if (!this.supabase) {
+      return;
+    }
+
+    if (this.storageBootstrapDisabled) {
+      this.logger.warn(
+        'STORAGE_BOOTSTRAP_DISABLED=1. Skipping Supabase bucket bootstrap.',
+      );
       return;
     }
 

@@ -63,6 +63,22 @@ describe("SupabaseStorageAdapter", () => {
         jest.clearAllMocks();
     });
 
+    it("should skip bucket bootstrap when storage bootstrap is disabled", async () => {
+        const { client } = createSupabaseMock();
+        jest.mocked(createClient).mockReturnValue(client as never);
+
+        const adapter = new SupabaseStorageAdapter(
+            createConfigService({ STORAGE_BOOTSTRAP_DISABLED: "1" }),
+        );
+        const ensureBucketExistsSpy = jest.spyOn(adapter, "ensureBucketExists");
+
+        await adapter.onModuleInit();
+
+        expect(ensureBucketExistsSpy).not.toHaveBeenCalled();
+        expect(client.storage.getBucket).not.toHaveBeenCalled();
+        expect(client.storage.createBucket).not.toHaveBeenCalled();
+    });
+
     it("should create a private bucket when the documents bucket is missing", async () => {
         const { client } = createSupabaseMock();
         client.storage.getBucket.mockResolvedValue({
