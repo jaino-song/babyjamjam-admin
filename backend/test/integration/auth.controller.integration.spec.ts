@@ -341,7 +341,11 @@ describe("AuthController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(response.body).toEqual(mockUser);
+                expect(response.body).toEqual({
+                    ...mockUser,
+                    branchName: null,
+                    branchSlug: null,
+                });
                 expect(prismaService.user.findUnique).toHaveBeenCalledWith({
                     where: { id: mockUser.id },
                     select: {
@@ -368,7 +372,10 @@ describe("AuthController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(response.body).toEqual({ branchName: null });
+                expect(response.body).toEqual({
+                    branchName: null,
+                    branchSlug: null,
+                });
             });
         });
 
