@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     errorResponse,
@@ -6,37 +7,50 @@ import {
     getAuthHeaders,
     getAuthToken,
     getRefreshToken,
-    invalidJsonResponse,
-    readJsonObjectBody,
+    parseBody,
     sanitizeUpstreamClientError,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
+// Mirrors backend GenerateStaffDocumentRequestDto: documentId is
+// @IsString() @IsNotEmpty() and required (replacing the manual !documentId
+// check). accessToken/refreshToken/prefillEndDate are read from the body when
+// present (falling back to cookies for the tokens), so they stay optional in
+// this schema; passthrough preserves any forward-compatible fields.
+const generateStaffDocumentSchema = z
+    .object({
+        documentId: z.string().min(1),
+        accessToken: z.string().optional(),
+        refreshToken: z.string().optional(),
+        prefillEndDate: z.string().optional(),
+    })
+    .passthrough();
+
 export async function POST(request: NextRequest) {
+    const authToken = getAuthToken(request);
+    if (!authToken) {
+        return unauthorizedResponse("Authentication required. Please log in.");
+    }
+
+    const { data: body, response: invalid } = await parseBody(generateStaffDocumentSchema, request);
+    if (invalid) {
+        return invalid;
+    }
+
+    const accessToken =
+        typeof body.accessToken === "string" && body.accessToken
+            ? body.accessToken
+            : getAccessToken(request);
+    const refreshToken =
+        typeof body.refreshToken === "string" && body.refreshToken
+            ? body.refreshToken
+            : getRefreshToken(request);
+
+    if (!accessToken || !refreshToken) {
+        return unauthorizedResponse("Authentication required. Please authenticate first.");
+    }
+
     try {
-        const authToken = getAuthToken(request);
-        if (!authToken) {
-            return unauthorizedResponse("Authentication required. Please log in.");
-        }
-
-        const body = await readJsonObjectBody(request);
-        const accessToken =
-            typeof body.accessToken === "string" && body.accessToken
-                ? body.accessToken
-                : getAccessToken(request);
-        const refreshToken =
-            typeof body.refreshToken === "string" && body.refreshToken
-                ? body.refreshToken
-                : getRefreshToken(request);
-
-        if (!body.documentId) {
-            return NextResponse.json({ error: "documentId is required" }, { status: 400 });
-        }
-
-        if (!accessToken || !refreshToken) {
-            return unauthorizedResponse("Authentication required. Please authenticate first.");
-        }
-
         const response = await serverAPIClient.post("/api/generate-staff-document", {
             documentId: body.documentId,
             accessToken,
@@ -55,11 +69,6 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(response.data);
     } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) {
-            return invalidJson;
-        }
-
         return errorResponse(error, "generate staff document");
     }
 }

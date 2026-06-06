@@ -2,10 +2,23 @@ import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+import { z } from "zod";
 
-import { getUpstreamErrorStatus, logUpstreamError, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+import { getUpstreamErrorStatus, logUpstreamError, parseBody, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
+
+// Mirrors backend LoginDto (email-auth.dto.ts): email is @IsEmail() and
+// password is @IsString() @IsNotEmpty(), both required. autoLogin is a
+// frontend-only flag controlling cookie maxAge (not forwarded to the backend).
+// Passthrough preserves any forward-compatible login fields.
+const loginSchema = z
+    .object({
+        email: z.string().email(),
+        password: z.string().min(1),
+        autoLogin: z.boolean().optional(),
+    })
+    .passthrough();
 
 interface TokenPayload {
     sub: string;
@@ -21,13 +34,11 @@ interface APIErrorResponse {
 }
 
 export async function POST(request: NextRequest) {
+    const { data: parsed, response: invalid } = await parseBody(loginSchema, request);
+    if (invalid) return invalid;
+
     try {
-        const body = await request.json();
-        const { autoLogin = true, ...loginPayload } = body as {
-            email: string;
-            password: string;
-            autoLogin?: boolean;
-        };
+        const { autoLogin = true, ...loginPayload } = parsed;
         const { data, status } = await serverAPIClient.post("/auth/login", loginPayload);
 
         // If login failed, return the response

@@ -15,14 +15,16 @@ jest.mock("@/lib/api/server", () => ({
 
 const mockPost = serverAPIClient.post as jest.Mock;
 
-function createRequest(): NextRequest {
+function createRequest(
+    body: BodyInit = JSON.stringify({ executionTime: 1780000000000, memberEmail: "member@example.com" }),
+): NextRequest {
     return new NextRequest("http://localhost/api/access-token", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             cookie: "auth_token=auth-token",
         },
-        body: JSON.stringify({ executionTime: 1780000000000, memberEmail: "member@example.com" }),
+        body,
     });
 }
 
@@ -36,6 +38,37 @@ describe("POST /api/access-token", () => {
 
     afterEach(() => {
         consoleErrorSpy.mockRestore();
+    });
+
+    it("rejects bodies missing executionTime before proxying", async () => {
+        const response = await POST(createRequest(JSON.stringify({ memberEmail: "member@example.com" })));
+
+        expect(response.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("forwards validated executionTime/memberEmail and sets auth cookies", async () => {
+        mockPost.mockResolvedValue({
+            status: 200,
+            data: {
+                oauth_token: {
+                    access_token: "new-access-token",
+                    refresh_token: "new-refresh-token",
+                },
+            },
+        });
+
+        const response = await POST(createRequest());
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toEqual({ success: true });
+        expect(response.headers.get("set-cookie")).toContain("eformsign_access_token=new-access-token");
+        expect(response.headers.get("set-cookie")).toContain("eformsign_refresh_token=new-refresh-token");
+        expect(mockPost).toHaveBeenCalledWith(
+            "/api/access-token",
+            { executionTime: 1780000000000, memberEmail: "member@example.com" },
+            { headers: { Authorization: "Bearer auth-token" } },
+        );
     });
 
     it("does not return or log raw backend error response details", async () => {

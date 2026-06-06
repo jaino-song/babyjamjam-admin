@@ -1,17 +1,46 @@
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     backendJsonResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    invalidJsonResponse,
-    readJsonObjectBody,
+    parseBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
 import { invalidClientIdResponse, isValidClientId } from "../client-route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
+
+// Mirrors backend UpdateClientDto: every field is @IsOptional, so this proxy
+// only type-checks the known fields and passes everything else through to the
+// backend's authoritative ValidationPipe.
+const updateClientSchema = z
+    .object({
+        name: z.string(),
+        primaryEmployeeId: z.number(),
+        secondaryEmployeeId: z.number().nullable(),
+        address: z.string().nullable(),
+        phone: z.string().nullable(),
+        type: z.string().nullable(),
+        duration: z.number().nullable(),
+        fullPrice: z.string().nullable(),
+        grant: z.string().nullable(),
+        actualPrice: z.string().nullable(),
+        startDate: z.string().nullable(),
+        endDate: z.string().nullable(),
+        careCenter: z.boolean(),
+        voucherClient: z.boolean(),
+        birthday: z.string().nullable(),
+        dueDate: z.string().nullable(),
+        serviceStatus: z.string().nullable(),
+        breastPump: z.boolean(),
+        eDocId: z.string().nullable(),
+        areaId: z.string().nullable(),
+    })
+    .partial()
+    .passthrough();
 
 // GET /api/clients/[id] - Get a client by ID
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -37,26 +66,25 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 // PATCH /api/clients/[id] - Update a client
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
+    const token = getAuthToken(request);
+    if (!token) {
+        return unauthorizedResponse("Unauthorized");
+    }
+
+    const { id } = await params;
+    if (!isValidClientId(id)) {
+        return invalidClientIdResponse();
+    }
+
+    const { data, response } = await parseBody(updateClientSchema, request);
+    if (response) return response;
+
     try {
-        const token = getAuthToken(request);
-        if (!token) {
-            return unauthorizedResponse("Unauthorized");
-        }
-
-        const { id } = await params;
-        if (!isValidClientId(id)) {
-            return invalidClientIdResponse();
-        }
-
-        const body = await readJsonObjectBody(request);
-        const response = await serverAPIClient.patch(`/clients/${id}`, body, {
+        const backendResponse = await serverAPIClient.patch(`/clients/${id}`, data, {
             headers: getAuthHeaders(token),
         });
-        return backendJsonResponse(response);
+        return backendJsonResponse(backendResponse);
     } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) return invalidJson;
-
         return errorResponse(error, "update client");
     }
 }

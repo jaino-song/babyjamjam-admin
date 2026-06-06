@@ -2,6 +2,7 @@
  * @jest-environment node
  */
 import { NextRequest } from "next/server";
+import { z } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { errorResponse, proxyDeleteRequest, proxyGetRequest, proxyPostRequest } from "../route-utils";
@@ -176,5 +177,118 @@ describe("route-utils proxy body parsing", () => {
             error: "Failed to delete eformsign document",
             code: "UPSTREAM_DELETE_ERROR",
         });
+    });
+});
+
+describe("route-utils proxy bodySchema validation", () => {
+    let consoleErrorSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+        mockDelete.mockReset();
+        mockPost.mockReset();
+        consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        consoleErrorSpy.mockRestore();
+    });
+
+    // sync-status: { documentId: required non-empty string }
+    const syncStatusSchema = z.object({ documentId: z.string().min(1) }).passthrough();
+
+    it("rejects a POST body failing bodySchema before proxying", async () => {
+        const response = await proxyPostRequest(
+            createJsonRequest("POST", JSON.stringify({})),
+            "/eformsign-docs/sync-status",
+            "sync eformsign document status",
+            { bodySchema: syncStatusSchema },
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ error: "Invalid request body" });
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("forwards a POST body that satisfies bodySchema", async () => {
+        mockPost.mockResolvedValue({ status: 200, data: { ok: true } });
+
+        const response = await proxyPostRequest(
+            createJsonRequest("POST", JSON.stringify({ documentId: "doc-1" })),
+            "/eformsign-docs/sync-status",
+            "sync eformsign document status",
+            { bodySchema: syncStatusSchema },
+        );
+
+        expect(response.status).toBe(200);
+        expect(mockPost).toHaveBeenCalledTimes(1);
+        const [path, payload] = mockPost.mock.calls[0];
+        expect(path).toBe("/eformsign-docs/sync-status");
+        expect(payload).toMatchObject({ documentId: "doc-1", accessToken: "eformsign-token" });
+    });
+
+    // re-request: { stepType + stepSeq required non-empty strings }
+    const reRequestSchema = z
+        .object({ stepType: z.string().min(1), stepSeq: z.string().min(1) })
+        .passthrough();
+
+    it("rejects a POST body missing stepSeq before proxying", async () => {
+        const response = await proxyPostRequest(
+            createJsonRequest("POST", JSON.stringify({ stepType: "01" })),
+            "/api/documents/doc-1/re_request_outsider",
+            "re-request eformsign document",
+            { bodySchema: reRequestSchema },
+        );
+
+        expect(response.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("forwards a re-request POST body that satisfies bodySchema", async () => {
+        mockPost.mockResolvedValue({ status: 200, data: { ok: true } });
+
+        const response = await proxyPostRequest(
+            createJsonRequest("POST", JSON.stringify({ stepType: "01", stepSeq: "1", comment: "hi" })),
+            "/api/documents/doc-1/re_request_outsider",
+            "re-request eformsign document",
+            { bodySchema: reRequestSchema },
+        );
+
+        expect(response.status).toBe(200);
+        const [, payload] = mockPost.mock.calls[0];
+        expect(payload).toMatchObject({ stepType: "01", stepSeq: "1", comment: "hi" });
+    });
+
+    // delete documents: { document_ids: non-empty string array }
+    const deleteDocumentsSchema = z
+        .object({ document_ids: z.array(z.string()).nonempty() })
+        .passthrough();
+
+    it("rejects a DELETE body with an empty document_ids array before proxying", async () => {
+        const response = await proxyDeleteRequest(
+            createJsonRequest("DELETE", JSON.stringify({ document_ids: [] })),
+            "/api/documents",
+            "delete eformsign documents",
+            { bodySchema: deleteDocumentsSchema },
+        );
+
+        expect(response.status).toBe(400);
+        expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it("forwards a DELETE body that satisfies bodySchema", async () => {
+        mockDelete.mockResolvedValue({ status: 200, data: { ok: true } });
+
+        const response = await proxyDeleteRequest(
+            createJsonRequest("DELETE", JSON.stringify({ document_ids: ["doc-1", "doc-2"] })),
+            "/api/documents",
+            "delete eformsign documents",
+            { bodySchema: deleteDocumentsSchema },
+        );
+
+        expect(response.status).toBe(200);
+        expect(mockDelete).toHaveBeenCalledTimes(1);
+        const [path, config] = mockDelete.mock.calls[0];
+        expect(path).toBe("/api/documents");
+        expect(config.data).toMatchObject({ document_ids: ["doc-1", "doc-2"] });
     });
 });

@@ -1,5 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+
 import { proxyDeleteRequest, proxyGetRequest } from "@/lib/api/route-utils";
+
+// Mirrors backend DeleteDocumentsRequestDto (eformsign.dto.ts):
+// document_ids is @IsArray() @ArrayNotEmpty() @IsString({ each: true }).
+// accessToken is forwarded as a query param by proxyDeleteRequest, not in the
+// body. Passthrough preserves forward-compatible fields (e.g. is_permanent).
+const deleteDocumentsSchema = z
+    .object({
+        document_ids: z.array(z.string()).nonempty(),
+    })
+    .passthrough();
 
 type IntegerParamOptions = {
     defaultValue: number;
@@ -81,5 +93,7 @@ export async function GET(request: NextRequest) {
  * Delete one or more eformsign documents
  */
 export async function DELETE(request: NextRequest) {
-    return proxyDeleteRequest(request, "/api/documents", "delete eformsign documents");
+    return proxyDeleteRequest(request, "/api/documents", "delete eformsign documents", {
+        bodySchema: deleteDocumentsSchema,
+    });
 }

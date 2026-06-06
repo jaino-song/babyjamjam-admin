@@ -136,6 +136,44 @@ describe("Alimtalk trigger rule API routes", () => {
     expect(mockGet).not.toHaveBeenCalled();
   });
 
+  it("forwards a validated partial update to the backend path", async () => {
+    mockPatch.mockResolvedValue({
+      status: 200,
+      data: { id: "rule_123", isActive: false },
+    });
+
+    const response = await updateRule(
+      createRequest("/api/alimtalk-trigger-rules/rule_123", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: false }),
+      }),
+      { params: Promise.resolve({ triggerId: "rule_123" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ id: "rule_123", isActive: false });
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/alimtalk-trigger-rules/rule_123",
+      { isActive: false },
+      expect.anything(),
+    );
+  });
+
+  it("rejects an update body with a mistyped field before proxying", async () => {
+    const response = await updateRule(
+      createRequest("/api/alimtalk-trigger-rules/rule_123", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: 123 }),
+      }),
+      { params: Promise.resolve({ triggerId: "rule_123" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed update JSON before proxying", async () => {
     const response = await updateRule(
       createRequest("/api/alimtalk-trigger-rules/rule_123", {
