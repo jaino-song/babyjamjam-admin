@@ -40,6 +40,18 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
         consoleErrorSpy.mockRestore();
     });
 
+    it("requires auth before parsing a voucher image", async () => {
+        const request = new NextRequest("http://localhost/api/voucher-price-infos/parse-image", {
+            method: "POST",
+        });
+
+        const response = await POST(request);
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
     it("forwards multipart uploads without overriding the form-data boundary", async () => {
         mockPost.mockResolvedValue({
             status: 200,

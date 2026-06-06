@@ -40,6 +40,20 @@ describe("POST /api/access-token", () => {
         consoleErrorSpy.mockRestore();
     });
 
+    it("rejects requests without an auth cookie before proxying", async () => {
+        const request = new NextRequest("http://localhost/api/access-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ executionTime: 1780000000000 }),
+        });
+
+        const response = await POST(request);
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toEqual({ error: "Unauthorized - please log in first" });
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
     it("rejects bodies missing executionTime before proxying", async () => {
         const response = await POST(createRequest(JSON.stringify({ memberEmail: "member@example.com" })));
 

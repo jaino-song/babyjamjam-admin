@@ -214,4 +214,55 @@ describe("file-storage API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Invalid file id" });
     expect(mockGet).not.toHaveBeenCalled();
   });
+
+  describe("auth rejection", () => {
+    function noAuthRequest(path: string, method = "GET"): NextRequest {
+      return new NextRequest(`http://localhost${path}`, { method });
+    }
+
+    it("rejects file listing without auth_token", async () => {
+      const response = await listFiles(noAuthRequest("/api/file-storage/files"));
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("rejects file upload without auth_token", async () => {
+      const response = await uploadFile(noAuthRequest("/api/file-storage/files", "POST"));
+      expect(response.status).toBe(401);
+      expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("rejects file detail GET without auth_token", async () => {
+      const response = await getFile(noAuthRequest("/api/file-storage/files/file_123"), {
+        params: Promise.resolve({ fileId: "file_123" }),
+      });
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("rejects file update without auth_token", async () => {
+      const response = await updateFile(noAuthRequest("/api/file-storage/files/file_123", "PUT"), {
+        params: Promise.resolve({ fileId: "file_123" }),
+      });
+      expect(response.status).toBe(401);
+      expect(mockPut).not.toHaveBeenCalled();
+    });
+
+    it("rejects file delete without auth_token", async () => {
+      const response = await deleteFile(noAuthRequest("/api/file-storage/files/file_123", "DELETE"), {
+        params: Promise.resolve({ fileId: "file_123" }),
+      });
+      expect(response.status).toBe(401);
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it("rejects file download without auth_token", async () => {
+      const response = await downloadFile(
+        noAuthRequest("/api/file-storage/files/file_123/download"),
+        { params: Promise.resolve({ fileId: "file_123" }) },
+      );
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+  });
 });

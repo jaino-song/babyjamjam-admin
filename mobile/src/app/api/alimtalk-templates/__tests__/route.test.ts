@@ -51,6 +51,24 @@ describe("alimtalk-template API routes", () => {
     buttons: [],
   };
 
+  describe("auth rejection", () => {
+    const noAuth = { headers: { cookie: "" } };
+
+    it("rejects template GET without an auth cookie before proxying", async () => {
+      const response = await listTemplates(createRequest("/api/alimtalk-templates", noAuth));
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("rejects template POST without an auth cookie before proxying", async () => {
+      const response = await createTemplate(
+        createRequest("/api/alimtalk-templates", { method: "POST", headers: { cookie: "" } }),
+      );
+      expect(response.status).toBe(401);
+      expect(mockPost).not.toHaveBeenCalled();
+    });
+  });
+
   it("forwards the validated payload to the backend when creating templates", async () => {
     mockPost.mockResolvedValue({
       status: 202,

@@ -7,13 +7,16 @@ import { serverAPIClient } from "@/lib/api/server";
 import { POST as createEformsignDoc } from "../route";
 import { POST as dispatchHeadless } from "../dispatch-headless/route";
 import { POST as finalizeHeadless } from "../finalize-headless/route";
+import { GET as getClientNames } from "../client-names/route";
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
+    get: jest.fn(),
     post: jest.fn(),
   },
 }));
 
+const mockGet = serverAPIClient.get as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
 
 function createRequest(path: string, body: BodyInit): NextRequest {
@@ -166,5 +169,35 @@ describe("eformsign-docs command API routes", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({ error: "already finalized" });
+  });
+
+  describe("auth rejection", () => {
+    function noAuthRequest(path: string, method = "POST"): NextRequest {
+      return new NextRequest(`http://localhost${path}`, { method });
+    }
+
+    it("rejects create without auth_token", async () => {
+      const response = await createEformsignDoc(noAuthRequest("/api/eformsign-docs"));
+      expect(response.status).toBe(401);
+      expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("rejects dispatch without auth_token", async () => {
+      const response = await dispatchHeadless(noAuthRequest("/api/eformsign-docs/dispatch-headless"));
+      expect(response.status).toBe(401);
+      expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("rejects finalize without auth_token", async () => {
+      const response = await finalizeHeadless(noAuthRequest("/api/eformsign-docs/finalize-headless"));
+      expect(response.status).toBe(401);
+      expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("rejects client-names without auth_token", async () => {
+      const response = await getClientNames(noAuthRequest("/api/eformsign-docs/client-names", "GET"));
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
   });
 });

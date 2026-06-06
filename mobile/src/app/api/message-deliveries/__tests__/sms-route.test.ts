@@ -42,6 +42,20 @@ describe("SMS delivery API route", () => {
     message: "hello",
   };
 
+  it("rejects an SMS request without an auth cookie before proxying", async () => {
+    const request = new NextRequest("http://localhost/api/message-deliveries/sms", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validSmsPayload),
+    });
+
+    const response = await sendSms(request);
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed JSON before proxying", async () => {
     const response = await sendSms(createRequest("{bad-json"));
 

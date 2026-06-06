@@ -5,10 +5,11 @@ import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { GET as getClients, POST as createClient } from "../route";
-import { GET as getClient, PATCH as updateClient } from "../[id]/route";
+import { GET as getClient, PATCH as updateClient, DELETE as deleteClient } from "../[id]/route";
 import { PATCH as terminateClient } from "../[id]/terminate/route";
 import { PATCH as requestReplacement } from "../[id]/request-replacement/route";
 import { PATCH as completeReplacement } from "../[id]/complete-replacement/route";
+import { GET as checkClientPhone } from "../check-phone/route";
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -22,6 +23,7 @@ jest.mock("@/lib/api/server", () => ({
 const mockGet = serverAPIClient.get as jest.Mock;
 const mockPatch = serverAPIClient.patch as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
+const mockDelete = serverAPIClient.delete as jest.Mock;
 
 function createRequest(path: string, init: { method?: string; body?: BodyInit; headers?: Record<string, string> } = {}): NextRequest {
   return new NextRequest(`http://localhost${path}`, {
@@ -312,5 +314,74 @@ describe("client API routes", () => {
       {},
       expect.any(Object),
     );
+  });
+});
+
+describe("client API routes auth rejection", () => {
+  beforeEach(() => {
+    mockGet.mockReset();
+    mockPatch.mockReset();
+    mockDelete.mockReset();
+    mockPost.mockReset();
+  });
+
+  function noAuthRequest(path: string, method = "GET"): NextRequest {
+    return new NextRequest(`http://localhost${path}`, { method });
+  }
+
+  it("rejects client detail GET without auth_token", async () => {
+    const response = await getClient(noAuthRequest("/api/clients/12"), {
+      params: Promise.resolve({ id: "12" }),
+    });
+    expect(response.status).toBe(401);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("rejects client update without auth_token", async () => {
+    const response = await updateClient(noAuthRequest("/api/clients/12", "PATCH"), {
+      params: Promise.resolve({ id: "12" }),
+    });
+    expect(response.status).toBe(401);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects client delete without auth_token", async () => {
+    const response = await deleteClient(noAuthRequest("/api/clients/12", "DELETE"), {
+      params: Promise.resolve({ id: "12" }),
+    });
+    expect(response.status).toBe(401);
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it("rejects terminate without auth_token", async () => {
+    const response = await terminateClient(noAuthRequest("/api/clients/12/terminate", "PATCH"), {
+      params: Promise.resolve({ id: "12" }),
+    });
+    expect(response.status).toBe(401);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects request-replacement without auth_token", async () => {
+    const response = await requestReplacement(
+      noAuthRequest("/api/clients/12/request-replacement", "PATCH"),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+    expect(response.status).toBe(401);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects complete-replacement without auth_token", async () => {
+    const response = await completeReplacement(
+      noAuthRequest("/api/clients/12/complete-replacement", "PATCH"),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+    expect(response.status).toBe(401);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects check-phone without auth_token", async () => {
+    const response = await checkClientPhone(noAuthRequest("/api/clients/check-phone?phone=01000000000"));
+    expect(response.status).toBe(401);
+    expect(mockGet).not.toHaveBeenCalled();
   });
 });

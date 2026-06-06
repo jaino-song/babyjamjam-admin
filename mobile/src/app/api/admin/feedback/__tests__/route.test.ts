@@ -46,6 +46,25 @@ describe("admin feedback API authorization", () => {
     mockFetch.mockReset();
   });
 
+  describe("auth rejection", () => {
+    it("rejects feedback detail GET without an auth cookie before proxying", async () => {
+      setAuthCookie();
+      const response = await getFeedbackDetail(
+        createRequest("/api/admin/feedback/fb-1"),
+        { params: Promise.resolve({ id: "fb-1" }) },
+      );
+      expect(response.status).toBe(401);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects feedback stats GET without an auth cookie before proxying", async () => {
+      setAuthCookie();
+      const response = await getFeedbackStats();
+      expect(response.status).toBe(401);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
   it("proxies backend authorization denials when listing feedback", async () => {
     setAuthCookie("user-token");
     mockFetch.mockResolvedValue({ ok: false, status: 403 });
