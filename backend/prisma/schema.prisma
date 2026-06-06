@@ -30,7 +30,7 @@ model bank_account_info {
 }
 
 model chat_feedback {
-  id          String       @id @default(dbgenerated("gen_random_uuid()::text"))
+  id          String       @id @default(dbgenerated("(gen_random_uuid())::text"))
   sessionId   String       @map("session_id")
   messageId   String       @map("message_id")
   userId      String       @map("user_id") @db.Uuid
@@ -48,7 +48,7 @@ model chat_feedback {
 }
 
 model chat_message {
-  id           String          @id @default(dbgenerated("gen_random_uuid()::text"))
+  id           String          @id @default(dbgenerated("(gen_random_uuid())::text"))
   sessionId    String          @map("session_id")
   role         String
   content      String
@@ -61,7 +61,7 @@ model chat_message {
 }
 
 model chat_session {
-  id           String          @id @default(dbgenerated("gen_random_uuid()::text"))
+  id           String          @id @default(dbgenerated("(gen_random_uuid())::text"))
   userId       String          @map("user_id") @db.Uuid
   createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   expiresAt    DateTime        @map("expires_at") @db.Timestamptz(6)
@@ -117,7 +117,7 @@ model doc_template {
 }
 
 model document {
-  id               String            @id @default(dbgenerated("gen_random_uuid()::text"))
+  id               String            @id @default(dbgenerated("(gen_random_uuid())::text"))
   name             String
   description      String?
   tags             String[]
@@ -141,7 +141,7 @@ model document {
 }
 
 model document_category {
-  id        String     @id @default(dbgenerated("gen_random_uuid()::text"))
+  id        String     @id @default(dbgenerated("(gen_random_uuid())::text"))
   value     String     @unique
   label     String
   color     String
@@ -317,7 +317,7 @@ model system_setting {
 }
 
 model system_template {
-  id              String                    @id @default(dbgenerated("gen_random_uuid()::text"))
+  id              String                    @id @default(dbgenerated("(gen_random_uuid())::text"))
   templateKey     String                    @unique @map("template_key")
   content         String
   createdAt       DateTime                  @default(now()) @map("created_at")
@@ -327,7 +327,7 @@ model system_template {
 }
 
 model system_template_version {
-  id             String          @id @default(dbgenerated("gen_random_uuid()::text"))
+  id             String          @id @default(dbgenerated("(gen_random_uuid())::text"))
   templateId     String          @map("template_id")
   content        String
   versionNumber  Int             @map("version_number")
@@ -377,7 +377,7 @@ model user_branch {
 }
 
 model consultation_inquiry {
-  id                     String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  id                     String    @id @default(dbgenerated("(gen_random_uuid())::text"))
   branchId               String    @map("branch_id") @db.Uuid
   publicBranchSlug       String    @map("public_branch_slug")
   motherName             String    @map("mother_name")
@@ -491,7 +491,7 @@ model alimtalk_log {
 }
 
 model alimtalk_trigger_rule {
-  id            String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  id            String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   branchId      String?  @map("branch_id") @db.Uuid
   name          String
   isActive      Boolean  @default(true) @map("is_active")
@@ -509,7 +509,7 @@ model alimtalk_trigger_rule {
 }
 
 model alimtalk_trigger_job {
-  id                 String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  id                 String    @id @default(dbgenerated("(gen_random_uuid())::text"))
   branchId           String?   @map("branch_id") @db.Uuid
   ruleId             String    @map("rule_id")
   status             String    @default("pending")

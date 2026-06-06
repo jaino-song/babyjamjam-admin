@@ -10,20 +10,33 @@ on:
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - '.github/workflows/backend-ci.yml'
+  # No paths filter on pull_request: this job is a REQUIRED check on dev,
+  # so it must report on every PR — path-filtered required checks block
+  # merges as eternally "expected" when the paths don't match.
   pull_request:
     branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
-    paths:
-      - 'backend/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.github/workflows/backend-ci.yml'
 
 jobs:
   verify:
     name: backend · type-check · lint · test
     timeout-minutes: 30
     runs-on: ubuntu-latest
+
+    # Throwaway Postgres used ONLY as prisma's shadow database for the
+    # migrations drift guard below — never seeded, never read by tests.
+    # trust auth: no password exists at all (ephemeral localhost container).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v4
@@ -54,3 +67,14 @@ jobs:
         run: pnpm --filter babyjamjam-staff-backend test
         env:
           CI: true
+
+      # Fails when schema.prisma changed without a corresponding migration.
+      # Replays prisma/migrations into the throwaway shadow DB and diffs the
+      # result against the schema — exit 2 on drift.
+      - name: Migrations drift guard
+        run: >-
+          pnpm --filter babyjamjam-staff-backend exec prisma migrate diff
+          --from-migrations prisma/migrations
+          --to-schema-datamodel prisma/schema.prisma
+          --shadow-database-url "postgresql://postgres@localhost:5432/postgres"
+          --exit-code
