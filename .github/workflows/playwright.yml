@@ -3,9 +3,21 @@ name: Frontend Playwright Tests
 on:
   workflow_dispatch:
   push:
-    branches: [ main, dev, preview, "feature/**", "fix/**" ]
+    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+    paths:
+      - 'frontend/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/playwright.yml'
   pull_request:
     branches: [ main, dev, preview, "feature/**", "fix/**" ]
+    paths:
+      - 'frontend/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/playwright.yml'
 
 jobs:
   test:
@@ -42,6 +54,7 @@ jobs:
       run: pnpm exec playwright test
       env:
         CI: true
+        JWT_SECRET: ${{ secrets.JWT_SECRET }}
     
     - name: Upload Playwright Report
       uses: actions/upload-artifact@v4

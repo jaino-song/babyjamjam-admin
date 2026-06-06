@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const nextJest = require('next/jest');
 
+// Date logic is KST business-time; pin the test runtime so suites are
+// deterministic on UTC CI runners and non-KST machines (mirrors mobile).
+process.env.TZ = 'Asia/Seoul';
+
 const createJestConfig = nextJest({
   dir: './',
 });

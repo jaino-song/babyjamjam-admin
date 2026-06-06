@@ -1,0 +1,59 @@
+name: Frontend CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+    paths:
+      - 'frontend/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/frontend-ci.yml'
+  pull_request:
+    branches: [ main, dev, preview, "feature/**", "fix/**" ]
+    paths:
+      - 'frontend/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/frontend-ci.yml'
+
+jobs:
+  verify:
+    name: frontend · type-check · lint · test · build
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Fail fast on the cheapest, most deterministic gate first.
+      - name: Type check
+        run: pnpm --filter babyjamjam-staff run type-check
+
+      - name: Lint
+        run: pnpm --filter babyjamjam-staff run lint
+
+      - name: Unit tests
+        run: pnpm --filter babyjamjam-staff test
+        env:
+          CI: true
+
+      - name: Build
+        run: pnpm --filter babyjamjam-staff run build
