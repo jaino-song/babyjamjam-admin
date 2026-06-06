@@ -1,9 +1,19 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
-import { invalidJsonResponse, readJsonObjectBody, upstreamSseErrorResponse } from "@/lib/api/route-utils";
+import { parseBody, upstreamSseErrorResponse } from "@/lib/api/route-utils";
 
 const BACKEND_URL = BACKEND_BASE_URL;
+
+// Mirrors backend ChatStreamDto: `message` is required (@IsNotEmpty @IsString),
+// `sessionId` optional string. Other fields pass through to the backend pipe.
+const chatStreamSchema = z
+    .object({
+        message: z.string().min(1).max(10_000),
+        sessionId: z.string().optional(),
+    })
+    .passthrough();
 
 export async function POST(request: NextRequest) {
     const cookieStore = await cookies();
@@ -16,16 +26,17 @@ export async function POST(request: NextRequest) {
         });
     }
 
-    try {
-        const body = await readJsonObjectBody(request);
+    const { data, response } = await parseBody(chatStreamSchema, request);
+    if (response) return response;
 
+    try {
         const backendResponse = await fetch(`${BACKEND_URL}/ai/chat/stream`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${authToken.value}`,
             },
-            body: JSON.stringify(body),
+            body: JSON.stringify(data),
         });
 
         if (!backendResponse.ok) {
@@ -40,12 +51,7 @@ export async function POST(request: NextRequest) {
                 Connection: "keep-alive",
             },
         });
-    } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) {
-            return invalidJson;
-        }
-
+    } catch {
         return upstreamSseErrorResponse();
     }
 }

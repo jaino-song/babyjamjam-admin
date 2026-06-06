@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AxiosError } from "axios";
+import { z } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
@@ -52,6 +53,53 @@ export function invalidJsonResponse(error: unknown): NextResponse | null {
     }
 
     return null;
+}
+
+export type ParsedBody<T> =
+    | { data: T; response: null }
+    | { data: null; response: NextResponse };
+
+/**
+ * Read + zod-validate a JSON request body for mutation routes.
+ *
+ * Proxy routes sit in front of the backend's authoritative ValidationPipe,
+ * so schemas here pin the ESSENTIAL contract (required fields and types —
+ * use .passthrough() for forward-compatible optional fields) rather than
+ * duplicating full backend DTOs. Returns a ready 400 NextResponse on
+ * malformed JSON or schema violation.
+ */
+export async function parseBody<T>(
+    schema: z.ZodType<T>,
+    request: NextRequest,
+): Promise<ParsedBody<T>> {
+    let body: Record<string, unknown>;
+    try {
+        body = await readJsonObjectBody(request);
+    } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        return {
+            data: null,
+            response:
+                invalidJson ??
+                NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 }),
+        };
+    }
+
+    const result = schema.safeParse(body);
+    if (!result.success) {
+        const issues = result.error.issues
+            .slice(0, 5)
+            .map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`);
+        return {
+            data: null,
+            response: NextResponse.json(
+                { error: "Invalid request body", issues },
+                { status: 400 },
+            ),
+        };
+    }
+
+    return { data: result.data, response: null };
 }
 
 /**

@@ -54,22 +54,39 @@ describe("document category API route", () => {
     await expect(response.json()).resolves.toEqual({ error: "Failed to fetch document categories" });
   });
 
-  it("preserves backend status and payload when creating categories", async () => {
+  it("preserves backend status and forwards the validated body when creating categories", async () => {
     mockPost.mockResolvedValue({
       status: 202,
       data: { queued: true },
     });
 
+    const payload = { value: "contracts", label: "Contracts", color: "#ff0000" };
+
     const response = await createCategory(
       createRequest("/api/document-categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Docs" }),
+        body: JSON.stringify(payload),
       }),
     );
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ queued: true });
+    expect(mockPost).toHaveBeenCalledWith("/document-categories", payload, expect.any(Object));
+  });
+
+  it("rejects create bodies missing required fields before proxying", async () => {
+    const response = await createCategory(
+      createRequest("/api/document-categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // missing the required label/color strings
+        body: JSON.stringify({ value: "contracts" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("rejects malformed create JSON before proxying", async () => {

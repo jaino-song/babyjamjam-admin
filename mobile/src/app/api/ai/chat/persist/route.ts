@@ -1,9 +1,21 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
-import { invalidJsonResponse, readJsonObjectBody, upstreamJsonErrorResponse } from "@/lib/api/route-utils";
+import { parseBody, upstreamJsonErrorResponse } from "@/lib/api/route-utils";
 
 const BACKEND_URL = BACKEND_BASE_URL;
+
+// Mirrors backend ChatPersistDto: `userMessage` and `assistantContent` are
+// required (@IsNotEmpty @IsString); `sessionId` is optional. Other fields pass
+// through to the backend pipe.
+const chatPersistSchema = z
+    .object({
+        userMessage: z.string().min(1).max(10_000),
+        assistantContent: z.string().min(1).max(10_000),
+        sessionId: z.string().optional(),
+    })
+    .passthrough();
 
 export async function POST(request: NextRequest) {
     const cookieStore = await cookies();
@@ -16,15 +28,17 @@ export async function POST(request: NextRequest) {
         });
     }
 
+    const { data, response } = await parseBody(chatPersistSchema, request);
+    if (response) return response;
+
     try {
-        const body = await readJsonObjectBody(request);
         const backendResponse = await fetch(`${BACKEND_URL}/ai/chat/persist`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${authToken.value}`,
             },
-            body: JSON.stringify(body),
+            body: JSON.stringify(data),
         });
 
         if (!backendResponse.ok) {
@@ -37,12 +51,7 @@ export async function POST(request: NextRequest) {
             status: backendResponse.status,
             headers: { "Content-Type": "application/json" },
         });
-    } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) {
-            return invalidJson;
-        }
-
+    } catch {
         return upstreamJsonErrorResponse(502);
     }
 }

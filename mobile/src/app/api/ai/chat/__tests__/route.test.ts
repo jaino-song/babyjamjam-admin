@@ -76,6 +76,17 @@ describe("AI chat API routes", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("rejects persist bodies missing required fields before proxying", async () => {
+    setAuthCookie("auth-token");
+
+    const response = await persistChat(
+      createRequest("/api/ai/chat/persist", JSON.stringify({ userMessage: "hi" })),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("preserves successful backend status when persisting chat state", async () => {
     setAuthCookie("auth-token");
     mockFetch.mockResolvedValue(
@@ -86,11 +97,16 @@ describe("AI chat API routes", () => {
     );
 
     const response = await persistChat(
-      createRequest("/api/ai/chat/persist", JSON.stringify({ message: "hello" })),
+      createRequest(
+        "/api/ai/chat/persist",
+        JSON.stringify({ userMessage: "hello", assistantContent: "hi there" }),
+      ),
     );
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ queued: true });
+    const forwarded = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(forwarded).toEqual({ userMessage: "hello", assistantContent: "hi there" });
   });
 
   it("maps persist upstream errors without returning raw backend text", async () => {
@@ -103,7 +119,10 @@ describe("AI chat API routes", () => {
     );
 
     const response = await persistChat(
-      createRequest("/api/ai/chat/persist", JSON.stringify({ message: "hello" })),
+      createRequest(
+        "/api/ai/chat/persist",
+        JSON.stringify({ userMessage: "hello", assistantContent: "hi" }),
+      ),
     );
 
     expect(response.status).toBe(500);
@@ -123,6 +142,37 @@ describe("AI chat API routes", () => {
       error: "Request body must be valid JSON",
     });
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects stream bodies missing the required message before proxying", async () => {
+    setAuthCookie("auth-token");
+
+    const response = await streamChat(
+      createRequest("/api/ai/chat/stream", JSON.stringify({ sessionId: "s1" })),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated stream body to the backend", async () => {
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response("event: message\ndata: {}\n\n", {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+
+    await streamChat(
+      createRequest(
+        "/api/ai/chat/stream",
+        JSON.stringify({ message: "hello", sessionId: "s1" }),
+      ),
+    );
+
+    const forwarded = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(forwarded).toEqual({ message: "hello", sessionId: "s1" });
   });
 
   it("maps stream transport failures to a structured SSE error", async () => {
@@ -297,5 +347,41 @@ describe("AI chat API routes", () => {
       error: "Request body must be valid JSON",
     });
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects feedback with an invalid type before proxying", async () => {
+    setAuthCookie("auth-token");
+
+    const response = await submitFeedback(
+      createRequest(
+        "/api/ai/chat/feedback",
+        JSON.stringify({ sessionId: "s1", type: "meh" }),
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated feedback body to the backend", async () => {
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, id: "fb-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await submitFeedback(
+      createRequest(
+        "/api/ai/chat/feedback",
+        JSON.stringify({ sessionId: "s1", type: "positive", comment: "great" }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ success: true, id: "fb-1" });
+    const forwarded = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(forwarded).toEqual({ sessionId: "s1", type: "positive", comment: "great" });
   });
 });

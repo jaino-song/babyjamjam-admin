@@ -68,6 +68,44 @@ describe("client API routes", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
+  it("rejects create bodies missing required fields before proxying", async () => {
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // missing the required booleans careCenter/voucherClient/breastPump
+        body: JSON.stringify({ name: "Baby Kim" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated create body to the backend", async () => {
+    mockPost.mockResolvedValue({ status: 201, data: { id: 7 } });
+
+    const payload = {
+      name: "Baby Kim",
+      careCenter: false,
+      voucherClient: true,
+      breastPump: false,
+      primaryEmployeeId: 12,
+    };
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({ id: 7 });
+    expect(mockPost).toHaveBeenCalledWith("/clients", payload, expect.any(Object));
+  });
+
   it("rejects invalid client detail IDs before proxying", async () => {
     const response = await getClient(
       createRequest("/api/clients/not-a-number"),

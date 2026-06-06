@@ -41,7 +41,19 @@ function createRequest(path: string): NextRequest {
       "Content-Type": "application/json",
       cookie: "auth_token=auth-token",
     },
-    body: JSON.stringify({ email: "user@example.com", password: "password", token: "token" }),
+    // Superset body satisfying every auth route's zod schema (P4.4) so each
+    // handler reaches the mocked upstream instead of 400ing at validation.
+    body: JSON.stringify({
+      email: "user@example.com",
+      password: "password",
+      newPassword: "password",
+      token: "token",
+      name: "테스트",
+      phone: "01012345678",
+      birthDate: "1990-01-01",
+      branchId: "branch-1",
+      role: "manager",
+    }),
   });
 }
 

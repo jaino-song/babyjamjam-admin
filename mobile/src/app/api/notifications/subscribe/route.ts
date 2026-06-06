@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { z } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -6,10 +7,21 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    invalidJsonResponse,
-    readJsonObjectBody,
+    parseBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
+
+// Mirrors backend SubscribePushDto: endpoint/p256dh/auth are @IsString()
+// @IsNotEmpty() required; userAgent is optional. Passthrough preserves any
+// forward-compatible fields.
+const subscribePushSchema = z
+    .object({
+        endpoint: z.string().min(1),
+        p256dh: z.string().min(1),
+        auth: z.string().min(1),
+        userAgent: z.string().optional(),
+    })
+    .passthrough();
 
 export async function POST(request: NextRequest) {
     try {
@@ -18,15 +30,14 @@ export async function POST(request: NextRequest) {
             return unauthorizedResponse("Unauthorized");
         }
 
-        const body = await readJsonObjectBody(request);
-        const response = await serverAPIClient.post("/notifications/subscribe", body, {
+        const { data, response: invalid } = await parseBody(subscribePushSchema, request);
+        if (invalid) return invalid;
+
+        const response = await serverAPIClient.post("/notifications/subscribe", data, {
             headers: getAuthHeaders(token),
         });
         return backendJsonResponse(response);
     } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) return invalidJson;
-
         return errorResponse(error, "subscribe to notifications");
     }
 }
