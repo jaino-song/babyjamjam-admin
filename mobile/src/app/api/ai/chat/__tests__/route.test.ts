@@ -175,6 +175,58 @@ describe("AI chat API routes", () => {
     expect(forwarded).toEqual({ message: "hello", sessionId: "s1" });
   });
 
+  it("accepts a null sessionId for new chat sessions", async () => {
+    // Regression (PR #236 review): useChatStream sends sessionId: null until
+    // the backend assigns one; the proxy must not 400 first-time chats.
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response("event: message\ndata: {}\n\n", {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+
+    const response = await streamChat(
+      createRequest(
+        "/api/ai/chat/stream",
+        JSON.stringify({ message: "hello", sessionId: null }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    const forwarded = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(forwarded).toEqual({ message: "hello", sessionId: null });
+  });
+
+  it("persists null-session and long assistant replies without a proxy cap", async () => {
+    // Regression (PR #236 review): long generated answers must not be
+    // silently dropped from history by a proxy-only length cap.
+    setAuthCookie("auth-token");
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const longReply = "가".repeat(20_000);
+    const response = await persistChat(
+      createRequest(
+        "/api/ai/chat/persist",
+        JSON.stringify({
+          userMessage: "질문",
+          assistantContent: longReply,
+          sessionId: null,
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    const forwarded = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(forwarded.assistantContent).toHaveLength(20_000);
+    expect(forwarded.sessionId).toBeNull();
+  });
+
   it("maps stream transport failures to a structured SSE error", async () => {
     setAuthCookie("auth-token");
     mockFetch.mockRejectedValue(new Error("backend unavailable"));

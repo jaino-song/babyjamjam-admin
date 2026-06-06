@@ -7,13 +7,15 @@ import { parseBody, upstreamJsonErrorResponse } from "@/lib/api/route-utils";
 const BACKEND_URL = BACKEND_BASE_URL;
 
 // Mirrors backend ChatPersistDto: `userMessage` and `assistantContent` are
-// required (@IsNotEmpty @IsString); `sessionId` is optional. Other fields pass
-// through to the backend pipe.
+// required (@IsNotEmpty @IsString); `sessionId` is optional and may be null
+// for new sessions (class-validator @IsOptional allows null). No length caps:
+// the backend DTO has none, and long generated replies are a normal outcome —
+// a proxy-only cap would silently drop turns from history.
 const chatPersistSchema = z
     .object({
-        userMessage: z.string().min(1).max(10_000),
-        assistantContent: z.string().min(1).max(10_000),
-        sessionId: z.string().optional(),
+        userMessage: z.string().min(1),
+        assistantContent: z.string().min(1),
+        sessionId: z.string().nullable().optional(),
     })
     .passthrough();
 
