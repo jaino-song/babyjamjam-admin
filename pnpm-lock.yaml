@@ -176,6 +176,9 @@ importers:
 
   frontend:
     dependencies:
+      '@babyjamjam/shared':
+        specifier: workspace:*
+        version: link:../packages/shared
       '@radix-ui/react-avatar':
         specifier: ^1.1.11
         version: 1.1.11(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -363,6 +366,9 @@ importers:
 
   mobile:
     dependencies:
+      '@babyjamjam/shared':
+        specifier: workspace:*
+        version: link:../packages/shared
       '@radix-ui/react-avatar':
         specifier: ^1.1.11
         version: 1.1.11(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -535,6 +541,12 @@ importers:
       tailwindcss:
         specifier: ^4
         version: 4.2.1
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/shared:
+    devDependencies:
       typescript:
         specifier: ^5
         version: 5.9.3
