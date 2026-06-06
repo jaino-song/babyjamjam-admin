@@ -30,24 +30,6 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 const MAX_DOCUMENT_TAGS = 50;
 const MAX_DOCUMENT_TAG_LENGTH = 100;
 
-function toResponse(entity: DocumentEntity) {
-    return {
-        id: entity.id,
-        name: entity.name,
-        description: entity.description,
-        categoryId: entity.categoryId,
-        tags: entity.tags,
-        mimeType: entity.mimetype,
-        fileSize: entity.filesize,
-        storagePath: entity.storagepath,
-        storageUrl: entity.storageurl,
-        orgId: entity.branchid,
-        uploadedBy: entity.uploadedby,
-        createdAt: entity.createdat,
-        updatedAt: entity.updatedat,
-    };
-}
-
 function parseDocumentTags(tags: string[] | string | undefined): string[] {
     if (tags === undefined) {
         return [];
@@ -142,11 +124,10 @@ export class DocumentController {
             mimetype: mimeType,
             filesize: file.size,
             storagepath: storagePath,
-            storageurl: storageUrl,
             branchid: branchId,
             uploadedby: tenant.userId || "system",
         });
-        return toResponse(entity);
+        return this.toResponse(entity, storageUrl);
     }
 
     @Post()
@@ -161,11 +142,10 @@ export class DocumentController {
             mimetype: dto.mimetype,
             filesize: dto.filesize,
             storagepath: dto.storagepath,
-            storageurl: dto.storageurl,
             branchid: branchId,
             uploadedby: dto.uploadedby,
         });
-        return toResponse(entity);
+        return this.toResponse(entity);
     }
 
     @Get()
@@ -176,13 +156,13 @@ export class DocumentController {
         const entities = categoryId 
             ? await this.documentService.findByCategoryId(tenant.branchId ?? "", categoryId) 
             : await this.documentService.findAll(tenant.branchId ?? "");
-        return entities.map(toResponse);
+        return Promise.all(entities.map((entity) => this.toResponse(entity)));
     }
 
     @Get(":id")
     async findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
         const entity = await this.documentService.findById(tenant.branchId ?? "", id);
-        return toResponse(entity);
+        return this.toResponse(entity);
     }
 
     /**
@@ -195,7 +175,7 @@ export class DocumentController {
         @Param("branchid") branchid: string
     ) {
         const entities = await this.documentService.findByOrgId(tenant.branchId ?? "", branchid);
-        return entities.map(toResponse);
+        return Promise.all(entities.map((entity) => this.toResponse(entity)));
     }
 
     @Get("category/:categoryId")
@@ -207,7 +187,7 @@ export class DocumentController {
             tenant.branchId ?? "",
             categoryId
         );
-        return entities.map(toResponse);
+        return Promise.all(entities.map((entity) => this.toResponse(entity)));
     }
 
     @Put(":id")
@@ -222,7 +202,7 @@ export class DocumentController {
             categoryId: dto.categoryId,
             tags: dto.tags,
         });
-        return toResponse(entity);
+        return this.toResponse(entity);
     }
 
     /**
@@ -296,4 +276,25 @@ export class DocumentController {
          });
          res.send(fileBuffer);
      }
+
+    private async toResponse(entity: DocumentEntity, storageUrl?: string) {
+        const resolvedStorageUrl = storageUrl
+            ?? await this.fileStorage.createSignedUrl(entity.storagepath);
+
+        return {
+            id: entity.id,
+            name: entity.name,
+            description: entity.description,
+            categoryId: entity.categoryId,
+            tags: entity.tags,
+            mimeType: entity.mimetype,
+            fileSize: entity.filesize,
+            storagePath: entity.storagepath,
+            storageUrl: resolvedStorageUrl,
+            orgId: entity.branchid,
+            uploadedBy: entity.uploadedby,
+            createdAt: entity.createdat,
+            updatedAt: entity.updatedat,
+        };
+    }
 }
