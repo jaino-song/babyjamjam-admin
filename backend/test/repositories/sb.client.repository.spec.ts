@@ -475,6 +475,7 @@ describe("SbClientRepository", () => {
                         breastPump: true,
                         eDocId: null,
                         dueDate: null,
+                        areaId: null,
                     },
                 });
                 expect(clientModel.findFirst).toHaveBeenCalledWith(expect.objectContaining({
