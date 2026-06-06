@@ -7,6 +7,7 @@ import { Building2, Check } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { logout } from "@/app/logout/actions";
 import { getUserBranches, setCurrentBranch } from "./actions";
 import "@/components/app/mobile-redesign/redesign.css";
 
@@ -84,10 +85,11 @@ export default function SelectBranchPage() {
     fetchBranches();
   }, [confirmSelectBranch]);
 
-  const handleLogout = () => {
-    document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-    document.cookie = "refresh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-    document.cookie = "selected_branch_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  const handleLogout = async () => {
+    // auth_token/refresh_token are httpOnly — document.cookie cannot clear
+    // them, and the middleware bounces authenticated users straight back
+    // from /login. The server action clears them properly.
+    await logout();
     router.replace("/login");
   };
 
