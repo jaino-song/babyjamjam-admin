@@ -27,6 +27,7 @@ describe("WebhookGuard", () => {
     const defaultConfig: Record<string, string | undefined> = {
         EFORMSIGN_WEBHOOK_SECRET: "webhook-secret",
         EFORMSIGN_COMPANY_ID: "company-1",
+        EFORMSIGN_WEBHOOK_ALLOWED_COMPANY_IDS: undefined,
     };
 
     const createRequest = (overrides?: Partial<MockRequest>): MockRequest => ({
@@ -39,10 +40,22 @@ describe("WebhookGuard", () => {
         ...overrides,
     });
 
-    it("returns true for a valid bearer token and allowed company id", () => {
+    it("returns true for a valid bearer token and fallback company id", () => {
         const guard = new WebhookGuard(createConfigService());
 
         expect(guard.canActivate(createExecutionContext(createRequest()))).toBe(true);
+    });
+
+    it("returns true for company ids listed in EFORMSIGN_WEBHOOK_ALLOWED_COMPANY_IDS", () => {
+        const guard = new WebhookGuard(createConfigService({
+            EFORMSIGN_WEBHOOK_ALLOWED_COMPANY_IDS: "company-1, company-2",
+        }));
+
+        expect(guard.canActivate(createExecutionContext(createRequest({
+            body: {
+                company_id: "company-2",
+            },
+        })))).toBe(true);
     });
 
     it("throws 401 when the authorization header is missing", () => {
@@ -64,11 +77,30 @@ describe("WebhookGuard", () => {
     });
 
     it("throws 403 when the company id is unknown", () => {
-        const guard = new WebhookGuard(createConfigService());
+        const guard = new WebhookGuard(createConfigService({
+            EFORMSIGN_WEBHOOK_ALLOWED_COMPANY_IDS: "company-1, company-2",
+        }));
 
         expect(() => guard.canActivate(createExecutionContext(createRequest({
             body: {
                 company_id: "unknown-company",
+            },
+        })))).toThrow(ForbiddenException);
+    });
+
+    it("treats fallback EFORMSIGN_COMPANY_ID as one literal value without splitting commas", () => {
+        const guard = new WebhookGuard(createConfigService({
+            EFORMSIGN_COMPANY_ID: "company-1,company-2",
+        }));
+
+        expect(guard.canActivate(createExecutionContext(createRequest({
+            body: {
+                company_id: "company-1,company-2",
+            },
+        })))).toBe(true);
+        expect(() => guard.canActivate(createExecutionContext(createRequest({
+            body: {
+                company_id: "company-1",
             },
         })))).toThrow(ForbiddenException);
     });

@@ -12,6 +12,7 @@ export interface IDocumentRepository {
     findByOrgId(branchid: string, orgId: string): Promise<DocumentEntity[]>;
     findByCategoryId(branchid: string, categoryId: string): Promise<DocumentEntity[]>;
     findAll(branchid: string): Promise<DocumentEntity[]>;
+    existsByStoragePathOutsideBranch(branchid: string, storagePath: string): Promise<boolean>;
     create(branchid: string, doc: DocumentEntity): Promise<DocumentEntity>;
     update(branchid: string, doc: DocumentEntity): Promise<DocumentEntity>;
     delete(branchid: string, id: string): Promise<void>;

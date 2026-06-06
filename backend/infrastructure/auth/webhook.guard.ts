@@ -65,13 +65,10 @@ export class WebhookGuard implements CanActivate {
             throw new ForbiddenException("Unknown company id");
         }
 
-        const allowedCompanyIds = (this.configService.get<string>("EFORMSIGN_COMPANY_ID") ?? "")
-            .split(",")
-            .map((value) => value.trim())
-            .filter(Boolean);
+        const allowedCompanyIds = this.getAllowedCompanyIds();
 
         if (allowedCompanyIds.length === 0) {
-            this.logger.error("EFORMSIGN_COMPANY_ID not configured");
+            this.logger.error("EFORMSIGN_WEBHOOK_ALLOWED_COMPANY_IDS or EFORMSIGN_COMPANY_ID not configured");
             throw new ForbiddenException("Webhook tenant validation not configured");
         }
 
@@ -84,6 +81,19 @@ export class WebhookGuard implements CanActivate {
             );
             throw new ForbiddenException("Unknown company id");
         }
+    }
+
+    private getAllowedCompanyIds(): string[] {
+        const webhookAllowedCompanyIds = this.configService.get<string>("EFORMSIGN_WEBHOOK_ALLOWED_COMPANY_IDS");
+        if (typeof webhookAllowedCompanyIds === "string" && webhookAllowedCompanyIds.trim().length > 0) {
+            return webhookAllowedCompanyIds
+                .split(",")
+                .map((value) => value.trim())
+                .filter(Boolean);
+        }
+
+        const fallbackCompanyId = this.configService.get<string>("EFORMSIGN_COMPANY_ID")?.trim() ?? "";
+        return fallbackCompanyId ? [fallbackCompanyId] : [];
     }
 
     private secureCompare(a: string, b: string): boolean {
