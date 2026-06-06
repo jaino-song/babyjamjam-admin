@@ -11,8 +11,6 @@ import { authApi } from "@/services/api";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 import "@/components/app/mobile-redesign/redesign.css";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
-
 const LoginPage = () => {
   const router = useRouter();
 
@@ -134,7 +132,7 @@ const LoginPage = () => {
   };
 
   const handleKakao = () => {
-    if (API_BASE_URL) window.location.href = `${API_BASE_URL}/auth/kakao`;
+    authApi.kakaoLogin();
   };
 
   return (

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { jwtDecode } from "jwt-decode";
 
+import { getServerRuntimeConfig } from "@/lib/env";
+
 interface TokenPayload {
   sub: string;
   role: string | null;
@@ -16,10 +18,10 @@ interface RefreshResponse {
   refreshToken?: string;
 }
 
-const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
-const API_URL = isProduction
-  ? process.env.NEXT_PUBLIC_API_BASE_URL
-  : process.env.DEVELOPMENT_API_BASE_URL;
+const {
+  backendBaseUrl: API_URL,
+  isProductionLike,
+} = getServerRuntimeConfig();
 
 function isAutoLoginEnabled(value: string | undefined): boolean {
   return value !== "0" && value !== "false";
@@ -95,7 +97,7 @@ function setSessionCookies(
 ): void {
   const baseCookieOptions = {
     httpOnly: true,
-    secure: isProduction,
+    secure: isProductionLike,
     sameSite: "lax" as const,
     path: "/",
   };
@@ -126,10 +128,6 @@ async function tryRefreshAuthSession(refreshToken: string): Promise<{
   refreshToken: string;
   role: string;
 } | null> {
-  if (!API_URL) {
-    return null;
-  }
-
   try {
     const refreshResponse = await fetch(`${API_URL}/auth/refresh-token`, {
       method: "POST",

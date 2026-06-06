@@ -1,8 +1,10 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+
+import { serverAPIClient } from "@/lib/api/server";
+import { getServerRuntimeConfig } from "@/lib/env";
 
 interface Branch {
   id: string;
@@ -63,7 +65,7 @@ export async function setCurrentBranch(branchId: string): Promise<{
 }> {
   try {
     const cookieStore = await cookies();
-    const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
+    const isSecureCookie = getServerRuntimeConfig().isSecureCookieEnv;
     const token = cookieStore.get("auth_token")?.value || null;
     const autoLoginCookie = cookieStore.get("auto_login")?.value;
     const autoLogin = autoLoginCookie !== "0" && autoLoginCookie !== "false";

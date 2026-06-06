@@ -1,3 +1,6 @@
+/**
+ * @jest-environment node
+ */
 import { resolveBackendBaseUrl, serverAPIClient } from "../server";
 
 type BackendEnv = Parameters<typeof resolveBackendBaseUrl>[0];
@@ -18,17 +21,17 @@ describe("resolveBackendBaseUrl", () => {
     });
 
     it("requires NEXT_PUBLIC_API_BASE_URL in production", () => {
-        expect(resolveBackendBaseUrl(createEnv({
+        expect(() => resolveBackendBaseUrl(createEnv({
             NODE_ENV: "production",
             DEVELOPMENT_API_BASE_URL: "http://localhost:3001",
-        }))).toBeNull();
+        }))).toThrow(/NEXT_PUBLIC_API_BASE_URL/);
     });
 
     it("requires NEXT_PUBLIC_API_BASE_URL on Vercel preview", () => {
-        expect(resolveBackendBaseUrl(createEnv({
+        expect(() => resolveBackendBaseUrl(createEnv({
             VERCEL_ENV: "preview",
             DEVELOPMENT_API_BASE_URL: "http://localhost:3001",
-        }))).toBeNull();
+        }))).toThrow(/NEXT_PUBLIC_API_BASE_URL/);
     });
 
     it("normalizes valid backend URLs", () => {
@@ -39,10 +42,10 @@ describe("resolveBackendBaseUrl", () => {
     });
 
     it("rejects invalid URL schemes", () => {
-        expect(resolveBackendBaseUrl(createEnv({
+        expect(() => resolveBackendBaseUrl(createEnv({
             NODE_ENV: "production",
             NEXT_PUBLIC_API_BASE_URL: "ftp://api.example.com",
-        }))).toBeNull();
+        }))).toThrow(/http:\/\/ or https:\/\//);
     });
 });
 

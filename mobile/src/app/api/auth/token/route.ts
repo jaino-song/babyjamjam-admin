@@ -1,8 +1,10 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
-import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+
+import { serverAPIClient } from "@/lib/api/server";
+import { getServerRuntimeConfig } from "@/lib/env";
 
 interface TokenPayload {
     sub: string;
@@ -16,8 +18,9 @@ interface APIErrorResponse {
     error: string;
 }
 
-const isProduction = process.env.NODE_ENV === "production";
-const isSecureCookie = isProduction || process.env.VERCEL_ENV === "preview";
+const {
+    isSecureCookieEnv: isSecureCookie,
+} = getServerRuntimeConfig();
 
 // 30일 세션을 부여받는 권한 있는 역할들
 const EXTENDED_SESSION_ROLES = new Set(["owner", "creator"]);

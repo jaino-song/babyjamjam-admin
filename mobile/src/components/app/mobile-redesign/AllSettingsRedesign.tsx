@@ -11,6 +11,7 @@ import type { MenuGroup } from "./mockup-data";
 import { MenuGroups } from "./primitives";
 import { t } from "@/lib/i18n/translations";
 import type { Locale } from "@/app/actions/locale";
+import { APP_VERSION } from "@/lib/env";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useInitialUser } from "@/providers/UserProvider";
 
@@ -18,8 +19,7 @@ const DEFAULT_PROFILE_NAME = "사용자";
 const DEFAULT_PROFILE_ROLE = "스태프";
 
 function getAppVersion() {
-  const version = process.env.NEXT_PUBLIC_APP_VERSION ?? process.env.npm_package_version ?? "0.0.0";
-  return `아가잼잼 어드민 v${version}`;
+  return `아가잼잼 어드민 v${APP_VERSION}`;
 }
 
 function getRoleLabel(locale: Locale, role: string | undefined) {

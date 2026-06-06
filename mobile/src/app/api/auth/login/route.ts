@@ -1,9 +1,11 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
-import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+
 import { getUpstreamErrorStatus, logUpstreamError, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+import { serverAPIClient } from "@/lib/api/server";
+import { getServerRuntimeConfig } from "@/lib/env";
 
 interface TokenPayload {
     sub: string;
@@ -35,7 +37,7 @@ export async function POST(request: NextRequest) {
 
         // Set auth cookies on successful login
         const cookieStore = await cookies();
-        const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
+        const isSecureCookie = getServerRuntimeConfig().isSecureCookieEnv;
 
         let role = "user";
         try {
