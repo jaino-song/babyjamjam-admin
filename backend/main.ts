@@ -1,5 +1,6 @@
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import helmet from "helmet";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
 import { PrismaExceptionFilter } from "./infrastructure/filters/prisma-exception.filter";
@@ -20,6 +21,9 @@ process.on('unhandledRejection', (reason, promise) => {
 
 async function bootstrap() {
     const app = await NestFactory.create(AppModule);
+    app.use(helmet());
+    const expressApp = app.getHttpAdapter().getInstance();
+    expressApp.set("trust proxy", 1);
     app.use(cookieParser());
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     app.useGlobalFilters(new PrismaExceptionFilter());

@@ -6,6 +6,7 @@ import {
 import { SendAligoSmsDto, SendAligoSmsResult } from "application/dto/aligo/send-sms.dto";
 import { ClientEntity } from "domain/entities/client.entity";
 import { PhoneNumber } from "domain/value-objects/phone-number.vo";
+import { maskPhone } from "application/utils/mask";
 
 interface ContractSignedInfo {
     contractType: string;
@@ -35,7 +36,7 @@ export class AligoService {
             return await this.sendSmsUsecase.execute(dto);
         } catch (error) {
             this.logger.error(
-                `[Aligo] Failed to send sms to ${dto.receiver}`,
+                `[Aligo] Failed to send sms to ${maskPhone(dto.receiver)}`,
                 error instanceof Error ? error.stack : String(error),
             );
             throw error;
@@ -45,7 +46,7 @@ export class AligoService {
     async sendClientCreatedAlimtalk(client: ClientEntity): Promise<void> {
         const phone = PhoneNumber.create(client.phone);
         if (!phone) {
-            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${maskPhone(client.phone)}`);
             return;
         }
 
@@ -66,7 +67,7 @@ export class AligoService {
     ): Promise<void> {
         const phone = PhoneNumber.create(client.phone);
         if (!phone) {
-            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${maskPhone(client.phone)}`);
             return;
         }
 
@@ -89,7 +90,7 @@ export class AligoService {
     ): Promise<void> {
         const phone = PhoneNumber.create(client.phone);
         if (!phone) {
-            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${maskPhone(client.phone)}`);
             return;
         }
 
@@ -109,7 +110,7 @@ export class AligoService {
     ): Promise<void> {
         const phone = PhoneNumber.create(client.phone);
         if (!phone) {
-            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${maskPhone(client.phone)}`);
             return;
         }
 
@@ -129,7 +130,7 @@ export class AligoService {
     ): Promise<void> {
         const phone = PhoneNumber.create(client.phone);
         if (!phone) {
-            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${maskPhone(client.phone)}`);
             return;
         }
 
@@ -154,7 +155,7 @@ export class AligoService {
     ): Promise<void> {
         const phone = PhoneNumber.create(client.phone);
         if (!phone) {
-            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${maskPhone(client.phone)}`);
             return;
         }
 
@@ -180,7 +181,7 @@ export class AligoService {
     ): Promise<void> {
         const phone = PhoneNumber.create(client.phone);
         if (!phone) {
-            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${client.phone}`);
+            this.logger.warn(`[Aligo] Invalid or missing phone for client ${client.id}: ${maskPhone(client.phone)}`);
             return;
         }
 

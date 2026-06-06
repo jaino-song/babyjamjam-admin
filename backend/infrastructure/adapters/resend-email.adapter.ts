@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Resend } from 'resend';
+import { maskEmail } from 'application/utils/mask';
 import { EmailPort, EmailOptions } from '../../domain/ports/email.port';
 
 // Published Resend template IDs
@@ -27,7 +28,7 @@ export class ResendEmailAdapter implements EmailPort {
 
     async send(options: EmailOptions): Promise<string> {
         if (!this.resend) {
-            this.logger.warn(`Email not sent (no API key): to=${options.to}, subject=${options.subject}`);
+            this.logger.warn(`Email not sent (no API key): to=${maskEmail(options.to)}, subject=${options.subject}`);
             return 'disabled';
         }
 
@@ -45,10 +46,10 @@ export class ResendEmailAdapter implements EmailPort {
                 throw new Error(response.error.message);
             }
 
-            this.logger.log(`Email sent successfully to ${options.to}, ID: ${response.data?.id}`);
+            this.logger.log(`Email sent successfully to ${maskEmail(options.to)}, ID: ${response.data?.id}`);
             return response.data?.id || '';
         } catch (error) {
-            this.logger.error(`Failed to send email to ${options.to}:`, error);
+            this.logger.error(`Failed to send email to ${maskEmail(options.to)}:`, error);
             throw error;
         }
     }
@@ -91,7 +92,7 @@ export class ResendEmailAdapter implements EmailPort {
         variables: Record<string, string | number>;
     }): Promise<string> {
         if (!this.resend) {
-            this.logger.warn(`Email not sent (no API key): to=${options.to}, template=${options.templateId}`);
+            this.logger.warn(`Email not sent (no API key): to=${maskEmail(options.to)}, template=${options.templateId}`);
             return 'disabled';
         }
 
@@ -110,10 +111,10 @@ export class ResendEmailAdapter implements EmailPort {
                 throw new Error(response.error.message);
             }
 
-            this.logger.log(`Template email sent to ${options.to}, ID: ${response.data?.id}`);
+            this.logger.log(`Template email sent to ${maskEmail(options.to)}, ID: ${response.data?.id}`);
             return response.data?.id || '';
         } catch (error) {
-            this.logger.error(`Failed to send template email to ${options.to}:`, error);
+            this.logger.error(`Failed to send template email to ${maskEmail(options.to)}:`, error);
             throw error;
         }
     }
