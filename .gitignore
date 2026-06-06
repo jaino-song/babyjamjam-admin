@@ -37,6 +37,14 @@ backend/prisma/seed.ts
 .DS_Store
 *.pem
 
+# editor/tool backup + temp artifacts (audit P4.8 — keep these junk
+# classes from ever being tracked again)
+*.bak
+*.bak2
+**/.temp/
+**/.claude/hookify.*.local.md
+*-opencode.md
+
 # paul planning files (local only)
 .paul/
 
