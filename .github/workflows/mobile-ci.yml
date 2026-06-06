@@ -58,12 +58,13 @@ jobs:
       - name: Build
         run: pnpm --filter babyjamjam-admin run build
 
-  # Non-blocking until CI has JWT_SECRET for auth setup (tests/global-setup.ts
-  # currently reads it from backend/.env, which only exists locally).
+  # Manual-only until Phase 6 stands up the real backend stack in CI
+  # (Postgres container + migrate deploy + seed + NestJS boot). The suites
+  # are backend-coupled and time out without it — verified 2026-06-06.
   e2e:
-    name: playwright e2e (advisory)
+    name: playwright e2e (manual until real-backend CI lands)
+    if: github.event_name == 'workflow_dispatch'
     needs: verify
-    continue-on-error: true
     timeout-minutes: 60
     runs-on: ubuntu-latest
 
@@ -92,6 +93,7 @@ jobs:
         run: pnpm --filter babyjamjam-admin run test:e2e
         env:
           CI: true
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4

@@ -1,0 +1,56 @@
+name: Backend CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+    paths:
+      - 'backend/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+    paths:
+      - 'backend/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/backend-ci.yml'
+
+jobs:
+  verify:
+    name: backend · type-check · lint · test
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Fail fast on the cheapest, most deterministic gate first.
+      - name: Type check
+        run: pnpm --filter babyjamjam-staff-backend run type-check
+
+      - name: Lint
+        run: pnpm --filter babyjamjam-staff-backend run lint
+
+      - name: Unit tests
+        run: pnpm --filter babyjamjam-staff-backend test
+        env:
+          CI: true

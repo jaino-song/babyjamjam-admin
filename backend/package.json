@@ -4,6 +4,10 @@
   "description": "",
   "author": "",
   "private": true,
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10 <11"
+  },
   "license": "UNLICENSED",
   "scripts": {
     "generate": "prisma generate",
@@ -11,6 +15,8 @@
     "prestart:dev": "prisma generate",
     "pretest": "prisma generate",
     "build": "prisma generate && nest build",
+    "type-check": "prisma generate && tsc --noEmit",
+    "lint": "eslint .",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
@@ -71,10 +77,12 @@
     "@types/passport-local": "^1.0.38",
     "@types/supertest": "^6.0.3",
     "@types/web-push": "^3.6.4",
+    "eslint": "^9",
     "jest": "^30.2.0",
     "supertest": "^7.1.4",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.1",
+    "typescript-eslint": "^8.57.0",
     "typescript": "^5.1.3"
   }
 }

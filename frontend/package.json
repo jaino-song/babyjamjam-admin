@@ -2,6 +2,10 @@
   "name": "babyjamjam-staff",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10 <11"
+  },
   "bin": {
     "magi": "./bin/magi"
   },
@@ -14,6 +18,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "type-check": "tsc --noEmit",
     "test": "jest",
     "test:smoke": "RUN_SMOKE_TESTS=1 playwright test tests/contract-creation.smoke.spec.ts --timeout=120000",
     "test:screenshots": "playwright test tests/screenshots",

@@ -1,11 +1,11 @@
 name: Frontend Playwright Tests
 
+# Manual-only until Phase 6 stands up the real backend stack in CI
+# (Postgres container + migrate deploy + seed + NestJS boot). The suites
+# are backend-coupled and time out without it — verified 2026-06-06.
+# Blocking per-PR coverage for the frontend lives in frontend-ci.yml.
 on:
   workflow_dispatch:
-  push:
-    branches: [ main, dev, preview, "feature/**", "fix/**" ]
-  pull_request:
-    branches: [ main, dev, preview, "feature/**", "fix/**" ]
 
 jobs:
   test:
@@ -42,6 +42,7 @@ jobs:
       run: pnpm exec playwright test
       env:
         CI: true
+        JWT_SECRET: ${{ secrets.JWT_SECRET }}
     
     - name: Upload Playwright Report
       uses: actions/upload-artifact@v4
