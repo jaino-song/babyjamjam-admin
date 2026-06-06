@@ -1,4 +1,4 @@
-import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
+import { ExecutionContext, ForbiddenException, INestApplication, ValidationPipe } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { DocumentService } from "application/services/document.service";
 import { DocumentEntity } from "domain/entities/document.entity";
@@ -135,6 +135,26 @@ describe("DocumentController (Integration)", () => {
         );
         expect(documentService.create.mock.calls[0]?.[1]).not.toHaveProperty("storageurl");
         expect(fileStorage.createSignedUrl).toHaveBeenCalledWith("documents/contract.pdf");
+    });
+
+    it("should reject unavailable storage paths before signing a URL", async () => {
+        documentService.create.mockRejectedValue(new ForbiddenException("storage path unavailable"));
+
+        const response = await request(app.getHttpServer())
+            .post("/documents")
+            .send({
+                name: "Contract",
+                categoryId: "contract",
+                tags: ["signed"],
+                mimetype: "application/pdf",
+                filesize: 100,
+                storagepath: "documents/shared.pdf",
+                uploadedby: "user-1",
+            });
+
+        expect(response.status).toBe(403);
+        expect(response.body.message).toBe("storage path unavailable");
+        expect(fileStorage.createSignedUrl).not.toHaveBeenCalled();
     });
 
     it("should use tenant branch as document metadata branch when uploading documents", async () => {
