@@ -23,6 +23,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "db:seed": "ts-node prisma/seed.ts",
+    "db:seed:e2e": "ts-node test/e2e-env/seed-e2e.ts",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy"
   },
