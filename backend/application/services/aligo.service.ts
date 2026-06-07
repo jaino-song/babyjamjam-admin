@@ -53,6 +53,8 @@ export class AligoService {
         await this.safeSend({
             templateKey: "CLIENT_CREATED",
             receiver: phone.toString(),
+            branchId: client.branchId ?? undefined,
+            clientId: client.id,
             variables: {
                 고객명: client.name,
                 등록일: this.formatDate(new Date()),
@@ -74,6 +76,8 @@ export class AligoService {
         await this.safeSend({
             templateKey: "CONTRACT_SIGNED",
             receiver: phone.toString(),
+            branchId: client.branchId ?? undefined,
+            clientId: client.id,
             variables: {
                 고객명: client.name,
                 계약유형: contractInfo.contractType,
@@ -97,6 +101,8 @@ export class AligoService {
         await this.safeSend({
             templateKey: "CONTRACT_REMINDER_3DAYS",
             receiver: phone.toString(),
+            branchId: client.branchId ?? undefined,
+            clientId: client.id,
             variables: {
                 고객명: client.name,
                 서비스시작일: serviceStartDate,
@@ -117,6 +123,8 @@ export class AligoService {
         await this.safeSend({
             templateKey: "CONTRACT_REMINDER_1DAY",
             receiver: phone.toString(),
+            branchId: client.branchId ?? undefined,
+            clientId: client.id,
             variables: {
                 고객명: client.name,
                 서비스시작일: serviceStartDate,
@@ -137,6 +145,8 @@ export class AligoService {
         await this.safeSend({
             templateKey: "PAYMENT_CONFIRMED",
             receiver: phone.toString(),
+            branchId: client.branchId ?? undefined,
+            clientId: client.id,
             variables: {
                 고객명: client.name,
                 결제금액: this.formatCurrency(paymentInfo.amount),
@@ -162,6 +172,8 @@ export class AligoService {
         await this.safeSend({
             templateKey: "SURVEY_REQUEST",
             receiver: phone.toString(),
+            branchId: client.branchId ?? undefined,
+            clientId: client.id,
             variables: {
                 고객명: client.name,
                 서비스종료일: serviceEndDate,
@@ -188,6 +200,8 @@ export class AligoService {
         await this.safeSend({
             templateKey: "PAYMENT_REMINDER",
             receiver: phone.toString(),
+            branchId: client.branchId ?? undefined,
+            clientId: client.id,
             variables: {
                 고객명: client.name,
                 등록일: registrationDate,
