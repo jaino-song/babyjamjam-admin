@@ -62,7 +62,8 @@ import {
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
-import { eformsignApi, type EformsignDocClientSummary } from "@/services/api";
+import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
+import { eformsignApi } from "@/services/api";
 import { Badge, ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import { ActivityTimeline } from "@/components/app/v3";
 import {
@@ -1645,7 +1646,7 @@ export default function ContractsPage() {
       setFinalizeProgress((current) => {
         const next = resolveFailedHeadlessProgress(
           current,
-          headless.failedStep,
+          undefined,
           CONTRACT_FINALIZE_PROGRESS_STEPS,
         );
         if (next !== current) {

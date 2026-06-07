@@ -1,22 +1,15 @@
-export type HeadlessProgressStepKey = "client-started" | "info-inserted" | "creating" | "sent";
+import type {
+    HeadlessProgressState,
+    HeadlessProgressStep,
+    HeadlessProgressStepKey,
+} from "@babyjamjam/shared/types/eformsign";
 
-export interface HeadlessProgressState {
-    step: HeadlessProgressStepKey | null;
-    completed: boolean;
-    failed: boolean;
-}
-
-export interface HeadlessProgressEvent {
-    step: HeadlessProgressStepKey | "failed";
-    failedStep?: HeadlessProgressStepKey;
-    reason?: string;
-}
-
-export interface HeadlessProgressStep {
-    key: HeadlessProgressStepKey;
-    label: string;
-    errorLabel: string;
-}
+export type {
+    HeadlessProgressEvent,
+    HeadlessProgressState,
+    HeadlessProgressStep,
+    HeadlessProgressStepKey,
+} from "@babyjamjam/shared/types/eformsign";
 
 export const CONTRACT_CREATION_PROGRESS_STEPS: readonly HeadlessProgressStep[] = [
     { key: "client-started", label: "전자문서 클라이언트 시작", errorLabel: "전자문서 클라이언트 시작 실패" },
