@@ -160,4 +160,16 @@ test.describe('Critical flows (real backend)', () => {
     });
     expect([401, 403]).toContain(badAuth.status());
   });
+
+  // NOTE (flow 3 disposition, 2026-06-08): "contract lifecycle completion"
+  // ends in this suite at the webhook-completion segment above. The upstream
+  // finalize step (POST /eformsign-docs/finalize-headless) cannot be e2e-
+  // tested under the vendor-stub charter: eformsign's Open API has no
+  // approve/send endpoint, so finalize drives the vendor-hosted embedded SDK
+  // iframe (efs_embedded_v2.js from the eformsign CDN) with backend-side
+  // Playwright clicking the SDK's 전송 button — real vendor servers plus a
+  // browser runtime the CI backend job does not provision. Stubbing that
+  // would mean serving a counterfeit SDK and asserting our mock clicks our
+  // mock. The DB-side completion lifecycle (claim → link → end-date sync →
+  // alimtalk → idempotent replay) IS exercised above against the real stack.
 });
