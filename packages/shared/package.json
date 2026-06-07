@@ -11,6 +11,7 @@
         "./types/alimtalk": "./src/types/alimtalk.ts",
         "./types/eformsign": "./src/types/eformsign.ts",
         "./types/message": "./src/types/message.ts",
+        "./types/system-template": "./src/types/system-template.ts",
         "./utils": "./src/utils/index.ts",
         "./eslint-plugin": "./eslint-plugin/index.mjs"
     },
