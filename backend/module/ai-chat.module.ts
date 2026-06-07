@@ -8,6 +8,7 @@ import { CleanupChatSessionsUsecase } from "application/usecases/ai-chat/cleanup
 import { ToolExecutorService } from "application/ai-chat/tool-executor.service";
 import { GeminiChatGateway } from "infrastructure/api/gemini-chat.gateway";
 import { VercelGeminiGateway } from "infrastructure/api/vercel-gemini.gateway";
+import { createGeminiGateway } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { ChatSessionModule } from "./chat-session.module";
@@ -40,16 +41,9 @@ export { GEMINI_GATEWAY } from "./ai-chat.tokens";
     ],
     controllers: [AIChatController, AdminFeedbackController],
     providers: [
-        // Feature flag: USE_VERCEL_AI_SDK=true enables the new Vercel AI SDK gateway
         {
             provide: GEMINI_GATEWAY,
-            useFactory: (configService: ConfigService) => {
-                const useVercelAiSdk = configService.get<string>("USE_VERCEL_AI_SDK") === "true";
-                if (useVercelAiSdk) {
-                    return new VercelGeminiGateway(configService);
-                }
-                return new GeminiChatGateway(configService);
-            },
+            useFactory: createGeminiGateway,
             inject: [ConfigService],
         },
         // Keep both gateways available for direct injection if needed
