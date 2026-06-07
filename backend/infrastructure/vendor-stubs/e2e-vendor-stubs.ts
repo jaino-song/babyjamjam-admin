@@ -1,0 +1,479 @@
+import { ConfigService } from "@nestjs/config";
+
+import {
+    AligoAlimtalkResponse,
+    AligoCreateTemplateParams,
+    AligoSendAlimtalkParams,
+    AligoTemplateCreateResponse,
+    AligoTemplateListResponse,
+    IAligoApiPort,
+} from "domain/ports/aligo-api.port";
+import {
+    AligoSendSmsParams,
+    AligoSmsResponse,
+    IAligoSmsApiPort,
+} from "domain/ports/aligo-sms-api.port";
+import {
+    CreateDocumentPayload,
+    CreateDocumentResponse,
+    EformsignApiDocumentResponse,
+    EformsignApiListResponse,
+    EformsignTokenResponse,
+    IEformsignClientRepository,
+} from "domain/repositories/eformsign.client.interface";
+import { AligoApiClient } from "infrastructure/api/aligo-api.client";
+import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
+
+export const E2E_VENDOR_STUBS_ENV = "E2E_VENDOR_STUBS";
+export const EFORMSIGN_STUB_USER_EMAIL = "e2e-stub@babyjamjam.test";
+export const EFORMSIGN_STUB_COMPANY_ID = "e2e-stub-company";
+export const EFORMSIGN_STUB_TEMPLATE_ID = "tpl-test";
+
+const EFORMSIGN_STUB_ACCESS_TOKEN = "e2e-stub-token";
+const EFORMSIGN_STUB_REFRESH_TOKEN = "e2e-stub-refresh-token";
+const EFORMSIGN_STUB_API_URL = "https://stub.eformsign.invalid";
+
+type EformsignStubDocument = EformsignApiDocumentResponse & {
+    detail_template_info?: {
+        id: string;
+        name: string;
+    };
+    histories?: unknown[];
+    last_editor?: {
+        recipient_type: string;
+        id: string;
+        name: string;
+    };
+    previous_status?: unknown[];
+    recipients?: unknown[];
+};
+
+const STUB_EFORMSIGN_DOCUMENTS: EformsignStubDocument[] = [
+    {
+        id: "doc-finalize-test",
+        document_number: "E2E-20260602-0002",
+        template: {
+            id: "tpl-test",
+            name: "남동구 계약서",
+        },
+        detail_template_info: {
+            id: "tpl-test",
+            name: "남동구 계약서",
+        },
+        document_name: "최종 확인 테스트 계약서",
+        creator: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        created_date: Date.parse("2026-06-02T09:00:00.000Z"),
+        updated_date: Date.parse("2026-06-02T09:00:00.000Z"),
+        last_editor: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        current_status: {
+            status_type: "060",
+            status_doc_type: "진행중",
+            status_doc_detail: "검토 필요",
+            step_type: "05",
+            step_index: "3",
+            step_name: "이용자 서명",
+            step_recipients: [
+                {
+                    recipient_type: "01",
+                    id: "hong-test",
+                    name: "홍테스트",
+                },
+            ],
+            step_group: 0,
+            expired_date: Date.parse("2026-06-30T09:00:00.000Z"),
+            _expired: false,
+        },
+        fields: [],
+        next_status: [],
+        previous_status: [],
+        histories: [],
+        recipients: [],
+    },
+    {
+        id: "doc-delete-target",
+        document_number: "E2E-20260603-0003",
+        template: {
+            id: "tpl-existing-test",
+            name: "남동구 계약서",
+        },
+        detail_template_info: {
+            id: "tpl-existing-test",
+            name: "남동구 계약서",
+        },
+        document_name: "삭제 대상 테스트 계약서",
+        creator: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        created_date: Date.parse("2026-06-03T09:00:00.000Z"),
+        updated_date: Date.parse("2026-06-03T09:00:00.000Z"),
+        last_editor: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        current_status: {
+            status_type: "002",
+            status_doc_type: "진행중",
+            status_doc_detail: "대기",
+            step_type: "01",
+            step_index: "1",
+            step_name: "발송 대기",
+            step_recipients: [
+                {
+                    recipient_type: "02",
+                    id: "",
+                    name: "홍테스트",
+                },
+            ],
+            step_group: 0,
+            expired_date: Date.parse("2026-07-03T09:00:00.000Z"),
+            _expired: false,
+        },
+        fields: [],
+        next_status: [],
+        previous_status: [],
+        histories: [],
+        recipients: [],
+    },
+    {
+        id: "doc-keep-1",
+        document_number: "E2E-20260602-0001",
+        template: {
+            id: "tpl-existing-test",
+            name: "남동구 계약서",
+        },
+        detail_template_info: {
+            id: "tpl-existing-test",
+            name: "남동구 계약서",
+        },
+        document_name: "유지 대상 테스트 계약서",
+        creator: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        created_date: Date.parse("2026-06-02T09:00:00.000Z"),
+        updated_date: Date.parse("2026-06-02T09:00:00.000Z"),
+        last_editor: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        current_status: {
+            status_type: "002",
+            status_doc_type: "진행중",
+            status_doc_detail: "대기",
+            step_type: "01",
+            step_index: "1",
+            step_name: "발송 대기",
+            step_recipients: [
+                {
+                    recipient_type: "02",
+                    id: "",
+                    name: "홍테스트",
+                },
+            ],
+            step_group: 0,
+            expired_date: Date.parse("2026-07-02T09:00:00.000Z"),
+            _expired: false,
+        },
+        fields: [],
+        next_status: [],
+        previous_status: [],
+        histories: [],
+        recipients: [],
+    },
+    {
+        id: "doc-create-test",
+        document_number: "E2E-20260501-0001",
+        template: {
+            id: "tpl-create-test",
+            name: "남동구 계약서",
+        },
+        detail_template_info: {
+            id: "tpl-create-test",
+            name: "남동구 계약서",
+        },
+        document_name: "생성 테스트 계약서",
+        creator: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        created_date: Date.parse("2026-05-01T09:00:00.000Z"),
+        updated_date: Date.parse("2026-05-01T09:00:00.000Z"),
+        last_editor: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        current_status: {
+            status_type: "060",
+            status_doc_type: "진행중",
+            status_doc_detail: "대기",
+            step_type: "05",
+            step_index: "2",
+            step_name: "이용자 서명",
+            step_recipients: [
+                {
+                    recipient_type: "02",
+                    id: "",
+                    name: "홍테스트",
+                },
+            ],
+            step_group: 0,
+            expired_date: Date.parse("2026-06-30T09:00:00.000Z"),
+            _expired: false,
+        },
+        fields: [],
+        next_status: [],
+        previous_status: [],
+        histories: [],
+        recipients: [],
+    },
+];
+
+function cloneStubDocument<T>(value: T): T {
+    return structuredClone(value);
+}
+
+function buildFallbackStubDocument(documentId: string): EformsignStubDocument {
+    return {
+        id: documentId,
+        document_number: `E2E-${documentId}`,
+        template: {
+            id: EFORMSIGN_STUB_TEMPLATE_ID,
+            name: "남동구 계약서",
+        },
+        detail_template_info: {
+            id: EFORMSIGN_STUB_TEMPLATE_ID,
+            name: "남동구 계약서",
+        },
+        document_name: `Stub Document ${documentId}`,
+        creator: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        created_date: Date.parse("2026-06-06T00:00:00.000Z"),
+        updated_date: Date.parse("2026-06-06T00:00:00.000Z"),
+        last_editor: {
+            recipient_type: "01",
+            id: EFORMSIGN_STUB_USER_EMAIL,
+            name: "E2E Stub Staff",
+        },
+        current_status: {
+            status_type: "002",
+            status_doc_type: "진행중",
+            status_doc_detail: "대기",
+            step_type: "01",
+            step_index: "1",
+            step_name: "발송 대기",
+            step_recipients: [
+                {
+                    recipient_type: "02",
+                    id: "",
+                    name: "홍테스트",
+                },
+            ],
+            step_group: 0,
+            expired_date: Date.parse("2026-07-06T00:00:00.000Z"),
+            _expired: false,
+        },
+        fields: [],
+        next_status: [],
+        previous_status: [],
+        histories: [],
+        recipients: [],
+    };
+}
+
+function buildCreatedStubDocumentId(payload: CreateDocumentPayload): string {
+    const source = `${payload.templateId}:${payload.documentName}:${payload.recipient.sms}`;
+    return `doc-stub-${Buffer.from(source).toString("hex").slice(0, 16)}`;
+}
+
+export function areE2EVendorStubsEnabled(configService: Pick<ConfigService, "get">): boolean {
+    return configService.get<string>(E2E_VENDOR_STUBS_ENV) === "1";
+}
+
+export function buildEformsignStubTokenResponse(): EformsignTokenResponse {
+    return {
+        oauth_token: {
+            access_token: EFORMSIGN_STUB_ACCESS_TOKEN,
+            refresh_token: EFORMSIGN_STUB_REFRESH_TOKEN,
+        },
+        api_key: {
+            company: {
+                api_url: EFORMSIGN_STUB_API_URL,
+            },
+        },
+    };
+}
+
+export function buildEformsignStubDocuments(): EformsignStubDocument[] {
+    return STUB_EFORMSIGN_DOCUMENTS
+        .map((document) => cloneStubDocument(document))
+        .sort((left, right) => right.created_date - left.created_date);
+}
+
+export function buildEformsignStubListResponse(
+    documentType: "01" | "03" | "04",
+    limit: number,
+    skip: number,
+): EformsignApiListResponse {
+    const documents = documentType === "01"
+        ? buildEformsignStubDocuments().slice(skip, skip + limit)
+        : [];
+
+    return {
+        documents,
+        total_count: documentType === "01" ? STUB_EFORMSIGN_DOCUMENTS.length : 0,
+    };
+}
+
+export function buildEformsignStubDocument(documentId: string): EformsignStubDocument {
+    const existing = STUB_EFORMSIGN_DOCUMENTS.find((document) => document.id === documentId);
+    return cloneStubDocument(existing ?? buildFallbackStubDocument(documentId));
+}
+
+export function buildEformsignStubCreateDocumentResponse(
+    payload: CreateDocumentPayload,
+): CreateDocumentResponse {
+    return {
+        documentId: buildCreatedStubDocumentId(payload),
+        status: "created",
+    };
+}
+
+export function buildEformsignStubDeleteResponse(documentIds: string[]) {
+    return {
+        code: 0,
+        message: "stubbed",
+        status: 200,
+        result: {
+            success_result: documentIds,
+            fail_result: [],
+        },
+    };
+}
+
+export function buildEformsignStubReRequestResponse(documentId: string) {
+    return {
+        code: 0,
+        message: "stubbed",
+        status: "re-requested",
+        documentId,
+    };
+}
+
+export function buildEformsignStubPdf(documentId: string, fileType: "document" | "audit_trail"): Buffer {
+    const pdf = [
+        "%PDF-1.4",
+        "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj",
+        "2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj",
+        "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R>>endobj",
+        `4 0 obj<</Length 60>>stream\nBT /F1 12 Tf 18 140 Td (${documentId} ${fileType}) Tj ET\nendstream endobj`,
+        "trailer<</Root 1 0 R>>",
+        "%%EOF",
+    ].join("\n");
+
+    return Buffer.from(pdf);
+}
+
+export class E2eEformsignClientStub implements IEformsignClientRepository {
+    getAccessToken(executionTime: number, memberEmail?: string): Promise<EformsignTokenResponse> {
+        void executionTime;
+        void memberEmail;
+        return Promise.resolve(buildEformsignStubTokenResponse());
+    }
+
+    refreshAccessToken(executionTime: number, refreshToken: string): Promise<EformsignTokenResponse> {
+        void executionTime;
+        void refreshToken;
+        return Promise.resolve(buildEformsignStubTokenResponse());
+    }
+
+    getAllDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]> {
+        void accessToken;
+        return Promise.resolve(buildEformsignStubDocuments());
+    }
+
+    getDocument(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse> {
+        void accessToken;
+        return Promise.resolve(buildEformsignStubDocument(documentId));
+    }
+
+    createDocument(accessToken: string, payload: CreateDocumentPayload): Promise<CreateDocumentResponse> {
+        void accessToken;
+        return Promise.resolve(buildEformsignStubCreateDocumentResponse(payload));
+    }
+}
+
+export class E2eAligoApiStub implements IAligoApiPort, IAligoSmsApiPort {
+    sendAlimtalk(params: AligoSendAlimtalkParams): Promise<AligoAlimtalkResponse> {
+        void params;
+        return Promise.resolve({
+            code: 0,
+            message: "stubbed",
+            info: {
+                type: "AT",
+                mid: 1,
+                current: "2026-06-06 00:00:00",
+                unit: 1,
+                total: 1,
+                scnt: 1,
+                fcnt: 0,
+            },
+        });
+    }
+
+    createTemplate(params: AligoCreateTemplateParams): Promise<AligoTemplateCreateResponse> {
+        void params;
+        return Promise.resolve({
+            code: 0,
+            message: "stubbed",
+            info: {},
+        });
+    }
+
+    listTemplates(): Promise<AligoTemplateListResponse> {
+        return Promise.resolve({
+            code: 0,
+            message: "stubbed",
+            list: [],
+        });
+    }
+
+    sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {
+        return Promise.resolve({
+            result_code: 1,
+            message: "stubbed",
+            msg_type: params.msgType ?? "SMS",
+            success_cnt: 1,
+            error_cnt: 0,
+        });
+    }
+}
+
+export function createEformsignClientRepository(configService: ConfigService): IEformsignClientRepository {
+    return areE2EVendorStubsEnabled(configService)
+        ? new E2eEformsignClientStub()
+        : new EformsignApiClient(configService);
+}
+
+export function createAligoPortClient(configService: ConfigService): IAligoApiPort & IAligoSmsApiPort {
+    return areE2EVendorStubsEnabled(configService)
+        ? new E2eAligoApiStub()
+        : new AligoApiClient(configService);
+}

@@ -414,7 +414,7 @@ export const ContractCreationForm = () => {
 
       // Authenticate first - tokens are stored in httpOnly cookies
       const executionTime = Date.now();
-      const authResult = await eformsignApi.authenticate(executionTime);
+      const authResult = await eformsignApi.authenticate(executionTime, undefined, { force: true });
 
       if (!authResult.success) {
         throw new Error("Failed to authenticate");

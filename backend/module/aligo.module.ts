@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { ALIGO_API_PORT } from "domain/ports/aligo-api.port";
 import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
 import { AligoApiClient } from "infrastructure/api/aligo-api.client";
@@ -10,11 +11,16 @@ import { AligoService } from "application/services/aligo.service";
 import { ALIMTALK_LOG_REPOSITORY } from "domain/repositories/alimtalk-log.repository.interface";
 import { SbAlimtalkLogRepository } from "infrastructure/database/repositories/sb.alimtalk-log.repository";
 import { DatabaseModule } from "infrastructure/database/database.module";
+import { createAligoPortClient } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 
 @Module({
     imports: [DatabaseModule],
     providers: [
-        AligoApiClient,
+        {
+            provide: AligoApiClient,
+            inject: [ConfigService],
+            useFactory: createAligoPortClient,
+        },
         { provide: ALIGO_API_PORT, useExisting: AligoApiClient },
         { provide: ALIGO_SMS_API_PORT, useExisting: AligoApiClient },
         { provide: ALIMTALK_LOG_REPOSITORY, useClass: SbAlimtalkLogRepository },
