@@ -5,6 +5,7 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
+import type { SystemTemplateKey } from "@/features/system-templates/types";
 import {
   useAlimtalkHistory,
   useUpcomingAlimtalkJobs,
@@ -364,9 +365,9 @@ const TEMPLATE_DETAIL_TABS = [
   { key: "preview", label: "미리보기" },
 ];
 
-const BUILTIN_TEMPLATE_SYSTEM_KEYS: Record<BuiltinTemplateType, string> = {
+const BUILTIN_TEMPLATE_SYSTEM_KEYS: Record<BuiltinTemplateType, SystemTemplateKey> = {
   greeting: "GREETING",
-  "service-info": "service_info",
+  "service-info": "SERVICE_INFO",
   "price-info": "PRICE_INFO",
   reminder: "REMINDER",
   thanks: "THANKS",

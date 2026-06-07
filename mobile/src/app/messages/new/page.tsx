@@ -112,7 +112,7 @@ const NAME_FALLBACK_VARIABLES: TemplateInputVariable[] = [
 const PRICE_INFO_FALLBACK_VARIABLES: TemplateInputVariable[] = [
   { key: "name", label: "산모명", required: true, type: "string" },
   { key: "weeks", label: "서비스 주수", required: true, type: "number" },
-  { key: "duration", label: "서비스 기간", required: true, type: "number" },
+  { key: "duration", label: "서비스 기간", required: true, type: "string" },
   { key: "type", label: "바우처 유형", required: true, type: "string" },
   { key: "fullPrice", label: "총 서비스 금액", required: true, type: "currency" },
   { key: "grant", label: "정부지원금", required: true, type: "currency" },
