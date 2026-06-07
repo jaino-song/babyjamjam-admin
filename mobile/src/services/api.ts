@@ -1,6 +1,16 @@
 import { api } from "@/lib/api/client";
 import { PUBLIC_BACKEND_BASE_URL } from "@/lib/env";
-import { EformsignDeleteDocumentsResponse, EformsignDocumentsResponse } from "@/lib/eformsign/types";
+import {
+    CreateEformsignDocRecordRequest,
+    EformsignApiListResponse,
+    EformsignAuthStatusResponse,
+    EformsignDeleteDocumentsResponse,
+    EformsignDocClientSummary,
+    EformsignDocumentsResponse,
+    EformsignReRequestDocumentRequest,
+    FinalizeHeadlessResponse,
+    HeadlessDispatchResponse,
+} from "@babyjamjam/shared/types/eformsign";
 import { safeStorageSetItem } from "@/lib/safe-storage";
 import { isAxiosError } from "axios";
 
@@ -33,6 +43,8 @@ export interface ContractDataDto {
 
 const HEADLESS_DISPATCH_TIMEOUT_MS = 180_000;
 const HEADLESS_FINALIZE_TIMEOUT_MS = 60_000;
+const DEFAULT_EFORMSIGN_LIMIT = 100;
+const DEFAULT_EFORMSIGN_SKIP = 0;
 const MAX_EFORMSIGN_AUTH_5XX_ATTEMPTS = 3;
 const EFORMSIGN_AUTH_5XX_BACKOFF_MS = 30_000;
 
@@ -88,22 +100,16 @@ function recordEformsignAuthFailure(error: unknown): void {
     }
 }
 
-// Auth API response types
-export interface HeadlessDispatchResponse {
-    ok: boolean;
-    documentId?: string;
-    durationMs: number;
-    reason?: string;
-    failedStep?: string;
-    fallbackHint?: "iframe";
-}
-
-export interface FinalizeHeadlessResponse {
-    ok: boolean;
-    durationMs: number;
-    reason?: string;
-    failedStep?: string;
-    fallbackHint?: "iframe";
+function normalizeDocumentListResponse(
+    response: EformsignApiListResponse,
+    params?: { limit?: number; skip?: number },
+): EformsignDocumentsResponse {
+    return {
+        documents: response.documents ?? [],
+        total_rows: response.total_count ?? response.documents?.length ?? 0,
+        limit: params?.limit ?? DEFAULT_EFORMSIGN_LIMIT,
+        skip: params?.skip ?? DEFAULT_EFORMSIGN_SKIP,
+    };
 }
 
 export interface AuthResponse {
@@ -122,20 +128,6 @@ export interface LoginResponse extends AuthResponse {
     accessToken?: string;
     refreshToken?: string;
     user?: string;
-}
-
-export interface EformsignAuthStatusResponse {
-    hasAppAuthToken: boolean;
-    hasAccessToken: boolean;
-    hasRefreshToken: boolean;
-}
-
-export interface EformsignDocClientSummary {
-    documentId: string;
-    clientId: number;
-    clientName: string;
-    clientPhone: string | null;
-    providerName: string | null;
 }
 
 export interface SyncedEformsignDocResponse {
@@ -238,15 +230,7 @@ export const eformsignApi = {
     },
     reRequestDocument: async (
         documentId: string,
-        params: {
-            stepType: string;
-            stepSeq: string;
-            comment?: string;
-            recipientPhone?: {
-                countryCode: string;
-                phoneNumber: string;
-            };
-        }
+        params: EformsignReRequestDocumentRequest
     ): Promise<{ status?: string; code?: string; message?: string }> => {
         const { data } = await api.post(`/eformsign/documents/${documentId}/re-request`, params);
         return data;
@@ -304,20 +288,7 @@ export const eformsignApi = {
         return data;
     },
     // Create eformsign doc record to track document in local DB
-    createDocRecord: async (params: {
-        documentId: string;
-        clientId: number;
-        statusType: string;
-        statusDetail: string;
-        stepType: string;
-        stepIndex: string;
-        stepName: string;
-        stepRecipientType: string;
-        stepRecipientName: string;
-        stepRecipientSms: string;
-        expiredDate: string;
-        linkToClient?: boolean; // If true, also update client.e_doc_id
-    }) => {
+    createDocRecord: async (params: CreateEformsignDocRecordRequest) => {
         const { data } = await api.post('/eformsign-docs', params);
         return data;
     },
@@ -347,16 +318,16 @@ export const eformsignApi = {
     getDocumentPreviewUrl: (documentId: string): string =>
         `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document#toolbar=0`,
     getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/in-progress');
-        return data;
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/in-progress');
+        return normalizeDocumentListResponse(data);
     },
     getCompletedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/completed');
-        return data;
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/completed');
+        return normalizeDocumentListResponse(data);
     },
     getRejectedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/rejected');
-        return data;
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/rejected');
+        return normalizeDocumentListResponse(data);
     },
     deleteDocuments: async (
         documentIds: string[],

@@ -99,6 +99,7 @@ import { ContractCreationForm } from "@/components/app/messages/forms/ContractCr
 import { StaffCompletionIframeModal } from "@/components/app/contracts/StaffCompletionIframeModal";
 import {
   HeadlessProgressStepper,
+  type HeadlessProgressEvent,
   type HeadlessProgressState,
   type HeadlessProgressStep,
   type HeadlessProgressStepKey,
@@ -118,11 +119,7 @@ const INITIAL_FINALIZE_PROGRESS: HeadlessProgressState = {
   failed: false,
 };
 
-interface FinalizeProgressEvent {
-  step: HeadlessProgressStepKey | "failed";
-  failedStep?: HeadlessProgressStepKey;
-  reason?: string;
-}
+type FinalizeProgressEvent = HeadlessProgressEvent;
 
 function isFinalizeProgressStepKey(value: string): value is HeadlessProgressStepKey {
   return FINALIZE_PROGRESS_STEPS.some((item) => item.key === value);
