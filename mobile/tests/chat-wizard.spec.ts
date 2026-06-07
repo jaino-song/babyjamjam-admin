@@ -48,6 +48,14 @@ test.describe('Chat client registration wizard', () => {
       });
     });
 
+    await page.route('**/api/ai/chat/persist', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true }),
+      });
+    });
+
     await page.route('**/api/voucher-price-infos/years', async (route) => {
       await route.fulfill({
         status: 200,
@@ -87,7 +95,7 @@ test.describe('Chat client registration wizard', () => {
     });
   });
 
-  test('opens wizard via chip and submits to /api/clients without SSE', async ({ page }) => {
+  test('opens wizard via 산모 등록 message and submits to /api/clients without SSE', async ({ page }) => {
     let sseCalled = 0;
     await page.route('**/api/ai/chat/stream', async (route) => {
       sseCalled += 1;
@@ -128,15 +136,16 @@ test.describe('Chat client registration wizard', () => {
       });
     });
 
-    await page.goto('/dashboard');
+    await page.goto('/chat');
 
-    const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-    await expect(chatInput).toBeVisible({ timeout: 10000 });
-    await chatInput.click();
+    // The wizard is triggered by sending the literal "산모 등록" message —
+    // useChatStream intercepts it locally and renders the wizard inline
+    // without calling the SSE endpoint.
+    const chatInput = page.locator('[data-component="chat-input"]');
+    await expect(chatInput).toBeVisible({ timeout: 15000 });
+    await chatInput.fill('산모 등록');
+    await chatInput.press('Enter');
 
-    await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
-
-    await page.getByRole('button', { name: '산모 등록' }).click();
     await expect(page.getByLabel('이름')).toBeVisible({ timeout: 5000 });
 
     await page.getByLabel('이름').fill('홍길동');

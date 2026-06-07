@@ -1,4 +1,7 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+
+// The dashboard chat widget was removed in the mobile redesign (ChatWidget is
+// unmounted); chat lives at /chat. These specs drive the page directly.
 
 const MOCK_CHAT_MESSAGES = [
     { role: 'user', content: '안녕하세요', timestamp: '2026-01-19T10:00:00.000Z' },
@@ -15,7 +18,11 @@ const MOCK_AUTH_RESPONSE = {
     role: 'admin',
 };
 
-const setupAuthMocks = async (page) => {
+const CHAT_INPUT = '[data-component="chat-input"]';
+const CHAT_MESSAGES = '[data-component="chat-messages"]';
+const ANY_BUBBLE = '[data-component="chat-message-user"], [data-component="chat-message-assistant"]';
+
+const setupAuthMocks = async (page: Page) => {
     await page.addInitScript(() => {
         (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
     });
@@ -37,9 +44,28 @@ const setupAuthMocks = async (page) => {
     });
 };
 
+const setupChatSideEffectMocks = async (page: Page) => {
+    await page.route('**/api/ai/chat/persist', async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ ok: true }),
+        });
+    });
+
+    await page.route('**/api/ai/chat/sessions/**', async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ ok: true }),
+        });
+    });
+};
+
 test.describe('Chat History Persistence', () => {
     test.beforeEach(async ({ page }) => {
         await setupAuthMocks(page);
+        await setupChatSideEffectMocks(page);
 
         await page.route('**/api/ai/chat/history**', async (route) => {
             const url = new URL(route.request().url());
@@ -66,7 +92,6 @@ test.describe('Chat History Persistence', () => {
         });
 
         await page.route('**/api/ai/chat/stream', async (route) => {
-            const encoder = new TextEncoder();
             const chunks = [
                 'event: message\ndata: {"type":"chunk","content":"테스트 "}\n\n',
                 'event: message\ndata: {"type":"chunk","content":"응답입니다."}\n\n',
@@ -85,22 +110,16 @@ test.describe('Chat History Persistence', () => {
         });
     });
 
-    test('should load chat history when modal opens', async ({ page }) => {
-        await page.goto('/dashboard');
+    test('loads persisted history on /chat', async ({ page }) => {
+        await page.goto('/chat');
 
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
-
+        await expect(page.locator(CHAT_MESSAGES)).toBeVisible({ timeout: 15000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
         await expect(page.getByText('무엇을 도와드릴까요?').first()).toBeVisible();
         await expect(page.getByText('고객 목록 보여줘')).toBeVisible();
     });
 
-    test('should show empty state when no history exists', async ({ page }) => {
+    test('shows an empty conversation when no history exists', async ({ page }) => {
         await page.route('**/api/ai/chat/history**', async (route) => {
             await route.fulfill({
                 status: 200,
@@ -115,58 +134,38 @@ test.describe('Chat History Persistence', () => {
             });
         });
 
-        await page.goto('/dashboard');
+        await page.goto('/chat');
 
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
-        await expect(page.getByText('고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible();
+        await expect(page.locator(CHAT_MESSAGES)).toBeVisible({ timeout: 15000 });
+        await expect(page.locator(ANY_BUBBLE)).toHaveCount(0);
+        await expect(page.locator(CHAT_INPUT)).toBeEnabled();
     });
 
-    test('should send message and receive response', async ({ page }) => {
-        await page.goto('/dashboard');
+    test('sends a message and renders the streamed response', async ({ page }) => {
+        await page.goto('/chat');
 
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
+        const chatInput = page.locator(CHAT_INPUT);
+        await expect(chatInput).toBeVisible({ timeout: 15000 });
 
-        await page.waitForURL('**/chat', { timeout: 10000 });
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
-
-        const chatPageInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatPageInput).toBeVisible({ timeout: 5000 });
-
-        await chatPageInput.fill('새로운 메시지');
-        await chatPageInput.press('Enter');
+        await chatInput.fill('새로운 메시지');
+        await chatInput.press('Enter');
 
         await expect(page.getByText('새로운 메시지')).toBeVisible({ timeout: 5000 });
         await expect(page.getByText('테스트 응답입니다.')).toBeVisible({ timeout: 10000 });
     });
 
-    test('should close and reopen modal with history preserved', async ({ page }) => {
-        await page.goto('/dashboard');
+    test('reload restores the persisted conversation', async ({ page }) => {
+        await page.goto('/chat');
+        await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 15000 });
 
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
+        await page.reload();
 
-        await page.waitForURL('**/chat', { timeout: 10000 });
+        await expect(page.locator(CHAT_MESSAGES)).toBeVisible({ timeout: 15000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
-
-        await page.getByTestId('chat-fullscreen-close').click();
-        await page.waitForURL('**/dashboard', { timeout: 15000 });
-
-        await chatInput.click();
-        await page.waitForURL('**/chat', { timeout: 10000 });
-
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
-        await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText('고객 목록 보여줘')).toBeVisible();
     });
 
-    test('should show loading indicator while fetching history', async ({ page }) => {
+    test('page stays interactive while history is still loading', async ({ page }) => {
         let resolveHistory: () => void;
         const historyPromise = new Promise<void>((resolve) => {
             resolveHistory = resolve;
@@ -187,42 +186,35 @@ test.describe('Chat History Persistence', () => {
             });
         });
 
-        await page.goto('/dashboard');
+        await page.goto('/chat');
 
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        // History fetch is non-blocking: composer must render before it lands.
+        await expect(page.locator(CHAT_INPUT)).toBeVisible({ timeout: 15000 });
+        await expect(page.locator(ANY_BUBBLE)).toHaveCount(0);
 
         resolveHistory!();
 
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
     });
 
-    test('should clear session when delete button is clicked', async ({ page }) => {
-        await page.goto('/dashboard');
+    test('새 대화 clears the current session', async ({ page }) => {
+        await page.goto('/chat');
+        await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 15000 });
 
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
+        await page.getByRole('button', { name: '새 대화' }).click();
 
-        await page.waitForURL('**/chat', { timeout: 10000 });
-        await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
-
-        await page.getByTestId('chat-fullscreen-clear').click();
-
-        await expect(page.getByText('고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible({ timeout: 5000 });
+        await expect(page.locator(ANY_BUBBLE)).toHaveCount(0, { timeout: 5000 });
+        await expect(page.locator(CHAT_INPUT)).toBeEnabled();
     });
 });
 
 test.describe('Chat History API Error Handling', () => {
     test.beforeEach(async ({ page }) => {
         await setupAuthMocks(page);
+        await setupChatSideEffectMocks(page);
     });
 
-    test('should handle API error gracefully', async ({ page }) => {
+    test('handles a history 500 without crashing the page', async ({ page }) => {
         await page.route('**/api/ai/chat/history**', async (route) => {
             await route.fulfill({
                 status: 500,
@@ -231,17 +223,13 @@ test.describe('Chat History API Error Handling', () => {
             });
         });
 
-        await page.goto('/dashboard');
+        await page.goto('/chat');
 
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator(CHAT_INPUT)).toBeVisible({ timeout: 15000 });
+        await expect(page.locator(CHAT_MESSAGES)).toBeVisible();
     });
 
-    test('should handle 401 unauthorized error', async ({ page }) => {
+    test('handles a history 401 without crashing the page', async ({ page }) => {
         await page.route('**/api/ai/chat/history**', async (route) => {
             await route.fulfill({
                 status: 401,
@@ -250,13 +238,9 @@ test.describe('Chat History API Error Handling', () => {
             });
         });
 
-        await page.goto('/dashboard');
+        await page.goto('/chat');
 
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator(CHAT_INPUT)).toBeVisible({ timeout: 15000 });
+        await expect(page.locator(CHAT_MESSAGES)).toBeVisible();
     });
 });

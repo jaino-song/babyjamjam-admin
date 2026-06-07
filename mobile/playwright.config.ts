@@ -6,6 +6,8 @@ const CI_QUARANTINE = [
   '**/nav-slide-dense.spec.ts', // local-only diagnostic: dense frame capture, real login
   '**/animation-plan-visual-verify.spec.ts', // animation/visual diagnostic, timing-fragile in CI
   '**/dashboard-activities-animation.spec.ts', // animation diagnostic (addInitScript event collection)
+  '**/chat-feedback.spec.ts', // feedback UI has no production mount (MessageFeedback only lives in the unmounted ChatFullscreen) — product decision pending
+  '**/screenshots/baseline.spec.ts', // visual baseline CAPTURE tool (no assertions); networkidle-based, CI-fragile by design
 ];
 
 /**
