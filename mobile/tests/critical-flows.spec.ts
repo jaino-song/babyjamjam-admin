@@ -70,7 +70,7 @@ test.describe('Critical flows (real backend)', () => {
   test('eformsign completion webhook delivers exactly one alimtalk (replay is idempotent)', async ({
     page,
     context,
-  }) => {
+  }, testInfo) => {
     const authToken = (await context.cookies()).find((c) => c.name === 'auth_token')?.value;
     expect(authToken).toBeTruthy();
     const authHeaders = { Authorization: `Bearer ${authToken}` };
@@ -83,6 +83,29 @@ test.describe('Critical flows (real backend)', () => {
       return rows.length;
     };
 
+    // Provision a fresh document per attempt: the completion claim is a
+    // one-shot state transition, so reusing a seeded document would make
+    // every retry start from "already completed" (duplicate → no alimtalk)
+    // and the test could never pass on retry.
+    const documentId = `e2e-idem-${Date.now()}-r${testInfo.retry}`;
+    const createRes = await page.request.post(`${BACKEND_URL}/eformsign-docs`, {
+      headers: authHeaders,
+      data: {
+        documentId,
+        clientId: 1,
+        statusType: '002',
+        statusDetail: '대기',
+        stepType: '01',
+        stepIndex: '1',
+        stepName: '발송 대기',
+        stepRecipientType: '02',
+        stepRecipientName: '홍테스트',
+        stepRecipientSms: '01012345678',
+        expiredDate: '2027-01-01T00:00:00.000Z',
+      },
+    });
+    expect(createRes.ok()).toBeTruthy();
+
     // Shape must satisfy EformsignWebhookPayloadDto exactly — the global
     // ValidationPipe rejects missing required fields with a 400.
     const webhookPayload = {
@@ -91,8 +114,8 @@ test.describe('Critical flows (real backend)', () => {
       company_id: COMPANY_ID,
       event_type: 'ready_document_pdf',
       ready_document_pdf: {
-        document_id: 'doc-keep-1',
-        document_title: 'doc-keep-1 계약서',
+        document_id: documentId,
+        document_title: `${documentId} 계약서`,
         workflow_seq: 1,
         workflow_name: '완료',
         template_id: 'tpl-test',

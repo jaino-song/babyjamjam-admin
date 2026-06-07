@@ -21,6 +21,7 @@ type ClientRow = {
     breastPump: boolean;
     eDocId: string | null;
     areaId?: string | null;
+    branchId?: string | null;
 };
 
 export class ClientMapper {
@@ -46,6 +47,7 @@ export class ClientMapper {
             row.dueDate ?? null,
             row.createdAt ?? null,
             row.areaId ?? null,
+            row.branchId ?? null,
         );
     }
 

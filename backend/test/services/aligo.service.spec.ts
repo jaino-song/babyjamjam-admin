@@ -81,10 +81,13 @@ describe("AligoService", () => {
     });
 
     describe("sendContractSignedAlimtalk", () => {
-        it("should send CONTRACT_SIGNED template", async () => {
+        it("should send CONTRACT_SIGNED template scoped to the client's branch", async () => {
             sendAlimtalkUsecase.execute.mockResolvedValue({ code: 0, message: "success" });
 
-            await service.sendContractSignedAlimtalk(createMockClient(), {
+            const client = createMockClient();
+            client.branchId = "branch-1";
+
+            await service.sendContractSignedAlimtalk(client, {
                 contractType: "방문요양",
                 signedDate: "2025-01-14",
                 serviceStartDate: "2025-01-15",
@@ -94,6 +97,11 @@ describe("AligoService", () => {
             expect(sendAlimtalkUsecase.execute).toHaveBeenCalledWith(
                 expect.objectContaining({
                     templateKey: "CONTRACT_SIGNED",
+                    // Regression: omitting branchId/clientId orphans the
+                    // alimtalk_log row — invisible to the tenant-scoped
+                    // GET /alimtalk-logs history.
+                    branchId: "branch-1",
+                    clientId: 1,
                     variables: expect.objectContaining({
                         계약유형: "방문요양",
                         담당자명: "김직원",
