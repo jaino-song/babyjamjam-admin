@@ -1,4 +1,8 @@
 import axios from "axios";
+import type {
+    AlimtalkProvider,
+    AlimtalkProviderResponse,
+} from "@babyjamjam/shared/types/alimtalk";
 import { api } from "@/lib/api/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 import {
@@ -249,13 +253,7 @@ export const eformsignApi = {
     },
 }
 
-export type AlimtalkProvider = 'aligo' | 'channeltalk' | 'none';
-
-export interface AlimtalkProviderResponse {
-    provider: AlimtalkProvider;
-    enabled: boolean;
-    updatedAt?: string;
-}
+export type { AlimtalkProvider, AlimtalkProviderResponse };
 
 export interface NotificationPreferencesResponse {
     emailNotificationsEnabled: boolean;

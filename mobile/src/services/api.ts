@@ -1,3 +1,7 @@
+import type {
+    AlimtalkProvider,
+    AlimtalkProviderResponse,
+} from "@babyjamjam/shared/types/alimtalk";
 import { api } from "@/lib/api/client";
 import { PUBLIC_BACKEND_BASE_URL } from "@/lib/env";
 import {
@@ -311,15 +315,9 @@ export async function withEformsignReauth<T>(fn: () => Promise<T>): Promise<T> {
     }
 }
 
-export type AlimtalkProvider = 'aligo' | 'channeltalk' | 'none';
-
 export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
 
-export interface AlimtalkProviderResponse {
-    provider: AlimtalkProvider;
-    enabled: boolean;
-    updatedAt?: string;
-}
+export type { AlimtalkProvider, AlimtalkProviderResponse };
 
 export interface MessageSenderApprovalResponse {
     senderPhone: string | null;
