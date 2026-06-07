@@ -8,6 +8,7 @@
     "types": "src/index.ts",
     "exports": {
         ".": "./src/index.ts",
+        "./types/eformsign": "./src/types/eformsign.ts",
         "./utils": "./src/utils/index.ts",
         "./eslint-plugin": "./eslint-plugin/index.mjs"
     },

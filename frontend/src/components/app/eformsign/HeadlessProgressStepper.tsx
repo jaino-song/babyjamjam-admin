@@ -1,20 +1,18 @@
 "use client";
 import { Check, LoaderCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type {
+  HeadlessProgressState,
+  HeadlessProgressStep,
+  HeadlessProgressStepKey,
+} from "@babyjamjam/shared/types/eformsign";
 
-export type HeadlessProgressStepKey = "client-started" | "info-inserted" | "creating" | "sent";
-
-export interface HeadlessProgressStep {
-  key: HeadlessProgressStepKey;
-  label: string;
-  errorLabel: string;
-}
-
-export interface HeadlessProgressState {
-  step: HeadlessProgressStepKey | null;
-  completed: boolean;
-  failed: boolean;
-}
+export type {
+  HeadlessProgressEvent,
+  HeadlessProgressState,
+  HeadlessProgressStep,
+  HeadlessProgressStepKey,
+} from "@babyjamjam/shared/types/eformsign";
 
 interface HeadlessProgressStepperProps {
   steps: readonly HeadlessProgressStep[];
