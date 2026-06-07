@@ -15,6 +15,10 @@ import {
     FinalizeHeadlessResponse,
     HeadlessDispatchResponse,
 } from "@babyjamjam/shared/types/eformsign";
+import type {
+    MessageSenderApprovalResponse,
+    MessageSenderApprovalStatus,
+} from "@babyjamjam/shared/types/message";
 import { safeStorageSetItem } from "@/lib/safe-storage";
 import { isAxiosError } from "axios";
 
@@ -387,19 +391,11 @@ export async function withEformsignReauth<T>(fn: () => Promise<T>): Promise<T> {
     }
 }
 
-export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
-
 export type { AlimtalkProvider, AlimtalkProviderResponse };
-
-export interface MessageSenderApprovalResponse {
-    senderPhone: string | null;
-    senderPhoneFormatted: string | null;
-    approvalStatus: MessageSenderApprovalStatus;
-    isApproved: boolean;
-    canRequest: boolean;
-    requestedAt: string | null;
-    approvedAt: string | null;
-}
+export type {
+    MessageSenderApprovalResponse,
+    MessageSenderApprovalStatus,
+};
 
 export const settingsApi = {
     getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {

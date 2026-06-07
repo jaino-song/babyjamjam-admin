@@ -1751,7 +1751,7 @@ export default function MessagesPage() {
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
 
   const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
-  const userTemplates = useMemo(() => userTemplatesData?.data ?? [], [userTemplatesData]);
+  const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
 
   const userTemplateItems = useMemo<TemplateListItem[]>(() => {
     return userTemplates.map((template) => ({

@@ -46,17 +46,11 @@ import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { extractVariables, renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
+import type { SendMessageDeliverySmsResponse } from "@babyjamjam/shared/types/message";
 
 import styles from "./page.module.css";
 
-interface SendResponse {
-  result?: {
-    resultCode?: number;
-    message?: string;
-    errorCount?: number;
-  };
-  message?: string;
-}
+type SendResponse = SendMessageDeliverySmsResponse;
 
 interface RecipientChip {
   id: string;
