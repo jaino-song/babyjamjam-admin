@@ -83,15 +83,21 @@ test.describe('Critical flows (real backend)', () => {
       return rows.length;
     };
 
+    // Shape must satisfy EformsignWebhookPayloadDto exactly — the global
+    // ValidationPipe rejects missing required fields with a 400.
     const webhookPayload = {
       webhook_id: 'e2e-idempotency-check',
-      event_type: 'ready_document_pdf',
+      webhook_name: 'e2e-webhook',
       company_id: COMPANY_ID,
+      event_type: 'ready_document_pdf',
       ready_document_pdf: {
         document_id: 'doc-keep-1',
-        document_status: 'doc_complete',
+        document_title: 'doc-keep-1 계약서',
         workflow_seq: 1,
         workflow_name: '완료',
+        template_id: 'tpl-test',
+        template_name: '테스트 템플릿',
+        document_status: 'doc_complete',
       },
     };
     const webhookHeaders = {
