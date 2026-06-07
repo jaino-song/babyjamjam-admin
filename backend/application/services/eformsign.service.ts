@@ -1,7 +1,18 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
-import * as https from "https";
+import {
+    EFORMSIGN_STUB_COMPANY_ID,
+    EFORMSIGN_STUB_TEMPLATE_ID,
+    EFORMSIGN_STUB_USER_EMAIL,
+    areE2EVendorStubsEnabled,
+    buildEformsignStubDeleteResponse,
+    buildEformsignStubDocument,
+    buildEformsignStubListResponse,
+    buildEformsignStubPdf,
+    buildEformsignStubReRequestResponse,
+    buildEformsignStubTokenResponse,
+} from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 import { ContractDataDto } from "../dto/contract.dto";
 import { EFORMSIGN_END_DATE_FIELD_IDS } from "../usecases/eformsign-doc/eformsign-end-date-field-ids";
 
@@ -49,16 +60,18 @@ export class EformsignService {
     private readonly EFORMSIGN_COMPANY_ID: string;
     private readonly EFORMSIGN_TEMPLATE_ID: string;
     private readonly isConfigured: boolean;
+    private readonly vendorStubsEnabled: boolean;
 
     constructor(private configService: ConfigService) {
-        this.USER_EMAIL = this.configService.get<string>("EFORMSIGN_USER_EMAIL") || "";
+        this.vendorStubsEnabled = areE2EVendorStubsEnabled(this.configService);
+        this.USER_EMAIL = this.configService.get<string>("EFORMSIGN_USER_EMAIL") || (this.vendorStubsEnabled ? EFORMSIGN_STUB_USER_EMAIL : "");
         this.EFORMSIGN_API_URL = this.configService.get<string>("EFORMSIGN_API_URL") || "";
         this.EFORMSIGN_DOC_API_URL = this.configService.get<string>("EFORMSIGN_DOC_API_URL") || "";
         this.EFORMSIGN_API_KEY = this.configService.get<string>("EFORMSIGN_API_KEY") || "";
         this.EFORMSIGN_PRIVATE_KEY = this.configService.get<string>("EFORMSIGN_PRIVATE_KEY") || "";
-        this.EFORMSIGN_COMPANY_ID = this.configService.get<string>("EFORMSIGN_COMPANY_ID") || "";
-        this.EFORMSIGN_TEMPLATE_ID = this.configService.get<string>("EFORMSIGN_TEMPLATE_ID") || "";
-        this.isConfigured = Boolean(
+        this.EFORMSIGN_COMPANY_ID = this.configService.get<string>("EFORMSIGN_COMPANY_ID") || (this.vendorStubsEnabled ? EFORMSIGN_STUB_COMPANY_ID : "");
+        this.EFORMSIGN_TEMPLATE_ID = this.configService.get<string>("EFORMSIGN_TEMPLATE_ID") || (this.vendorStubsEnabled ? EFORMSIGN_STUB_TEMPLATE_ID : "");
+        this.isConfigured = this.vendorStubsEnabled || Boolean(
             this.USER_EMAIL &&
             this.EFORMSIGN_API_URL &&
             this.EFORMSIGN_DOC_API_URL &&
@@ -68,7 +81,9 @@ export class EformsignService {
             this.EFORMSIGN_TEMPLATE_ID,
         );
 
-        if (!this.isConfigured) {
+        if (this.vendorStubsEnabled) {
+            this.logger.warn("E2E vendor stubs enabled for eformsign integration.");
+        } else if (!this.isConfigured) {
             this.logger.warn("Eformsign environment variables are not fully configured. Eformsign features will be disabled.");
         }
     }
@@ -82,6 +97,10 @@ export class EformsignService {
      * - Output: hex string
      */
     generateSignature(executionTime: number): string {
+        if (this.vendorStubsEnabled) {
+            return "e2e-stub-signature";
+        }
+
         this.assertConfigured();
         const message = String(executionTime);
 
@@ -108,6 +127,10 @@ export class EformsignService {
     }
 
     async getAccessToken(executionTime: number, memberEmail?: string): Promise<EformsignTokenResponse> {
+        if (this.vendorStubsEnabled) {
+            return buildEformsignStubTokenResponse();
+        }
+
         this.assertConfigured();
         const signature = this.generateSignature(executionTime);
         const email = memberEmail || this.USER_EMAIL;
@@ -137,6 +160,10 @@ export class EformsignService {
     }
 
     async refreshAccessToken(executionTime: number, refreshToken: string): Promise<EformsignTokenResponse> {
+        if (this.vendorStubsEnabled) {
+            return buildEformsignStubTokenResponse();
+        }
+
         this.assertConfigured();
         const signature = this.generateSignature(executionTime);
 
@@ -244,14 +271,9 @@ export class EformsignService {
         prefillEndDate?: string,
     ) {
         this.assertConfigured();
-        const params = new URLSearchParams({ include_detail_template_info: "true" });
-        const docRes = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}?${params}`, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        if (!docRes.ok) {
-            throw new Error(`Failed to get document ${documentId} for staff completion: ${docRes.status} ${await docRes.text()}`);
-        }
-        const doc = await docRes.json();
+        const doc = this.vendorStubsEnabled
+            ? buildEformsignStubDocument(documentId)
+            : await this.fetchStaffCompletionDocument(documentId, accessToken);
         const templateId =
             doc?.detail_template_info?.id ??
             doc?.template?.id ??
@@ -316,6 +338,10 @@ export class EformsignService {
      * type: "01"
      */
     async getInProgressDocuments(accessToken: string, limit = 100, skip = 0): Promise<any> {
+        if (this.vendorStubsEnabled) {
+            return buildEformsignStubListResponse("01", limit, skip);
+        }
+
         this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
@@ -346,6 +372,10 @@ export class EformsignService {
      * type: "03"
      */
     async getCompletedDocuments(accessToken: string, limit = 100, skip = 0): Promise<any> {
+        if (this.vendorStubsEnabled) {
+            return buildEformsignStubListResponse("03", limit, skip);
+        }
+
         this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
@@ -376,6 +406,10 @@ export class EformsignService {
      * type: "04"
      */
     async getRejectedDocuments(accessToken: string, limit = 100, skip = 0): Promise<any> {
+        if (this.vendorStubsEnabled) {
+            return buildEformsignStubListResponse("04", limit, skip);
+        }
+
         this.assertConfigured();
         const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
             method: "POST",
@@ -406,6 +440,10 @@ export class EformsignService {
      * GET /v2.0/api/documents/{documentId}
      */
     async getDocumentById(accessToken: string, documentId: string): Promise<any> {
+        if (this.vendorStubsEnabled) {
+            return buildEformsignStubDocument(documentId);
+        }
+
         this.assertConfigured();
         const includeParams = new URLSearchParams({
             include_fields: "true",
@@ -448,6 +486,15 @@ export class EformsignService {
         contentDisposition: string | null;
         body: Buffer;
     }> {
+        if (this.vendorStubsEnabled) {
+            return {
+                status: 200,
+                contentType: "application/pdf",
+                contentDisposition: `attachment; filename="${documentId}-${fileType}.pdf"`,
+                body: buildEformsignStubPdf(documentId, fileType),
+            };
+        }
+
         this.assertConfigured();
         const response = await fetch(
             `${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}/download_files?file_type=${fileType}`,
@@ -526,6 +573,10 @@ export class EformsignService {
         documentIds: string[],
         isPermanent: boolean = false
     ): Promise<any> {
+        if (this.vendorStubsEnabled) {
+            return buildEformsignStubDeleteResponse(documentIds);
+        }
+
         this.assertConfigured();
         const url = new URL(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents`);
         if (isPermanent) {
@@ -566,6 +617,10 @@ export class EformsignService {
             phoneNumber?: string;
         }
     ): Promise<any> {
+        if (this.vendorStubsEnabled) {
+            return buildEformsignStubReRequestResponse(documentId);
+        }
+
         this.assertConfigured();
         const nextStep: {
             step_type: string;
@@ -657,6 +712,19 @@ export class EformsignService {
         }
 
         return await response.json();
+    }
+
+    private async fetchStaffCompletionDocument(documentId: string, accessToken: string): Promise<any> {
+        const params = new URLSearchParams({ include_detail_template_info: "true" });
+        const docRes = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}?${params}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (!docRes.ok) {
+            throw new Error(`Failed to get document ${documentId} for staff completion: ${docRes.status} ${await docRes.text()}`);
+        }
+
+        return await docRes.json();
     }
 
     private assertConfigured() {

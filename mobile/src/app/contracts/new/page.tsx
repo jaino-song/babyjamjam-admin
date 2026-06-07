@@ -719,7 +719,7 @@ export default function ContractCreationPage() {
       }
 
       // 2. Eformsign auth (cookies)
-      const authResult = await eformsignApi.authenticate(Date.now());
+      const authResult = await eformsignApi.authenticate(Date.now(), undefined, { force: true });
       if (!authResult.success) throw new Error("Failed to authenticate");
 
       // 3. Build contract data

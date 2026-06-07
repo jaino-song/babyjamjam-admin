@@ -1677,7 +1677,7 @@ export default function ContractsPage() {
       // Fallback to iframe via generateStaffDocument
       setIsFinalizeProgressOpen(false);
       try {
-        const authResult = await eformsignApi.authenticate(Date.now());
+        const authResult = await eformsignApi.authenticate(Date.now(), undefined, { force: true });
         if (!authResult.success) throw new Error("eformsign 인증에 실패했습니다.");
         const option = await eformsignApi.generateStaffDocument(documentId, undefined, undefined, endDateIso);
         setStaffDocumentOption(option as EformsignDocumentOption);

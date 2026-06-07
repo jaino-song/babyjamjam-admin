@@ -45,6 +45,60 @@ const HEADLESS_DISPATCH_TIMEOUT_MS = 180_000;
 const HEADLESS_FINALIZE_TIMEOUT_MS = 60_000;
 const DEFAULT_EFORMSIGN_LIMIT = 100;
 const DEFAULT_EFORMSIGN_SKIP = 0;
+const MAX_EFORMSIGN_AUTH_5XX_ATTEMPTS = 3;
+const EFORMSIGN_AUTH_5XX_BACKOFF_MS = 30_000;
+
+let consecutiveEformsignAuthServerFailures = 0;
+let isAutomaticEformsignAuthStopped = false;
+let nextAutomaticEformsignAuthAttemptAt = 0;
+
+export class EformsignAuthAutoRetryStoppedError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "EformsignAuthAutoRetryStoppedError";
+    }
+}
+
+function isServerErrorStatus(status?: number): status is number {
+    return typeof status === "number" && status >= 500 && status < 600;
+}
+
+function resetEformsignAuthFailureState(): void {
+    consecutiveEformsignAuthServerFailures = 0;
+    isAutomaticEformsignAuthStopped = false;
+    nextAutomaticEformsignAuthAttemptAt = 0;
+}
+
+function assertAutomaticEformsignAuthAllowed(force = false): void {
+    if (force) {
+        return;
+    }
+
+    if (isAutomaticEformsignAuthStopped) {
+        throw new EformsignAuthAutoRetryStoppedError(
+            "Eformsign authentication auto-retries are paused after repeated server errors.",
+        );
+    }
+
+    if (Date.now() < nextAutomaticEformsignAuthAttemptAt) {
+        throw new EformsignAuthAutoRetryStoppedError(
+            "Eformsign authentication is backing off after a recent server error.",
+        );
+    }
+}
+
+function recordEformsignAuthFailure(error: unknown): void {
+    if (!isAxiosError(error) || !isServerErrorStatus(error.response?.status)) {
+        return;
+    }
+
+    consecutiveEformsignAuthServerFailures += 1;
+    nextAutomaticEformsignAuthAttemptAt = Date.now() + EFORMSIGN_AUTH_5XX_BACKOFF_MS;
+
+    if (consecutiveEformsignAuthServerFailures >= MAX_EFORMSIGN_AUTH_5XX_ATTEMPTS) {
+        isAutomaticEformsignAuthStopped = true;
+    }
+}
 
 function normalizeDocumentListResponse(
     response: EformsignApiListResponse,
@@ -64,6 +118,10 @@ export interface AuthResponse {
     code?: string;
     hasKakaoAccount?: boolean;
     errors?: string[];
+}
+
+export interface EformsignAuthRequestOptions {
+    force?: boolean;
 }
 
 export interface LoginResponse extends AuthResponse {
@@ -143,10 +201,24 @@ export const eformsignApi = {
         const { data } = await api.post('/generate-signature', { executionTime });
         return data;
     },
-    // Authenticates and stores token in httpOnly cookie (returns { success: true })
-    authenticate: async (executionTime: number, memberEmail?: string): Promise<{ success: boolean }> => {
-        const { data } = await api.post('/access-token', { executionTime, memberEmail });
-        return data;
+    // Authenticates and stores token in httpOnly cookie (returns { success: true }).
+    // After repeated upstream 5xx responses, background callers back off and then stop
+    // retrying until a user-driven flow forces a fresh attempt.
+    authenticate: async (
+        executionTime: number,
+        memberEmail?: string,
+        options?: EformsignAuthRequestOptions,
+    ): Promise<{ success: boolean }> => {
+        assertAutomaticEformsignAuthAllowed(options?.force === true);
+
+        try {
+            const { data } = await api.post('/access-token', { executionTime, memberEmail });
+            resetEformsignAuthFailureState();
+            return data;
+        } catch (error) {
+            recordEformsignAuthFailure(error);
+            throw error;
+        }
     },
     getAuthStatus: async (): Promise<EformsignAuthStatusResponse> => {
         const { data } = await api.get('/eformsign/auth-status');

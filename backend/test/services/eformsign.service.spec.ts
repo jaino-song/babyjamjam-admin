@@ -3,10 +3,10 @@ import { ConfigService } from "@nestjs/config";
 import { ContractDataDto } from "application/dto/contract.dto";
 import { EformsignService } from "application/services/eformsign.service";
 
-describe("EformsignService", () => {
-    const configService = {
+function createConfigService(overrides: Record<string, string | undefined> = {}): ConfigService {
+    return {
         get: jest.fn((key: string) => {
-            const values: Record<string, string> = {
+            const values: Record<string, string | undefined> = {
                 EFORMSIGN_USER_EMAIL: "staff@example.com",
                 EFORMSIGN_API_URL: "https://api.eformsign.example",
                 EFORMSIGN_DOC_API_URL: "https://doc.eformsign.example",
@@ -14,14 +14,17 @@ describe("EformsignService", () => {
                 EFORMSIGN_PRIVATE_KEY: "00",
                 EFORMSIGN_COMPANY_ID: "company-1",
                 EFORMSIGN_TEMPLATE_ID: "template-1",
+                ...overrides,
             };
 
             return values[key];
         }),
     } as unknown as ConfigService;
+}
 
+describe("EformsignService", () => {
     it("sorts merged document lists by eformsign created_date newest first", async () => {
-        const service = new EformsignService(configService);
+        const service = new EformsignService(createConfigService());
 
         jest.spyOn(service, "getInProgressDocuments").mockResolvedValue({
             documents: [
@@ -53,7 +56,7 @@ describe("EformsignService", () => {
     });
 
     it("uses payment collection date fields and reviewer step for provider confirmation", () => {
-        const service = new EformsignService(configService);
+        const service = new EformsignService(createConfigService());
         const contractData: ContractDataDto = {
             customerName: "김정인",
             customerContact: "010-1234-5678",
@@ -108,5 +111,87 @@ describe("EformsignService", () => {
                 }),
             ]),
         );
+    });
+
+    it("uses e2e vendor stubs for token fetches and document listing without network access", async () => {
+        const fetchSpy = jest.spyOn(global, "fetch");
+        const service = new EformsignService(createConfigService({
+            E2E_VENDOR_STUBS: "1",
+            EFORMSIGN_USER_EMAIL: undefined,
+            EFORMSIGN_API_URL: undefined,
+            EFORMSIGN_DOC_API_URL: undefined,
+            EFORMSIGN_API_KEY: undefined,
+            EFORMSIGN_PRIVATE_KEY: undefined,
+            EFORMSIGN_COMPANY_ID: undefined,
+            EFORMSIGN_TEMPLATE_ID: undefined,
+        }));
+
+        await expect(service.getAccessToken(Date.now())).resolves.toMatchObject({
+            oauth_token: {
+                access_token: "e2e-stub-token",
+                refresh_token: "e2e-stub-refresh-token",
+            },
+        });
+
+        const documents = await service.getAllDocuments("ignored-token");
+
+        expect(documents.documents.map((document) => document.id)).toEqual([
+            "doc-delete-target",
+            "doc-finalize-test",
+            "doc-keep-1",
+            "doc-create-test",
+        ]);
+        expect(fetchSpy).not.toHaveBeenCalled();
+
+        fetchSpy.mockRestore();
+    });
+
+    it("builds iframe options in stub mode even when vendor env is absent", () => {
+        const service = new EformsignService(createConfigService({
+            E2E_VENDOR_STUBS: "1",
+            EFORMSIGN_USER_EMAIL: undefined,
+            EFORMSIGN_API_URL: undefined,
+            EFORMSIGN_DOC_API_URL: undefined,
+            EFORMSIGN_API_KEY: undefined,
+            EFORMSIGN_PRIVATE_KEY: undefined,
+            EFORMSIGN_COMPANY_ID: undefined,
+            EFORMSIGN_TEMPLATE_ID: undefined,
+        }));
+        const contractData: ContractDataDto = {
+            customerName: "김정인",
+            customerContact: "010-1234-5678",
+            customerDOB: "900101",
+            customerAddress: "인천 서구",
+            caretaker1Name: "이관리",
+            caretaker1Contact: "010-9999-8888",
+            type: "A통합3형",
+            days: "15",
+            area: "Seogu",
+            contractDuration: "2026-06-03 ~ 2026-06-23",
+            startYear: "26",
+            startMonth: "06",
+            startDay: "03",
+            startDate: "2026-06-03",
+            endYear: "26",
+            endMonth: "06",
+            endDay: "23",
+            endDate: "2026-06-23",
+            paymentYear: "26",
+            paymentMonth: "06",
+            paymentDay: "03",
+            fullPrice: "1000000",
+            grant: "800000",
+            actualPrice: "200000",
+        };
+
+        const options = service.generateDocumentOptions(
+            contractData,
+            "stub-access-token",
+            "stub-refresh-token",
+        );
+
+        expect(options.company.id).toBe("e2e-stub-company");
+        expect(options.user.id).toBe("e2e-stub@babyjamjam.test");
+        expect(options.mode.template_id).toBe("tpl-test");
     });
 });
