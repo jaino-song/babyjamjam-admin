@@ -68,7 +68,9 @@ jobs:
     name: playwright e2e (dispatch-only real backend)
     if: github.event_name == 'workflow_dispatch'
     needs: verify
-    timeout-minutes: 60
+    # 90: the full 266-test suite against the real stack needs headroom —
+    # two 60-minute runs were cancelled mid-suite before any report upload.
+    timeout-minutes: 90
     runs-on: ubuntu-latest
     env:
       BASE_URL: http://localhost:3000
