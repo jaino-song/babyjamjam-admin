@@ -87,7 +87,6 @@ test.describe('Chat History Persistence', () => {
 
     test('should load chat history when modal opens', async ({ page }) => {
         await page.goto('/dashboard');
-        await page.waitForLoadState('networkidle');
 
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await expect(chatInput).toBeVisible({ timeout: 10000 });
@@ -117,7 +116,6 @@ test.describe('Chat History Persistence', () => {
         });
 
         await page.goto('/dashboard');
-        await page.waitForLoadState('networkidle');
 
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await expect(chatInput).toBeVisible({ timeout: 10000 });
@@ -130,9 +128,9 @@ test.describe('Chat History Persistence', () => {
 
     test('should send message and receive response', async ({ page }) => {
         await page.goto('/dashboard');
-        await page.waitForLoadState('networkidle');
 
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+        await expect(chatInput).toBeVisible({ timeout: 10000 });
         await chatInput.click();
 
         await page.waitForURL('**/chat', { timeout: 10000 });
@@ -150,15 +148,15 @@ test.describe('Chat History Persistence', () => {
 
     test('should close and reopen modal with history preserved', async ({ page }) => {
         await page.goto('/dashboard');
-        await page.waitForLoadState('networkidle');
 
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+        await expect(chatInput).toBeVisible({ timeout: 10000 });
         await chatInput.click();
 
         await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
 
-        await page.getByTestId('chat-back').click();
+        await page.getByTestId('chat-fullscreen-close').click();
         await page.waitForURL('**/dashboard', { timeout: 15000 });
 
         await chatInput.click();
@@ -190,9 +188,9 @@ test.describe('Chat History Persistence', () => {
         });
 
         await page.goto('/dashboard');
-        await page.waitForLoadState('networkidle');
 
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+        await expect(chatInput).toBeVisible({ timeout: 10000 });
         await chatInput.click();
 
         await page.waitForURL('**/chat', { timeout: 10000 });
@@ -205,15 +203,15 @@ test.describe('Chat History Persistence', () => {
 
     test('should clear session when delete button is clicked', async ({ page }) => {
         await page.goto('/dashboard');
-        await page.waitForLoadState('networkidle');
 
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+        await expect(chatInput).toBeVisible({ timeout: 10000 });
         await chatInput.click();
 
         await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
 
-        await page.getByTestId('chat-clear').click();
+        await page.getByTestId('chat-fullscreen-clear').click();
 
         await expect(page.getByText('고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible({ timeout: 5000 });
     });
@@ -234,9 +232,9 @@ test.describe('Chat History API Error Handling', () => {
         });
 
         await page.goto('/dashboard');
-        await page.waitForLoadState('networkidle');
 
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+        await expect(chatInput).toBeVisible({ timeout: 10000 });
         await chatInput.click();
 
         await page.waitForURL('**/chat', { timeout: 10000 });
@@ -253,9 +251,9 @@ test.describe('Chat History API Error Handling', () => {
         });
 
         await page.goto('/dashboard');
-        await page.waitForLoadState('networkidle');
 
         const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+        await expect(chatInput).toBeVisible({ timeout: 10000 });
         await chatInput.click();
 
         await page.waitForURL('**/chat', { timeout: 10000 });

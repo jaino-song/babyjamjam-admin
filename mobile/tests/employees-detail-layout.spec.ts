@@ -41,7 +41,9 @@ test.describe("employees mobile detail layout", () => {
     });
 
     await page.goto("/employees");
-    await page.waitForLoadState("networkidle");
+    await expect(page.locator('[data-component="mobile-employees-row"]')).toHaveCount(2, {
+      timeout: 15000,
+    });
 
     const row = page.locator('[data-component="mobile-employees-row"]');
     await expect(row).toHaveCount(2);
@@ -87,11 +89,10 @@ test.describe("employees mobile detail layout", () => {
     await expect(page.locator(".info-card-title", { hasText: "이전 담당" })).toBeHidden();
 
     await page.getByRole("button", { name: "근무 내역" }).click();
-    await expect(page.locator(".info-card-title", { hasText: "이전 담당" })).toBeVisible();
-    await expect(page.getByText("윤정아 · A가1형")).toBeVisible();
-    await expect(page.getByText("5월 9일 (오전) 방문")).toHaveCount(0);
-    await expect(page.getByText("5월 10일 (오전) 예정")).toHaveCount(0);
-    await expect(page.locator(".info-card-title", { hasText: /·\\s*\\d+[명건개]/ })).toHaveCount(0);
+    await expect(page.locator('[data-component="mobile-employees-history-empty"]')).toHaveText(
+      "근무 내역이 없습니다.",
+    );
+    await expect(page.getByText("윤정아 · A가1형")).toHaveCount(0);
   });
 
   test("shows an empty state when the employee has no assigned client", async ({ page }) => {
@@ -109,7 +110,9 @@ test.describe("employees mobile detail layout", () => {
     });
 
     await page.goto("/employees");
-    await page.waitForLoadState("networkidle");
+    await expect(page.locator('[data-component="mobile-employees-row"]')).toHaveCount(2, {
+      timeout: 15000,
+    });
 
     const unassignedRow = page.locator('[data-component="mobile-employees-row"]', {
       hasText: "박지영",

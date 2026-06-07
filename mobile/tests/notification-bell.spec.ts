@@ -105,11 +105,19 @@ test.describe('Notification Bell Navigation', () => {
       });
     });
 
-    await page.route('**/api/notifications', async (route) => {
+    await page.route('**/api/notifications?**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(MOCK_NOTIFICATIONS),
+      });
+    });
+
+    await page.route('**/api/notifications/vapid-key', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ publicKey: 'test-vapid-key' }),
       });
     });
 
@@ -124,15 +132,22 @@ test.describe('Notification Bell Navigation', () => {
 
     await page.route('**/api/notifications/*/read', async (route) => {
       currentUnreadCount = Math.max(0, currentUnreadCount - 1);
+      const notificationId = Number(route.request().url().split('/').slice(-2, -1)[0]);
+      const notification =
+        MOCK_NOTIFICATIONS.find((item) => item.id === notificationId) ?? MOCK_NOTIFICATIONS[0];
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ success: true }),
+        body: JSON.stringify({
+          ...notification,
+          isRead: true,
+          readAt: new Date().toISOString(),
+        }),
       });
     });
 
     await page.goto('/clients');
-    await page.waitForLoadState('networkidle');
+    await expect(page.locator('[data-component="clients"]')).toBeVisible({ timeout: 15000 });
 
     const e2eFlag = await page.evaluate(() => (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__);
     if (!e2eFlag) {
@@ -140,7 +155,7 @@ test.describe('Notification Bell Navigation', () => {
         (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
       });
       await page.reload();
-      await page.waitForLoadState('networkidle');
+      await expect(page.locator('[data-component="clients"]')).toBeVisible({ timeout: 15000 });
     }
   });
 
@@ -175,7 +190,7 @@ test.describe('Notification Bell Navigation', () => {
     await page.waitForURL(/\/clients\/1/);
 
     await page.goBack();
-    await page.waitForLoadState('networkidle');
+    await expect(page.locator('[data-component="clients"]')).toBeVisible({ timeout: 15000 });
 
     await expect(badge).toHaveText('1');
   });

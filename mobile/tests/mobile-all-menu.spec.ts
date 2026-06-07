@@ -24,6 +24,16 @@ async function restoreAuthCookies(page: Page) {
 test.describe("Mobile nav: center chat + /all menu", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
+  test.beforeEach(async ({ page }) => {
+    await page.route("**/api/notifications/vapid-key**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ publicKey: "test-vapid-key" }),
+      });
+    });
+  });
+
   test("all menu uses fixed-size skeletons for fetched values while loading", async ({ page }) => {
     let releaseClients: () => void = () => {};
     let releaseEmployees: () => void = () => {};
