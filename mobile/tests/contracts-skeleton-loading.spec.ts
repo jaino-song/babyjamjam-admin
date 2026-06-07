@@ -191,6 +191,12 @@ test.describe('Contracts Page Skeleton Loading', () => {
     await expect(page.locator('[data-component="mobile-redesign-list-title"]')).toContainText('2건');
   });
 
+  // NOTE (review follow-up, 2026-06-08): a dedicated documents-API error
+  // state does not exist post-redesign (the old MuiAlert tests covered dead
+  // UI). Observed current behavior on a hard documents 500: the eformsign
+  // reauth path ends in a LOGOUT/login redirect — encode no test until the
+  // intended failure UX is decided (tracked as a product/UX finding).
+
   test('shows the current empty-state copy when no contracts exist', async ({ page }) => {
     await page.route('**/api/access-token', async (route) => {
       await route.fulfill({

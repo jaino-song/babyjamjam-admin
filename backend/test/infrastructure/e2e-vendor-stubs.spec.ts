@@ -56,6 +56,25 @@ describe("vendor stub factory selection", () => {
         expect(createGeminiGateway(configService)).toBeInstanceOf(VercelGeminiGateway);
     });
 
+    it("prefers the stub over the Vercel flag when both are set (precedence)", () => {
+        const configService = createConfigService({
+            E2E_VENDOR_STUBS: "1",
+            USE_VERCEL_AI_SDK: "true",
+        });
+
+        expect(createGeminiGateway(configService)).toBeInstanceOf(E2eGeminiGatewayStub);
+    });
+
+    it("treats truthy-but-not-'1' stub flag values as OFF (fail-safe)", () => {
+        for (const value of ["true", "yes", " 1"]) {
+            const configService = createConfigService({ E2E_VENDOR_STUBS: value });
+
+            expect(createGeminiGateway(configService)).toBeInstanceOf(GeminiChatGateway);
+            expect(createAligoPortClient(configService)).toBeInstanceOf(AligoApiClient);
+            expect(createEformsignClientRepository(configService)).toBeInstanceOf(EformsignApiClient);
+        }
+    });
+
     it("switches to stubbed vendor clients when E2E_VENDOR_STUBS is on", async () => {
         const configService = createConfigService({
             E2E_VENDOR_STUBS: "1",
