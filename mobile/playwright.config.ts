@@ -2,13 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 // Quarantined from CI until rewritten/unblocked — see tests/QUARANTINE.md
 const CI_QUARANTINE = [
-  '**/client-creation.spec.ts', // UI moved: dialog flow -> /clients/new wizard; spec rewrite tracked
-  '**/alimtalk-settings.spec.ts', // navigates removed routes /settings/general, /settings/voucher-price (404); rewrite vs current IA
   '**/nav-indicator-diagnose.spec.ts', // local-only diagnostic: real login with dev credentials, dev server timing capture
   '**/nav-slide-dense.spec.ts', // local-only diagnostic: dense frame capture, real login
   '**/animation-plan-visual-verify.spec.ts', // animation/visual diagnostic, timing-fragile in CI
   '**/dashboard-activities-animation.spec.ts', // animation diagnostic (addInitScript event collection)
-  '**/chat-live-stream.spec.ts', // hits real /api/ai/chat/stream; backend requires GEMINI_API_KEY (no vendor stub yet)
 ];
 
 /**

@@ -23,6 +23,14 @@ import {
 } from "domain/repositories/eformsign.client.interface";
 import { AligoApiClient } from "infrastructure/api/aligo-api.client";
 import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
+import {
+    ChatMessage,
+    FunctionCall,
+    FunctionDeclaration,
+    GeminiChatGateway,
+    GeminiStreamChunk,
+} from "infrastructure/api/gemini-chat.gateway";
+import { VercelGeminiGateway } from "infrastructure/api/vercel-gemini.gateway";
 
 export const E2E_VENDOR_STUBS_ENV = "E2E_VENDOR_STUBS";
 export const EFORMSIGN_STUB_USER_EMAIL = "e2e-stub@babyjamjam.test";
@@ -32,6 +40,29 @@ export const EFORMSIGN_STUB_TEMPLATE_ID = "tpl-test";
 const EFORMSIGN_STUB_ACCESS_TOKEN = "e2e-stub-token";
 const EFORMSIGN_STUB_REFRESH_TOKEN = "e2e-stub-refresh-token";
 const EFORMSIGN_STUB_API_URL = "https://stub.eformsign.invalid";
+const GEMINI_STUB_PREFIX = "[e2e-stub] ";
+const GEMINI_STUB_MAX_ECHO_LENGTH = 48;
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeGeminiStubText(value: string | undefined): string {
+    const normalized = (value ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, GEMINI_STUB_MAX_ECHO_LENGTH);
+
+    return normalized || "stub response";
+}
+
+function buildGeminiStubText(messages: ChatMessage[]): string {
+    const lastUserMessage = [...messages]
+        .reverse()
+        .find((message) => message.role === "user")?.content;
+
+    return `${GEMINI_STUB_PREFIX}${normalizeGeminiStubText(lastUserMessage)}`;
+}
 
 type EformsignStubDocument = EformsignApiDocumentResponse & {
     detail_template_info?: {
@@ -466,6 +497,52 @@ export class E2eAligoApiStub implements IAligoApiPort, IAligoSmsApiPort {
     }
 }
 
+export class E2eGeminiGatewayStub {
+    async chat(
+        messages: ChatMessage[],
+        tools?: FunctionDeclaration[],
+    ): Promise<{ text?: string; functionCall?: FunctionCall }> {
+        void tools;
+        return {
+            text: buildGeminiStubText(messages),
+        };
+    }
+
+    async *chatStream(
+        messages: ChatMessage[],
+        tools?: FunctionDeclaration[],
+    ): AsyncGenerator<GeminiStreamChunk> {
+        void tools;
+        const responseText = buildGeminiStubText(messages);
+        const chunks = [
+            GEMINI_STUB_PREFIX,
+            responseText.slice(GEMINI_STUB_PREFIX.length, GEMINI_STUB_PREFIX.length + 12),
+            responseText.slice(GEMINI_STUB_PREFIX.length + 12),
+        ].filter((chunk) => chunk.length > 0);
+
+        await sleep(10);
+        for (const chunk of chunks) {
+            yield { type: "text", content: chunk };
+            await sleep(10);
+        }
+
+        yield { type: "done" };
+    }
+
+    async sendFunctionResult(
+        messages: ChatMessage[],
+        functionName: string,
+        result: unknown,
+        tools?: FunctionDeclaration[],
+    ): Promise<{ text?: string; functionCall?: FunctionCall }> {
+        void tools;
+
+        return {
+            text: `${GEMINI_STUB_PREFIX}${normalizeGeminiStubText(`${functionName} ${JSON.stringify(result)}`)}`,
+        };
+    }
+}
+
 export function createEformsignClientRepository(configService: ConfigService): IEformsignClientRepository {
     return areE2EVendorStubsEnabled(configService)
         ? new E2eEformsignClientStub()
@@ -476,4 +553,17 @@ export function createAligoPortClient(configService: ConfigService): IAligoApiPo
     return areE2EVendorStubsEnabled(configService)
         ? new E2eAligoApiStub()
         : new AligoApiClient(configService);
+}
+
+export function createGeminiGateway(configService: ConfigService) {
+    if (areE2EVendorStubsEnabled(configService)) {
+        return new E2eGeminiGatewayStub();
+    }
+
+    const useVercelAiSdk = configService.get<string>("USE_VERCEL_AI_SDK") === "true";
+    if (useVercelAiSdk) {
+        return new VercelGeminiGateway(configService);
+    }
+
+    return new GeminiChatGateway(configService);
 }
