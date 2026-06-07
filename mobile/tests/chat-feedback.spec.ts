@@ -61,9 +61,9 @@ test.describe('chat message feedback', () => {
 
   test('should show feedback buttons on assistant messages', async ({ page }) => {
     await page.goto('/dashboard');
-    await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
     await chatInput.click();
 
     await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
@@ -85,9 +85,9 @@ test.describe('chat message feedback', () => {
     });
 
     await page.goto('/dashboard');
-    await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
     await chatInput.click();
 
     await expect(page.getByTestId('thumbs-up')).toBeVisible({ timeout: 5000 });
@@ -101,9 +101,9 @@ test.describe('chat message feedback', () => {
 
   test('should open modal on thumbs down click', async ({ page }) => {
     await page.goto('/dashboard');
-    await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
     await chatInput.click();
 
     await expect(page.getByTestId('thumbs-down')).toBeVisible({ timeout: 5000 });
@@ -114,9 +114,9 @@ test.describe('chat message feedback', () => {
 
   test('should have submit button disabled until comment is entered', async ({ page }) => {
     await page.goto('/dashboard');
-    await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
     await chatInput.click();
 
     await page.getByTestId('thumbs-down').click();
@@ -142,9 +142,9 @@ test.describe('chat message feedback', () => {
     });
 
     await page.goto('/dashboard');
-    await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
     await chatInput.click();
 
     await page.getByTestId('thumbs-down').click();

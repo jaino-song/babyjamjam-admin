@@ -116,9 +116,7 @@ test.describe("Contracts delete flow", () => {
     });
 
     await page.goto("/contracts");
-    await page.waitForLoadState("networkidle");
-
-    await expect(page.getByText("삭제대상 고객").first()).toBeVisible();
+    await expect(page.getByText("삭제대상 고객").first()).toBeVisible({ timeout: 15000 });
 
     await page.getByText("삭제대상 고객").first().click();
     await expect(page.locator('[data-component="mobile-contracts-detail"]')).toBeVisible();

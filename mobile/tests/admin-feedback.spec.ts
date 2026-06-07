@@ -77,7 +77,7 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 15000 });
     
     // Should see the feedback list
     await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 5000 });
@@ -98,7 +98,7 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 15000 });
     
     // Click negative filter
     await page.getByRole('button', { name: '부정적' }).click();
@@ -119,7 +119,7 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 15000 });
     
     await expect(page.getByText('전체').first()).toBeVisible();
     await expect(page.getByText('긍정적').first()).toBeVisible();
@@ -143,7 +143,7 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 15000 });
     
     // Check table headers
     await expect(page.getByText('날짜')).toBeVisible();
@@ -169,7 +169,7 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 15000 });
     
     await expect(page.getByText('피드백이 없습니다.')).toBeVisible();
   });
@@ -188,7 +188,7 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 15000 });
     
     // Click positive filter
     await page.getByRole('button', { name: '긍정적' }).click();
@@ -210,7 +210,7 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 15000 });
     
     // Should see the feedback list
     await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 5000 });

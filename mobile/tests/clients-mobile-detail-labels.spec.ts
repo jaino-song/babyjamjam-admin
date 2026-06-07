@@ -39,6 +39,24 @@ const ACTIVE_CLIENT_WITHOUT_CONTRACT = {
 test.describe("Mobile clients detail labels", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
+  test.beforeEach(async ({ page }) => {
+    await page.route("**/api/employees", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
+
+    await page.route("**/api/alimtalk-logs?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
+  });
+
   test("uses the compact notification labels in the client detail sheet", async ({ page }) => {
     await page.route("**/api/clients?**", async (route) => {
       await route.fulfill({
@@ -55,6 +73,7 @@ test.describe("Mobile clients detail labels", () => {
     });
 
     await page.goto("/clients");
+    await expect(page.locator('[data-component="mobile-clients-row"]')).toBeVisible({ timeout: 15000 });
 
     await page.locator('[data-component="mobile-clients-row"]', { hasText: CLIENT.name }).click();
     await page.getByRole("button", { name: "알림 발송" }).click();
@@ -82,6 +101,7 @@ test.describe("Mobile clients detail labels", () => {
     });
 
     await page.goto("/clients");
+    await expect(page.locator('[data-component="mobile-clients-row"]')).toBeVisible({ timeout: 15000 });
 
     const row = page.locator('[data-component="mobile-clients-row"]', {
       hasText: ACTIVE_CLIENT_WITHOUT_CONTRACT.name,

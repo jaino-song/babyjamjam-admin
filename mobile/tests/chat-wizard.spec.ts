@@ -129,7 +129,6 @@ test.describe('Chat client registration wizard', () => {
     });
 
     await page.goto('/dashboard');
-    await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
     await expect(chatInput).toBeVisible({ timeout: 10000 });

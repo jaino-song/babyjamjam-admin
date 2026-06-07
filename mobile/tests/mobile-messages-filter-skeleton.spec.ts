@@ -5,6 +5,22 @@ const nowIso = new Date().toISOString();
 test.describe("Mobile messages filter skeletons", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
+  test.beforeEach(async ({ page }) => {
+    await page.route("**/api/settings/message-sender-approval", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          approvalStatus: "approved",
+          isApproved: true,
+          canRequest: true,
+          senderPhone: "01012345678",
+          senderPhoneFormatted: "010-1234-5678",
+        }),
+      });
+    });
+  });
+
   test("renders whole filter pills as skeletons while message counts load", async ({ page }) => {
     let releaseLogs: () => void = () => {};
     const logsReady = new Promise<void>((resolve) => {

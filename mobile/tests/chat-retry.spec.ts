@@ -77,9 +77,9 @@ test.describe('chat auto-retry', () => {
 
     // Navigate directly to chat page
     await page.goto('/chat');
-    await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?');
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
     await chatInput.fill('테스트 메시지');
     await chatInput.press('Enter');
 
@@ -99,9 +99,9 @@ test.describe('chat auto-retry', () => {
 
     // Navigate directly to chat page
     await page.goto('/chat');
-    await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?');
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
     await chatInput.fill('테스트 메시지');
     await chatInput.press('Enter');
 

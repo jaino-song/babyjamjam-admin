@@ -43,7 +43,7 @@ test.describe('Admin Nav Visibility', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 15000 });
     
     const menuButton = page.locator('button[aria-label="open navigation"]');
     await menuButton.click();
