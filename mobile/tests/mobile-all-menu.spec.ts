@@ -108,7 +108,7 @@ test.describe("Mobile nav: center chat + /all menu", () => {
     ).toBeVisible();
     await expect(
       page
-        .locator('[data-component="mobile-redesign-menu-row"]', { hasText: "알림톡" })
+        .locator('[data-component="mobile-redesign-menu-row"]', { hasText: "발송 자동화" })
         .locator('[data-component="mobile-all-value-skeleton"]')
     ).toBeVisible();
 
@@ -138,7 +138,8 @@ test.describe("Mobile nav: center chat + /all menu", () => {
     await expect(page.locator(".menu-value", { hasText: "2명" })).toBeVisible();
     await expect(page.locator(".menu-value", { hasText: "1명" })).toBeVisible();
     await expect(page.locator(".menu-value", { hasText: "5건" })).toBeVisible();
-    await expect(page.locator(".menu-value", { hasText: "4종" })).toBeVisible();
+    // 4 mocked rules + UI_ONLY_AUTOMATION_TRIGGER_COUNT(1) → "5개"
+    await expect(page.locator(".menu-value", { hasText: "5개" })).toBeVisible();
     await expect(page.locator(".menu-badge", { hasText: "3" })).toBeVisible();
     await expect(page.locator('[data-component="mobile-all-value-skeleton"]')).toHaveCount(0);
     await expect(page.locator('[data-component="mobile-all-badge-skeleton"]')).toHaveCount(0);

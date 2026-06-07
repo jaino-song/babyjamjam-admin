@@ -122,6 +122,10 @@ test.describe('Contracts Page Search Feature', () => {
     const searchField = page.getByPlaceholder(SEARCH_PLACEHOLDER);
     await expect(searchField).toBeVisible({ timeout: 15000 });
 
+    // Anchor on the mocked rows landing before exercising the search.
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(3, {
+      timeout: 15000,
+    });
     await expect(page.getByText('홍길동')).toBeVisible();
     await expect(page.getByText('김철수')).toBeVisible();
     await expect(page.getByText('홍길순')).toBeVisible();
@@ -139,6 +143,9 @@ test.describe('Contracts Page Search Feature', () => {
     await page.goto('/contracts');
     const searchField = page.getByPlaceholder(SEARCH_PLACEHOLDER);
     await expect(searchField).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(3, {
+      timeout: 15000,
+    });
 
     await searchField.fill('홍길동');
     await expect(page.getByText('김철수')).not.toBeVisible();
@@ -155,6 +162,9 @@ test.describe('Contracts Page Search Feature', () => {
 
     await page.goto('/contracts');
     await expect(page.getByPlaceholder(SEARCH_PLACEHOLDER)).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(3, {
+      timeout: 15000,
+    });
 
     const completedFilter = page
       .locator('[data-component="mobile-redesign-filter-pill"]')

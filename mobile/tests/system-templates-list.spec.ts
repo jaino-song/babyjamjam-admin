@@ -78,8 +78,14 @@ test.describe('Templates List', () => {
       '시스템 자동',
     );
     await expect(page.locator('[data-component="messages-templates-row"]')).toHaveCount(2);
-    await expect(page.getByText('비용 안내', { exact: true })).toBeVisible();
-    await expect(page.getByText('인사(소개)', { exact: true })).toBeVisible();
+    // The row-name node also contains the channel badge ("알림톡"), so an
+    // exact-text match can never resolve — scope to the name node instead.
+    await expect(
+      page.locator('[data-component="messages-templates-row-name"]').filter({ hasText: '비용 안내' }),
+    ).toBeVisible();
+    await expect(
+      page.locator('[data-component="messages-templates-row-name"]').filter({ hasText: '인사(소개)' }),
+    ).toBeVisible();
   });
 
   test('navigates to the current system template detail page on click', async ({ page }) => {
@@ -113,10 +119,13 @@ test.describe('Templates List', () => {
     await page.goto('/messages/templates');
     await expect(page.getByText('템플릿 관리')).toBeVisible({ timeout: 15000 });
 
-    await page.getByText('비용 안내', { exact: true }).click();
+    await page
+      .locator('[data-component="messages-templates-row"]')
+      .filter({ hasText: '비용 안내' })
+      .click();
 
     await expect(page).toHaveURL(/\/messages\/system-templates\/PRICE_INFO/);
     await expect(page.locator('[data-component="messages-system-template-detail"]')).toBeVisible();
-    await expect(page.getByText('비용 안내', { exact: true })).toBeVisible();
+    await expect(page.locator('[data-component="messages-system-template-detail"]')).toContainText('비용 안내');
   });
 });

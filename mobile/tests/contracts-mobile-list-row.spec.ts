@@ -308,6 +308,8 @@ test.describe("Mobile contracts list rows", () => {
     await routeNotificationLogs(page);
 
     await page.goto("/contracts");
+    // Anchor: wait for the mocked rows to land before child assertions.
+    await expect(page.locator('[data-component="mobile-contracts-row"]').first()).toBeVisible({ timeout: 15000 });
 
     const waitingRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "대기고객" });
     const openedRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "열람고객" });
@@ -550,6 +552,8 @@ test.describe("Mobile contracts list rows", () => {
     await routeNotificationLogs(page);
 
     await page.goto("/contracts");
+    // Anchor: wait for the mocked rows to land before child assertions.
+    await expect(page.locator('[data-component="mobile-contracts-row"]').first()).toBeVisible({ timeout: 15000 });
 
     await page.locator('[data-component="mobile-contracts-row"]', { hasText: "대기고객" }).click();
     await expect(page.locator('[data-component="mobile-contracts-preview"]')).toBeVisible();
@@ -853,6 +857,8 @@ test.describe("Mobile contracts list rows", () => {
     await routeNotificationLogs(page);
 
     await page.goto("/contracts");
+    // Anchor: wait for the mocked rows to land before child assertions.
+    await expect(page.locator('[data-component="mobile-contracts-row"]').first()).toBeVisible({ timeout: 15000 });
 
     await page.locator('[data-component="mobile-contracts-row"]', { hasText: "대기고객" }).click();
 
@@ -907,6 +913,8 @@ test.describe("Mobile contracts list rows", () => {
     await routeNotificationLogs(page);
 
     await page.goto("/contracts");
+    // Anchor: wait for the mocked rows to land before child assertions.
+    await expect(page.locator('[data-component="mobile-contracts-row"]').first()).toBeVisible({ timeout: 15000 });
 
     await page.locator('[data-component="mobile-contracts-row"]', { hasText: "대기고객" }).click();
 
