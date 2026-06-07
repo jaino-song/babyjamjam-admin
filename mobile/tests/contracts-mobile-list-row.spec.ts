@@ -315,7 +315,9 @@ test.describe("Mobile contracts list rows", () => {
     const openedRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "열람고객" });
     const staleStepRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "구문서" });
     const sendFailedRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "전송실패" });
-    const reviewRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "검토 담당자" });
+    // Row name comes from DOCUMENT_CLIENT_SUMMARIES.clientName ("검토고객"),
+    // not the step recipient name.
+    const reviewRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "검토고객" });
     const completedRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "완료고객" });
 
     await expect(waitingRow.locator(".step-label")).toHaveText("3/6 - 이용자 문서 열람 대기");
@@ -561,7 +563,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(page.locator('[data-component="mobile-contracts-receipt-share"]')).toHaveCount(0);
 
     await page.locator(".sheet-close").click();
-    await page.locator('[data-component="mobile-contracts-row"]', { hasText: "검토 담당자" }).click();
+    await page.locator('[data-component="mobile-contracts-row"]', { hasText: "검토고객" }).click();
     const signAction = page.locator('[data-component="mobile-contracts-sign"]');
     await expect(page.locator('[data-component="mobile-contracts-preview"]')).toBeVisible();
     await expect(signAction).toBeVisible();
@@ -871,12 +873,14 @@ test.describe("Mobile contracts list rows", () => {
     await expect(contractInfo).not.toContainText("마감일");
     await expect(page.locator(".client-detail-badges")).not.toContainText("DOC-WAITING");
 
-    const relatedInfo = page.locator(".info-card", { hasText: "관련 정보" });
-    await expect(relatedInfo).toContainText("제공인력");
-    await expect(relatedInfo).toContainText("실제제공인력");
-    await expect(relatedInfo).toContainText("문서 ID");
-    await expect(relatedInfo).toContainText("doc-waiting");
-    await expect(relatedInfo).not.toContainText("eformsign 코드");
+    // The former combined "관련 정보" card no longer exists: provider fields
+    // render in the 이용자 정보 card, document id in the 계약 정보 card.
+    const userInfo = page.locator(".info-card", { hasText: "이용자 정보" });
+    await expect(userInfo).toContainText("제공인력");
+    await expect(userInfo).toContainText("실제제공인력");
+    await expect(contractInfo).toContainText("문서 ID");
+    await expect(contractInfo).toContainText("doc-waiting");
+    await expect(contractInfo).not.toContainText("eformsign 코드");
   });
 
   test("falls back to provider fields from the detailed eformsign document", async ({ page }) => {
@@ -918,9 +922,10 @@ test.describe("Mobile contracts list rows", () => {
 
     await page.locator('[data-component="mobile-contracts-row"]', { hasText: "대기고객" }).click();
 
-    const relatedInfo = page.locator(".info-card", { hasText: "관련 정보" });
-    await expect(relatedInfo).toContainText("제공인력");
-    await expect(relatedInfo).toContainText("문서제공인력");
+    // Provider fields render in the 이용자 정보 card (no "관련 정보" card).
+    const userInfo = page.locator(".info-card", { hasText: "이용자 정보" });
+    await expect(userInfo).toContainText("제공인력");
+    await expect(userInfo).toContainText("문서제공인력");
   });
 
   test("shows real alimtalk and message delivery logs in the notification tab", async ({ page }) => {

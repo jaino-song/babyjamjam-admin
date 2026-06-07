@@ -101,6 +101,11 @@ async function routeContractsList(page: Page, payload = MOCK_DOCUMENTS): Promise
   });
 }
 
+// The contract list rows ([data-component="mobile-contracts-row"]) only mount
+// in the mobile layout — at the default desktop viewport the row tree is
+// absent (run #7 evidence: page renders, row count stays 0).
+test.use({ viewport: { width: 390, height: 844 } });
+
 test.describe('Contracts Page Search Feature', () => {
   test('renders the current mobile search and filter shell', async ({ page }) => {
     await routeContractsList(page);

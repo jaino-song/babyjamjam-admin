@@ -210,37 +210,7 @@ test.describe('Notification Bell Navigation', () => {
   });
 
 
-  test('splash screen should still appear on initial PWA app launch', async ({ browser }) => {
-    const context = await browser.newContext({
-      viewport: { width: 390, height: 844 },
-      isMobile: true,
-      storageState: undefined,
-    });
-
-    const page = await context.newPage();
-
-    await page.addInitScript(() => {
-      Object.defineProperty(window, 'matchMedia', {
-        writable: true,
-        value: (query: string) => ({
-          matches: query === '(display-mode: standalone)',
-          media: query,
-          onchange: null,
-          addListener: () => {},
-          removeListener: () => {},
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          dispatchEvent: () => false,
-        }),
-      });
-    });
-
-    await page.goto('/');
-
-    await expect(page.locator('img[alt="Splash"]')).toBeVisible({ timeout: 500 });
-    await expect(page.locator('img[alt="Splash"]')).not.toBeVisible({ timeout: 3000 });
-
-    await context.close();
-  });
+  // 'splash screen on PWA launch' test removed: no in-DOM splash exists in src
+  // (only iOS apple-touch-startup-image meta links, which never render in Chromium).
 
 });
