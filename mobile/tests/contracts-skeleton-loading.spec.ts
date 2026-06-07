@@ -79,6 +79,11 @@ async function routeSharedContractDependencies(page: Page): Promise<void> {
   });
 }
 
+// The contract list rows ([data-component="mobile-contracts-row"]) only mount
+// in the mobile layout — at the default desktop viewport the row tree is
+// absent (run #7 evidence: page renders, row count stays 0).
+test.use({ viewport: { width: 390, height: 844 } });
+
 test.describe('Contracts Page Skeleton Loading', () => {
   test('shows the current mobile loading shell while documents are pending', async ({ page }) => {
     let releaseAuth!: () => void;

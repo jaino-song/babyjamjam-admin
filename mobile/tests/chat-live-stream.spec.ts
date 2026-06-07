@@ -166,7 +166,11 @@ test.describe("Chat live stream smoke", () => {
     await input.press("Enter");
 
     await expect(page.locator('[data-component="chat-wizard-registration"]').first()).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText("산모 등록")).toBeVisible({ timeout: 5000 });
+    // "산모 등록" also appears inside the rendered wizard — scope to the
+    // user's message bubble to avoid a strict-mode violation.
+    await expect(
+      page.locator('[data-component="chat-message-user-bubble"]', { hasText: "산모 등록" }),
+    ).toBeVisible({ timeout: 5000 });
 
     expect(sseCalled).toBe(0);
   });

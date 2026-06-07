@@ -157,7 +157,7 @@ test.describe("clients/new wizard", () => {
     await expect(page.locator('[data-component="clients-new-wizard"]')).toBeVisible();
     await expect(page.locator('[data-component="clients-new-navbar-title"]')).toHaveText("새 고객 추가");
     await expect(page.locator('[data-component="clients-new-step-count"]')).toHaveText("1 / 3 단계");
-    await expect(page.getByText("기본 정보")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "기본 정보" })).toBeVisible();
     await expect(page.getByPlaceholder("홍길동")).toBeVisible();
     await expect(page.getByPlaceholder("010-1234-5678")).toBeVisible();
   });
