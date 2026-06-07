@@ -233,7 +233,7 @@ export default function MessagesPage() {
   const [activeDetailTab, setActiveDetailTab] = useState<MessageDetailTab>("content");
 
   const { data: userTemplatesData } = useMessageTemplates(1, 100);
-  const userTemplates = Array.isArray(userTemplatesData?.data) ? userTemplatesData.data : [];
+  const userTemplates = Array.isArray(userTemplatesData) ? userTemplatesData : [];
 
   const { data: upcomingJobsData } = useQuery<UpcomingAlimtalkJob[]>({
     queryKey: ["alimtalk", "upcoming", 100],

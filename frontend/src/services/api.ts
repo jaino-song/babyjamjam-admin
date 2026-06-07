@@ -16,6 +16,12 @@ import {
     HeadlessDispatchResponse,
     HeadlessFinalizeResponse,
 } from '@babyjamjam/shared/types/eformsign';
+import type {
+    MessageDeliverySmsType,
+    MessageDeliveryTriggerType,
+    SendMessageDeliverySmsRequest,
+    SendMessageDeliverySmsResponse,
+} from "@babyjamjam/shared/types/message";
 
 const DEFAULT_EFORMSIGN_LIMIT = 100;
 const DEFAULT_EFORMSIGN_SKIP = 0;
@@ -260,39 +266,12 @@ export interface NotificationPreferencesResponse {
     updatedAt?: string;
 }
 
-export type MessageDeliverySmsType = "AUTO" | "SMS" | "LMS";
-export type MessageDeliveryTriggerType = "immediate" | "scheduled";
-
-export interface SendMessageDeliverySmsRequest {
-    receiver: string;
-    message: string;
-    recipientName?: string;
-    title?: string;
-    msgType?: MessageDeliverySmsType;
-    triggerType?: MessageDeliveryTriggerType;
-    scheduledDate?: string;
-    scheduledTime?: string;
-    testMode?: boolean;
-}
-
-export interface SendMessageDeliverySmsResponse {
-    provider: "aligo";
-    triggerType: Exclude<MessageDeliveryTriggerType, undefined>;
-    request: {
-        receiver: string;
-        msgType: "SMS" | "LMS";
-        scheduledAt?: string;
-        testMode: boolean;
-    };
-    result: {
-        resultCode: number;
-        message: string;
-        msgId?: number;
-        successCount?: number;
-        errorCount?: number;
-        msgType?: string;
-    };
-}
+export type {
+    MessageDeliverySmsType,
+    MessageDeliveryTriggerType,
+    SendMessageDeliverySmsRequest,
+    SendMessageDeliverySmsResponse,
+};
 
 export interface RibbonConfig {
     enabled: boolean;
