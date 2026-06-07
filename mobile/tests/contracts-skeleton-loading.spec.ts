@@ -47,6 +47,25 @@ const MOCK_EMPTY_DOCUMENTS = {
 };
 
 async function routeSharedContractDependencies(page: Page): Promise<void> {
+  // Mock the auth identity so the run doesn't depend on the backend having
+  // the storage-state user (local dev DBs lack it; the auth check otherwise
+  // races the test and kills the page at a random point).
+  for (const authPattern of ['**/api/auth/me', '**/auth/me']) {
+    await page.route(authPattern, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'test-user',
+          name: '테스트 사용자',
+          email: 'test@example.com',
+          profile_image: '',
+          role: 'admin',
+        }),
+      });
+    });
+  }
+
   await page.route('**/api/eformsign-docs/client-names**', async (route) => {
     await route.fulfill({
       status: 200,
@@ -104,7 +123,8 @@ test.describe('Contracts Page Skeleton Loading', () => {
       });
     });
 
-    await page.route('**/api/eformsign/documents?**', async (route) => {
+    // Broad glob: the page also lists via /in-progress and /completed subpaths.
+    await page.route('**/api/eformsign/documents**', async (route) => {
       await documentsReady;
       await route.fulfill({
         status: 200,
@@ -131,7 +151,9 @@ test.describe('Contracts Page Skeleton Loading', () => {
     releaseAuth();
     releaseDocuments();
 
-    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(2);
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(2, {
+      timeout: 15000,
+    });
     await expect(page.locator('[data-component="mobile-contracts-loading-row"]')).toHaveCount(0);
     await expect(page.locator('[data-component="mobile-redesign-filter-pill"][data-loading="true"]')).toHaveCount(
       0,
@@ -148,7 +170,8 @@ test.describe('Contracts Page Skeleton Loading', () => {
       });
     });
 
-    await page.route('**/api/eformsign/documents?**', async (route) => {
+    // Broad glob: the page also lists via /in-progress and /completed subpaths.
+    await page.route('**/api/eformsign/documents**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -177,7 +200,8 @@ test.describe('Contracts Page Skeleton Loading', () => {
       });
     });
 
-    await page.route('**/api/eformsign/documents?**', async (route) => {
+    // Broad glob: the page also lists via /in-progress and /completed subpaths.
+    await page.route('**/api/eformsign/documents**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
