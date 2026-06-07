@@ -31,6 +31,7 @@ import {
     GeminiStreamChunk,
 } from "infrastructure/api/gemini-chat.gateway";
 import { VercelGeminiGateway } from "infrastructure/api/vercel-gemini.gateway";
+import type { IGeminiGateway } from "application/services/ai-chat.service";
 
 export const E2E_VENDOR_STUBS_ENV = "E2E_VENDOR_STUBS";
 export const EFORMSIGN_STUB_USER_EMAIL = "e2e-stub@babyjamjam.test";
@@ -497,7 +498,14 @@ export class E2eAligoApiStub implements IAligoApiPort, IAligoSmsApiPort {
     }
 }
 
-export class E2eGeminiGatewayStub {
+/**
+ * Deterministic Gemini double for e2e runs. SCOPE: text streaming only —
+ * it never emits "function_call" (or "error") chunks, so the agentic
+ * tool-execution loop in AIChatService.chatStream is intentionally NOT
+ * exercised under E2E_VENDOR_STUBS=1. Tool-calling regressions are covered
+ * by unit tests, not the e2e suite.
+ */
+export class E2eGeminiGatewayStub implements IGeminiGateway {
     async chat(
         messages: ChatMessage[],
         tools?: FunctionDeclaration[],
@@ -555,7 +563,7 @@ export function createAligoPortClient(configService: ConfigService): IAligoApiPo
         : new AligoApiClient(configService);
 }
 
-export function createGeminiGateway(configService: ConfigService) {
+export function createGeminiGateway(configService: ConfigService): IGeminiGateway {
     if (areE2EVendorStubsEnabled(configService)) {
         return new E2eGeminiGatewayStub();
     }
