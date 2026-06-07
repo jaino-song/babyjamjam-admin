@@ -55,9 +55,13 @@ const DEFAULT_EFORMSIGN_LIMIT = 100;
 const DEFAULT_EFORMSIGN_SKIP = 0;
 const MAX_EFORMSIGN_AUTH_5XX_ATTEMPTS = 3;
 const EFORMSIGN_AUTH_5XX_BACKOFF_MS = 30_000;
+// Review finding: a permanent stop stranded read-only document views for the
+// tab lifetime (only contract write actions force-reset). The stop is now a
+// cooldown so background auth resumes on its own once the vendor recovers.
+const EFORMSIGN_AUTH_STOP_COOLDOWN_MS = 5 * 60_000;
 
 let consecutiveEformsignAuthServerFailures = 0;
-let isAutomaticEformsignAuthStopped = false;
+let automaticEformsignAuthStoppedUntil = 0;
 let nextAutomaticEformsignAuthAttemptAt = 0;
 
 export class EformsignAuthAutoRetryStoppedError extends Error {
@@ -73,7 +77,7 @@ function isServerErrorStatus(status?: number): status is number {
 
 function resetEformsignAuthFailureState(): void {
     consecutiveEformsignAuthServerFailures = 0;
-    isAutomaticEformsignAuthStopped = false;
+    automaticEformsignAuthStoppedUntil = 0;
     nextAutomaticEformsignAuthAttemptAt = 0;
 }
 
@@ -82,13 +86,15 @@ function assertAutomaticEformsignAuthAllowed(force = false): void {
         return;
     }
 
-    if (isAutomaticEformsignAuthStopped) {
+    const now = Date.now();
+
+    if (now < automaticEformsignAuthStoppedUntil) {
         throw new EformsignAuthAutoRetryStoppedError(
             "Eformsign authentication auto-retries are paused after repeated server errors.",
         );
     }
 
-    if (Date.now() < nextAutomaticEformsignAuthAttemptAt) {
+    if (now < nextAutomaticEformsignAuthAttemptAt) {
         throw new EformsignAuthAutoRetryStoppedError(
             "Eformsign authentication is backing off after a recent server error.",
         );
@@ -104,7 +110,10 @@ function recordEformsignAuthFailure(error: unknown): void {
     nextAutomaticEformsignAuthAttemptAt = Date.now() + EFORMSIGN_AUTH_5XX_BACKOFF_MS;
 
     if (consecutiveEformsignAuthServerFailures >= MAX_EFORMSIGN_AUTH_5XX_ATTEMPTS) {
-        isAutomaticEformsignAuthStopped = true;
+        // Pause (not permanently stop) automatic attempts; a later failure
+        // after the cooldown re-arms the pause, a success clears everything.
+        automaticEformsignAuthStoppedUntil = Date.now() + EFORMSIGN_AUTH_STOP_COOLDOWN_MS;
+        consecutiveEformsignAuthServerFailures = MAX_EFORMSIGN_AUTH_5XX_ATTEMPTS - 1;
     }
 }
 

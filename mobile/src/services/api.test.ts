@@ -105,4 +105,30 @@ describe("eformsignApi.authenticate", () => {
         await expect(apiModule.eformsignApi.authenticate(6)).resolves.toEqual({ success: true });
         expect(mockPost).toHaveBeenCalledTimes(5);
     });
+
+    it("resumes automatic retries after the stop cooldown elapses", async () => {
+        // Review finding: a permanent stop stranded read-only document views
+        // (no force-auth action available) until a full page reload.
+        const { apiModule, mockPost } = await loadApiModule();
+        mockPost
+            .mockRejectedValueOnce(createAxiosServerError(503))
+            .mockRejectedValueOnce(createAxiosServerError(503))
+            .mockRejectedValueOnce(createAxiosServerError(503))
+            .mockResolvedValueOnce({ data: { success: true } });
+
+        await expect(apiModule.eformsignApi.authenticate(1)).rejects.toBeInstanceOf(AxiosError);
+        jest.setSystemTime(new Date("2026-06-07T00:00:30.001Z"));
+        await expect(apiModule.eformsignApi.authenticate(2)).rejects.toBeInstanceOf(AxiosError);
+        jest.setSystemTime(new Date("2026-06-07T00:01:00.002Z"));
+        await expect(apiModule.eformsignApi.authenticate(3)).rejects.toBeInstanceOf(AxiosError);
+        await expect(apiModule.eformsignApi.authenticate(4)).rejects.toBeInstanceOf(
+            apiModule.EformsignAuthAutoRetryStoppedError,
+        );
+
+        // Five minutes after the pause began, background auth tries again
+        // on its own and a success clears the breaker entirely.
+        jest.setSystemTime(new Date("2026-06-07T00:06:00.003Z"));
+        await expect(apiModule.eformsignApi.authenticate(5)).resolves.toEqual({ success: true });
+        expect(mockPost).toHaveBeenCalledTimes(4);
+    });
 });

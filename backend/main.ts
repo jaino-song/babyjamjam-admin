@@ -20,6 +20,17 @@ process.on('unhandledRejection', (reason, promise) => {
 };
 
 async function bootstrap() {
+    // Belt-and-suspenders (review finding): the e2e-only switches must never
+    // ride into a production boot — they disable vendor egress and the
+    // storage bucket bootstrap.
+    if (process.env["NODE_ENV"] === "production") {
+        for (const flag of ["E2E_VENDOR_STUBS", "STORAGE_BOOTSTRAP_DISABLED"]) {
+            if (process.env[flag] === "1") {
+                throw new Error(`${flag}=1 is not allowed when NODE_ENV=production`);
+            }
+        }
+    }
+
     const app = await NestFactory.create(AppModule);
     app.use(helmet());
     const expressApp = app.getHttpAdapter().getInstance();
