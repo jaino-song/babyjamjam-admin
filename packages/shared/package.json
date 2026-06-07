@@ -24,7 +24,11 @@
         "tailwind-merge": "^3.4.0",
         "zod": "^4.3.6"
     },
+    "peerDependencies": {
+        "next": "16.1.6"
+    },
     "devDependencies": {
+        "next": "16.1.6",
         "typescript": "^5"
     }
 }
