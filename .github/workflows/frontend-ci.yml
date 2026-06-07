@@ -15,7 +15,7 @@ on:
   # so it must report on every PR — path-filtered required checks block
   # merges as eternally "expected" when the paths don't match.
   pull_request:
-    branches: [ main, dev, preview, "feature/**", "fix/**" ]
+    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
 
 jobs:
   verify:

@@ -45,6 +45,11 @@ jobs:
       - name: Type check
         run: pnpm --filter babyjamjam-admin run type-check
 
+      # The shared package is otherwise only type-checked transitively through
+      # its consumers; an orphaned export would ship green (review finding).
+      - name: Type check shared package
+        run: pnpm --filter @babyjamjam/shared run type-check
+
       - name: Lint
         run: pnpm --filter babyjamjam-admin run lint
 

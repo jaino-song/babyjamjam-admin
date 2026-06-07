@@ -2,6 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
+import { dashboardQueryKeys } from "@/hooks/useDashboardAnalytics";
 import type { 
     Client, 
     CreateClientDto, 
@@ -103,6 +104,9 @@ export function useCreateClient() {
         onSuccess: () => {
             // Invalidate all client queries (lists + details) using prefix match
             queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
+            // Dashboard summary counters derive from clients (review finding:
+            // with staleTime 60s they otherwise show stale counts post-mutation).
+            queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.analytics() });
         },
     });
 }
@@ -123,6 +127,7 @@ export function useUpdateClient() {
             queryClient.invalidateQueries({ 
                 queryKey: clientQueryKeys.detail(variables.id) 
             });
+            queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.analytics() });
         },
     });
 }
@@ -159,6 +164,7 @@ export function useDeleteClient() {
         },
         onSettled: () => {
             queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
+            queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.analytics() });
         },
     });
 }

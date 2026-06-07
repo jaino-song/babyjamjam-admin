@@ -30,7 +30,9 @@ build/
 backend/dist/
 backend/node_modules/
 backend/prisma/generated/
-backend/prisma/schema.prisma
+# schema.prisma is tracked and load-bearing (drift guard, prisma generate,
+# migration authoring) — review finding: a tracked-but-ignored file silently
+# falls out of git after a stray `git rm --cached`/recreate. Never ignore it.
 backend/prisma/seed.ts
 
 # misc
