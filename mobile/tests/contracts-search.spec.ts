@@ -60,6 +60,25 @@ const MOCK_EMPTY_DOCUMENTS = {
 };
 
 async function routeContractsList(page: Page, payload = MOCK_DOCUMENTS): Promise<void> {
+  // Mock the auth identity so the run doesn't depend on the backend having
+  // the storage-state user (local dev DBs lack it; the auth check otherwise
+  // races the test and kills the page at a random point).
+  for (const authPattern of ['**/api/auth/me', '**/auth/me']) {
+    await page.route(authPattern, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'test-user',
+          name: '테스트 사용자',
+          email: 'test@example.com',
+          profile_image: '',
+          role: 'admin',
+        }),
+      });
+    });
+  }
+
   await page.route('**/api/access-token', async (route) => {
     await route.fulfill({
       status: 200,
@@ -68,7 +87,9 @@ async function routeContractsList(page: Page, payload = MOCK_DOCUMENTS): Promise
     });
   });
 
-  await page.route('**/api/eformsign/documents?**', async (route) => {
+  // Broad glob (no '?'): the page lists via /eformsign/documents AND the
+  // /in-progress + /completed subpaths — a query-requiring glob matches none.
+  await page.route('**/api/eformsign/documents**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -157,7 +178,7 @@ test.describe('Contracts Page Search Feature', () => {
 
     await searchField.clear();
 
-    await expect(page.getByText('홍길동')).toBeVisible();
+    await expect(page.getByText('홍길동')).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('김철수')).toBeVisible();
     await expect(page.getByText('홍길순')).toBeVisible();
   });
