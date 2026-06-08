@@ -10,6 +10,16 @@ import type {
     GeminiStreamChunk,
 } from "./gemini-chat.gateway";
 
+function getNumberConfig(configService: ConfigService, key: string, fallback: number, min: number): number {
+    const rawValue = configService.get<string | number>(key);
+    if (rawValue === undefined || rawValue === null || rawValue === "") {
+        return fallback;
+    }
+
+    const parsedValue = Number(rawValue);
+    return Number.isFinite(parsedValue) && parsedValue >= min ? parsedValue : fallback;
+}
+
 /**
  * Vercel AI SDK-based gateway for Gemini API.
  *
@@ -25,9 +35,9 @@ export class VercelGeminiGateway {
     private readonly maxOutputTokens: number;
 
     constructor(private readonly configService: ConfigService) {
-        this.model = this.configService.get<string>("GEMINI_CHAT_MODEL") || "gemini-2.0-flash-lite";
-        this.temperature = this.configService.get<number>("GEMINI_CHAT_TEMPERATURE") ?? 0.1;
-        this.maxOutputTokens = this.configService.get<number>("GEMINI_CHAT_MAX_OUTPUT_TOKENS") ?? 4096;
+        this.model = this.configService.get<string>("GEMINI_CHAT_MODEL") || "gemini-2.5-flash-lite";
+        this.temperature = getNumberConfig(this.configService, "GEMINI_CHAT_TEMPERATURE", 0.1, 0);
+        this.maxOutputTokens = getNumberConfig(this.configService, "GEMINI_CHAT_MAX_OUTPUT_TOKENS", 4096, 1);
     }
 
     private getApiKey(): string {

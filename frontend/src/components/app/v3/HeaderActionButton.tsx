@@ -5,7 +5,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 const baseStyles =
-  "flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[0.75rem] font-semibold transition-colors";
+  "flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[0.7rem] font-semibold transition-colors";
 
 const variantStyles = {
   primary: "text-v3-primary hover:bg-v3-primary-light",

@@ -60,7 +60,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "시스템",
     items: [
       { label: "알림", href: "/messages", icon: Bell },
-      { label: "설정", href: "/settings", icon: Settings },
+      { label: "설정", href: "/notification", icon: Settings },
     ],
   },
 ];
@@ -144,9 +144,9 @@ export const V3Sidebar = () => {
                       href={item.href}
                       data-component={`sidebar-nav-${getNavItemName(item.href)}`}
                       className={`
-                        relative group flex items-center gap-3 px-4 py-2.5 rounded-2xl transition-all duration-200 overflow-hidden
-                        ${active 
-                          ? "bg-v3-primary text-white shadow-md shadow-blue-500/20" 
+                        relative group flex items-center gap-3 px-4 py-2.5 rounded-2xl transition-colors overflow-hidden
+                        ${active
+                          ? "bg-v3-primary text-white shadow-md shadow-blue-500/20"
                           : "text-v3-text hover:bg-v3-primary-light hover:text-v3-primary"
                         }
                       `}

@@ -1,26 +1,33 @@
 import { NextResponse, NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+import { getUpstreamErrorStatus, logUpstreamError, parseBody, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+
+const resetPasswordSchema = z
+    .object({
+        token: z.string().min(1).max(10_000),
+        newPassword: z.string().min(8),
+    })
+    .passthrough();
 
 export async function POST(request: NextRequest) {
-    try {
-        const body = await request.json();
-        const { data, status } = await serverAPIClient.post("/auth/reset-password", body);
+    const { data, response } = await parseBody(resetPasswordSchema, request);
+    if (response) return response;
 
-        return NextResponse.json(data, { status });
+    try {
+        const { data: responseData, status } = await serverAPIClient.post("/auth/reset-password", data);
+
+        return NextResponse.json(responseData, { status });
     } catch (error) {
-        console.error("[Auth Reset Password] Error:", error);
+        logUpstreamError("Auth Reset Password", error);
 
         if (error instanceof AxiosError) {
-            const status = error.response?.status || 500;
+            const status = getUpstreamErrorStatus(error);
             const responseData = error.response?.data;
 
-            if (responseData) {
-                return NextResponse.json(responseData, { status });
-            }
-
             return NextResponse.json(
-                { error: error.message || "Reset failed" },
+                sanitizeUpstreamClientError(responseData, "Reset failed"),
                 { status }
             );
         }

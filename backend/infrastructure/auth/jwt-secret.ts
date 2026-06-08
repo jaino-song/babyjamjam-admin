@@ -1,8 +1,6 @@
-const DEFAULT_DEVELOPMENT_JWT_SECRET = "your-secret-key";
+import { isProductionLikeEnvironment } from "./runtime-environment";
 
-function isProductionLikeEnvironment() {
-  return process.env["NODE_ENV"] === "production" || process.env["VERCEL_ENV"] === "preview";
-}
+const DEFAULT_DEVELOPMENT_JWT_SECRET = "your-secret-key";
 
 export function getJwtSecret(): string {
   const configuredSecret = process.env["JWT_SECRET"]?.trim();

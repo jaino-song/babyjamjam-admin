@@ -8,7 +8,7 @@ export const serverAPIClient = axios.create({
     baseURL: API_URL,
     proxy: false,
     timeout: 60000,
-    validateStatus: (status) => status < 600,
+    validateStatus: (status) => status < 400,
     headers: {
         "Content-Type": "application/json",
     },

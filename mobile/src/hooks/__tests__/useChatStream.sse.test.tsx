@@ -21,11 +21,15 @@ function createSSEStream(chunks: string[]): ReadableStream<Uint8Array> {
 
 describe("useChatStream SSE parsing", () => {
     const originalFetch = globalThis.fetch;
+    const globalWithEncoding = globalThis as typeof globalThis & {
+        TextEncoder: typeof globalThis.TextEncoder;
+        TextDecoder: typeof globalThis.TextDecoder;
+    };
 
     beforeEach(() => {
         localStorage.clear();
-        (globalThis as any).TextEncoder = TextEncoder;
-        (globalThis as any).TextDecoder = TextDecoder;
+        globalWithEncoding.TextEncoder = TextEncoder as unknown as typeof globalThis.TextEncoder;
+        globalWithEncoding.TextDecoder = TextDecoder as unknown as typeof globalThis.TextDecoder;
         globalThis.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
             if (url.includes("/api/ai/chat/stream")) {

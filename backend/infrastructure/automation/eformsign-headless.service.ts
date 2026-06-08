@@ -8,6 +8,10 @@ import {
 import { runEformsignCreationGates } from "./eformsign-creation-gates";
 import { runEformsignFinalizeGates } from "./eformsign-finalize-gates";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
+import {
+    formatEformsignCallbackPayload,
+    readEformsignCallbackState,
+} from "./eformsign-gate-utils";
 
 /**
  * Result envelope returned by the headless service. The frontend uses
@@ -32,6 +36,13 @@ export interface DispatchFinalizeParams {
 const MAX_CONCURRENCY = 3;
 const EFORMSIGN_SDK_URL = "https://www.eformsign.com/lib/js/efs_embedded_v2.js";
 const EFORMSIGN_JQUERY_URL = "https://www.eformsign.com/plugins/jquery/jquery.min.js";
+const EFORMSIGN_HEADED_MODE_VALUES = new Set(["false", "0", "no", "off", "headed"]);
+
+function shouldLaunchHeadless(): boolean {
+    const value = process.env["EFORMSIGN_BROWSER_HEADLESS"]?.trim().toLowerCase();
+    if (!value) return true;
+    return !EFORMSIGN_HEADED_MODE_VALUES.has(value);
+}
 
 /**
  * Drives the eformsign embedded SDK off-screen so the iframe gate sequence
@@ -134,19 +145,13 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         await this.waitForEformsignIframe(page, "eformsign_iframe");
         params.onProgress?.("client-started");
 
-        const successPromise = page.waitForFunction(
-            () => (window as unknown as { __eformsignSuccess?: unknown }).__eformsignSuccess !== undefined,
-            { timeout: 90_000 },
-        );
-
         await runEformsignCreationGates(page, eformsignFrame, this.logger, params.onProgress);
 
         // The gate runner only confirms the click sequence completed; the
         // actual dispatch is acknowledged by the SDK success callback
         // (`__eformsignSuccess`). If that never fires, the document was not
         // sent — surface that as ok=false so the frontend falls back.
-        await successPromise;
-        const documentId = await this.readSuccessDocumentId(page);
+        const documentId = await this.waitForTerminalSdkCallback(page, 30_000);
         params.onProgress?.("sent");
 
         return {
@@ -168,15 +173,9 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         await this.waitForEformsignIframe(page, "eformsign_finalize_iframe");
         params.onProgress?.("client-started");
 
-        const successPromise = page.waitForFunction(
-            () => (window as unknown as { __eformsignSuccess?: unknown }).__eformsignSuccess !== undefined,
-            { timeout: 60_000 },
-        );
-
         await runEformsignFinalizeGates(page, eformsignFrame, this.logger, params.onProgress);
 
-        await successPromise;
-        const documentId = await this.readSuccessDocumentId(page);
+        const documentId = await this.waitForTerminalSdkCallback(page, 30_000);
         params.onProgress?.("sent");
 
         return {
@@ -186,13 +185,34 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         };
     }
 
-    private async readSuccessDocumentId(page: Page): Promise<string | undefined> {
-        return page
-            .evaluate(() => {
-                const w = window as unknown as { __eformsignSuccess?: { document_id?: string } };
-                return w.__eformsignSuccess?.document_id;
-            })
-            .catch(() => undefined);
+    private async waitForTerminalSdkCallback(page: Page, timeoutMs: number): Promise<string | undefined> {
+        await page.waitForFunction(
+            () => {
+                const w = window as unknown as {
+                    __eformsignSuccess?: unknown;
+                    __eformsignError?: unknown;
+                };
+                return w.__eformsignSuccess !== undefined || w.__eformsignError !== undefined;
+            },
+            { timeout: timeoutMs },
+        );
+
+        const state = await readEformsignCallbackState(page);
+        if (state.hasError) {
+            throw new Error(`eformsign SDK error: ${formatEformsignCallbackPayload(state.error)}`);
+        }
+        if (!state.hasSuccess) {
+            throw new Error("eformsign SDK completed without a success callback");
+        }
+        return this.readDocumentIdFromCallback(state.success);
+    }
+
+    private readDocumentIdFromCallback(payload: unknown): string | undefined {
+        if (!payload || typeof payload !== "object" || !("document_id" in payload)) {
+            return undefined;
+        }
+        const documentId = (payload as { document_id?: unknown }).document_id;
+        return typeof documentId === "string" && documentId.trim() ? documentId : undefined;
     }
 
     private async gotoEmbeddedSdkPage(page: Page, html: string, purpose: string): Promise<void> {
@@ -291,8 +311,12 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         if (this.browser && this.browser.isConnected()) {
             return this.browser;
         }
+        const headless = shouldLaunchHeadless();
+        if (!headless) {
+            this.logger.warn("Launching eformsign automation browser in headed mode.");
+        }
         this.browser = await chromium.launch({
-            headless: true,
+            headless,
             args: [
                 "--no-sandbox",
                 "--disable-dev-shm-usage",

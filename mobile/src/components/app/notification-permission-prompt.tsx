@@ -7,18 +7,20 @@ import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 export function NotificationPermissionPrompt() {
     const [showBanner, setShowBanner] = useState(false);
     const pathname = usePathname() ?? "";
+    const excluded = isLayoutExcluded(pathname);
     const hasBottomNav =
-        !isLayoutExcluded(pathname) && !pathname.startsWith("/clients/new");
+        !excluded && !pathname.startsWith("/clients/new");
 
     useEffect(() => {
-        if (typeof window === 'undefined') return;
+        if (typeof window === 'undefined' || excluded) return;
         if (!('Notification' in window)) return;
-        if (Notification.permission === 'default') {
-            setShowBanner(true);
-        }
-    }, []);
+        if (Notification.permission !== 'default') return;
 
-    if (!showBanner) return null;
+        const timer = window.setTimeout(() => setShowBanner(true), 0);
+        return () => window.clearTimeout(timer);
+    }, [excluded]);
+
+    if (!showBanner || excluded) return null;
 
     const handleEnable = async () => {
         const permission = await Notification.requestPermission();

@@ -7,6 +7,7 @@ import { EMAIL_PORT, EmailPort } from "../../domain/ports/email.port";
 import { AUTH_TOKEN_REPOSITORY, IAuthTokenRepository } from "../../domain/repositories/auth-token.repository.interface";
 import { AuthTokenEntity } from "../../domain/entities/auth-token.entity";
 import { getAuthTokenExpiresIn } from "./auth-token-policy";
+import { maskEmail } from "application/utils/mask";
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
 
 export interface KakaoData {
@@ -1214,7 +1215,7 @@ export class AuthService {
         if (existingUser) {
             // Check if user has Kakao account only (no password) - link the accounts
             if (existingUser.kakaoId && !existingUser.passwordHash) {
-                this.logger.log(`Linking email/password to existing Kakao account: ${email}`);
+                this.logger.log(`Linking email/password to existing Kakao account: ${maskEmail(email)}`);
 
                 const passwordHash = await this.hashPassword(password);
                 await this.prisma.user.update({
@@ -1243,7 +1244,7 @@ export class AuthService {
             // User already has email account (with or without Kakao)
             // Don't reveal that the email exists - return generic success
             // But still send an email to notify the user
-            this.logger.log(`Registration attempt for existing email: ${email}`);
+            this.logger.log(`Registration attempt for existing email: ${maskEmail(email)}`);
             return {
                 success: true,
                 message: '인증 이메일이 발송되었습니다. 이메일을 확인해주세요.',
@@ -1316,7 +1317,7 @@ export class AuthService {
 
         // Send email
         await this.emailService.sendVerificationEmail(email, user?.name || null, verificationUrl);
-        this.logger.log(`Verification email sent to ${email}`);
+        this.logger.log(`Verification email sent to ${maskEmail(email)}`);
     }
 
     /**
@@ -1438,10 +1439,10 @@ export class AuthService {
 
         try {
             await this.emailService.sendPasswordResetEmail(user.email!, user.name, resetUrl);
-            this.logger.log(`Password reset email sent to ${email}`);
+            this.logger.log(`Password reset email sent to ${maskEmail(email)}`);
         } catch (error) {
             this.logger.error(
-                `Failed to send password reset email to ${email}`,
+                `Failed to send password reset email to ${maskEmail(email)}`,
                 error instanceof Error ? error.stack : String(error),
             );
         }
@@ -1545,7 +1546,7 @@ export class AuthService {
             await this.sendVerificationEmail(user.id, user.email!);
         } catch (error) {
             this.logger.error(
-                `Failed to resend verification email to ${email}`,
+                `Failed to resend verification email to ${maskEmail(email)}`,
                 error instanceof Error ? error.stack : String(error),
             );
         }
@@ -1693,5 +1694,46 @@ export class AuthService {
         } catch {
             return null;
         }
+    }
+
+    /**
+     * Create a Kakao login state token carrying the originating client (mobile/desktop) and a
+     * random nonce. The caller stores the nonce in a single-use httpOnly cookie so the callback
+     * can bind the round-trip to this browser (login-CSRF protection).
+     */
+    async createKakaoLoginState(client: 'mobile' | 'desktop'): Promise<{ signedState: string; nonce: string }> {
+        const nonce = crypto.randomBytes(32).toString('hex');
+        const signedState = await this.jwt.signAsync(
+            { client, purpose: 'kakao_login', nonce },
+            { expiresIn: '10m' },
+        );
+        return { signedState, nonce };
+    }
+
+    /**
+     * Verify a Kakao login state token and confirm its nonce matches the browser cookie.
+     * Returns the originating client, or null if the state is missing/forged/expired or the
+     * nonce does not match.
+     */
+    async verifyKakaoLoginState(
+        signedState: string,
+        expectedNonce: string | undefined,
+    ): Promise<{ client: 'mobile' | 'desktop' } | null> {
+        if (!expectedNonce) return null;
+        try {
+            const decoded = await this.jwt.verifyAsync<{ client?: string; purpose: string; nonce?: string }>(signedState);
+            if (decoded.purpose !== 'kakao_login') return null;
+            if (!decoded.nonce || !this.timingSafeEqualStrings(decoded.nonce, expectedNonce)) return null;
+            return { client: decoded.client === 'mobile' ? 'mobile' : 'desktop' };
+        } catch {
+            return null;
+        }
+    }
+
+    private timingSafeEqualStrings(a: string, b: string): boolean {
+        const bufA = Buffer.from(a);
+        const bufB = Buffer.from(b);
+        if (bufA.length !== bufB.length) return false;
+        return crypto.timingSafeEqual(bufA, bufB);
     }
 }

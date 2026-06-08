@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>상담 조회 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.list-card { background: white; border-radius: 22px; box-shadow: var(--shadow-v3); }
+.consult-snippet {
+  font-size: 0.7rem;
+  color: var(--v3-text-muted);
+  margin-top: 3px;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.voucher-tag { font-weight: 700; }
+.voucher-tag.govt { color: var(--v3-primary); }
+.voucher-tag.self { color: var(--v3-dark); }
+.snippet-sep { opacity: 0.4; }
+.unread-row { background: hsla(214, 80%, 95%, 0.5); position: relative; padding-left: 18px; }
+.unread-row::before {
+  content: '';
+  position: absolute;
+  top: 50%; left: 6px;
+  transform: translateY(-50%);
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--v3-primary);
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="shell-content">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="list-title">
+              <span class="list-title-text">상담 조회 <span class="list-count">24건</span></span>
+            </div>
+            <div class="filter-row">
+              <button class="filter-pill active">전체 <span class="count">24</span></button>
+              <button class="filter-pill">미확인 <span class="count" style="background: var(--v3-burgundy-light); color: var(--v3-burgundy);">5</span></button>
+              <button class="filter-pill">확인 <span class="count">19</span></button>
+            </div>
+
+            <div class="list-card-scroll">
+              <div class="section-block">
+                <div class="section-header">미확인 · 5건</div>
+
+              <div class="list-item unread-row" onclick="openDetail(this)">
+                <div class="list-avatar av-burgundy">홍</div>
+                <div class="list-info">
+                  <div class="list-name">홍은지</div>
+                  <div class="consult-snippet"><span class="voucher-tag govt">A라1형</span><span class="snippet-sep">·</span>출산 예정 5/16</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">10분 전</span></div>
+              </div>
+
+              <div class="list-item unread-row">
+                <div class="list-avatar av-primary">서</div>
+                <div class="list-info">
+                  <div class="list-name">서영민</div>
+                  <div class="consult-snippet"><span class="voucher-tag self">일반</span><span class="snippet-sep">·</span>출산 예정 7/8</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">38분 전</span></div>
+              </div>
+
+              <div class="list-item unread-row">
+                <div class="list-avatar av-green">김</div>
+                <div class="list-info">
+                  <div class="list-name">김다영</div>
+                  <div class="consult-snippet"><span class="voucher-tag self">일반</span><span class="snippet-sep">·</span>출산 예정 6/22</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">2시간 전</span></div>
+              </div>
+
+              <div class="list-item unread-row">
+                <div class="list-avatar av-orange">이</div>
+                <div class="list-info">
+                  <div class="list-name">이지원</div>
+                  <div class="consult-snippet"><span class="voucher-tag govt">D가2형</span><span class="snippet-sep">·</span>출산 예정 5/30</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">4시간 전</span></div>
+              </div>
+
+              <div class="list-item unread-row">
+                <div class="list-avatar av-purple">한</div>
+                <div class="list-info">
+                  <div class="list-name">한지유</div>
+                  <div class="consult-snippet"><span class="voucher-tag self">일반</span><span class="snippet-sep">·</span>출산 예정 8/14</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">5시간 전</span></div>
+              </div>
+              </div>
+
+              <div class="section-block">
+                <div class="section-header">확인 완료 · 19건</div>
+
+              <div class="list-item">
+                <div class="list-avatar av-primary">박</div>
+                <div class="list-info">
+                  <div class="list-name">박지영</div>
+                  <div class="consult-snippet"><span class="voucher-tag govt">A통합1형</span><span class="snippet-sep">·</span>출산 예정 5/24</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">어제</span></div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-avatar av-burgundy">윤</div>
+                <div class="list-info">
+                  <div class="list-name">윤소희</div>
+                  <div class="consult-snippet"><span class="voucher-tag govt">A라2형</span><span class="snippet-sep">·</span>출산 예정 5/15</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">5/8</span></div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-avatar av-green">최</div>
+                <div class="list-info">
+                  <div class="list-name">최예린</div>
+                  <div class="consult-snippet"><span class="voucher-tag govt">D가1형</span><span class="snippet-sep">·</span>출산 예정 5/4</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">4/28</span></div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <!-- Bottom sheet detail (consultation) -->
+      <div class="nav-page detail">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <button class="sheet-close" onclick="closeDetail()" style="margin-left: auto;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="client-detail-header pop-up">
+            <div class="client-detail-avatar-lg av-burgundy">홍</div>
+            <div class="client-detail-title">
+              <div class="client-detail-name">홍은지</div>
+              <div class="client-detail-badges">
+                <span class="badge-mini burgundy">미확인</span>
+                <span class="badge-mini muted">웹 · 10분 전</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-actions" style="margin-top: 0; padding: 14px 16px;">
+            <button class="btn btn-secondary">답장</button>
+            <button class="btn btn-primary">고객 등록</button>
+          </div>
+
+          <div class="filter-row detail-tabs" style="padding: 0;">
+            <button class="filter-pill active" data-tab="info">고객 정보</button>
+            <button class="filter-pill" data-tab="inquiry">상담 내용</button>
+          </div>
+
+          <!-- Tab: 상담 내용 -->
+          <div class="tab-content" data-tab-content="inquiry">
+            <div class="info-card pop-up" style="padding: 16px;">
+              <div class="info-card-title">문의 본문</div>
+              <div style="font-size: 0.84rem; line-height: 1.55; color: var(--v3-dark); white-space: pre-wrap;">안녕하세요, 5월 셋째주(5/19~5/31)에 산후도우미 서비스를 신청하고 싶어 문의드립니다.
+
+A라1형 바우처 가지고 있고 14일 기간으로 알아보고 있습니다. 출산 예정일은 5월 18일이고 인천 부평구 거주합니다.
+
+가능한 분 있으면 연락 부탁드려요.</div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">문의 정보</div>
+              <div class="info-row"><span class="info-row-label">근무 지역</span><span class="info-row-value">인천 부평구</span></div>
+              <div class="info-row"><span class="info-row-label">서비스 기간</span><span class="info-row-value">14일</span></div>
+              <div class="info-row"><span class="info-row-label">추가 서비스</span><span class="info-row-value"><span class="addon-stack"><span class="addon-stack-item">큰아이 돌봄 · 수량 1</span><span class="addon-stack-item">가사 추가 · 수량 1</span></span></span></div>
+              <div class="info-row"><span class="info-row-label">추천 경로</span><span class="info-row-value">시군구청</span></div>
+              <div class="info-row"><span class="info-row-label">선호 매니저</span><span class="info-row-value">서경자</span></div>
+              <div class="info-row"><span class="info-row-label">추가 사항</span><span class="info-row-value"><span class="additional-notes-value">오후 6시 이후 통화가 편합니다. 큰아이 하원 시간도 같이 상담받고 싶어요.</span></span></div>
+            </div>
+          </div>
+
+          <!-- Tab: 고객 정보 -->
+          <div class="tab-content active" data-tab-content="info">
+            <div class="info-card pop-up">
+              <div class="info-card-title">기본 정보</div>
+              <div class="info-row"><span class="info-row-label">이름</span><span class="info-row-value">홍은지</span></div>
+              <div class="info-row"><span class="info-row-label">연락처</span><span class="info-row-value">010-3456-7890</span></div>
+              <div class="info-row"><span class="info-row-label">주소</span><span class="info-row-value">인천 부평구</span></div>
+              <div class="info-row"><span class="info-row-label">출산 예정일</span><span class="info-row-value">2025. 5. 18.</span></div>
+              <div class="info-row"><span class="info-row-label">출산 경험</span><span class="info-row-value">초산</span></div>
+              <div class="info-row"><span class="info-row-label">바우처 유형</span><span class="info-row-value">A라1형</span></div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">문의 상태</div>
+              <div class="info-row"><span class="info-row-label">출처</span><span class="info-row-value">웹사이트</span></div>
+              <div class="info-row"><span class="info-row-label">확인 여부</span><span class="info-row-value info-row-value-green"><span class="status-value-with-time"><span>확인 완료</span><span class="status-value-time">5/18 14:32</span></span></span></div>
+              <div class="info-row"><span class="info-row-label">진행 상태</span><span class="info-row-value">신규</span></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-primary-light);"><svg width="15" height="15" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div class="notif-body"><div class="notif-title">새 상담 문의</div><div class="notif-snippet">홍은지 님이 웹사이트를 통해 문의했습니다.</div><div class="notif-time">10분 전</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 전체) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">상담 조회 · /consultations</div>
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+function openDetail(el){document.getElementById('stack').classList.add('show-detail');}
+function closeDetail(){document.getElementById('stack').classList.remove('show-detail');}
+document.querySelectorAll('.filter-pill').forEach(p=>p.addEventListener('click',()=>{
+  const row=p.closest('.filter-row');
+  row.querySelectorAll('.filter-pill').forEach(x=>x.classList.remove('active'));
+  p.classList.add('active');
+  if(p.dataset.tab){
+    document.querySelectorAll('.tab-content').forEach(c=>c.classList.toggle('active',c.dataset.tabContent===p.dataset.tab));
+  }
+}));
+</script>
+</body>
+</html>

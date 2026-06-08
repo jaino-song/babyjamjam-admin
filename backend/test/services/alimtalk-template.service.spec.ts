@@ -6,6 +6,7 @@ describe("AlimtalkTemplateService", () => {
     const createMockAligoApi = (): jest.Mocked<IAligoApiPort> => ({
         sendAlimtalk: jest.fn(),
         createTemplate: jest.fn(),
+        listTemplates: jest.fn(),
     });
 
     const createDto = (overrides: Partial<CreateAlimtalkTemplateDto> = {}): CreateAlimtalkTemplateDto => ({

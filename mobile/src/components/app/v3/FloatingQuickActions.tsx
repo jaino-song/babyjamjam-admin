@@ -20,7 +20,7 @@ interface FloatingAction {
 }
 
 const FLOATING_ACTIONS: FloatingAction[] = [
-  { href: "/contracts/creation", label: "계약 발송", icon: Send },
+  { href: "/contracts/new", label: "계약 발송", icon: Send },
   { href: "/messages", label: "메시지", icon: MessageSquare },
   { href: "#", label: "알림톡", icon: KakaoTalkIcon },
   { href: "/messages", label: "비용계산기", icon: Calculator },

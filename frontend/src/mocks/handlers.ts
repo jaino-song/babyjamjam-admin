@@ -132,11 +132,10 @@ export const clientHandlers = {
     return {
       total: filtered.length,
       active: filtered.filter((c) => c.serviceStatus === 'active').length,
-      pending: filtered.filter((c) => c.serviceStatus === 'pending').length,
+      waiting: filtered.filter((c) => c.serviceStatus === 'waiting').length,
       completed: filtered.filter((c) => c.serviceStatus === 'completed').length,
       terminated: filtered.filter((c) => c.serviceStatus === 'terminated').length,
       replacementRequested: filtered.filter((c) => c.serviceStatus === 'replacement_requested').length,
-      inactive: filtered.filter((c) => c.serviceStatus === 'inactive').length,
     };
   },
 };

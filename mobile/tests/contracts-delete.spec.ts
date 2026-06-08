@@ -1,8 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     sessionStorage.clear();
+    (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
   });
 });
 
@@ -43,6 +44,8 @@ test.describe("Contracts delete flow", () => {
 
     let deleteRequestCount = 0;
 
+    await routeContractsDependencies(page, () => documents);
+
     await page.route("**/api/access-token", async (route) => {
       await route.fulfill({
         status: 200,
@@ -53,6 +56,7 @@ test.describe("Contracts delete flow", () => {
 
     await page.route("**/api/eformsign/documents**", async (route) => {
       const method = route.request().method();
+      const url = new URL(route.request().url());
 
       if (method === "DELETE") {
         deleteRequestCount += 1;
@@ -77,6 +81,28 @@ test.describe("Contracts delete flow", () => {
         return;
       }
 
+      if (method === "GET" && url.pathname.includes("/download_files")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/pdf",
+          body: "%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF",
+        });
+        return;
+      }
+
+      if (method === "GET") {
+        const documentId = /^\/api\/eformsign\/documents\/([^/]+)$/.exec(url.pathname)?.[1];
+        if (documentId) {
+          const doc = documents.find((item) => item.id === documentId);
+          await route.fulfill({
+            status: doc ? 200 : 404,
+            contentType: "application/json",
+            body: JSON.stringify(doc ?? { error: "Not found" }),
+          });
+          return;
+        }
+      }
+
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -90,27 +116,78 @@ test.describe("Contracts delete flow", () => {
     });
 
     await page.goto("/contracts");
-    await page.waitForLoadState("networkidle");
-
-    await expect(page.getByText("삭제대상 고객").first()).toBeVisible();
+    await expect(page.getByText("삭제대상 고객").first()).toBeVisible({ timeout: 15000 });
 
     await page.getByText("삭제대상 고객").first().click();
-    await expect(page.locator('[data-component="contracts-detail"]')).toBeVisible();
+    await expect(page.locator('[data-component="mobile-contracts-detail"]')).toBeVisible();
 
-    await page.locator('[data-component="contracts-detail-actions"] button').click();
+    await page.locator('[data-component="mobile-contracts-detail-menu-trigger"]').click();
+    await page.locator('[data-component="mobile-contracts-detail-menu-delete"]').click();
     await expect(page.locator('[data-component="confirm-action-modal"]')).toBeVisible();
-    await expect(page.getByText("이 문서를 삭제하시겠습니까?")).toBeVisible();
+    await expect(page.getByText("선택한 계약서를 삭제할까요?")).toBeVisible();
 
     await page.locator('[data-component="confirm-action-modal-actions"]').getByRole("button", { name: "취소" }).click();
     await expect(page.locator('[data-component="confirm-action-modal"]')).not.toBeVisible();
     expect(deleteRequestCount).toBe(0);
 
-    await page.locator('[data-component="contracts-detail-actions"] button').click();
+    await page.locator('[data-component="mobile-contracts-detail-menu-trigger"]').click();
+    await page.locator('[data-component="mobile-contracts-detail-menu-delete"]').click();
     await page.locator('[data-component="confirm-action-modal-actions"]').getByRole("button", { name: "삭제" }).click();
 
     await expect.poll(() => deleteRequestCount).toBe(1);
-    await expect(page.getByText("문서 삭제 완료")).toBeVisible();
+    await expect(page.locator('[data-component="toast"]')).toContainText("삭제대상 고객 계약서를 삭제했습니다.");
     await expect(page.getByText("삭제대상 고객")).not.toBeVisible();
-    await expect(page.getByText("계약을 선택해주세요")).toBeVisible();
+    await expect(page.locator('[data-component="mobile-contracts-detail-page"]')).toHaveAttribute("aria-hidden", "true");
   });
 });
+
+async function routeContractsDependencies(
+  page: Page,
+  getDocuments: () => Array<{
+    id: string;
+    current_status?: {
+      step_recipients?: Array<{ name?: string }>;
+    };
+  }>,
+) {
+  await page.route("**/api/auth/me", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "e2e-user",
+        name: "E2E Tester",
+        email: "e2e@example.com",
+        role: "admin",
+        branchName: "E2E Branch",
+      }),
+    });
+  });
+
+  await page.route("**/api/eformsign-docs/client-names**", async (route) => {
+    const summaries = getDocuments().map((doc, index) => {
+      const clientName = doc.current_status?.step_recipients?.[0]?.name ?? "고객";
+      return {
+        documentId: doc.id,
+        clientId: 9000 + index,
+        clientName,
+        clientPhone: "010-0000-0000",
+        providerName: "테스트 제공자",
+      };
+    });
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(summaries),
+    });
+  });
+
+  await page.route("**/api/alimtalk-logs**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+}

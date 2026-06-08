@@ -20,6 +20,7 @@ type UpdateClientParams = {
     serviceStatus?: string | null;
     breastPump?: boolean;
     eDocId?: string | null;
+    areaId?: string | null;
 };
 
 @Injectable()

@@ -105,12 +105,19 @@ export class EformsignWebhookService {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    async processWebhook(branchid: string, payload: EformsignWebhookPayloadDto): Promise<void> {
+    async processWebhook(payload: EformsignWebhookPayloadDto): Promise<void> {
         const { event_type, webhook_id, document, ready_document_pdf, document_action } = payload;
         const documentId = document?.id ?? ready_document_pdf?.document_id ?? document_action?.document_id;
-        const resolvedBranchId = documentId
-            ? await this.resolveBranchIdForDocument(branchid, documentId)
-            : branchid;
+        if (!documentId) {
+            this.logger.warn(`Ignoring webhook ${webhook_id}: missing document identifier`);
+            return;
+        }
+
+        const resolvedBranchId = await this.resolveBranchIdForDocument(documentId);
+        if (!resolvedBranchId) {
+            this.logger.warn(`Ignoring webhook ${webhook_id}: no local branch mapping for document ${documentId}`);
+            return;
+        }
 
         this.logger.log(`Processing webhook ${webhook_id}: event_type=${event_type}`);
 
@@ -148,10 +155,24 @@ export class EformsignWebhookService {
 
         this.logger.log(`PDF ready event: ${documentId} -> status=${status}, workflow=${workflow_name}`);
 
-        // Map status to Korean detail and determine status type
-        const { statusType, statusDetail } = this.mapStatus(status);
+        if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
+            const claimed = await this.claimDocumentCompletion(
+                branchid,
+                documentId,
+                workflow_seq,
+                workflow_name,
+                "ready_document_pdf",
+            );
+            if (!claimed) {
+                return;
+            }
 
-        // Update document status in DB
+            await this.handleCompletedDocument(branchid, documentId, workflow_name, "PDF event");
+            this.eventBus.emit({ branchId: branchid, documentId, reason: `pdf:${status}` });
+            return;
+        }
+
+        const { statusType, statusDetail } = this.mapStatus(status);
         try {
             await this.updateStatusUsecase.execute(branchid, {
                 documentId,
@@ -165,39 +186,11 @@ export class EformsignWebhookService {
 
             this.logger.log(`Document ${documentId} status updated from PDF event: ${status} -> ${statusDetail}`);
         } catch (error) {
-            // Document not found - frontend must create record first
             this.logger.warn(
                 `[ready_document_pdf] Document ${documentId} not found in DB. ` +
                 `Ensure frontend calls POST /eformsign-docs to create the record with clientId first. Error: ${error}`
             );
             return;
-        }
-
-        if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
-            this.logger.log(`Document ${documentId} completed (from PDF event), linking to client`);
-            try {
-                await this.linkDocumentUsecase.execute(branchid, documentId);
-                this.logger.log(`Document ${documentId} successfully linked to client`);
-
-                try {
-                    const accessTokenResponse = await this.eformsignApiClient.getAccessToken(Date.now());
-                    await this.syncClientEndDateUsecase.execute(
-                        branchid,
-                        documentId,
-                        accessTokenResponse.oauth_token.access_token
-                    );
-                } catch (error) {
-                    this.logger.error(`Failed to sync end date for document ${documentId}: ${error}`);
-                }
-
-                await this.sendContractSignedAlimtalkByDocumentId(
-                    branchid,
-                    documentId,
-                    workflow_name
-                );
-            } catch (error) {
-                this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
-            }
         }
 
         this.eventBus.emit({ branchId: branchid, documentId, reason: `pdf:${status}` });
@@ -251,61 +244,115 @@ export class EformsignWebhookService {
 
         this.logger.log(`Document event: ${documentId} -> status=${status}, title=${document_title}`);
 
-        // Map status to Korean detail and determine status type
         const { statusType, statusDetail } = this.mapStatus(status);
 
-        // Update document status in DB
-        try {
-            await this.updateStatusUsecase.execute(branchid, {
+        if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
+            const claimed = await this.claimDocumentCompletion(
+                branchid,
                 documentId,
-                statusType,
-                statusDetail,
-                stepType: String(workflow_seq),
-                stepIndex: String(workflow_seq),
-                stepName: workflow_name,
-                expired: false,
-            });
-
-            this.logger.log(`Document ${documentId} status updated: ${status} -> ${statusDetail}`);
-        } catch (error) {
-            // Document might not exist in our DB - frontend must create it first
-            this.logger.warn(
-                `[${status}] Document ${documentId} not found in DB. ` +
-                `Ensure frontend calls POST /eformsign-docs to create the record with clientId first. Error: ${error}`
+                workflow_seq,
+                workflow_name,
+                status,
             );
-            return;
+            if (!claimed) {
+                return;
+            }
+        } else {
+            try {
+                await this.updateStatusUsecase.execute(branchid, {
+                    documentId,
+                    statusType,
+                    statusDetail,
+                    stepType: String(workflow_seq),
+                    stepIndex: String(workflow_seq),
+                    stepName: workflow_name,
+                    expired: false,
+                });
+
+                this.logger.log(`Document ${documentId} status updated: ${status} -> ${statusDetail}`);
+            } catch (error) {
+                this.logger.warn(
+                    `[${status}] Document ${documentId} not found in DB. ` +
+                    `Ensure frontend calls POST /eformsign-docs to create the record with clientId first. Error: ${error}`
+                );
+                return;
+            }
         }
 
         await this.notifyReviewRequiredIfNeeded(branchid, documentId, document_title, statusType);
 
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
-            this.logger.log(`Document ${documentId} completed, linking to client`);
-            try {
-                await this.linkDocumentUsecase.execute(branchid, documentId);
-                this.logger.log(`Document ${documentId} successfully linked to client`);
-
-                try {
-                    const accessTokenResponse = await this.eformsignApiClient.getAccessToken(Date.now());
-                    await this.syncClientEndDateUsecase.execute(
-                        branchid,
-                        documentId,
-                        accessTokenResponse.oauth_token.access_token
-                    );
-                } catch (error) {
-                    this.logger.error(`Failed to sync end date for document ${documentId}: ${error}`);
-                }
-
-                await this.sendContractSignedAlimtalkByDocumentId(
-                    branchid,
-                    documentId,
-                    workflow_name
-                );
-            } catch (error) {
-                this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
-            }
+            await this.handleCompletedDocument(branchid, documentId, workflow_name, "document event");
         }
 
         this.eventBus.emit({ branchId: branchid, documentId, reason: `doc:${status}` });
+    }
+
+    private async claimDocumentCompletion(
+        branchid: string,
+        documentId: string,
+        workflowSeq: number,
+        workflowName: string,
+        source: string,
+    ): Promise<boolean> {
+        const claimResult = await this.eformsignDocRepository.claimCompletionStatus(branchid, {
+            documentId,
+            statusType: "050",
+            statusDetail: "완료",
+            stepType: String(workflowSeq),
+            stepIndex: String(workflowSeq),
+            stepName: workflowName,
+            expired: false,
+        });
+
+        if (claimResult === "claimed") {
+            this.logger.log(`Document ${documentId} completion claimed from ${source}`);
+            return true;
+        }
+
+        if (claimResult === "duplicate") {
+            this.logger.log(`Duplicate completion webhook ignored for document ${documentId} (${source})`);
+            return false;
+        }
+
+        this.logger.warn(
+            `[${source}] Document ${documentId} not found in DB. ` +
+            "Ensure frontend calls POST /eformsign-docs to create the record with clientId first."
+        );
+        return false;
+    }
+
+    private async handleCompletedDocument(
+        branchid: string,
+        documentId: string,
+        workflowName: string,
+        source: string,
+    ): Promise<void> {
+        this.logger.log(`Document ${documentId} completed (${source}), linking to client`);
+
+        try {
+            await this.linkDocumentUsecase.execute(branchid, documentId);
+            this.logger.log(`Document ${documentId} successfully linked to client`);
+
+            try {
+                const accessTokenResponse = await this.eformsignApiClient.getAccessToken(Date.now());
+                await this.syncClientEndDateUsecase.execute(
+                    branchid,
+                    documentId,
+                    accessTokenResponse.oauth_token.access_token
+                );
+            } catch (error) {
+                this.logger.error(`Failed to sync end date for document ${documentId}: ${error}`);
+            }
+
+            await this.sendContractSignedAlimtalkByDocumentId(
+                branchid,
+                documentId,
+                workflowName
+            );
+        } catch (error) {
+            this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
+        }
     }
 
     private async sendContractSignedAlimtalkByDocumentId(
@@ -362,13 +409,12 @@ export class EformsignWebhookService {
         return `${year}-${month}-${day}`;
     }
 
-    private async resolveBranchIdForDocument(fallbackBranchId: string, documentId: string): Promise<string> {
+    private async resolveBranchIdForDocument(documentId: string): Promise<string | null> {
         try {
-            const branchId = await this.eformsignDocRepository.findBranchIdByDocumentId(documentId);
-            return branchId ?? fallbackBranchId;
+            return await this.eformsignDocRepository.findBranchIdByDocumentId(documentId);
         } catch (error) {
             this.logger.warn(`Failed to resolve branch for document ${documentId}: ${error}`);
-            return fallbackBranchId;
+            return null;
         }
     }
 

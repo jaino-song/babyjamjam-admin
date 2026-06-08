@@ -1,60 +1,91 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
+import { invalidClientIdResponse, isValidClientId } from "../client-route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-// Helper to get auth token from request
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-// Helper to create authorization headers
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+// Mirrors backend UpdateClientDto: every field is @IsOptional, so this proxy
+// only type-checks the known fields and passes everything else through to the
+// backend's authoritative ValidationPipe.
+const updateClientSchema = z
+    .object({
+        name: z.string(),
+        primaryEmployeeId: z.number(),
+        secondaryEmployeeId: z.number().nullable(),
+        address: z.string().nullable(),
+        phone: z.string().nullable(),
+        type: z.string().nullable(),
+        duration: z.number().nullable(),
+        fullPrice: z.string().nullable(),
+        grant: z.string().nullable(),
+        actualPrice: z.string().nullable(),
+        startDate: z.string().nullable(),
+        endDate: z.string().nullable(),
+        careCenter: z.boolean(),
+        voucherClient: z.boolean(),
+        birthday: z.string().nullable(),
+        dueDate: z.string().nullable(),
+        serviceStatus: z.string().nullable(),
+        breastPump: z.boolean(),
+        eDocId: z.string().nullable(),
+        areaId: z.string().nullable(),
+    })
+    .partial()
+    .passthrough();
 
 // GET /api/clients/[id] - Get a client by ID
 export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { id } = await params;
+        if (!isValidClientId(id)) {
+            return invalidClientIdResponse();
+        }
+
         const response = await serverAPIClient.get(`/clients/${id}`, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error fetching client:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch client" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch client");
     }
 }
 
 // PATCH /api/clients/[id] - Update a client
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
-    try {
-        const token = getAuthToken(request);
-        if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+    const token = getAuthToken(request);
+    if (!token) {
+        return unauthorizedResponse("Unauthorized");
+    }
 
-        const { id } = await params;
-        const body = await request.json();
-        const response = await serverAPIClient.patch(`/clients/${id}`, body, {
+    const { id } = await params;
+    if (!isValidClientId(id)) {
+        return invalidClientIdResponse();
+    }
+
+    const { data, response } = await parseBody(updateClientSchema, request);
+    if (response) return response;
+
+    try {
+        const backendResponse = await serverAPIClient.patch(`/clients/${id}`, data, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(backendResponse);
     } catch (error) {
-        console.error("[API] Error updating client:", error);
-        return NextResponse.json(
-            { error: "Failed to update client" },
-            { status: 500 }
-        );
+        return errorResponse(error, "update client");
     }
 }
 
@@ -63,19 +94,19 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { id } = await params;
-        await serverAPIClient.delete(`/clients/${id}`, {
+        if (!isValidClientId(id)) {
+            return invalidClientIdResponse();
+        }
+
+        const response = await serverAPIClient.delete(`/clients/${id}`, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json({ success: true });
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error deleting client:", error);
-        return NextResponse.json(
-            { error: "Failed to delete client" },
-            { status: 500 }
-        );
+        return errorResponse(error, "delete client");
     }
 }

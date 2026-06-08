@@ -1,26 +1,32 @@
 import { NextResponse, NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+import { getUpstreamErrorStatus, logUpstreamError, parseBody, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+
+const verifyEmailSchema = z
+    .object({
+        token: z.string().min(1).max(10_000),
+    })
+    .passthrough();
 
 export async function POST(request: NextRequest) {
-    try {
-        const body = await request.json();
-        const { data, status } = await serverAPIClient.post("/auth/verify-email", body);
+    const { data, response } = await parseBody(verifyEmailSchema, request);
+    if (response) return response;
 
-        return NextResponse.json(data, { status });
+    try {
+        const { data: responseData, status } = await serverAPIClient.post("/auth/verify-email", data);
+
+        return NextResponse.json(responseData, { status });
     } catch (error) {
-        console.error("[Auth Verify Email] Error:", error);
+        logUpstreamError("Auth Verify Email", error);
 
         if (error instanceof AxiosError) {
-            const status = error.response?.status || 500;
+            const status = getUpstreamErrorStatus(error);
             const responseData = error.response?.data;
 
-            if (responseData) {
-                return NextResponse.json(responseData, { status });
-            }
-
             return NextResponse.json(
-                { error: error.message || "Verification failed" },
+                sanitizeUpstreamClientError(responseData, "Verification failed"),
                 { status }
             );
         }

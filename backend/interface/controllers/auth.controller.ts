@@ -20,50 +20,63 @@ import {
 import { SelectBranchDto, SwitchBranchDto } from "interface/dto/branch-auth.dto";
 import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
+import { getKakaoOAuthConfig } from "infrastructure/auth/kakao-config";
 
 @Controller("auth")
 export class AuthController {
-    private readonly rateLimitGuard: RateLimitGuard;
     private static readonly PENDING_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
     private static readonly PENDING_ONBOARDING_TOKEN_HEADER = "x-pending-onboarding-token";
+    private static readonly OAUTH_NONCE_COOKIE = "kakao_oauth_nonce";
 
     constructor(
         private readonly authService: AuthService,
         private readonly prisma: PrismaService,
-    ) {
-        this.rateLimitGuard = new RateLimitGuard();
-    }
+        private readonly rateLimitGuard: RateLimitGuard,
+    ) {}
 
     @Get("kakao")
-    @UseGuards(AuthGuard("kakao"))
-    async kakaoLogin() {
-        // Redirects user to Kakao login page
+    async kakaoLogin(@Query("client") client: string | undefined, @Res() res: Response) {
+        // Initiate Kakao OAuth manually so we can both:
+        //  - carry the originating client (mobile vs desktop) in the OAuth `state`, so the
+        //    callback returns mobile users to m.staff.* instead of the desktop domain, and
+        //  - bind the round-trip to THIS browser with a single-use nonce cookie, so a forged
+        //    callback from another browser is rejected (login-CSRF protection).
+        // Both frontends navigate the browser directly to this backend host to start the flow,
+        // so the nonce cookie set here is sent back on the callback (same host).
+        const target = client === "mobile" ? "mobile" : "desktop";
+        const { signedState, nonce } = await this.authService.createKakaoLoginState(target);
+        this.setOAuthNonceCookie(res, nonce);
+
+        res.redirect(this.buildKakaoAuthorizeUrl(signedState));
     }
 
     @Get("kakao/callback")
     @UseGuards(AuthGuard("kakao"))
     async kakaoCallback(@Req() req: any, @Res() res: Response) {
-        const nodeEnv = process.env['NODE_ENV'];
-        let frontendURL: string;
-
-        if (nodeEnv === "production") {
-            frontendURL = process.env['PRODUCTION_FRONTEND_URL'] ?? "http://localhost:3000";
-        } else if (nodeEnv === "preview") {
-            frontendURL = process.env['PREVIEW_FRONTEND_URL'] ?? "http://localhost:3000";
-        } else {
-            frontendURL = process.env['DEVELOPMENT_FRONTEND_URL'] ?? "http://localhost:3000";
-        }
-
-        // Check if this is an account linking request (state contains linking JWT)
+        // `state` is a signed JWT: { client, nonce } for login, or a userId payload for
+        // linking. For login, the matching single-use nonce was stored in an httpOnly cookie
+        // at initiation; reading + clearing it here and requiring it to match the signed nonce
+        // binds this callback to the browser that started the flow (login-CSRF protection).
         const state = req.query.state as string | undefined;
-        if (state) {
-            const linkingInfo = await this.authService.verifyLinkingState(state);
-            if (linkingInfo) {
-                // This is an account linking request
-                console.log(`[Auth] Linking Kakao account to user ${linkingInfo.userId}`);
-                return this.completeKakaoLink(linkingInfo.userId, req.user, res, frontendURL);
-            }
+        const nonce = req.cookies?.[AuthController.OAUTH_NONCE_COOKIE] as string | undefined;
+        this.clearOAuthNonceCookie(res);
+
+        // Account-linking flow: state is a signed JWT bound to a userId (JwtGuard-gated).
+        const linkingInfo = state ? await this.authService.verifyLinkingState(state) : null;
+        if (linkingInfo) {
+            console.log(`[Auth] Linking Kakao account to user ${linkingInfo.userId}`);
+            return this.completeKakaoLink(linkingInfo.userId, req.user, res, this.resolveFrontendURL("desktop"));
         }
+
+        // Login/registration flow: state is a signed JWT carrying { client, nonce }.
+        const loginState = state ? await this.authService.verifyKakaoLoginState(state, nonce) : null;
+        if (!loginState) {
+            // Login-CSRF guard: state missing/forged/expired, or its nonce does not match the cookie.
+            console.warn("[Auth] Rejected Kakao callback: invalid or unbound OAuth state");
+            return res.redirect(`${this.resolveFrontendURL("desktop")}/login?error=invalid_oauth_state`);
+        }
+
+        const frontendURL = this.resolveFrontendURL(loginState.client);
 
         // Normal login/registration flow
         const result = await this.authService.validateKakaoUser(req.user);
@@ -301,14 +314,7 @@ export class AuthController {
     @UseGuards(JwtGuard)
     async initiateKakaoLink(@Request() req: any, @Res() res: Response) {
         const state = await this.authService.createLinkingState(req.user.userId);
-
-        const kakaoAuthUrl = new URL("https://kauth.kakao.com/oauth/authorize");
-        kakaoAuthUrl.searchParams.set("client_id", process.env['KAKAO_CLIENT_ID'] || "");
-        kakaoAuthUrl.searchParams.set("redirect_uri", process.env['KAKAO_CALLBACK_URL'] || "");
-        kakaoAuthUrl.searchParams.set("response_type", "code");
-        kakaoAuthUrl.searchParams.set("state", state);
-
-        res.redirect(kakaoAuthUrl.toString());
+        res.redirect(this.buildKakaoAuthorizeUrl(state));
     }
 
     /**
@@ -411,6 +417,53 @@ export class AuthController {
         } catch {
             return null;
         }
+    }
+
+    private resolveFrontendURL(client: "mobile" | "desktop"): string {
+        const nodeEnv = process.env['NODE_ENV'];
+        const fallback = "http://localhost:3000";
+
+        const desktopURL =
+            nodeEnv === "production" ? process.env['PRODUCTION_FRONTEND_URL']
+            : nodeEnv === "preview" ? process.env['PREVIEW_FRONTEND_URL']
+            : process.env['DEVELOPMENT_FRONTEND_URL'];
+
+        if (client === "desktop") {
+            return desktopURL ?? fallback;
+        }
+
+        const mobileURL =
+            nodeEnv === "production" ? process.env['PRODUCTION_MOBILE_FRONTEND_URL']
+            : nodeEnv === "preview" ? process.env['PREVIEW_MOBILE_FRONTEND_URL']
+            : process.env['DEVELOPMENT_MOBILE_FRONTEND_URL'];
+
+        // Fall back to the desktop URL until the mobile URL env var is configured, so a
+        // missing var degrades gracefully (current behavior) instead of breaking login.
+        return mobileURL ?? desktopURL ?? fallback;
+    }
+
+    private buildKakaoAuthorizeUrl(state: string): string {
+        const kakaoOAuthConfig = getKakaoOAuthConfig();
+        const kakaoAuthUrl = new URL("https://kauth.kakao.com/oauth/authorize");
+        kakaoAuthUrl.searchParams.set("client_id", kakaoOAuthConfig.clientID);
+        kakaoAuthUrl.searchParams.set("redirect_uri", kakaoOAuthConfig.callbackURL);
+        kakaoAuthUrl.searchParams.set("response_type", "code");
+        kakaoAuthUrl.searchParams.set("state", state);
+        return kakaoAuthUrl.toString();
+    }
+
+    private setOAuthNonceCookie(res: Response, nonce: string) {
+        res.cookie(AuthController.OAUTH_NONCE_COOKIE, nonce, {
+            httpOnly: true,
+            secure: process.env['NODE_ENV'] === 'production',
+            sameSite: 'lax',
+            path: '/',
+            maxAge: 10 * 60 * 1000, // 10 minutes; matches the signed-state TTL
+        });
+    }
+
+    private clearOAuthNonceCookie(res: Response) {
+        res.clearCookie(AuthController.OAUTH_NONCE_COOKIE, { path: '/' });
     }
 
     private setAuthCookies(res: Response, tokens: { accessToken: string; refreshToken: string }) {

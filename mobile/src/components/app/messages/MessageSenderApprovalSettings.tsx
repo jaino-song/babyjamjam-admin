@@ -124,7 +124,7 @@ export function MessageSenderApprovalSettings({
               </div>
             </div>
 
-            {!approval?.canRequest ? (
+            {!isLoading && !approval?.canRequest ? (
               <Alert>
                 <AlertDescription>
                   이 신청은 현재 조직의 `admin` 또는 `manager` 역할만 진행할 수 있습니다.

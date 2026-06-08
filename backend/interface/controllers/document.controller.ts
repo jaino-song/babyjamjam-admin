@@ -27,22 +27,38 @@ import { FILE_STORAGE_PORT, FileStoragePort } from "domain/ports/file-storage.po
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
-function toResponse(entity: DocumentEntity) {
-    return {
-        id: entity.id,
-        name: entity.name,
-        description: entity.description,
-        categoryId: entity.categoryId,
-        tags: entity.tags,
-        mimeType: entity.mimetype,
-        fileSize: entity.filesize,
-        storagePath: entity.storagepath,
-        storageUrl: entity.storageurl,
-        orgId: entity.branchid,
-        uploadedBy: entity.uploadedby,
-        createdAt: entity.createdat,
-        updatedAt: entity.updatedat,
-    };
+const MAX_DOCUMENT_TAGS = 50;
+const MAX_DOCUMENT_TAG_LENGTH = 100;
+
+function parseDocumentTags(tags: string[] | string | undefined): string[] {
+    if (tags === undefined) {
+        return [];
+    }
+
+    let parsed: unknown = tags;
+    if (typeof tags === "string") {
+        try {
+            parsed = JSON.parse(tags);
+        } catch {
+            throw new BadRequestException("tags must be a valid JSON array");
+        }
+    }
+
+    if (!Array.isArray(parsed)) {
+        throw new BadRequestException("tags must be an array");
+    }
+
+    if (parsed.length > MAX_DOCUMENT_TAGS) {
+        throw new BadRequestException(`tags must contain ${MAX_DOCUMENT_TAGS} items or fewer`);
+    }
+
+    if (!parsed.every((tag): tag is string => (
+        typeof tag === "string" && tag.length <= MAX_DOCUMENT_TAG_LENGTH
+    ))) {
+        throw new BadRequestException(`each tag must be a string up to ${MAX_DOCUMENT_TAG_LENGTH} characters`);
+    }
+
+    return parsed;
 }
 
 @Controller("documents")
@@ -67,7 +83,7 @@ export class DocumentController {
         }),
     )
     async upload(
-        @CurrentTenant() tenant: { branchId?: string },
+        @CurrentTenant() tenant: { branchId?: string; userId?: string },
         @UploadedFile() file: Express.Multer.File,
         @Body() dto: UploadDocumentDto,
     ) {
@@ -90,6 +106,7 @@ export class DocumentController {
             ? `${randomUUID()}.${fileExtension}`
             : randomUUID();
         const mimeType = file.mimetype || "application/octet-stream";
+        const tags = parseDocumentTags(dto.tags);
 
         // upload to storage
         const storageUrl = await this.fileStorage.upload(
@@ -97,11 +114,9 @@ export class DocumentController {
             storagePath,
             mimeType,
         );
+        const branchId = tenant.branchId ?? "";
 
-        // parse tags from string if needed (form-data sends arrays as strings)
-        const tags = typeof dto.tags === "string" ? JSON.parse(dto.tags) : dto.tags || [];
-
-        const entity = await this.documentService.create(tenant.branchId ?? "", {
+        const entity = await this.documentService.create(branchId, {
             name: dto.name || file.originalname,
             description: dto.description,
             categoryId: dto.categoryId,
@@ -109,16 +124,17 @@ export class DocumentController {
             mimetype: mimeType,
             filesize: file.size,
             storagepath: storagePath,
-            storageurl: storageUrl,
-            branchid: dto.branchid,
-            uploadedby: dto.uploadedby || "system",
+            branchid: branchId,
+            uploadedby: tenant.userId || "system",
         });
-        return toResponse(entity);
+        return this.toResponse(entity, storageUrl);
     }
 
     @Post()
     async create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateDocumentDto) {
-        const entity = await this.documentService.create(tenant.branchId ?? "", {
+        const branchId = tenant.branchId ?? "";
+
+        const entity = await this.documentService.create(branchId, {
             name: dto.name,
             description: dto.description,
             categoryId: dto.categoryId,
@@ -126,11 +142,10 @@ export class DocumentController {
             mimetype: dto.mimetype,
             filesize: dto.filesize,
             storagepath: dto.storagepath,
-            storageurl: dto.storageurl,
-            branchid: dto.branchid,
+            branchid: branchId,
             uploadedby: dto.uploadedby,
         });
-        return toResponse(entity);
+        return this.toResponse(entity);
     }
 
     @Get()
@@ -141,13 +156,13 @@ export class DocumentController {
         const entities = categoryId 
             ? await this.documentService.findByCategoryId(tenant.branchId ?? "", categoryId) 
             : await this.documentService.findAll(tenant.branchId ?? "");
-        return entities.map(toResponse);
+        return Promise.all(entities.map((entity) => this.toResponse(entity)));
     }
 
     @Get(":id")
     async findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
         const entity = await this.documentService.findById(tenant.branchId ?? "", id);
-        return toResponse(entity);
+        return this.toResponse(entity);
     }
 
     /**
@@ -160,7 +175,7 @@ export class DocumentController {
         @Param("branchid") branchid: string
     ) {
         const entities = await this.documentService.findByOrgId(tenant.branchId ?? "", branchid);
-        return entities.map(toResponse);
+        return Promise.all(entities.map((entity) => this.toResponse(entity)));
     }
 
     @Get("category/:categoryId")
@@ -172,7 +187,7 @@ export class DocumentController {
             tenant.branchId ?? "",
             categoryId
         );
-        return entities.map(toResponse);
+        return Promise.all(entities.map((entity) => this.toResponse(entity)));
     }
 
     @Put(":id")
@@ -187,7 +202,7 @@ export class DocumentController {
             categoryId: dto.categoryId,
             tags: dto.tags,
         });
-        return toResponse(entity);
+        return this.toResponse(entity);
     }
 
     /**
@@ -261,4 +276,25 @@ export class DocumentController {
          });
          res.send(fileBuffer);
      }
+
+    private async toResponse(entity: DocumentEntity, storageUrl?: string) {
+        const resolvedStorageUrl = storageUrl
+            ?? await this.fileStorage.createSignedUrl(entity.storagepath);
+
+        return {
+            id: entity.id,
+            name: entity.name,
+            description: entity.description,
+            categoryId: entity.categoryId,
+            tags: entity.tags,
+            mimeType: entity.mimetype,
+            fileSize: entity.filesize,
+            storagePath: entity.storagepath,
+            storageUrl: resolvedStorageUrl,
+            orgId: entity.branchid,
+            uploadedBy: entity.uploadedby,
+            createdAt: entity.createdat,
+            updatedAt: entity.updatedat,
+        };
+    }
 }

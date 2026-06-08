@@ -1,40 +1,95 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { Check, ChevronLeft } from "lucide-react";
+import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronLeft, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useCreateClient } from "@/hooks/useClients";
-import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
-import type { CreateClientDto } from "@/lib/client/types";
+import { useQuery } from "@tanstack/react-query";
+import { useClient, useCreateClient, useUpdateClient } from "@/hooks/useClients";
+import {
+  useAllVoucherPrices,
+  useBankAccountInfos,
+  useVoucherPriceInfos,
+  type BankAccountInfo,
+  type VoucherPriceInfo,
+} from "@/hooks/useVoucherData";
+import type { CreateClientDto, ServiceStatus, UpdateClientDto } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
-import type { Employee } from "@/hooks/useEmployees";
-import type { WizardStep } from "@/components/app/v3";
-import { Input, InputField, SteppedWizard } from "@/components/app/v3";
+import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
+import bankAccountOptions from "@/components/app/messages/templates/json/bank-account.json";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
+import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { parsePositiveIntQueryParam } from "@/lib/query-params";
+import { buildClientEditPrefillFromEformsignDocument } from "@/lib/eformsign/client-prefill";
+import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { cn } from "@/lib/utils";
-
-const SELECT_CLS =
-  "w-full px-4 py-3 rounded-2xl border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
-
-const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
-
-const GRID_CLS = "grid grid-cols-1 md:grid-cols-2 gap-4";
-
-const COMPLETED_PILL =
-  "inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-v3-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-v3-dark";
+import styles from "./page.module.css";
 
 const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
 const PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS = 1000;
 const PHONE_DUPLICATE_CHECK_FAILED_MESSAGE = "문제가 발생했어요. 새로고침 해주세요.";
+
+const WIZARD_STEPS = [
+  { title: "기본 정보", desc: "고객님의 기본 정보를 입력해주세요." },
+  { title: "서비스 설정", desc: "바우처와 제공인력, 요금 정보를 확인해주세요." },
+  { title: "계약 정보", desc: "계약 상태와 서비스 기간을 입력해주세요." },
+] as const;
+const VOUCHER_TYPE_OPTIONS = Object.values(voucherOptions.voucherOptions).flatMap((types) =>
+  Object.entries(types).map(([value, typeData]) => ({
+    value,
+    label: typeData.label,
+  })),
+);
+
+const getBankAccountAreaLabel = (areaId: string): string => (
+  bankAccountOptions[areaId as keyof typeof bankAccountOptions]?.area ?? areaId
+);
+
+const getBankAccountOptionLabel = (account: BankAccountInfo): string => {
+  const areaLabel = getBankAccountAreaLabel(account.area);
+  const accountText = [account.bankName, account.accNum].filter(Boolean).join(" ");
+
+  return accountText ? `${areaLabel} · ${accountText}` : areaLabel;
+};
+
+type HelperTone = "muted" | "ok" | "err" | "pending";
+
+function Field({
+  label,
+  required,
+  children,
+  helper,
+  helperTone = "muted",
+}: {
+  label: ReactNode;
+  required?: boolean;
+  children: ReactNode;
+  helper?: ReactNode;
+  helperTone?: HelperTone;
+}) {
+  return (
+    <div className={styles.formRow} data-component="clients-new-form-row">
+      <label className={styles.formLabel}>
+        {label}
+        {required ? <span className={styles.requiredMark}>*</span> : null}
+      </label>
+      {children}
+      {helper ? (
+        <div className={cn(styles.formHelper, styles[`helper_${helperTone}`])} data-component="clients-new-form-helper">
+          {helper}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const formatPhoneNumber = (value: string): string => {
   const digits = value.replace(/\D/g, "");
@@ -56,12 +111,91 @@ const parsePrice = (value: string | null | undefined): string => {
   return value.replace(/,/g, "");
 };
 
+const yymmddToIso = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const v = value.trim();
+  if (!/^\d{6}$/.test(v)) return v;
+  return `20${v.slice(0, 2)}-${v.slice(2, 4)}-${v.slice(4, 6)}`;
+};
+
+// ISO "2026-05-30" → "260530" — 편집 모드에서 client 데이터를 wizard store(YYMMDD)에 하이드레이트.
+const isoToYymmdd = (iso: string | null | undefined): string => {
+  if (!iso) return "";
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  return `${m[1].slice(2)}${m[2]}${m[3]}`;
+};
+
+const normalizeOptionToken = (value: string): string => value.replace(/[\s_-]+/g, "").toLowerCase();
+
+const resolveVoucherTypeValue = (value: string | null | undefined): string | undefined => {
+  const normalized = normalizeOptionToken(value ?? "");
+  if (!normalized) return undefined;
+
+  return VOUCHER_TYPE_OPTIONS.find((option) => (
+    normalizeOptionToken(option.value) === normalized ||
+    normalizeOptionToken(option.label) === normalized
+  ))?.value;
+};
+
+const normalizePhoneDigits = (value: string | null | undefined): string => (value ?? "").replace(/\D/g, "");
+
+const findEmployeeByContractPrefill = (
+  employees: readonly Employee[],
+  name: string | undefined,
+  phone: string | undefined,
+): Employee | undefined => {
+  if (!name) return undefined;
+  const trimmedName = name.trim();
+  const phoneDigits = normalizePhoneDigits(phone);
+
+  return employees.find((employee) => {
+    if (employee.name.trim() !== trimmedName) return false;
+    return !phoneDigits || normalizePhoneDigits(employee.phone) === phoneDigits;
+  }) ?? employees.find((employee) => employee.name.trim() === trimmedName);
+};
+
+const normalizePriceDigits = (value: string | null | undefined): string => (value ?? "").replace(/\D/g, "");
+
+const findVoucherPriceByAmounts = (
+  voucherPrices: readonly VoucherPriceInfo[],
+  amounts: { fullPrice?: string; grant?: string; actualPrice?: string },
+): VoucherPriceInfo | undefined => {
+  const fullPrice = normalizePriceDigits(amounts.fullPrice);
+  const grant = normalizePriceDigits(amounts.grant);
+  const actualPrice = normalizePriceDigits(amounts.actualPrice);
+  if (!fullPrice && !grant && !actualPrice) return undefined;
+
+  return voucherPrices.find((price) => {
+    if (fullPrice && normalizePriceDigits(price.fullPrice) !== fullPrice) return false;
+    if (grant && normalizePriceDigits(price.grant) !== grant) return false;
+    if (actualPrice && normalizePriceDigits(price.actualPrice) !== actualPrice) return false;
+    return true;
+  });
+};
+
 export default function NewClientPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editingClientId = parsePositiveIntQueryParam(searchParams.get("clientId"));
+  const isEditMode = editingClientId !== null;
+
   const locale = useLocale();
   const createClient = useCreateClient();
+  const updateClient = useUpdateClient();
+  const { data: editingClient } = useClient(editingClientId ?? 0);
+  const { data: employees = [], isLoading: isEmployeesLoading } = useEmployees();
+  const voucherLookupYear = isEditMode ? new Date().getFullYear() : undefined;
+  const {
+    data: allVoucherPrices = [],
+    isLoading: isAllVoucherPricesLoading,
+    isFetching: isAllVoucherPricesFetching,
+  } = useAllVoucherPrices(voucherLookupYear);
+  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
   const prefillName = useClientDialogStore((s) => s.prefillName);
+  const prefillClient = useClientDialogStore((s) => s.prefillClient);
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
+  const clearPrefillClient = useClientDialogStore((s) => s.clearPrefillClient);
 
   const store = useClientWizardStore();
   const { currentStep, pricesManuallyEdited, setField, setCurrentStep, setPricesManuallyEdited, reset } = store;
@@ -75,15 +209,59 @@ export default function NewClientPage() {
   const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
   const floatingErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastInitializedFormKeyRef = useRef<string | null>(null);
+  const lastHydratedIdRef = useRef<number | null>(null);
+  const lastHydratedContractDocIdRef = useRef<string | null>(null);
+
+  const { data: editingContractDocument } = useQuery({
+    queryKey: ["eformsign-docs", "document", editingClient?.eDocId],
+    queryFn: async () => {
+      const documentId = editingClient?.eDocId;
+      if (!documentId) {
+        throw new Error("documentId is required");
+      }
+      return withEformsignReauth(() => eformsignApi.getDocument(documentId));
+    },
+    enabled: Boolean(isEditMode && editingClient?.eDocId),
+    staleTime: 1000 * 60,
+    retry: 1,
+  });
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
+  const originalPhoneDigits = useMemo(
+    () => editingClient?.phone?.replace(/\D/g, "") ?? null,
+    [editingClient?.phone],
+  );
+  const isUsingOriginalPhone = Boolean(isEditMode && originalPhoneDigits && phoneDigits === originalPhoneDigits);
+  const isPhoneAvailable =
+    phoneDigits.length === 11 &&
+    (isUsingOriginalPhone ||
+      (!isCheckingPhoneDuplicate &&
+        !hasPhoneDuplicateCheckFailed &&
+        !isPhoneDuplicate &&
+        lastCheckedPhoneDigits === phoneDigits));
   const phoneInlineMessage = phoneDigits.length === 11
-    ? hasPhoneDuplicateCheckFailed
-    ? PHONE_DUPLICATE_CHECK_FAILED_MESSAGE
-    : isPhoneDuplicate
-      ? t(locale, "clients.form.error-phone-duplicate")
-      : null
+    ? isUsingOriginalPhone
+      ? "✓ 등록 가능한 번호입니다."
+      : isCheckingPhoneDuplicate
+      ? "번호를 확인하고 있습니다."
+      : hasPhoneDuplicateCheckFailed
+        ? PHONE_DUPLICATE_CHECK_FAILED_MESSAGE
+        : isPhoneDuplicate
+          ? t(locale, "clients.form.error-phone-duplicate")
+          : isPhoneAvailable
+            ? "✓ 등록 가능한 번호입니다."
+            : null
     : null;
+  const phoneHelperTone: HelperTone = isUsingOriginalPhone
+    ? "ok"
+    : isCheckingPhoneDuplicate
+      ? "pending"
+      : hasPhoneDuplicateCheckFailed || isPhoneDuplicate
+        ? "err"
+        : isPhoneAvailable
+          ? "ok"
+          : "muted";
 
   const showFloatingError = (message: string) => {
     setFloatingError(message);
@@ -104,23 +282,183 @@ export default function NewClientPage() {
     };
   }, []);
 
-  useEffect(() => {
-    return () => {
-      reset();
-    };
-  }, [reset]);
+  const formSessionKey = isEditMode ? `edit:${editingClientId}` : "create";
 
   useEffect(() => {
-    if (prefillName) {
-      setField("name", prefillName);
+    if (lastInitializedFormKeyRef.current === formSessionKey) return;
+    lastInitializedFormKeyRef.current = formSessionKey;
+    lastHydratedIdRef.current = null;
+    lastHydratedContractDocIdRef.current = null;
+    reset();
+  }, [formSessionKey, reset]);
+
+  useEffect(() => {
+    if (!prefillName) return;
+
+    if (isEditMode) {
       clearPrefillName();
+      return;
     }
-  }, [prefillName, clearPrefillName, setField]);
+
+    setField("name", prefillName);
+    clearPrefillName();
+  }, [prefillName, clearPrefillName, isEditMode, setField]);
+
+  useEffect(() => {
+    if (!prefillClient) return;
+
+    if (isEditMode) {
+      clearPrefillClient();
+      return;
+    }
+
+    reset();
+
+    if (prefillClient.name !== undefined) setField("name", prefillClient.name);
+    if (prefillClient.birthday !== undefined) setField("birthday", prefillClient.birthday);
+    if (prefillClient.dueDate !== undefined) setField("dueDate", prefillClient.dueDate);
+    if (prefillClient.address !== undefined) setField("address", prefillClient.address);
+    if (prefillClient.phone !== undefined) setField("phone", prefillClient.phone);
+    if (prefillClient.type !== undefined) setField("type", prefillClient.type);
+    if (prefillClient.duration !== undefined) setField("duration", prefillClient.duration);
+    if (prefillClient.fullPrice !== undefined) setField("fullPrice", prefillClient.fullPrice);
+    if (prefillClient.grant !== undefined) setField("grant", prefillClient.grant);
+    if (prefillClient.actualPrice !== undefined) setField("actualPrice", prefillClient.actualPrice);
+    if (prefillClient.startDate !== undefined) setField("startDate", prefillClient.startDate);
+    if (prefillClient.endDate !== undefined) setField("endDate", prefillClient.endDate);
+    if (prefillClient.careCenter !== undefined) setField("careCenter", prefillClient.careCenter);
+    if (prefillClient.voucherClient !== undefined) setField("voucherClient", prefillClient.voucherClient);
+    if (prefillClient.breastPump !== undefined) setField("breastPump", prefillClient.breastPump);
+    if (prefillClient.serviceStatus !== undefined) setField("serviceStatus", prefillClient.serviceStatus);
+    if (prefillClient.areaId !== undefined) setField("areaId", prefillClient.areaId ?? "");
+
+    if (
+      prefillClient.fullPrice !== undefined ||
+      prefillClient.grant !== undefined ||
+      prefillClient.actualPrice !== undefined
+    ) {
+      setPricesManuallyEdited(true);
+    }
+
+    clearPrefillClient();
+  }, [prefillClient, clearPrefillClient, isEditMode, reset, setField, setPricesManuallyEdited]);
+
+  // 편집 모드: 기존 client 데이터를 wizard store에 1회 하이드레이트 (editingClient.id 변경 시 재실행).
+  // pricesManuallyEdited=true 로 두어 voucherPriceInfos 자동 입력 effect가 저장된 요금을 덮어쓰지 못하게 한다.
+  useEffect(() => {
+    if (!editingClient) return;
+    if (lastHydratedIdRef.current === editingClient.id) return;
+    lastHydratedIdRef.current = editingClient.id;
+
+    setField("name", editingClient.name);
+    setField("birthday", editingClient.birthday ?? "");
+    setField("dueDate", isoToYymmdd(editingClient.dueDate));
+    setField("address", editingClient.address ?? "");
+    setField("phone", editingClient.phone ?? "");
+    setField("primaryEmployeeId", editingClient.primaryEmployee?.id ?? null);
+    setField("secondaryEmployeeId", editingClient.secondaryEmployee?.id ?? null);
+    setField("type", editingClient.type ?? "");
+    setField("duration", editingClient.duration);
+    setField("fullPrice", editingClient.fullPrice ?? "");
+    setField("grant", editingClient.grant ?? "");
+    setField("actualPrice", editingClient.actualPrice ?? "");
+    setField("startDate", isoToYymmdd(editingClient.startDate));
+    setField("endDate", isoToYymmdd(editingClient.endDate));
+    setField("careCenter", editingClient.careCenter);
+    setField("voucherClient", editingClient.voucherClient);
+    setField("breastPump", editingClient.breastPump);
+    setField("serviceStatus", editingClient.serviceStatus ?? "waiting");
+    setField("areaId", editingClient.areaId ?? "");
+    setPricesManuallyEdited(Boolean(editingClient.fullPrice || editingClient.grant || editingClient.actualPrice));
+  }, [editingClient, setField, setPricesManuallyEdited]);
+
+  useEffect(() => {
+    if (!editingClient?.eDocId || !editingContractDocument) return;
+    if (lastHydratedContractDocIdRef.current === editingClient.eDocId) return;
+
+    const prefill = buildClientEditPrefillFromEformsignDocument(editingContractDocument);
+    const hasPricePrefill = Boolean(prefill.fullPrice || prefill.grant || prefill.actualPrice);
+    const initialVoucherType = resolveVoucherTypeValue(prefill.type);
+
+    if ((prefill.primaryEmployeeName || prefill.secondaryEmployeeName) && isEmployeesLoading) {
+      return;
+    }
+
+    if (
+      hasPricePrefill &&
+      (isAllVoucherPricesLoading || isAllVoucherPricesFetching || allVoucherPrices.length === 0)
+    ) {
+      return;
+    }
+
+    lastHydratedContractDocIdRef.current = editingClient.eDocId;
+
+    const matchedVoucherPrice = hasPricePrefill
+      ? findVoucherPriceByAmounts(allVoucherPrices, prefill)
+      : undefined;
+    const matchedDuration = matchedVoucherPrice?.duration ? Number(matchedVoucherPrice.duration) : undefined;
+    const voucherType = initialVoucherType ?? resolveVoucherTypeValue(matchedVoucherPrice?.type);
+    const voucherDuration = Number.isFinite(matchedDuration) ? matchedDuration : prefill.duration;
+    const primaryEmployee = findEmployeeByContractPrefill(
+      employees,
+      prefill.primaryEmployeeName,
+      prefill.primaryEmployeePhone,
+    );
+    const secondaryEmployee = findEmployeeByContractPrefill(
+      employees,
+      prefill.secondaryEmployeeName,
+      prefill.secondaryEmployeePhone,
+    );
+
+    if (!store.birthday && prefill.birthday) setField("birthday", prefill.birthday);
+    if (!store.dueDate && prefill.dueDate) setField("dueDate", prefill.dueDate);
+    if (!store.address && prefill.address) setField("address", prefill.address);
+    if (!store.phone && prefill.phone) setField("phone", prefill.phone);
+    if (!store.type && voucherType) setField("type", voucherType);
+    if (store.duration == null && voucherDuration != null) setField("duration", voucherDuration);
+    if (!store.fullPrice && prefill.fullPrice) setField("fullPrice", prefill.fullPrice);
+    if (!store.grant && prefill.grant) setField("grant", prefill.grant);
+    if (!store.actualPrice && prefill.actualPrice) setField("actualPrice", prefill.actualPrice);
+    if (!store.startDate && prefill.startDate) setField("startDate", prefill.startDate);
+    if (!store.endDate && prefill.endDate) setField("endDate", prefill.endDate);
+    if (store.primaryEmployeeId == null && primaryEmployee) setField("primaryEmployeeId", primaryEmployee.id);
+    if (store.secondaryEmployeeId == null && secondaryEmployee) setField("secondaryEmployeeId", secondaryEmployee.id);
+
+    if (hasPricePrefill) {
+      setPricesManuallyEdited(true);
+    }
+  }, [
+    editingClient?.eDocId,
+    editingContractDocument,
+    allVoucherPrices,
+    employees,
+    isAllVoucherPricesFetching,
+    isAllVoucherPricesLoading,
+    isEmployeesLoading,
+    setField,
+    setPricesManuallyEdited,
+    store.actualPrice,
+    store.address,
+    store.birthday,
+    store.dueDate,
+    store.duration,
+    store.endDate,
+    store.fullPrice,
+    store.grant,
+    store.phone,
+    store.primaryEmployeeId,
+    store.secondaryEmployeeId,
+    store.startDate,
+    store.type,
+  ]);
 
   useEffect(() => {
     if (phoneDigits.length !== 11) {
       return;
     }
+
+    // 편집 모드에서 변경하지 않은 기존 번호는 중복 체크를 건너뛴다 (본인 번호이므로 항상 사용 가능).
+    if (isUsingOriginalPhone) return;
 
     const abortController = new AbortController();
 
@@ -194,7 +532,7 @@ export default function NewClientPage() {
       abortController.abort();
       setIsCheckingPhoneDuplicate(false);
     };
-  }, [phoneDigits]);
+  }, [phoneDigits, isUsingOriginalPhone]);
 
   const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(store.type || "");
 
@@ -203,11 +541,25 @@ export default function NewClientPage() {
     const durations = [...new Set(voucherPriceInfos.map((i) => Number(i.duration)))];
     return durations.sort((a, b) => a - b);
   }, [voucherPriceInfos]);
+  const hasValidStoreDuration = store.duration != null && availableDurations.includes(store.duration);
+
+  const inferredDurationFromPrices = useMemo(() => {
+    if (!voucherPriceInfos || hasValidStoreDuration) return null;
+
+    const matchedVoucherPrice = findVoucherPriceByAmounts(voucherPriceInfos, {
+      fullPrice: store.fullPrice,
+      grant: store.grant,
+      actualPrice: store.actualPrice,
+    });
+    const matchedDuration = matchedVoucherPrice?.duration ? Number(matchedVoucherPrice.duration) : undefined;
+    return matchedDuration !== undefined && Number.isFinite(matchedDuration) ? matchedDuration : null;
+  }, [hasValidStoreDuration, store.actualPrice, store.fullPrice, store.grant, voucherPriceInfos]);
+  const effectiveDuration = hasValidStoreDuration ? store.duration : inferredDurationFromPrices;
 
   const selectedPriceInfo = useMemo(() => {
-    if (!voucherPriceInfos || !store.duration) return null;
-    return voucherPriceInfos.find((i) => Number(i.duration) === store.duration);
-  }, [voucherPriceInfos, store.duration]);
+    if (!voucherPriceInfos || !effectiveDuration) return null;
+    return voucherPriceInfos.find((i) => Number(i.duration) === effectiveDuration);
+  }, [effectiveDuration, voucherPriceInfos]);
 
   useEffect(() => {
     if (selectedPriceInfo && !pricesManuallyEdited) {
@@ -216,6 +568,41 @@ export default function NewClientPage() {
       setField("actualPrice", parsePrice(selectedPriceInfo.actualPrice));
     }
   }, [selectedPriceInfo, pricesManuallyEdited, setField]);
+
+  useEffect(() => {
+    if (!store.type || hasValidStoreDuration || !voucherPriceInfos) return;
+
+    const matchedVoucherPrice = findVoucherPriceByAmounts(voucherPriceInfos, {
+      fullPrice: store.fullPrice,
+      grant: store.grant,
+      actualPrice: store.actualPrice,
+    });
+    const matchedDuration = matchedVoucherPrice?.duration ? Number(matchedVoucherPrice.duration) : undefined;
+    if (matchedDuration !== undefined && Number.isFinite(matchedDuration)) {
+      setField("duration", matchedDuration);
+    }
+  }, [
+    hasValidStoreDuration,
+    setField,
+    store.actualPrice,
+    store.duration,
+    store.fullPrice,
+    store.grant,
+    store.type,
+    voucherPriceInfos,
+  ]);
+
+  // 시작일(YYMMDD) + 바우처 기간이 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
+  // 사용자가 종료일을 수동 편집해도 startDate/duration이 다시 바뀌어야만 덮어쓴다.
+  useEffect(() => {
+    if (!store.startDate || !effectiveDuration) return;
+    if (!/^\d{6}$/.test(store.startDate)) return;
+    const startIso = `20${store.startDate.slice(0, 2)}-${store.startDate.slice(2, 4)}-${store.startDate.slice(4, 6)}`;
+    const endIso = calcEndDateBusinessDays(startIso, effectiveDuration);
+    if (!endIso) return;
+    const endYymmdd = `${endIso.slice(2, 4)}${endIso.slice(5, 7)}${endIso.slice(8, 10)}`;
+    setField("endDate", endYymmdd);
+  }, [effectiveDuration, store.startDate, setField]);
 
   const handleTypeChange = (newType: string) => {
     setField("type", newType);
@@ -239,6 +626,7 @@ export default function NewClientPage() {
         if (store.birthday.replace(/\D/g, "").length !== 6) return false;
         if (!store.dueDate) return false;
         if (phoneDigits.length !== 11) return false;
+        if (isUsingOriginalPhone) return true;
 
         if (isCheckingPhoneDuplicate) {
           return false;
@@ -300,25 +688,30 @@ export default function NewClientPage() {
       const dto: CreateClientDto = {
         name: store.name,
         birthday: store.birthday || null,
-        dueDate: store.dueDate || null,
+        dueDate: yymmddToIso(store.dueDate),
         address: store.address || null,
         phone: store.phone || null,
         primaryEmployeeId: store.primaryEmployeeId,
         secondaryEmployeeId: store.secondaryEmployeeId,
         type: store.type || null,
-        duration: store.duration || null,
+        duration: effectiveDuration || null,
         fullPrice: store.fullPrice || null,
         grant: store.grant || null,
         actualPrice: store.actualPrice || null,
-        startDate: store.startDate || null,
-        endDate: store.endDate || null,
+        startDate: yymmddToIso(store.startDate),
+        endDate: yymmddToIso(store.endDate),
         careCenter: store.careCenter,
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
         serviceStatus: store.serviceStatus || null,
+        areaId: store.areaId || null,
       };
-      const newClient = await createClient.mutateAsync(dto);
-      router.push(`/clients?id=${newClient.id}`);
+      if (editingClientId !== null) {
+        await updateClient.mutateAsync({ id: editingClientId, dto: dto as UpdateClientDto });
+      } else {
+        await createClient.mutateAsync(dto);
+      }
+      router.push(clientsReturnHref);
     } catch (err: unknown) {
       showFloatingError(getErrorMessage(err, locale, "clients.form.error-save-failed"));
     }
@@ -332,327 +725,32 @@ export default function NewClientPage() {
     }
   };
 
-  const steps: WizardStep[] = [
-    {
-      label: "기본 정보",
-      content: (
-        <div className={GRID_CLS}>
-          <InputField
-            title={
-              <>
-                {t(locale, "clients.form.name")} <span className="text-v3-burgundy">*</span>
-              </>
-            }
-            inputProps={{
-              value: store.name,
-              onChange: (e) => setField("name", e.target.value),
-              placeholder: "홍길동",
-            }}
-          />
-          <InputField
-            title={
-              <>
-                {t(locale, "clients.form.birthday")} <span className="text-v3-burgundy">*</span>
-              </>
-            }
-            inputProps={{
-              value: store.birthday,
-              onChange: (e) => setField("birthday", e.target.value),
-              placeholder: "YYMMDD",
-              maxLength: 6,
-            }}
-          />
-          <InputField
-            title={
-              <>
-                {t(locale, "clients.form.due-date")} <span className="text-v3-burgundy">*</span>
-              </>
-            }
-            inputProps={{
-              type: "date",
-              value: store.dueDate,
-              onChange: (e) => setField("dueDate", e.target.value),
-            }}
-          />
-          <InputField
-            title={
-              <>
-                {t(locale, "clients.form.phone")} <span className="text-v3-burgundy">*</span>
-              </>
-            }
-            message={phoneInlineMessage}
-            messageTone={hasPhoneDuplicateCheckFailed || isPhoneDuplicate ? "error" : "muted"}
-            inputProps={{
-              value: store.phone,
-              onChange: (e) => setField("phone", formatPhoneNumber(e.target.value)),
-              placeholder: "010-1234-5678",
-              maxLength: 13,
-            }}
-          />
-          <InputField
-            className="md:col-span-2"
-            title={t(locale, "clients.form.address")}
-            inputProps={{
-              value: store.address,
-              onChange: (e) => setField("address", e.target.value),
-              placeholder: "서울시 강남구...",
-            }}
-          />
-        </div>
-      ),
-      summary: (
-        <div className="flex gap-3 flex-wrap">
-          {store.name && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.name}
-            </span>
-          )}
-          {store.phone && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.phone}
-            </span>
-          )}
-          {store.address && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.address}
-            </span>
-          )}
-        </div>
-      ),
-    },
-    {
-      label: "담당 관리사",
-      content: (
-        <div className={GRID_CLS}>
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLS}>{t(locale, "clients.form.primary-employee")}</label>
-            <EmployeeAutocomplete
-              value={store.primaryEmployeeId}
-              onChange={(id) => setField("primaryEmployeeId", id)}
-              label=""
-              excludeIds={store.secondaryEmployeeId != null ? [store.secondaryEmployeeId] : []}
-              allowManualEntry
-              onManualEntry={() => {
-                setEmployeeDialogTarget("primary");
-                setIsEmployeeDialogOpen(true);
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLS}>{t(locale, "clients.form.secondary-employee")}</label>
-            <EmployeeAutocomplete
-              value={store.secondaryEmployeeId}
-              onChange={(id) => setField("secondaryEmployeeId", id)}
-              label=""
-              excludeIds={store.primaryEmployeeId != null ? [store.primaryEmployeeId] : []}
-              allowManualEntry
-              onManualEntry={() => {
-                setEmployeeDialogTarget("secondary");
-                setIsEmployeeDialogOpen(true);
-              }}
-            />
-          </div>
-        </div>
-      ),
-    },
-    {
-      label: "서비스 설정",
-      content: (
-        <div className="space-y-6">
-          <div className={GRID_CLS}>
-            <div className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-type")}</label>
-              <select
-                className={SELECT_CLS}
-                value={store.type}
-                onChange={(e) => handleTypeChange(e.target.value)}
-              >
-                <option value="">선택하세요</option>
-                {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) =>
-                  Object.entries(types).map(([typeValue, typeData]) => (
-                    <option key={typeValue} value={typeValue}>
-                      {groupName} — {typeData.label}
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.duration")}</label>
-              <div className="relative">
-                <select
-                  className={cn(SELECT_CLS, (!store.type || isPriceLoading) && "opacity-50")}
-                  value={store.duration?.toString() || ""}
-                  onChange={(e) => {
-                    setField("duration", e.target.value ? Number(e.target.value) : null);
-                    setPricesManuallyEdited(false);
-                  }}
-                  disabled={!store.type || isPriceLoading}
-                >
-                  <option value="">선택하세요</option>
-                  {availableDurations.map((d) => (
-                    <option key={d} value={String(d)}>
-                      {d}일
-                    </option>
-                  ))}
-                </select>
-                {isPriceLoading && (
-                  <div className="absolute right-10 top-1/2 -translate-y-1/2">
-                    <div className="w-4 h-4 border-2 border-v3-primary/30 border-t-v3-primary rounded-full animate-spin" />
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+  const activeStep = Math.min(currentStep, WIZARD_STEPS.length - 1);
+  const isFirstStep = activeStep === 0;
+  const isLastStep = activeStep === WIZARD_STEPS.length - 1;
+  const activeStepMeta = WIZARD_STEPS[activeStep];
+  const progress = ((activeStep + 1) / WIZARD_STEPS.length) * 100;
+  const clientsReturnHref = editingClientId !== null ? `/clients?id=${editingClientId}` : "/clients";
+  const goBackToClients = () => {
+    router.push(clientsReturnHref);
+  };
 
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className={LABEL_CLS}>{t(locale, "clients.form.section-pricing")}</span>
-              {selectedPriceInfo && !pricesManuallyEdited && (
-                <span className="text-[0.65rem] font-bold text-v3-primary bg-v3-primary-light px-2 py-0.5 rounded-full">
-                  자동입력
-                </span>
-              )}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <InputField
-                title={t(locale, "clients.form.full-price")}
-                inputProps={{
-                  value: formatPrice(store.fullPrice),
-                  onChange: (e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, "")),
-                  placeholder: "0",
-                }}
-                renderInput={(resolvedInputProps) => (
-                  <div className="relative">
-                    <Input {...resolvedInputProps} className={cn(resolvedInputProps.className, "pr-8")} />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                  </div>
-                )}
-              />
-              <InputField
-                title={t(locale, "clients.form.grant")}
-                inputProps={{
-                  value: formatPrice(store.grant),
-                  onChange: (e) => handlePriceChange("grant", e.target.value.replace(/,/g, "")),
-                  placeholder: "0",
-                }}
-                renderInput={(resolvedInputProps) => (
-                  <div className="relative">
-                    <Input {...resolvedInputProps} className={cn(resolvedInputProps.className, "pr-8")} />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                  </div>
-                )}
-              />
-              <InputField
-                title={t(locale, "clients.form.actual-price")}
-                inputProps={{
-                  value: formatPrice(store.actualPrice),
-                  onChange: (e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, "")),
-                  placeholder: "0",
-                }}
-                renderInput={(resolvedInputProps) => (
-                  <div className="relative">
-                    <Input {...resolvedInputProps} className={cn(resolvedInputProps.className, "pr-8")} />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                  </div>
-                )}
-              />
-            </div>
-          </div>
+  const handlePrev = () => {
+    if (isFirstStep) return;
+    setCurrentStep(activeStep - 1);
+  };
 
-        </div>
-      ),
-      summary: (
-        <div className="flex gap-3 flex-wrap">
-          {store.type && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.type}
-            </span>
-          )}
-          {store.duration && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {store.duration}일
-            </span>
-          )}
-          {store.actualPrice && (
-            <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {formatPrice(store.actualPrice)}원
-            </span>
-          )}
-        </div>
-      ),
-    },
-    {
-      label: "계약 정보",
-      content: (
-        <div className="space-y-6">
-          <div className={GRID_CLS}>
-            <div className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.contract-status")}</label>
-              <select
-                className={SELECT_CLS}
-                value={store.serviceStatus}
-                onChange={(e) => setField("serviceStatus", e.target.value)}
-              >
-                {SERVICE_STATUS_OPTIONS.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <InputField
-              title={t(locale, "clients.form.start-date")}
-              inputProps={{
-                type: "date",
-                value: store.startDate,
-                onChange: (e) => setField("startDate", e.target.value),
-              }}
-            />
-            <InputField
-              title={t(locale, "clients.form.end-date")}
-              inputProps={{
-                type: "date",
-                value: store.endDate,
-                onChange: (e) => setField("endDate", e.target.value),
-              }}
-            />
-            <div className="flex flex-col gap-1.5 md:col-start-2">
-              <span className={cn(LABEL_CLS, "mb-1 block")}>{t(locale, "clients.form.section-flags")}</span>
-              <div className="flex flex-wrap gap-3">
-                {([
-                  { key: "voucherClient" as const, label: t(locale, "clients.form.voucher-client") },
-                  { key: "careCenter" as const, label: t(locale, "clients.form.care-center") },
-                  { key: "breastPump" as const, label: t(locale, "clients.form.breast-pump") },
-                ]).map(({ key, label }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setField(key, !store[key])}
-                    className={cn(
-                      "px-4 py-2.5 rounded-2xl text-[0.8rem] font-semibold transition-all border-[1.5px]",
-                      store[key]
-                        ? "bg-v3-primary-light border-v3-primary text-v3-primary"
-                        : "bg-white border-v3-border text-v3-text-muted hover:border-v3-primary/40"
-                    )}
-                  >
-                    {store[key] && <Check className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={2.5} />}
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      ),
-    },
-  ];
+  const handleNext = () => {
+    if (isLastStep) {
+      void handleComplete();
+      return;
+    }
+
+    handleStepChange(activeStep + 1);
+  };
+
+  const isSaving = createClient.isPending || updateClient.isPending;
+  const isPrimaryDisabled = isSaving || !isStepSatisfied(activeStep);
 
   return (
     <>
@@ -696,30 +794,346 @@ export default function NewClientPage() {
         )}
       </AnimatePresence>
 
-      <div data-component="clients-new-main-content" className="flex min-h-[calc(100dvh-6rem)] items-start justify-center py-6 md:py-8">
-        <div data-component="clients-new-main-content-inner" className="flex w-full flex-col">
-          <button
-            type="button"
-            onClick={() => router.push("/clients")}
-            className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
-          >
-            <ChevronLeft className="w-5 h-5 md:w-5 md:h-5 w-[18px] h-[18px]" />
-            고객 목록으로 돌아가기
-          </button>
+      <div className={styles.pageRoot} data-component="clients-new-page-shell">
+        <div className={styles.navPage} data-component="clients-new-nav-page">
+          <header className={styles.navbar} data-component="clients-new-navbar">
+            <button
+              type="button"
+              onClick={goBackToClients}
+              className={styles.navbarIconButton}
+              aria-label="고객 목록으로 돌아가기"
+            >
+              <ChevronLeft aria-hidden="true" size={20} strokeWidth={2.5} />
+            </button>
 
-          <div data-component="clients-new-stepper-shell">
-            <SteppedWizard
-              title={t(locale, "clients.form.add-title")}
-              subtitle="고객 정보를 단계별로 입력해 주세요"
-              steps={steps}
-              currentStep={currentStep}
-              onStepChange={handleStepChange}
-              onComplete={handleComplete}
-              completeLabel="등록"
-              isSubmitting={createClient.isPending}
-              isNextDisabled={!isStepSatisfied(currentStep)}
-            />
-          </div>
+            <div className={styles.navbarTitle} data-component="clients-new-navbar-title">{isEditMode ? "고객 정보 수정" : "새 고객 추가"}</div>
+
+            <button
+              type="button"
+              onClick={goBackToClients}
+              className={styles.navbarIconButton}
+              aria-label={isEditMode ? "고객 정보 수정 닫기" : "새 고객 추가 닫기"}
+            >
+              <X aria-hidden="true" size={20} strokeWidth={2.5} />
+            </button>
+          </header>
+
+          <section className={styles.wizardContent} data-component="clients-new-wizard">
+            <div className={styles.wizardHeader} data-component="clients-new-wizard-header">
+              <div className={styles.progressRow} data-component="clients-new-progress-row">
+                <div className={styles.progressTrack} data-component="clients-new-progress-track" aria-hidden="true">
+                  <div className={styles.progressFill} data-component="clients-new-progress-fill" style={{ width: `${progress}%` }} />
+                </div>
+                <div className={styles.stepCount} data-component="clients-new-step-count">
+                  <span>{activeStep + 1}</span> / {WIZARD_STEPS.length} 단계
+                </div>
+              </div>
+              <h1 className={styles.stepTitle}>{activeStepMeta.title}</h1>
+              <p className={styles.stepDesc}>{activeStepMeta.desc}</p>
+            </div>
+
+            <div className={styles.formScroll} data-component="clients-new-step-content">
+              {activeStep === 0 ? (
+                <>
+                  <div className={styles.formCard} data-component="clients-new-basic-contact-card">
+                    <Field label="이름" required>
+                      <input
+                        className={styles.formInput}
+                        value={store.name}
+                        onChange={(e) => setField("name", e.target.value)}
+                        placeholder="홍길동"
+                      />
+                    </Field>
+                    <Field label="연락처" required helper={phoneInlineMessage} helperTone={phoneHelperTone}>
+                      <input
+                        className={styles.formInput}
+                        value={store.phone}
+                        onChange={(e) => setField("phone", formatPhoneNumber(e.target.value))}
+                        type="tel"
+                        inputMode="numeric"
+                        maxLength={13}
+                        placeholder="010-1234-5678"
+                      />
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-basic-details-card">
+                    <Field label="생년월일">
+                      <input
+                        className={styles.formInput}
+                        value={store.birthday}
+                        onChange={(e) => setField("birthday", e.target.value)}
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
+                      />
+                    </Field>
+                    <Field label="출산 예정일">
+                      <input
+                        className={styles.formInput}
+                        value={store.dueDate}
+                        onChange={(e) => setField("dueDate", e.target.value)}
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
+                      />
+                    </Field>
+                    <Field label="주소">
+                      <input
+                        className={styles.formInput}
+                        value={store.address}
+                        onChange={(e) => setField("address", e.target.value)}
+                        placeholder="서울시 강남구..."
+                      />
+                    </Field>
+                  </div>
+                </>
+              ) : null}
+
+              {activeStep === 1 ? (
+                <>
+                  <div className={styles.formCard} data-component="clients-new-voucher-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">바우처</div>
+                    <Field label="바우처 유형">
+                      <div className={styles.selectWrap} data-component="clients-new-voucher-select-wrap">
+                        <select
+                          className={styles.formInput}
+                          value={store.type}
+                          onChange={(e) => handleTypeChange(e.target.value)}
+                        >
+                          <option value="">선택하세요</option>
+                          {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                            <optgroup key={groupName} label={groupName}>
+                              {Object.entries(types).map(([typeValue, typeData]) => (
+                                <option key={typeValue} value={typeValue}>
+                                  {typeData.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                    </Field>
+                    <Field label="기간" helper="바우처 유형에 따라 선택 가능한 기간이 달라집니다.">
+                      <div className={cn(styles.selectWrap, isPriceLoading ? styles.loadingSelect : !store.type && styles.disabledSelect)} data-component="clients-new-duration-select-wrap">
+                        <select
+                          className={styles.formInput}
+                          value={effectiveDuration?.toString() || ""}
+                          onChange={(e) => {
+                            setField("duration", e.target.value ? Number(e.target.value) : null);
+                            setPricesManuallyEdited(false);
+                          }}
+                          disabled={!store.type || isPriceLoading}
+                        >
+                          <option value="">선택하세요</option>
+                          {availableDurations.map((d) => (
+                            <option key={d} value={String(d)}>
+                              {d}일
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-bank-account-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">계좌번호</div>
+                    <Field label="계좌번호">
+                      <div
+                        className={cn(
+                          styles.selectWrap,
+                          isBankAccountInfosLoading ? styles.loadingSelect : bankAccountInfos.length === 0 && styles.disabledSelect,
+                        )}
+                        data-component="clients-new-bank-account-select-wrap"
+                      >
+                        <select
+                          className={styles.formInput}
+                          value={store.areaId}
+                          onChange={(e) => setField("areaId", e.target.value)}
+                          disabled={isBankAccountInfosLoading || bankAccountInfos.length === 0}
+                          data-component="clients-new-bank-account-select"
+                        >
+                          <option value="">
+                            {isBankAccountInfosLoading ? "불러오는 중" : "계좌번호 선택"}
+                          </option>
+                          {store.areaId && !bankAccountInfos.some((account) => account.area === store.areaId) ? (
+                            <option value={store.areaId}>
+                              {getBankAccountAreaLabel(store.areaId)}
+                            </option>
+                          ) : null}
+                          {bankAccountInfos.map((account) => (
+                            <option key={account.area} value={account.area}>
+                              {getBankAccountOptionLabel(account)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-employee-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">제공인력 배정</div>
+                    <Field label="제공인력 1">
+                      <EmployeeAutocomplete
+                        value={store.primaryEmployeeId}
+                        onChange={(id) => setField("primaryEmployeeId", id)}
+                        label=""
+                        excludeIds={store.secondaryEmployeeId != null ? [store.secondaryEmployeeId] : []}
+                        allowManualEntry
+                        onManualEntry={() => {
+                          setEmployeeDialogTarget("primary");
+                          setIsEmployeeDialogOpen(true);
+                        }}
+                      />
+                    </Field>
+                    <Field label="제공인력 2">
+                      <EmployeeAutocomplete
+                        value={store.secondaryEmployeeId}
+                        onChange={(id) => setField("secondaryEmployeeId", id)}
+                        label=""
+                        excludeIds={store.primaryEmployeeId != null ? [store.primaryEmployeeId] : []}
+                        allowManualEntry
+                        onManualEntry={() => {
+                          setEmployeeDialogTarget("secondary");
+                          setIsEmployeeDialogOpen(true);
+                        }}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-pricing-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">
+                      요금 정보
+                      {selectedPriceInfo ? (
+                        <span className={styles.autoBadge}>자동입력</span>
+                      ) : null}
+                    </div>
+                    <Field label="총 서비스 금액">
+                      <div className={styles.priceInput} data-component="clients-new-full-price-input-wrap">
+                        <input
+                          className={styles.formInput}
+                          value={formatPrice(store.fullPrice)}
+                          onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                          inputMode="numeric"
+                          placeholder="0"
+                        />
+                        <span>원</span>
+                      </div>
+                    </Field>
+                    <Field label="정부지원금">
+                      <div className={styles.priceInput} data-component="clients-new-grant-input-wrap">
+                        <input
+                          className={styles.formInput}
+                          value={formatPrice(store.grant)}
+                          onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
+                          inputMode="numeric"
+                          placeholder="0"
+                        />
+                        <span>원</span>
+                      </div>
+                    </Field>
+                    <Field label="본인부담금" helper="총 서비스 금액 - 정부지원금 = 본인부담금. 직접 수정도 가능합니다.">
+                      <div className={styles.priceInput} data-component="clients-new-actual-price-input-wrap">
+                        <input
+                          className={styles.formInput}
+                          value={formatPrice(store.actualPrice)}
+                          onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
+                          inputMode="numeric"
+                          placeholder="0"
+                        />
+                        <span>원</span>
+                      </div>
+                    </Field>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-options-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">추가 옵션</div>
+                    <div className={styles.toggleChipRow} data-component="clients-new-option-chips">
+                      {([
+                        { key: "voucherClient" as const, label: "바우처 고객" },
+                        { key: "careCenter" as const, label: "조리원 이용" },
+                        { key: "breastPump" as const, label: "유축기 대여" },
+                      ]).map(({ key, label }) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setField(key, !store[key])}
+                          className={cn(styles.toggleChip, store[key] && styles.selected)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {activeStep === 2 ? (
+                <>
+                  <div className={styles.formCard} data-component="clients-new-contract-status-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">계약 상태</div>
+                    <div className={styles.selectWrap} data-component="clients-new-status-select-wrap">
+                      <select
+                        className={styles.formInput}
+                        value={store.serviceStatus}
+                        onChange={(e) => setField("serviceStatus", e.target.value as ServiceStatus)}
+                        data-component="clients-new-status-select"
+                      >
+                        {SERVICE_STATUS_OPTIONS.map((status) => (
+                          <option key={status.value} value={status.value}>
+                            {status.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className={styles.formCard} data-component="clients-new-service-period-card">
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">서비스 기간</div>
+                    <Field label="시작일">
+                      <input
+                        className={styles.formInput}
+                        value={store.startDate}
+                        onChange={(e) => setField("startDate", e.target.value)}
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
+                      />
+                    </Field>
+                    <Field label="종료일">
+                      <input
+                        className={styles.formInput}
+                        value={store.endDate}
+                        onChange={(e) => setField("endDate", e.target.value)}
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
+                      />
+                    </Field>
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            <div className={styles.wizardActions} data-component="clients-new-actions">
+              <button
+                type="button"
+                onClick={handlePrev}
+                disabled={isFirstStep}
+                className={cn(styles.wizardButton, styles.secondaryButton)}
+              >
+                이전
+              </button>
+              <button
+                type="button"
+                onClick={handleNext}
+                disabled={isPrimaryDisabled}
+                className={cn(styles.wizardButton, styles.primaryButton)}
+              >
+                {isSaving ? (isEditMode ? "저장 중..." : "등록 중...") : isLastStep ? (isEditMode ? "저장" : "등록") : "다음"}
+              </button>
+            </div>
+          </section>
         </div>
       </div>
 

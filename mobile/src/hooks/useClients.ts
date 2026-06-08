@@ -2,12 +2,18 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
+import { dashboardQueryKeys } from "@/hooks/useDashboardAnalytics";
 import type { 
     Client, 
     CreateClientDto, 
     UpdateClientDto, 
     PaginatedResponse 
 } from "@/lib/client/types";
+
+interface UseClientsOptions {
+    refetchOnMount?: boolean | "always";
+    staleTime?: number;
+}
 
 // Query keys - using factory pattern for proper invalidation
 export const clientQueryKeys = {
@@ -20,8 +26,22 @@ export const clientQueryKeys = {
     detail: (id: number) => [...clientQueryKeys.details(), id] as const,
 };
 
+function isValidClientId(id: number): boolean {
+    return Number.isInteger(id) && id > 0;
+}
+
+export async function fetchClient(id: number): Promise<Client> {
+    const { data } = await api.get(`/clients/${id}`);
+    return data;
+}
+
 // Fetch all clients (paginated)
-export function useClients(page: number = 1, limit: number = 10, search?: string) {
+export function useClients(
+    page: number = 1,
+    limit: number = 10,
+    search?: string,
+    options: UseClientsOptions = {},
+) {
     return useQuery<PaginatedResponse<Client>>({
         queryKey: clientQueryKeys.list(page, limit, search),
         queryFn: async () => {
@@ -33,7 +53,8 @@ export function useClients(page: number = 1, limit: number = 10, search?: string
             const { data } = await api.get(`/clients?${params.toString()}`);
             return data;
         },
-        staleTime: 1000 * 60 * 5, // 5 minutes
+        refetchOnMount: options.refetchOnMount,
+        staleTime: options.staleTime ?? 1000 * 60 * 5, // 5 minutes
     });
 }
 
@@ -53,11 +74,8 @@ export function useAllClients() {
 export function useClient(id: number) {
     return useQuery<Client>({
         queryKey: clientQueryKeys.detail(id),
-        queryFn: async () => {
-            const { data } = await api.get(`/clients/${id}`);
-            return data;
-        },
-        enabled: !!id,
+        queryFn: () => fetchClient(id),
+        enabled: isValidClientId(id),
     });
 }
 
@@ -86,6 +104,9 @@ export function useCreateClient() {
         onSuccess: () => {
             // Invalidate all client queries (lists + details) using prefix match
             queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
+            // Dashboard summary counters derive from clients (review finding:
+            // with staleTime 60s they otherwise show stale counts post-mutation).
+            queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.analytics() });
         },
     });
 }
@@ -106,6 +127,7 @@ export function useUpdateClient() {
             queryClient.invalidateQueries({ 
                 queryKey: clientQueryKeys.detail(variables.id) 
             });
+            queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.analytics() });
         },
     });
 }
@@ -142,7 +164,7 @@ export function useDeleteClient() {
         },
         onSettled: () => {
             queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
+            queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.analytics() });
         },
     });
 }
-

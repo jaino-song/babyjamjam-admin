@@ -1,183 +1,150 @@
-import { test, expect } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
-/**
- * EmployeeAutocomplete Component Tests
- *
- * These tests verify the unified EmployeeAutocomplete component:
- * - Real-time search filtering
- * - "새 제공인력 추가" button always visible in dropdown
- * - Zustand store prefilling for EmployeeFormDialog
- * - Korean IME compatibility (openOnFocus)
- */
+// The employee autocomplete lives on STEP 1 (service settings) of the
+// /clients/new wizard — the beforeEach must complete step 0 first.
+
+const EMPLOYEES = [
+  {
+    id: 11,
+    name: '테스트직원',
+    workArea: ['인천'],
+    phone: '010-1111-1111',
+    grade: '베스트',
+    openToNextWork: true,
+    registeredDate: '2026-06-01',
+    status: 'available',
+  },
+  {
+    id: 12,
+    name: '보조직원',
+    workArea: ['인천'],
+    phone: '010-2222-2222',
+    grade: '프리미엄',
+    openToNextWork: true,
+    registeredDate: '2026-06-01',
+    status: 'available',
+  },
+];
+
+async function mockWizardRoutes(page: Page) {
+  await page.route('**/api/notifications/vapid-key**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ publicKey: 'test-vapid-key' }),
+    });
+  });
+
+  await page.route('**/api/employees', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(EMPLOYEES),
+    });
+  });
+
+  await page.route('**/api/bank-account-infos', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([{ area: 'area-incheon', bankName: '국민은행', accNum: '123-456-7890' }]),
+    });
+  });
+
+  await page.route('**/api/clients/check-phone**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ exists: false }),
+    });
+  });
+
+  await page.route('**/api/voucher-price-infos/type**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.route('**/api/clients', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
+}
 
 test.describe('EmployeeAutocomplete', () => {
-    // Navigate to clients page and open the form dialog before each test
-    test.beforeEach(async ({ page }) => {
-        // Go to clients page
-        await page.goto('/clients');
+  test.beforeEach(async ({ page }) => {
+    await mockWizardRoutes(page);
 
-        // Wait for page to load
-        await page.waitForLoadState('networkidle');
+    await page.goto('/clients/new');
+    await expect(page.locator('[data-component="clients-new-page-shell"]')).toBeVisible({
+      timeout: 15000,
     });
 
-    test('should open ClientFormDialog when clicking add button', async ({ page }) => {
-        // Find and click the add button (Plus icon)
-        const addButton = page.locator('[data-testid="add-client-button"]');
-        await addButton.click();
+    // Complete step 0 (basic info) to reach step 1 where the autocomplete mounts.
+    await page.getByPlaceholder('홍길동').fill('홍테스트 고객');
+    await page.getByPlaceholder('010-1234-5678').fill('01011112222');
+    await page.getByPlaceholder('YYMMDD').nth(0).fill('950101');
+    await page.getByPlaceholder('YYMMDD').nth(1).fill('260615');
+    await page.getByPlaceholder('서울시 강남구...').fill('인천광역시 연수구 테스트로 10');
+    await expect(
+      page.locator('[data-component="clients-new-basic-contact-card"] [data-component="clients-new-form-helper"]')
+    ).toContainText('등록 가능한 번호입니다.');
 
-        // Verify dialog opens
-        const dialog = page.locator('[data-testid="client-form-dialog"]');
-        await expect(dialog).toBeVisible();
+    await page.locator('[data-component="clients-new-actions"] button').nth(1).click();
+    await expect(page.locator('[data-component="clients-new-step-count"]')).toHaveText('2 / 3 단계');
+  });
+
+  test('renders employee autocompletes on the client creation wizard', async ({ page }) => {
+    const employeeAutocompletes = page.getByTestId('employee-autocomplete');
+
+    await expect(employeeAutocompletes.first()).toBeVisible();
+    await expect(employeeAutocompletes).toHaveCount(2);
+  });
+
+  test('opens the dropdown on focus and keeps the manual-entry action visible', async ({ page }) => {
+    const autocompleteInput = page.getByTestId('employee-autocomplete').first().locator('input');
+
+    await autocompleteInput.click();
+
+    await expect(page.locator('[data-component="employee-autocomplete-dropdown"]').first()).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.locator('[data-component="employee-autocomplete-add-button"]').first()).toBeVisible();
+  });
+
+  test('keeps the manual-entry action visible while filtering', async ({ page }) => {
+    const autocompleteInput = page.getByTestId('employee-autocomplete').first().locator('input');
+
+    await autocompleteInput.click();
+    await expect(page.locator('[data-component="employee-autocomplete-dropdown"]').first()).toBeVisible({
+      timeout: 5000,
     });
 
-    test('should show EmployeeAutocomplete in ClientFormDialog', async ({ page }) => {
-        // Open the form dialog
-        const addButton = page.locator('[data-testid="add-client-button"]');
-        await addButton.click();
+    await autocompleteInput.fill('김');
 
-        // Wait for dialog
-        await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
+    await expect(page.locator('[data-component="employee-autocomplete-dropdown"]').first()).toBeVisible();
+    await expect(page.locator('[data-component="employee-autocomplete-add-button"]').first()).toBeVisible();
+  });
 
-        // Find the primary employee autocomplete by its label
-        const employeeAutocomplete = page.locator('[data-testid="employee-autocomplete"]').first();
-        await expect(employeeAutocomplete).toBeVisible();
+  test('opens the employee dialog with the typed name prefilled', async ({ page }) => {
+    const autocompleteInput = page.getByTestId('employee-autocomplete').first().locator('input');
+    const typedName = '신규직원';
+
+    await autocompleteInput.click();
+    await expect(page.locator('[data-component="employee-autocomplete-dropdown"]').first()).toBeVisible({
+      timeout: 5000,
     });
 
-    test('should open dropdown on focus and show "새 제공인력 추가" button', async ({ page }) => {
-        // Open the form dialog
-        const addButton = page.locator('[data-testid="add-client-button"]');
-        await addButton.click();
-        await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
+    await autocompleteInput.fill(typedName);
+    await page.locator('[data-component="employee-autocomplete-add-button"]').first().click();
 
-        // Find the employee autocomplete input
-        const autocompleteInput = page.locator('[data-testid="employee-autocomplete"] input').first();
-
-        // Click to focus - should open dropdown (Korean IME compatibility)
-        await autocompleteInput.click();
-
-        // Wait for dropdown to appear
-        const dropdown = page.locator('[data-testid="employee-autocomplete-dropdown"]');
-        await expect(dropdown).toBeVisible({ timeout: 5000 });
-
-        // The "새 제공인력 추가" button should be visible
-        const addNewButton = page.locator('[data-testid="employee-autocomplete-add-button"]');
-        await expect(addNewButton).toBeVisible();
-    });
-
-    test('should filter employees when typing in search', async ({ page }) => {
-        // Open the form dialog
-        const addButton = page.locator('[data-testid="add-client-button"]');
-        await addButton.click();
-        await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-
-        // Find and focus the employee autocomplete
-        const autocompleteInput = page.locator('[data-testid="employee-autocomplete"] input').first();
-        await autocompleteInput.click();
-
-        // Wait for dropdown
-        await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible({ timeout: 5000 });
-
-        // Type a search term (Korean name)
-        await autocompleteInput.fill('김');
-
-        // Wait a moment for filtering
-        await page.waitForTimeout(300);
-
-        // The dropdown should still be visible with filtered results
-        // Note: Actual filtering depends on employee data in the database
-        await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible();
-
-        // The add button should still be visible even with search results
-        const addNewButton = page.locator('[data-testid="employee-autocomplete-add-button"]');
-        await expect(addNewButton).toBeVisible();
-    });
-
-    test('should open EmployeeFormDialog with prefilled name when clicking add button', async ({ page }) => {
-        // Open the form dialog
-        const addButton = page.locator('[data-testid="add-client-button"]');
-        await addButton.click();
-        await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-
-        // Find and focus the employee autocomplete
-        const autocompleteInput = page.locator('[data-testid="employee-autocomplete"] input').first();
-        await autocompleteInput.click();
-
-        // Wait for dropdown
-        await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible({ timeout: 5000 });
-
-        // Type a name that we want to be prefilled
-        const testName = '테스트직원';
-        await autocompleteInput.fill(testName);
-
-        // Click the "새 제공인력 추가" button
-        const addNewEmployeeButton = page.locator('[data-testid="employee-autocomplete-add-button"]');
-        await addNewEmployeeButton.click();
-
-        // Wait for the EmployeeFormDialog to appear (it's a nested dialog)
-        // Look for the dialog that contains employee form fields
-        await page.waitForTimeout(500);
-
-        // Check that a second dialog opened (EmployeeFormDialog)
-        const dialogs = page.locator('[role="dialog"]');
-        const dialogCount = await dialogs.count();
-
-        // There should be 2 dialogs now (ClientFormDialog + EmployeeFormDialog)
-        expect(dialogCount).toBeGreaterThanOrEqual(2);
-
-        // Find the name input in the EmployeeFormDialog (should be prefilled)
-        // The EmployeeFormDialog should have a text field with the prefilled name
-        const nameInputInEmployeeDialog = page.locator('[role="dialog"]').last().locator('input[type="text"]').first();
-
-        // Verify it has the prefilled value
-        await expect(nameInputInEmployeeDialog).toHaveValue(testName);
-    });
-
-    test('should keep "새 제공인력 추가" button visible even when no matches found', async ({ page }) => {
-        // Open the form dialog
-        const addButton = page.locator('[data-testid="add-client-button"]');
-        await addButton.click();
-        await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-
-        // Find and focus the employee autocomplete
-        const autocompleteInput = page.locator('[data-testid="employee-autocomplete"] input').first();
-        await autocompleteInput.click();
-
-        // Wait for dropdown
-        await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible({ timeout: 5000 });
-
-        // Type something that won't match any employees
-        await autocompleteInput.fill('존재하지않는이름xyz123');
-
-        // Wait for filtering
-        await page.waitForTimeout(300);
-
-        // The dropdown should still show the add button
-        const addNewButton = page.locator('[data-testid="employee-autocomplete-add-button"]');
-        await expect(addNewButton).toBeVisible();
-
-        // And possibly show "No options" text, but button is always there
-        const noOptionsText = page.getByText('검색 결과가 없습니다');
-        // This may or may not be visible depending on locale
-    });
-});
-
-test.describe('EmployeeAutocomplete in ContractCreationForm', () => {
-    test.beforeEach(async ({ page }) => {
-        // Navigate to contract creation page
-        await page.goto('/messages/contract');
-        await page.waitForLoadState('networkidle');
-    });
-
-    test('should have EmployeeAutocomplete for selecting caretaker', async ({ page }) => {
-        // The contract form should have an employee autocomplete field
-        const employeeAutocomplete = page.locator('[data-testid="employee-autocomplete"]');
-
-        // Check if at least one employee autocomplete exists on the page
-        // Note: This may be further in the form stepper, so we may need to navigate
-        const count = await employeeAutocomplete.count();
-
-        // If not immediately visible, the form might require steps to get there
-        // This is an informational assertion
-        console.log(`Found ${count} EmployeeAutocomplete components on contract form`);
-    });
+    const employeeDialog = page.locator('[data-component="employees-form-dialog"]');
+    await expect(employeeDialog).toBeVisible({ timeout: 5000 });
+    await expect(employeeDialog.locator('#name')).toHaveValue(typedName);
+  });
 });

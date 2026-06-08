@@ -1,341 +1,535 @@
 "use client";
 
-import Link from "next/link";
-import { redirect } from "next/navigation";
-import { useMemo, useState } from "react";
+import { redirect, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Calendar, File, Send, User } from "lucide-react";
 
-import { useDashboardStats } from "@/hooks/useDashboardStats";
-import { useClients } from "@/hooks/useClients";
-import { Client } from "@/lib/client/types";
+const ALL_FILTER = "전체";
+const DASHBOARD_ROUTE_BODY_CLASS = "mobile-dashboard-route";
+
+import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
+import { useClients, useDeleteClient } from "@/hooks/useClients";
+import { useSyncStaleEformsignStatuses } from "@/hooks/useSyncStaleEformsignStatuses";
+import type { Client } from "@/lib/client/types";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
+import { toast } from "@/hooks/use-toast";
 import { useInitialUser } from "@/providers/UserProvider";
-import { cn } from "@/lib/utils";
-import {
-  StatsBar,
-  SplitLayout,
-  DetailPanel,
-  InfoCard,
-  InfoRow,
-  StatusBadge,
-  RecentActivitiesPanel,
-  type ActionRequiredItem,
-  type StatusType,
-} from "@/components/app/v3";
-import {
-  Users,
-  Calendar,
-  FileSignature,
-  Send,
-  Phone,
-  FileText,
-  User,
-  MessageSquare,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
+import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { ClientDetailContent, type DetailTabId } from "@/components/app/clients/client-detail";
+import { DashboardRedesign } from "@/components/app/mobile-redesign/DashboardRedesign";
+import { diffBusinessDaysKr, isoDateInKorea } from "@/lib/date/business-days";
+import { deriveDashboardAnalyticsFromClients } from "@/lib/dashboard/analytics";
+import type {
+  DashboardRedesignFilter,
+  DashboardRedesignProps,
+} from "@/components/app/mobile-redesign/DashboardRedesign";
+import { MobileDetailSheet } from "@/components/app/mobile-redesign/detail-sheet";
+import type {
+  DashboardAnalytic,
+  ListRow,
+  SectionRows,
+} from "@/components/app/mobile-redesign/mockup-data";
+import "@/components/app/mobile-redesign/redesign.css";
 
-import { HeroBanner } from "@/components/app/dashboard/HeroBanner";
-import { Block } from "@/components/app/v3/Block";
-
-const DASHBOARD_STAT_KEYS = [
-  { icon: Users, valueKey: "activeClients" as const, label: "서비스 진행 중", colorIndex: 0, counter: "명" },
-  { icon: Calendar, valueKey: "upcomingThisMonth" as const, label: "이번달 시작 예정", colorIndex: 1, counter: "건" },
-  { icon: FileSignature, valueKey: "contractsPendingSignature" as const, label: "문서 서명 대기 중", colorIndex: 2, counter: "건" },
-  { icon: Send, valueKey: "contractsNotSent" as const, label: "문서 발송 대기 중", colorIndex: 3, counter: "건" },
+const AVATAR_TONES: NonNullable<ListRow["avatarTone"]>[] = [
+  "primary",
+  "green",
+  "burgundy",
+  "orange",
+  "purple",
 ];
 
-const getAvatarGradient = (name: string) => {
-  const charCode = name.charCodeAt(0);
-  const gradients = [
-    "bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]",
-    "bg-gradient-to-br from-[hsl(137,34%,31%)] to-[hsl(137,34%,25%)]",
-    "bg-gradient-to-br from-[hsl(355,36%,45%)] to-[hsl(355,36%,38%)]",
-    "bg-gradient-to-br from-[hsl(34,100%,55%)] to-[hsl(34,100%,45%)]",
-    "bg-gradient-to-br from-[hsl(175,60%,40%)] to-[hsl(175,60%,30%)]",
-    "bg-gradient-to-br from-[hsl(270,60%,55%)] to-[hsl(270,60%,45%)]",
-  ];
-  return gradients[charCode % gradients.length];
+function pickAvatarTone(name: string, fallback: number): NonNullable<ListRow["avatarTone"]> {
+  const code = name.charCodeAt(0) || fallback;
+  return AVATAR_TONES[code % AVATAR_TONES.length];
+}
+
+function clientInitial(name: string) {
+  return name.trim().charAt(0) || "?";
+}
+
+function clientMeta(c: Client) {
+  const type = c.type ?? "유형 미정";
+  return c.primaryEmployee?.name ? `${type} · ${c.primaryEmployee.name}` : `${type} · 제공인력 미배정`;
+}
+
+function dayDiff(targetISO: string | null) {
+  if (!targetISO) return null;
+  const target = new Date(targetISO);
+  if (Number.isNaN(target.getTime())) return null;
+  target.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
+}
+
+function formatMonthDay(diff: number) {
+  const d = new Date();
+  d.setDate(d.getDate() + diff);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function normalizeIsoDate(value: string | null) {
+  if (!value) return null;
+  const match = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (match) {
+    return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return isoDateInKorea(date);
+}
+
+function formatMonthDayFromIso(iso: string) {
+  return `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
+}
+
+interface DueInfo {
+  due: string;
+  dueSub?: string;
+  dueTone?: "urgent" | "soon";
+}
+
+type DashboardStatusBadge = {
+  label: string;
+  tone: ListRow["badgeTone"];
+  order: number;
 };
 
-const mapServiceStatusToV3 = (status: string | null): StatusType => {
-  switch (status) {
-    case "active":
-      return "active";
-    case "waiting":
-    case "pending":
-    case "replacement_requested":
-      return "pending";
-    case "terminated":
-    case "cancelled":
-      return "expired";
-    case "completed":
-      return "completed";
-    default:
-      return "pending";
-  }
+type DashboardStatusRow = ListRow & {
+  badges: DashboardStatusBadge[];
+  statusOrder: number;
 };
 
-const getStatusLabel = (status: string | null): string => {
-  switch (status) {
-    case "active":
-      return "진행중";
-    case "waiting":
-    case "pending":
-      return "대기";
-    case "replacement_requested":
-      return "교체 요청";
-    case "completed":
-      return "완료";
-    case "terminated":
-    case "cancelled":
-      return "중단";
-    default:
-      return "-";
+const DASHBOARD_STATUS_ORDER = {
+  waiting: 10,
+  upcoming: 20,
+  sendPending: 30,
+  reviewNeeded: 40,
+  active: 50,
+  replacementRequested: 60,
+} as const;
+
+function dueForStart(diff: number): DueInfo {
+  if (diff < 0) return { due: `D+${Math.abs(diff)}`, dueSub: "지남" };
+  if (diff === 0) return { due: "오늘", dueSub: "시작", dueTone: "urgent" };
+  if (diff === 1) return { due: "D-1", dueSub: "내일까지", dueTone: "urgent" };
+  if (diff <= 7) return { due: `D-${diff}`, dueSub: formatMonthDay(diff), dueTone: "soon" };
+  return { due: `D-${diff}`, dueSub: formatMonthDay(diff) };
+}
+
+function dueForUpcomingStart(diff: number): DueInfo {
+  if (diff <= 0) return dueForStart(diff);
+  if (diff === 1) return { due: "1일 남음", dueSub: "내일까지", dueTone: "urgent" };
+  if (diff <= 7) return { due: `${diff}일 남음`, dueSub: formatMonthDay(diff), dueTone: "soon" };
+  return { due: `${diff}일 남음`, dueSub: formatMonthDay(diff) };
+}
+
+function dueForEndDate(endDate: string | null): DueInfo | null {
+  const endIso = normalizeIsoDate(endDate);
+  if (!endIso) return null;
+
+  const diff = diffBusinessDaysKr(endIso);
+  if (diff === null) return null;
+
+  const dueSub = `~${formatMonthDayFromIso(endIso)}`;
+  if (diff < 0) return { due: `D+${Math.abs(diff)}`, dueSub: "지남" };
+  if (diff === 0) return { due: "종료", dueSub: "오늘", dueTone: "urgent" };
+  if (diff <= 3) return { due: `${diff}일 남음`, dueSub, dueTone: "urgent" };
+  if (diff <= 7) return { due: `${diff}일 남음`, dueSub, dueTone: "soon" };
+  return { due: `${diff}일 남음`, dueSub };
+}
+
+function withDashboardStatus(row: ListRow, statusOrder: number): DashboardStatusRow {
+  return {
+    ...row,
+    badges: [{ label: row.badge, tone: row.badgeTone, order: statusOrder }],
+    statusOrder,
+  };
+}
+
+function compactDashboardBadges(
+  badges: DashboardStatusBadge[],
+): Array<{ label: string; tone: ListRow["badgeTone"] }> {
+  const byLabel = new Map<string, DashboardStatusBadge>();
+
+  for (const badge of badges) {
+    const existing = byLabel.get(badge.label);
+    if (!existing || badge.order >= existing.order) {
+      byLabel.set(badge.label, badge);
+    }
   }
-};
+
+  const ordered = [...byLabel.values()].sort((a, b) => a.order - b.order);
+  const visible =
+    ordered.length > 2
+      ? [{ label: "...", tone: "muted" as const, order: Number.NEGATIVE_INFINITY }, ...ordered.slice(-2)]
+      : ordered;
+
+  return visible.map(({ label, tone }) => ({ label, tone }));
+}
+
+function mergeDashboardRows(rows: DashboardStatusRow[]): ListRow[] {
+  const mergedRows: Array<
+    DashboardStatusRow & {
+      sourceIndex: number;
+      fullBadges: DashboardStatusBadge[];
+    }
+  > = [];
+  const byClient = new Map<string | number, (typeof mergedRows)[number]>();
+
+  rows.forEach((row, index) => {
+    const key = row.id ?? `${row.name}-${row.meta}`;
+    const existing = byClient.get(key);
+
+    if (!existing) {
+      const merged = {
+        ...row,
+        sourceIndex: index,
+        fullBadges: [...row.badges],
+      };
+      byClient.set(key, merged);
+      mergedRows.push(merged);
+      return;
+    }
+
+    existing.fullBadges.push(...row.badges);
+
+    if (row.statusOrder >= existing.statusOrder) {
+      existing.badge = row.badge;
+      existing.badgeTone = row.badgeTone;
+      existing.due = row.due;
+      existing.dueSub = row.dueSub;
+      existing.dueTone = row.dueTone;
+      existing.statusOrder = row.statusOrder;
+    }
+  });
+
+  return mergedRows
+    .sort((a, b) => a.sourceIndex - b.sourceIndex)
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      meta: row.meta,
+      initial: row.initial,
+      badge: row.badge,
+      badgeTone: row.badgeTone,
+      badges: compactDashboardBadges(row.fullBadges),
+      due: row.due,
+      dueSub: row.dueSub,
+      dueTone: row.dueTone,
+      avatarTone: row.avatarTone,
+      onClick: row.onClick,
+    }));
+}
 
 export default function DashboardPage() {
-  const { data: stats, isLoading: statsLoading } = useDashboardStats();
-  const {
-    data: clientsData,
-    isLoading: clientsLoading,
-    isError: clientsError,
-    refetch: refetchClients,
-  } = useClients(1, 50);
+  // 60s staleTime: dashboard revisits within the window reuse the cache
+  // instead of re-firing analytics + clients (and the eformsign sync burst
+  // their invalidations cascade into) on every mount.
+  const { data: analytics, isLoading: analyticsLoading } = useDashboardAnalytics({
+    staleTime: 60_000,
+  });
+  const { data: clientsData, isLoading: clientsLoading } = useClients(1, 50, undefined, {
+    staleTime: 60_000,
+  });
   const user = useInitialUser();
+  const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
+
+  const clients = useMemo<Client[]>(() => clientsData?.data ?? [], [clientsData?.data]);
+  useSyncStaleEformsignStatuses(clients, { enabled: !clientsLoading });
+
+  useEffect(() => {
+    document.body.classList.add(DASHBOARD_ROUTE_BODY_CLASS);
+    return () => {
+      document.body.classList.remove(DASHBOARD_ROUTE_BODY_CLASS);
+    };
+  }, []);
+
+  const router = useRouter();
+  const locale = useLocale();
+  const deleteClient = useDeleteClient();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [detailTab, setDetailTab] = useState<DetailTabId>("basic");
+  const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [formDialogOpen, setFormDialogOpen] = useState(false);
+  const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
 
-  const clients = useMemo(() => clientsData?.data ?? [], [clientsData?.data]);
-  const hasMoreClients = (clientsData?.total ?? 0) > 50;
+  const openClient = useCallback((c: Client) => {
+    setSelectedClient(c);
+    setDetailTab("basic");
+  }, []);
+  const closeDetail = useCallback(() => setSelectedClient(null), []);
+  const handleEdit = useCallback((c: Client) => {
+    setEditingClient(c);
+    setFormDialogOpen(true);
+  }, []);
+  const handleMessage = useCallback((c: Client) => router.push(`/messages?clientId=${c.id}`), [router]);
+  const handleIssueContract = useCallback(() => router.push("/contracts/new"), [router]);
+  const handleDeleteRequest = useCallback((id: number) => setDeleteTargetClientId(id), []);
+  const handleDeleteConfirm = async () => {
+    if (deleteTargetClientId == null) return;
+    try {
+      await deleteClient.mutateAsync(deleteTargetClientId);
+      if (selectedClient?.id === deleteTargetClientId) setSelectedClient(null);
+      setDeleteTargetClientId(null);
+      toast({
+        title: t(locale, "clients.delete-success"),
+        description: t(locale, "clients.delete-success-description"),
+      });
+    } catch {
+      toast({
+        title: t(locale, "clients.delete-fail"),
+        description: t(locale, "clients.delete-fail-description"),
+        variant: "destructive",
+      });
+    }
+  };
 
-  const actionRequiredClients = useMemo(() => {
-    return clients
-      .filter((c) => {
-        const needsSignature = c.documentStatus && c.documentStatus !== "completed" && c.eDocId;
-        const notSent = !c.eDocId && c.serviceStatus === "active";
-        const replacementRequested = c.serviceStatus === "replacement_requested";
-        return needsSignature || notSent || replacementRequested;
-      })
-      .map((c): ActionRequiredItem => {
-        let reason: string;
-        let priority: number;
+  const dashboardData = useMemo<
+    Omit<DashboardRedesignProps, "activeFilter" | "onFilterChange"> & { allRows: ListRow[] }
+  >(() => {
+    const derivedAnalytics = deriveDashboardAnalyticsFromClients(clients);
+    const active = analytics?.activeClients ?? derivedAnalytics.activeClients;
+    const upcoming = analytics?.upcomingThisMonth ?? derivedAnalytics.upcomingThisMonth;
+    const pendingReview =
+      analytics?.contractsPendingSignature ?? derivedAnalytics.contractsPendingSignature;
+    const pendingSend = analytics?.contractsNotSent ?? derivedAnalytics.contractsNotSent;
 
-        if (c.serviceStatus === "replacement_requested") {
-          reason = "교체 요청";
-          priority = 1;
-        } else if (c.documentStatus && c.documentStatus !== "completed" && c.eDocId) {
-          reason = "서명 대기";
-          priority = 2;
-        } else {
-          reason = "발송 대기";
-          priority = 3;
-        }
+    const dashboardAnalytics: DashboardAnalytic[] = [
+      { label: "서비스 진행 중", value: String(active), tone: "primary", icon: User },
+      { label: "7일 내 시작 예정", value: String(upcoming), tone: "orange", icon: Calendar },
+      {
+        label: "검토 필요 문서",
+        value: String(pendingReview),
+        tone: "green",
+        icon: File,
+        urgent: pendingReview > 0,
+      },
+      {
+        label: "계약서 미완료",
+        value: String(pendingSend),
+        tone: "burgundy",
+        icon: Send,
+        urgent: pendingSend > 0,
+      },
+    ];
 
-        return { client: c, reason, priority };
-      })
-      .sort((a, b) => a.priority - b.priority);
-  }, [clients]);
+    if (clientsLoading) {
+      const filters: DashboardRedesignFilter[] = [
+        { label: ALL_FILTER, count: "", skeleton: true },
+        { label: "조치 필요", count: "", skeleton: true },
+        { label: "시작 예정", count: "", skeleton: true },
+        { label: "종료 예정", count: "", skeleton: true },
+      ];
 
-  const upcomingClients = useMemo(() => {
+      return { analytics: dashboardAnalytics, sections: [], filters, allRows: [], loading: true };
+    }
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const weekFromNow = new Date(today);
     weekFromNow.setDate(today.getDate() + 7);
     weekFromNow.setHours(23, 59, 59, 999);
+    const monthFromNow = new Date(today);
+    monthFromNow.setDate(today.getDate() + 30);
+    monthFromNow.setHours(23, 59, 59, 999);
 
-    return clients
+    const actionRequired = clients
       .filter((c) => {
-        if (!c.startDate) return false;
-        const start = new Date(c.startDate);
-        start.setHours(0, 0, 0, 0);
-        return start >= today && start <= weekFromNow;
+        if (c.serviceStatus === "replacement_requested") return true;
+        if (c.documentStatus && c.documentStatus !== "completed" && c.eDocId) return true;
+        if (!c.eDocId && c.serviceStatus === "active") return true;
+        return false;
+      })
+      .sort((a, b) => (b.updatedAt ? new Date(b.updatedAt).getTime() : 0) - (a.updatedAt ? new Date(a.updatedAt).getTime() : 0) || b.id - a.id);
+
+    const upcomingClients = clients
+      .filter((c) => {
+        if (!c.startDate || c.serviceStatus === "terminated")
+          return false;
+        const d = new Date(c.startDate);
+        if (Number.isNaN(d.getTime())) return false;
+        d.setHours(0, 0, 0, 0);
+        return d >= today && d <= weekFromNow;
       })
       .sort((a, b) => new Date(a.startDate!).getTime() - new Date(b.startDate!).getTime());
-  }, [clients]);
 
-  const selectedClientData = useMemo(() => {
-    if (!selectedClient) return null;
-    return clients.find((client) => client.id === selectedClient.id) ?? selectedClient;
-  }, [clients, selectedClient]);
+    const endingSoon = clients
+      .filter((c) => {
+        if (!c.endDate || c.serviceStatus !== "active") return false;
+        const d = new Date(c.endDate);
+        if (Number.isNaN(d.getTime())) return false;
+        d.setHours(0, 0, 0, 0);
+        return d >= today && d <= monthFromNow;
+      })
+      .sort((a, b) => new Date(a.endDate!).getTime() - new Date(b.endDate!).getTime());
+
+    const toActionRow = (c: Client, i: number): DashboardStatusRow => {
+      let badge: string;
+      let badgeTone: ListRow["badgeTone"];
+      let dueInfo: DueInfo | null = null;
+      let statusOrder: number;
+
+      if (c.serviceStatus === "replacement_requested") {
+        badge = "교체 요청";
+        badgeTone = "burgundy";
+        dueInfo = { due: "긴급", dueSub: "오늘", dueTone: "urgent" };
+        statusOrder = DASHBOARD_STATUS_ORDER.replacementRequested;
+      } else if (c.documentStatus && c.documentStatus !== "completed" && c.eDocId) {
+        badge = "검토 필요";
+        badgeTone = "primary";
+        const diff = dayDiff(c.startDate);
+        if (diff !== null) dueInfo = dueForStart(diff);
+        statusOrder = DASHBOARD_STATUS_ORDER.reviewNeeded;
+      } else {
+        badge = "발송 대기";
+        badgeTone = "orange";
+        const diff = dayDiff(c.startDate);
+        if (diff !== null) dueInfo = dueForStart(diff);
+        statusOrder = DASHBOARD_STATUS_ORDER.sendPending;
+      }
+
+      return withDashboardStatus({
+        id: c.id,
+        name: c.name,
+        meta: clientMeta(c),
+        initial: clientInitial(c.name),
+        badge,
+        badgeTone,
+        avatarTone: pickAvatarTone(c.name, i),
+        onClick: () => openClient(c),
+        ...(dueInfo ?? {}),
+      }, statusOrder);
+    };
+
+    const toUpcomingRow = (c: Client, i: number): DashboardStatusRow => {
+      const diff = dayDiff(c.startDate);
+      const dueInfo = diff !== null ? dueForUpcomingStart(diff) : null;
+      const hasEmployee = Boolean(c.primaryEmployee);
+      return withDashboardStatus({
+        id: c.id,
+        name: c.name,
+        meta: clientMeta(c),
+        initial: clientInitial(c.name),
+        badge: hasEmployee ? "예정" : "대기",
+        badgeTone: hasEmployee ? "primary" : "muted",
+        avatarTone: pickAvatarTone(c.name, i),
+        onClick: () => openClient(c),
+        ...(dueInfo ?? {}),
+      }, hasEmployee ? DASHBOARD_STATUS_ORDER.upcoming : DASHBOARD_STATUS_ORDER.waiting);
+    };
+
+    const toEndingRow = (c: Client, i: number): DashboardStatusRow => {
+      const dueInfo = dueForEndDate(c.endDate);
+      return withDashboardStatus({
+        id: c.id,
+        name: c.name,
+        meta: clientMeta(c),
+        initial: clientInitial(c.name),
+        badge: "진행중",
+        badgeTone: "primary",
+        avatarTone: pickAvatarTone(c.name, i),
+        onClick: () => openClient(c),
+        ...(dueInfo ?? {}),
+      }, DASHBOARD_STATUS_ORDER.active);
+    };
+
+    const actionRows = actionRequired.map(toActionRow);
+    const upcomingRows = upcomingClients.map(toUpcomingRow);
+    const endingRows = endingSoon.map(toEndingRow);
+    const allRows = mergeDashboardRows([...actionRows, ...upcomingRows, ...endingRows]);
+
+    const allSections: SectionRows[] = [
+      { title: `조치 필요 · ${actionRows.length}건`, rows: actionRows },
+      { title: `시작 예정 · ${upcomingRows.length}명`, rows: upcomingRows },
+      { title: `종료 예정 · ${endingRows.length}명`, rows: endingRows },
+    ].filter((s) => s.rows.length > 0);
+
+    const filters: DashboardRedesignFilter[] = [
+      { label: ALL_FILTER, count: String(allRows.length) },
+      { label: "조치 필요", count: String(actionRows.length) },
+      { label: "시작 예정", count: String(upcomingRows.length) },
+      { label: "종료 예정", count: String(endingRows.length) },
+    ];
+
+    return { analytics: dashboardAnalytics, sections: allSections, filters, allRows, loading: false };
+  }, [analytics, clients, clientsLoading, openClient]);
+
+  const visibleSections = useMemo(() => {
+    if (activeFilter === ALL_FILTER) {
+      return dashboardData.allRows.length > 0
+        ? [{ title: `${ALL_FILTER} · ${dashboardData.allRows.length}건`, rows: dashboardData.allRows }]
+        : [];
+    }
+    return dashboardData.sections.filter((s) => s.title.startsWith(activeFilter));
+  }, [dashboardData.allRows, dashboardData.sections, activeFilter]);
 
   if (!user) {
     redirect("/logout");
   }
 
   return (
-    <section
-      data-component="dashboard"
-      className="space-y-6"
-    >
-      <HeroBanner
-        title={user?.name ? `${user?.name} 님` : "다시 로그인 해주세요"}
-        subtitle={user?.branchName ?? ""}
-        isLoading={statsLoading}
+    <>
+      <MobileDetailSheet
+        name="dashboard"
+        isOpen={Boolean(selectedClient)}
+        onClose={closeDetail}
+        list={
+          <DashboardRedesign
+            analytics={dashboardData.analytics}
+            sections={visibleSections}
+            filters={dashboardData.filters}
+            activeFilter={activeFilter}
+            onFilterChange={setActiveFilter}
+            analyticsLoading={(analyticsLoading || clientsLoading) && !analytics}
+            loading={dashboardData.loading}
+          />
+        }
+        detail={
+          selectedClient ? (
+            <ClientDetailContent
+              client={selectedClient}
+              activeTab={detailTab}
+              onTabChange={setDetailTab}
+              onMessage={() => handleMessage(selectedClient)}
+              onIssueContract={handleIssueContract}
+              onEdit={handleEdit}
+              onDelete={handleDeleteRequest}
+            />
+          ) : (
+            <div className="detail-body" data-component="mobile-dashboard-detail-empty" />
+          )
+        }
       />
 
-      <Block name="dashboard-stats">
-        <StatsBar
-          name="dashboard"
-          isLoading={statsLoading}
-          items={DASHBOARD_STAT_KEYS.map((s) => ({
-            icon: s.icon,
-            value: stats?.[s.valueKey] ?? 0,
-            label: s.label,
-            counter: s.counter,
-            colorIndex: s.colorIndex,
-          }))}
-        />
-      </Block>
+      <ConfirmActionModal
+        open={deleteTargetClientId != null}
+        title={t(locale, "common.delete")}
+        description={t(locale, "clients.delete-confirm")}
+        cancelLabel={t(locale, "common.cancel")}
+        confirmLabel={t(locale, "common.delete")}
+        loading={deleteClient.isPending}
+        onOpenChange={(open) => {
+          if (!open && !deleteClient.isPending) {
+            setDeleteTargetClientId(null);
+          }
+        }}
+        onCancel={() => setDeleteTargetClientId(null)}
+        onConfirm={handleDeleteConfirm}
+      />
 
-      <Block
-        name="dashboard-split"
-      >
-        <SplitLayout
-          hasSelection={!!selectedClientData}
-          onBack={() => setSelectedClient(null)}
-        >
-          <Block name="dashboard-activities-panel">
-            <RecentActivitiesPanel
-              actionRequiredItems={actionRequiredClients}
-              upcomingItems={upcomingClients}
-              isLoading={clientsLoading}
-              isError={clientsError}
-              onRetry={() => refetchClients()}
-              selectedId={selectedClientData?.id}
-              onSelect={setSelectedClient}
-              hasMore={hasMoreClients}
-            />
-          </Block>
-
-          {selectedClientData ? (
-            <DetailPanel
-              avatar={
-                <div
-                  className={cn(
-                    "w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
-                    getAvatarGradient(selectedClientData.name)
-                  )}
-                >
-                  {selectedClientData.name.charAt(0)}
-                </div>
-              }
-              title={selectedClientData.name}
-              badges={
-                <StatusBadge
-                  status={mapServiceStatusToV3(selectedClientData.serviceStatus)}
-                  label={getStatusLabel(selectedClientData.serviceStatus)}
-                />
-              }
-              subtitle={
-                <>
-                  {selectedClientData.type || "일반"} ·{" "}
-                  {selectedClientData.duration ? `${selectedClientData.duration}일` : "-"}
-                </>
-              }
-            >
-              <div className="space-y-4">
-                <div className="flex gap-2">
-                  {selectedClientData.phone ? (
-                    <Button
-                      asChild
-                      variant="ghost"
-                      className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-2xl"
-                    >
-                      <a href={`tel:${selectedClientData.phone}`}>
-                        <Phone className="w-4 h-4" />
-                        <span className="text-[10px] font-semibold">전화</span>
-                      </a>
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      disabled
-                      className="flex-1 flex-col h-auto py-3 gap-1 rounded-2xl"
-                    >
-                      <Phone className="w-4 h-4" />
-                      <span className="text-[10px] font-semibold">전화</span>
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-2xl"
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                    <span className="text-[10px] font-semibold">메시지</span>
-                  </Button>
-                  <Button
-                    asChild
-                    variant="ghost"
-                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-2xl"
-                  >
-                    <Link href={`/clients?id=${selectedClientData.id}`}>
-                      <User className="w-4 h-4" />
-                      <span className="text-[10px] font-semibold">고객상세</span>
-                    </Link>
-                  </Button>
-                  <Button
-                    asChild
-                    variant="ghost"
-                    className="flex-1 flex-col h-auto py-3 gap-1 hover:bg-v3-primary-light hover:text-v3-primary rounded-2xl"
-                  >
-                    <Link href={`/contracts?clientId=${selectedClientData.id}`}>
-                      <FileText className="w-4 h-4" />
-                      <span className="text-[10px] font-semibold">계약</span>
-                    </Link>
-                  </Button>
-                </div>
-
-                <InfoCard title="기본 정보">
-                  <InfoRow label="이름" value={selectedClientData.name} />
-                  <InfoRow label="연락처" value={selectedClientData.phone || "-"} />
-                  <InfoRow label="주소" value={selectedClientData.address || "-"} />
-                  <InfoRow label="출산예정일" value={selectedClientData.dueDate || "-"} />
-                </InfoCard>
-
-                <InfoCard title="서비스 정보">
-                  <InfoRow label="바우처 유형" value={selectedClientData.type || "-"} />
-                  <InfoRow
-                    label="기간"
-                    value={selectedClientData.duration ? `${selectedClientData.duration}일` : "-"}
-                  />
-                  <InfoRow label="시작일" value={selectedClientData.startDate ? new Date(selectedClientData.startDate).toLocaleDateString("ko-KR") : "-"} />
-                  <InfoRow label="종료일" value={selectedClientData.endDate ? new Date(selectedClientData.endDate).toLocaleDateString("ko-KR") : "-"} />
-                  <InfoRow
-                    label="담당 직원"
-                    value={selectedClientData.primaryEmployee?.name || "-"}
-                  />
-                </InfoCard>
-
-                <InfoCard title="이용 현황">
-                  <div className="flex flex-wrap gap-2">
-                    <StatusBadge
-                      status={selectedClientData.voucherClient ? "active" : "expired"}
-                      label="바우처"
-                    />
-                    <StatusBadge
-                      status={selectedClientData.careCenter ? "active" : "expired"}
-                      label="산후조리원"
-                    />
-                    <StatusBadge
-                      status={selectedClientData.breastPump ? "active" : "expired"}
-                      label="유축기 대여"
-                    />
-                  </div>
-                </InfoCard>
-              </div>
-            </DetailPanel>
-          ) : (
-            <Block
-              name="dashboard-detail-empty"
-              className="bg-white rounded-2xl shadow-v3 flex items-center justify-center min-h-[400px]"
-            >
-              <div className="text-center text-v3-text-muted">
-                <p className="text-[0.8rem] font-semibold">
-                  항목을 선택하면 상세 정보가 표시됩니다
-                </p>
-              </div>
-            </Block>
-          )}
-        </SplitLayout>
-      </Block>
-    </section>
+      <ClientFormDialog
+        open={formDialogOpen}
+        onClose={() => {
+          setFormDialogOpen(false);
+          setEditingClient(null);
+        }}
+        client={editingClient}
+      />
+    </>
   );
 }

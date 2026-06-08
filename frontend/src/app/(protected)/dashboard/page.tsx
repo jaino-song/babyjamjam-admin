@@ -41,7 +41,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import Link from "next/link";
 
-import { HeroBanner } from "@/components/app/dashboard/HeroBanner";
 import { Block } from "@/components/app/v3/Block";
 
 const DASHBOARD_STAT_KEYS = [
@@ -69,11 +68,10 @@ const mapServiceStatusToV3 = (status: string | null): StatusType => {
     case "active":
       return "active";
     case "waiting":
-    case "pending":
-    case "replacement_requested":
       return "pending";
+    case "replacement_requested":
+      return "terminated";
     case "terminated":
-    case "cancelled":
       return "terminated";
     case "completed":
       return "completed";
@@ -100,14 +98,12 @@ const getStatusLabel = (status: string | null): string => {
     case "active":
       return "진행중";
     case "waiting":
-    case "pending":
       return "대기";
     case "replacement_requested":
       return "교체 요청";
     case "completed":
       return "완료";
     case "terminated":
-    case "cancelled":
       return "중단";
     default:
       return "-";
@@ -247,15 +243,8 @@ export default function DashboardPage() {
   return (
     <section
       data-component="dashboard"
-      className="flex flex-col gap-6 h-[calc(100dvh-11rem)] md:h-[calc(100dvh-4rem)]"
+      className="flex flex-col gap-4 h-[calc(100dvh-11rem)] md:h-[calc(100dvh-4rem)]"
     >
-      <div data-component="dashboard-hero" className="shrink-0">
-        <HeroBanner
-          title={user?.name ? `${user?.name} 님` : "다시 로그인 해주세요"}
-          subtitle={user?.branchName ?? ""}
-        />
-      </div>
-
       <Block name="dashboard-stats" className="shrink-0">
         <StatsBar
           name="dashboard"

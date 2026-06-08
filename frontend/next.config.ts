@@ -12,6 +12,8 @@ const localStaticGenerationMaxConcurrency =
     readPositiveInt(process.env.NEXT_STATIC_GENERATION_MAX_CONCURRENCY) ?? (process.env.CI ? undefined : 1);
 
 const nextConfig: NextConfig = {
+    // Workspace package ships TS source; Next transpiles it in-app.
+    transpilePackages: ["@babyjamjam/shared"],
     turbopack: {
         root: path.resolve(__dirname, ".."),
     },

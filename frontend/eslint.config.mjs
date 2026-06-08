@@ -1,7 +1,7 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
-import dataComponentPlugin from "./eslint-plugins/data-component/index.js";
+import dataComponentPlugin from "@babyjamjam/shared/eslint-plugin";
 
 const eslintConfig = defineConfig([
   ...nextVitals,

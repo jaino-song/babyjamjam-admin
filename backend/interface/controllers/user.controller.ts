@@ -5,11 +5,11 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 
 @Controller("users")
+@UseGuards(JwtGuard, OwnerOrAdminGuard)
 export class UserController {
     constructor(private readonly userService: UserService) {}
 
     @Get()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     findDirectory(@Req() req: { user: { role: string; branchId?: string } }) {
         if (req.user.role !== "owner" && !req.user.branchId) {
             throw new ForbiddenException("Branch context is required");

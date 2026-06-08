@@ -1,31 +1,43 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
+
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+// Mirrors backend SubscribePushDto: endpoint/p256dh/auth are @IsString()
+// @IsNotEmpty() required; userAgent is optional. Passthrough preserves any
+// forward-compatible fields.
+const subscribePushSchema = z
+    .object({
+        endpoint: z.string().min(1),
+        p256dh: z.string().min(1),
+        auth: z.string().min(1),
+        userAgent: z.string().optional(),
+    })
+    .passthrough();
 
 export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
-        const body = await request.json();
-        const response = await serverAPIClient.post("/notifications/subscribe", body, {
+        const { data, response: invalid } = await parseBody(subscribePushSchema, request);
+        if (invalid) return invalid;
+
+        const response = await serverAPIClient.post("/notifications/subscribe", data, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
-    } catch (error: any) {
-        console.error("[API] Error subscribing to notifications:", error.message);
-        return NextResponse.json(
-            { error: "Failed to subscribe to notifications" },
-            { status: error.response?.status || 500 }
-        );
+        return backendJsonResponse(response);
+    } catch (error) {
+        return errorResponse(error, "subscribe to notifications");
     }
 }

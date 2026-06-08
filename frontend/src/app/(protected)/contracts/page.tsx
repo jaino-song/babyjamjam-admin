@@ -99,6 +99,7 @@ import { ContractCreationForm } from "@/components/app/messages/forms/ContractCr
 import { StaffCompletionIframeModal } from "@/components/app/contracts/StaffCompletionIframeModal";
 import {
   HeadlessProgressStepper,
+  type HeadlessProgressEvent,
   type HeadlessProgressState,
   type HeadlessProgressStep,
   type HeadlessProgressStepKey,
@@ -118,11 +119,7 @@ const INITIAL_FINALIZE_PROGRESS: HeadlessProgressState = {
   failed: false,
 };
 
-interface FinalizeProgressEvent {
-  step: HeadlessProgressStepKey | "failed";
-  failedStep?: HeadlessProgressStepKey;
-  reason?: string;
-}
+type FinalizeProgressEvent = HeadlessProgressEvent;
 
 function isFinalizeProgressStepKey(value: string): value is HeadlessProgressStepKey {
   return FINALIZE_PROGRESS_STEPS.some((item) => item.key === value);
@@ -226,7 +223,8 @@ function getSignatureProgress(
     { label: "발송 완료", done: true },
     { label: "이용자 문서 열람", done: isSigned || hasOpenedDocument },
     { label: "이용자 서명 완료", done: isSigned },
-    { label: isCompleted ? "계약서 완료" : "최종 확인", done: isCompleted },
+    { label: isCompleted ? "제공기관 검토 완료" : "제공기관 검토 필요", done: isCompleted },
+    { label: "계약서 완료", done: isCompleted },
   ];
   return steps;
 }
@@ -643,7 +641,7 @@ export default function ContractsPage() {
         ]}
       />
 
-      <div data-component="contracts-sections" className="flex flex-col lg:flex-row gap-8 flex-1 min-h-0">
+      <div data-component="contracts-sections" className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
         <SectionNav
           items={NAV_SECTIONS}
           activeId={activeSection}
@@ -1406,9 +1404,15 @@ function ContractDetail({
 
   if (category === "completed") {
     activityItems.push({
+      icon: FileSignature,
+      iconVariant: "success",
+      text: "제공기관 검토 완료",
+      time: formatDateTime(detailedDocument.updated_date),
+    });
+    activityItems.push({
       icon: CheckCircle2,
       iconVariant: "success",
-      text: "제공기관이 계약서를 최종 확인했습니다",
+      text: "계약서가 완료되었습니다",
       time: formatDateTime(detailedDocument.updated_date),
     });
   } else if (category === "rejected") {
@@ -1420,10 +1424,10 @@ function ContractDetail({
     });
   } else {
     const pendingText = isReviewNeeded
-      ? "제공기관의 최종 확인 대기중입니다"
+      ? "제공기관 검토 필요"
       : hasOpenedDocument
         ? "이용자 서명 대기중입니다"
-        : "아직 문서 열람을 하지 않았습니다";
+        : "이용자 문서 열람 대기중입니다";
     activityItems.push({
       icon: isReviewNeeded ? FileSignature : Eye,
       iconVariant: "warning",
@@ -1571,8 +1575,8 @@ function ContractDetail({
         data-component="contracts-detail-activity-trigger"
         className="overflow-visible rounded-[18px] p-1 transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
         onClick={() => setIsActivityOpen(true)}
-        aria-label="활동 기록 보기"
-        title="활동 기록 보기"
+        aria-label="계약서 단계 보기"
+        title="계약서 단계 보기"
       >
         <Stepper steps={steps} size={isMobile ? "sm" : undefined} />
       </button>
@@ -1826,7 +1830,7 @@ function ContractDetail({
       <Dialog open={isActivityOpen} onOpenChange={setIsActivityOpen}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
-            <DialogTitle>활동 기록</DialogTitle>
+            <DialogTitle>계약서 단계</DialogTitle>
           </DialogHeader>
           <div data-component="contracts-activity-modal-body">
             <div data-component="contracts-activity-modal-timeline">

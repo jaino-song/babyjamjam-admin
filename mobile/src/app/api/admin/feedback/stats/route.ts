@@ -1,12 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { BACKEND_BASE_URL } from '@/lib/api/server';
 
 const API_BASE_URL = BACKEND_BASE_URL;
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const cookieStore = await cookies();
   const token = cookieStore.get('auth_token')?.value;
+  if (!token) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   
   const response = await fetch(`${API_BASE_URL}/admin/feedback/stats`, {
     headers: {

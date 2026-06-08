@@ -87,16 +87,9 @@ export class RateLimitGuard implements CanActivate {
 
     /**
      * Get client IP address from request
-     * Handles proxied requests (X-Forwarded-For)
+     * req.ip is trustworthy once Express trust proxy is configured.
      */
     private getClientIp(request: Request): string {
-        const forwardedFor = request.headers['x-forwarded-for'];
-        if (forwardedFor) {
-            const ips = Array.isArray(forwardedFor)
-                ? forwardedFor[0]
-                : forwardedFor.split(',')[0];
-            return ips?.trim() || 'unknown';
-        }
         return request.ip || request.socket?.remoteAddress || 'unknown';
     }
 

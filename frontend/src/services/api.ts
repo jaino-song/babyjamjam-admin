@@ -1,7 +1,42 @@
 import axios from "axios";
+import type {
+    AlimtalkProvider,
+    AlimtalkProviderResponse,
+} from "@babyjamjam/shared/types/alimtalk";
 import { api } from "@/lib/api/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
-import { EformsignDeleteDocumentsResponse, EformsignDocumentsResponse } from '@/lib/eformsign/types';
+import {
+    EformsignApiListResponse,
+    CreateEformsignDocRecordRequest,
+    EformsignAuthStatusResponse,
+    EformsignDeleteDocumentsResponse,
+    EformsignDocClientSummary,
+    EformsignDocumentsResponse,
+    EformsignReRequestDocumentRequest,
+    HeadlessDispatchResponse,
+    HeadlessFinalizeResponse,
+} from '@babyjamjam/shared/types/eformsign';
+import type {
+    MessageDeliverySmsType,
+    MessageDeliveryTriggerType,
+    SendMessageDeliverySmsRequest,
+    SendMessageDeliverySmsResponse,
+} from "@babyjamjam/shared/types/message";
+
+const DEFAULT_EFORMSIGN_LIMIT = 100;
+const DEFAULT_EFORMSIGN_SKIP = 0;
+
+function normalizeDocumentListResponse(
+    response: EformsignApiListResponse,
+    params?: { limit?: number; skip?: number },
+): EformsignDocumentsResponse {
+    return {
+        documents: response.documents ?? [],
+        total_rows: response.total_count ?? response.documents?.length ?? 0,
+        limit: params?.limit ?? DEFAULT_EFORMSIGN_LIMIT,
+        skip: params?.skip ?? DEFAULT_EFORMSIGN_SKIP,
+    };
+}
 
 // Auth API response types
 export interface AuthResponse {
@@ -16,28 +51,6 @@ export interface LoginResponse extends AuthResponse {
     accessToken?: string;
     refreshToken?: string;
     user?: string;
-}
-
-export interface EformsignAuthStatusResponse {
-    hasAppAuthToken: boolean;
-    hasAccessToken: boolean;
-    hasRefreshToken: boolean;
-}
-
-export interface HeadlessDispatchResponse {
-    ok: boolean;
-    documentId?: string;
-    durationMs: number;
-    reason?: string;
-    failedStep?: string;
-    fallbackHint?: "iframe";
-}
-
-export interface HeadlessFinalizeResponse {
-    ok: boolean;
-    durationMs: number;
-    reason?: string;
-    fallbackHint?: "iframe";
 }
 
 // Auth API
@@ -128,15 +141,7 @@ export const eformsignApi = {
     },
     reRequestDocument: async (
         documentId: string,
-        params: {
-            stepType: string;
-            stepSeq: string;
-            comment?: string;
-            recipientPhone?: {
-                countryCode: string;
-                phoneNumber: string;
-            };
-        }
+        params: EformsignReRequestDocumentRequest
     ): Promise<{ status?: string; code?: string; message?: string }> => {
         const { data } = await api.post(`/eformsign/documents/${documentId}/re-request`, params);
         return data;
@@ -170,20 +175,7 @@ export const eformsignApi = {
         return data;
     },
     // Create eformsign doc record to track document in local DB
-    createDocRecord: async (params: {
-        documentId: string;
-        clientId: number;
-        statusType: string;
-        statusDetail: string;
-        stepType: string;
-        stepIndex: string;
-        stepName: string;
-        stepRecipientType: string;
-        stepRecipientName: string;
-        stepRecipientSms: string;
-        expiredDate: string;
-        linkToClient?: boolean; // If true, also update client.e_doc_id
-    }) => {
+    createDocRecord: async (params: CreateEformsignDocRecordRequest) => {
         const { data } = await api.post('/eformsign-docs', params);
         return data;
     },
@@ -195,16 +187,16 @@ export const eformsignApi = {
         return data;
     },
     getInProgressDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/in-progress', { params });
-        return data;
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/in-progress', { params });
+        return normalizeDocumentListResponse(data, params);
     },
     getCompletedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/completed', { params });
-        return data;
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/completed', { params });
+        return normalizeDocumentListResponse(data, params);
     },
     getRejectedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/rejected', { params });
-        return data;
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/rejected', { params });
+        return normalizeDocumentListResponse(data, params);
     },
     deleteDocuments: async (
         documentIds: string[],
@@ -261,18 +253,24 @@ export const eformsignApi = {
         });
         return data;
     },
-    getDocumentClientNames: async (): Promise<Array<{ documentId: string; clientName: string }>> => {
+    getDocumentClientNames: async (): Promise<EformsignDocClientSummary[]> => {
         const { data } = await api.get('/eformsign-docs/client-names');
         return data;
     },
 }
 
-export type AlimtalkProvider = 'aligo' | 'channeltalk' | 'none';
+export type { AlimtalkProvider, AlimtalkProviderResponse };
 
-export interface AlimtalkProviderResponse {
-    provider: AlimtalkProvider;
-    enabled: boolean;
-    updatedAt?: string;
+export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
+
+export interface MessageSenderApprovalResponse {
+    senderPhone: string | null;
+    senderPhoneFormatted: string | null;
+    approvalStatus: MessageSenderApprovalStatus;
+    isApproved: boolean;
+    canRequest: boolean;
+    requestedAt: string | null;
+    approvedAt: string | null;
 }
 
 export interface NotificationPreferencesResponse {
@@ -280,39 +278,12 @@ export interface NotificationPreferencesResponse {
     updatedAt?: string;
 }
 
-export type MessageDeliverySmsType = "AUTO" | "SMS" | "LMS";
-export type MessageDeliveryTriggerType = "immediate" | "scheduled";
-
-export interface SendMessageDeliverySmsRequest {
-    receiver: string;
-    message: string;
-    recipientName?: string;
-    title?: string;
-    msgType?: MessageDeliverySmsType;
-    triggerType?: MessageDeliveryTriggerType;
-    scheduledDate?: string;
-    scheduledTime?: string;
-    testMode?: boolean;
-}
-
-export interface SendMessageDeliverySmsResponse {
-    provider: "aligo";
-    triggerType: Exclude<MessageDeliveryTriggerType, undefined>;
-    request: {
-        receiver: string;
-        msgType: "SMS" | "LMS";
-        scheduledAt?: string;
-        testMode: boolean;
-    };
-    result: {
-        resultCode: number;
-        message: string;
-        msgId?: number;
-        successCount?: number;
-        errorCount?: number;
-        msgType?: string;
-    };
-}
+export type {
+    MessageDeliverySmsType,
+    MessageDeliveryTriggerType,
+    SendMessageDeliverySmsRequest,
+    SendMessageDeliverySmsResponse,
+};
 
 export interface RibbonConfig {
     enabled: boolean;
@@ -342,6 +313,7 @@ export interface ConsultationInquiry {
     referralSource: string;
     privacyAcceptedAt: string;
     selectedServices: ConsultationSelectedServices | null;
+    additionalNotes: string | null;
     source: string;
     status: string;
     readAt: string | null;
@@ -390,6 +362,10 @@ export const settingsApi = {
     },
     updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
         const { data } = await api.put('/settings/alimtalk-provider', { provider });
+        return data;
+    },
+    getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
+        const { data } = await api.get("/settings/message-sender-approval");
         return data;
     },
     getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {

@@ -44,6 +44,14 @@ export class FetchDocumentByIdDto {
     documentId!: string;
 }
 
+export class SyncEformsignDocStatusDto {
+    @IsString()
+    accessToken!: string;
+
+    @IsString()
+    documentId!: string;
+}
+
 /**
  * DTO for creating a new eformsign doc record in local DB
  */

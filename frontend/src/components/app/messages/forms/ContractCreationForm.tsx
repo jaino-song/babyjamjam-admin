@@ -38,6 +38,7 @@ import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
   HeadlessProgressStepper,
+  type HeadlessProgressEvent,
   type HeadlessProgressState,
   type HeadlessProgressStep,
   type HeadlessProgressStepKey,
@@ -189,12 +190,6 @@ const CONTRACT_CREATION_PROGRESS_STEPS: readonly HeadlessProgressStep[] = [
 const CONTRACT_INFO_STEP_INDEX = 3;
 const CONTRACT_CREATION_PROCESSING_STEP_INDEX = 4;
 const CONTRACT_CREATION_MANUAL_HELP = "수동으로 입력해 주세요";
-
-interface HeadlessProgressEvent {
-  step: HeadlessProgressStepKey | "failed";
-  failedStep?: HeadlessProgressStepKey;
-  reason?: string;
-}
 
 interface ContractCreationRunOptions {
   mode?: "auto" | "manual";

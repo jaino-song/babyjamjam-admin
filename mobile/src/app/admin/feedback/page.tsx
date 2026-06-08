@@ -26,7 +26,7 @@ export default function AdminFeedbackPage() {
   const shortcuts = useMemo(
     () => [
       { href: '/chat', label: 'AI 어시스턴트', icon: Sparkles },
-      { href: '/contracts/creation', label: '계약 발송', icon: Send },
+      { href: '/contracts/new', label: '계약 발송', icon: Send },
       { href: '/clients', label: '고객', icon: Users },
       { href: '/messages', label: '메시지', icon: MessageCircle },
     ],

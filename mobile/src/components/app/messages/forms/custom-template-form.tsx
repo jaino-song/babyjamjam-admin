@@ -16,6 +16,11 @@ interface CustomTemplateFormProps {
     template: MessageTemplate;
 }
 
+interface TemplateFieldBinding {
+    value: string;
+    setValue: (value: string) => void;
+}
+
 export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
     const locale = useLocale();
     const { toast } = useToast();
@@ -23,42 +28,38 @@ export const CustomTemplateForm = ({ template }: CustomTemplateFormProps) => {
     const { variableValues, setVariableValue } = useTemplateStore();
     const [generatedMessage, setGeneratedMessage] = useState("");
 
-    const FORM_STORE_MAPPING: Record<string, keyof typeof formStore> = {
-        name: "name",
-        phone: "phone",
-        address: "address",
-        birthday: "birthday",
-        employeeName: "employeeName",
-        employeePhone: "employeePhone",
-        employee2Name: "employee2Name",
-        employee2Phone: "employee2Phone",
-        startDate: "startDate",
-        endDate: "endDate",
-        fullPrice: "fullPrice",
-        grant: "grant",
-        actualPrice: "actualPrice",
-        area: "area",
-        voucherType: "voucherType",
-        voucherDuration: "voucherDuration",
+    const formStoreFields: Record<string, TemplateFieldBinding> = {
+        name: { value: formStore.name, setValue: formStore.setName },
+        phone: { value: formStore.phone, setValue: formStore.setPhone },
+        address: { value: formStore.address, setValue: formStore.setAddress },
+        birthday: { value: formStore.birthday, setValue: formStore.setBirthday },
+        employeeName: { value: formStore.employeeName, setValue: formStore.setEmployeeName },
+        employeePhone: { value: formStore.employeePhone, setValue: formStore.setEmployeePhone },
+        employee2Name: { value: formStore.employee2Name, setValue: formStore.setEmployee2Name },
+        employee2Phone: { value: formStore.employee2Phone, setValue: formStore.setEmployee2Phone },
+        startDate: { value: formStore.startDate, setValue: formStore.setStartDate },
+        endDate: { value: formStore.endDate, setValue: formStore.setEndDate },
+        fullPrice: { value: formStore.fullPrice, setValue: formStore.setFullPrice },
+        grant: { value: formStore.grant, setValue: formStore.setGrant },
+        actualPrice: { value: formStore.actualPrice, setValue: formStore.setActualPrice },
+        area: { value: formStore.area, setValue: formStore.setArea },
+        voucherType: { value: formStore.voucherType, setValue: formStore.setVoucherType },
+        voucherDuration: { value: formStore.voucherDuration, setValue: formStore.setVoucherDuration },
     };
 
     const getVariableValue = (key: string): string => {
-        const storeKey = FORM_STORE_MAPPING[key];
-        if (storeKey && typeof formStore[storeKey] === "string") {
-            return formStore[storeKey] as string;
+        const field = formStoreFields[key];
+        if (field) {
+            return field.value;
         }
         return variableValues[key] || "";
     };
 
     const handleVariableChange = (key: string, value: string) => {
-        const storeKey = FORM_STORE_MAPPING[key];
-        if (storeKey) {
-            const setterName = `set${storeKey.charAt(0).toUpperCase()}${storeKey.slice(1)}`;
-            const setter = (formStore as any)[setterName];
-            if (typeof setter === "function") {
-                setter(value);
-                return;
-            }
+        const field = formStoreFields[key];
+        if (field) {
+            field.setValue(value);
+            return;
         }
         setVariableValue(key, value);
     };

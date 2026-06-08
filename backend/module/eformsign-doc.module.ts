@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import {
     FindEformsignDocByIdUsecase,
     FindEformsignDocByDocumentIdUsecase,
@@ -8,6 +9,7 @@ import {
     RefreshEformsignAccessTokenUsecase,
     FetchAllEformsignDocsFromApiUsecase,
     FetchEformsignDocFromApiUsecase,
+    UpdateEformsignDocStatusUsecase,
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
     ListClientNamesByBranchUsecase,
@@ -21,7 +23,7 @@ import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interfa
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
-import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
+import { createEformsignClientRepository } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignService } from "application/services/eformsign.service";
 import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
@@ -40,6 +42,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FindEformsignDocsByClientIdUsecase,
         ListEformsignDocsUsecase,
         CreateEformsignDocUsecase,
+        UpdateEformsignDocStatusUsecase,
         ListClientNamesByBranchUsecase,
         SyncClientEndDateUsecase,
         // Use cases - External API
@@ -65,7 +68,8 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         },
         {
             provide: EFORMSIGN_CLIENT_REPOSITORY,
-            useClass: EformsignApiClient,
+            inject: [ConfigService],
+            useFactory: createEformsignClientRepository,
         },
         {
             provide: CLIENT_REPOSITORY,

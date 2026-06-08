@@ -158,11 +158,10 @@ export const mockUserBranches: UserBranch[] = [
 
 export type ServiceStatus =
   | 'active'
-  | 'pending'
+  | 'waiting'
   | 'completed'
   | 'terminated'
-  | 'replacement_requested'
-  | 'inactive';
+  | 'replacement_requested';
 
 export interface Client {
   id: number;
@@ -246,7 +245,7 @@ export const mockClients: Client[] = [
     voucherClient: true,
     birthday: '920508',
     dueDate: '2024-09-30T00:00:00.000Z',
-    serviceStatus: 'pending',
+    serviceStatus: 'waiting',
     breastPump: false,
     eDocId: null,
   },
@@ -330,7 +329,7 @@ export const mockClients: Client[] = [
     voucherClient: false,
     birthday: '930405',
     dueDate: null,
-    serviceStatus: 'inactive',
+    serviceStatus: 'terminated',
     breastPump: false,
     eDocId: null,
   },
@@ -393,7 +392,7 @@ export const mockClients: Client[] = [
     voucherClient: true,
     birthday: '930303',
     dueDate: null,
-    serviceStatus: 'pending',
+    serviceStatus: 'waiting',
     breastPump: false,
     eDocId: null,
   },
@@ -1780,15 +1779,14 @@ export function createPaginatedResponse<T>(
 // STATISTICS & DASHBOARD DATA
 // ============================================================================
 
-export interface DashboardStats {
+export interface DashboardAnalytics {
   clients: {
     total: number;
     active: number;
-    pending: number;
+    waiting: number;
     completed: number;
     terminated: number;
     replacementRequested: number;
-    inactive: number;
   };
   employees: {
     total: number;
@@ -1808,15 +1806,14 @@ export interface DashboardStats {
   };
 }
 
-export const mockDashboardStats: DashboardStats = {
+export const mockDashboardAnalytics: DashboardAnalytics = {
   clients: {
     total: 12,
     active: 5,
-    pending: 2,
+    waiting: 2,
     completed: 1,
-    terminated: 1,
+    terminated: 2,
     replacementRequested: 2,
-    inactive: 1,
   },
   employees: {
     total: 7,
@@ -1863,7 +1860,7 @@ export const mockData = {
   systemSettings: mockSystemSettings,
   pushSubscriptions: mockPushSubscriptions,
   areaTemplates: mockAreaTemplates,
-  dashboardStats: mockDashboardStats,
+  dashboardAnalytics: mockDashboardAnalytics,
 };
 
 export default mockData;

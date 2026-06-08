@@ -20,9 +20,6 @@ export interface ContractDataDto {
     paymentYear: string;
     paymentMonth: string;
     paymentDay: string;
-    receiptYear: string;
-    receiptMonth: string;
-    receiptDay: string;
     fullPrice: string;
     grant: string;
     actualPrice: string;

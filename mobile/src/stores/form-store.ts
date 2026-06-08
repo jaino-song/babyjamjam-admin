@@ -1,5 +1,30 @@
 import { create } from "zustand";
 
+import { todayIsoDate } from "@/lib/contracts/date-input";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
+
+export interface ContractCreationPrefill {
+    clientId?: number | null;
+    name?: string;
+    phone?: string;
+    birthday?: string;
+    dueDate?: string;
+    address?: string;
+    employeeId?: number | null;
+    employeeName?: string;
+    employeePhone?: string;
+    startDate?: string;
+    endDate?: string;
+    fullPrice?: string;
+    grant?: string;
+    actualPrice?: string;
+    paymentDate?: string;
+    voucherType?: string;
+    voucherDuration?: string;
+    voucherYear?: number;
+    area?: string;
+}
+
 interface FormStore {
     // Client selection
     clientId: number | null;
@@ -31,6 +56,7 @@ interface FormStore {
     voucherDuration: string;
     voucherYear: number;
     area: string;
+    preservePrefilledPrices: boolean;
     // Client selection setters
     setClientId: (clientId: number | null) => void;
     setIsManualEntry: (isManualEntry: boolean) => void;
@@ -66,6 +92,7 @@ interface FormStore {
     setVoucherDuration: (voucherDuration: string) => void;
     setVoucherYear: (voucherYear: number) => void;
     setArea: (area: string) => void;
+    setPreservePrefilledPrices: (preservePrefilledPrices: boolean) => void;
     prefillFromClient: (client: {
         id: number;
         name: string;
@@ -83,6 +110,7 @@ interface FormStore {
         primaryEmployee?: { id: number; name: string } | null;
         secondaryEmployee?: { id: number; name: string } | null;
     }) => void;
+    prefillFromContract: (prefill: ContractCreationPrefill) => void;
 }
 
 // 현재 연도를 기본값으로 사용
@@ -115,16 +143,17 @@ export const useFormStore = create<FormStore>((set) => {
         fullPrice: "",
         grant: "",
         actualPrice: "",
-        paymentDate: "",
+        paymentDate: todayIsoDate(),
         voucherType: "",
         voucherDuration: "",
         voucherYear: currentYear,
         area: "",
+        preservePrefilledPrices: false,
         // Client selection setters
         setClientId: (clientId: number | null) => set({ clientId }),
         setIsManualEntry: (isManualEntry: boolean) => set({ isManualEntry }),
         setName: (name: string) => set({ name }),
-        setPhone: (phone: string) => set({ phone }),
+        setPhone: (phone: string) => set({ phone: formatKoreanPhoneNumber(phone) }),
         setBirthday: (birthday: string) => set({ birthday }),
         setDueDate: (dueDate: string) => set({ dueDate }),
         setAddress: (address: string) => set({ address }),
@@ -184,11 +213,12 @@ export const useFormStore = create<FormStore>((set) => {
         setVoucherDuration: (voucherDuration: string) => set({ voucherDuration }),
         setVoucherYear: (voucherYear: number) => set({ voucherYear }),
         setArea: (area: string) => set({ area }),
+        setPreservePrefilledPrices: (preservePrefilledPrices: boolean) => set({ preservePrefilledPrices }),
         prefillFromClient: (client) => set({
             clientId: client.id,
             isManualEntry: false,
             name: client.name,
-            phone: client.phone || "",
+            phone: formatKoreanPhoneNumber(client.phone),
             birthday: client.birthday || "",
             dueDate: client.dueDate || "",
             address: client.address || "",
@@ -199,10 +229,41 @@ export const useFormStore = create<FormStore>((set) => {
             actualPrice: client.actualPrice || "",
             startDate: client.startDate || "",
             endDate: client.endDate || "",
+            paymentDate: todayIsoDate(),
             employeeId: client.primaryEmployee?.id ?? null,
             employeeName: client.primaryEmployee?.name ?? "",
             employee2Id: client.secondaryEmployee?.id ?? null,
             employee2Name: client.secondaryEmployee?.name ?? "",
+            preservePrefilledPrices: false,
+        }),
+        prefillFromContract: (prefill) => set({
+            clientId: prefill.clientId ?? null,
+            isManualEntry: prefill.clientId == null,
+            name: prefill.name ?? "",
+            phone: formatKoreanPhoneNumber(prefill.phone),
+            birthday: prefill.birthday ?? "",
+            dueDate: prefill.dueDate ?? "",
+            address: prefill.address ?? "",
+            employeeId: prefill.employeeId ?? null,
+            isEmployeeManualEntry: prefill.employeeId == null,
+            employeeName: prefill.employeeName ?? "",
+            employeePhone: prefill.employeePhone ?? "",
+            showEmployee2: false,
+            employee2Id: null,
+            isEmployee2ManualEntry: false,
+            employee2Name: "",
+            employee2Phone: "",
+            startDate: prefill.startDate ?? "",
+            endDate: prefill.endDate ?? "",
+            fullPrice: prefill.fullPrice ?? "",
+            grant: prefill.grant ?? "",
+            actualPrice: prefill.actualPrice ?? "",
+            paymentDate: prefill.paymentDate || todayIsoDate(),
+            voucherType: prefill.voucherType ?? "",
+            voucherDuration: prefill.voucherDuration ?? "",
+            voucherYear: prefill.voucherYear ?? currentYear,
+            area: "",
+            preservePrefilledPrices: true,
         }),
     }
 })

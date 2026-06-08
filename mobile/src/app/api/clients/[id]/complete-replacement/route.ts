@@ -1,35 +1,45 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
+import { invalidClientIdResponse, isValidClientId } from "../../client-route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+// The backend completeReplacement endpoint binds no @Body DTO — it ignores the
+// request body entirely. This proxy still forwards whatever object body was
+// sent, so an all-optional passthrough object accepts any JSON object (incl.
+// `{}`) while parseBody still rejects malformed JSON with a 400.
+const completeReplacementSchema = z.object({}).passthrough();
 
 // PATCH /api/clients/[id]/complete-replacement - Complete employee replacement
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
-    try {
-        const token = getAuthToken(request);
-        if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+    const token = getAuthToken(request);
+    if (!token) {
+        return unauthorizedResponse("Unauthorized");
+    }
 
-        const { id } = await params;
-        const body = await request.json().catch(() => ({}));
-        const response = await serverAPIClient.patch(`/clients/${id}/complete-replacement`, body, {
+    const { id } = await params;
+    if (!isValidClientId(id)) {
+        return invalidClientIdResponse();
+    }
+
+    const { data, response } = await parseBody(completeReplacementSchema, request);
+    if (response) return response;
+
+    try {
+        const backendResponse = await serverAPIClient.patch(`/clients/${id}/complete-replacement`, data, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(backendResponse);
     } catch (error) {
-        console.error("[API] Error completing replacement:", error);
-        return NextResponse.json(
-            { error: "Failed to complete employee replacement" },
-            { status: 500 }
-        );
+        return errorResponse(error, "complete employee replacement");
     }
 }

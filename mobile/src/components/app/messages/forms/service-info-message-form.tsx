@@ -17,7 +17,7 @@ export const ServiceInfoMessageForm = () => {
   const { toast } = useToast();
   const { name, setName } = useFormStore();
   const [generatedMessage, setGeneratedMessage] = useState("");
-  const { data: systemTemplate } = useSystemTemplate("service_info");
+  const { data: systemTemplate } = useSystemTemplate("SERVICE_INFO");
 
   const handleGenerate = () => {
     const message = systemTemplate?.content

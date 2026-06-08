@@ -1,171 +1,176 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle } from "lucide-react";
+import { Check } from "lucide-react";
+
 import { authApi } from "@/services/api";
 import { forgotPasswordSchema } from "@/lib/validations/auth";
-import { Input, InputField } from "@/components/app/v3";
-import { CardContainer } from "@/components/auth/card-container";
-import { AuthInlineLink } from "@/components/auth/auth-inline-link";
-import { Button } from "@/components/ui/button";
-import { Alert } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
+import "@/components/app/mobile-redesign/redesign.css";
 
 export default function ForgotPasswordPage() {
-    const router = useRouter();
-    const [email, setEmail] = useState("");
-    const [fieldError, setFieldError] = useState<string | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
-    const [isSuccess, setIsSuccess] = useState(false);
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
 
-    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-        e.preventDefault();
-        setFieldError(null);
-        setError(null);
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setFieldError(null);
+    setError(null);
 
-        // Validate with Zod
-        const result = forgotPasswordSchema.safeParse({ email });
-        if (!result.success) {
-            setFieldError(result.error.issues[0]?.message || "유효한 이메일을 입력해주세요.");
-            return;
-        }
+    const result = forgotPasswordSchema.safeParse({ email });
+    if (!result.success) {
+      setFieldError(result.error.issues[0]?.message || "유효한 이메일을 입력해주세요.");
+      return;
+    }
 
-        setIsLoading(true);
+    setIsLoading(true);
+    try {
+      const response = await authApi.forgotPassword(email);
+      if (response.success) {
+        setIsSuccess(true);
+      } else {
+        setError(response.message || "요청 처리에 실패했습니다. 다시 시도해 주세요.");
+      }
+    } catch (err) {
+      console.error("Forgot password error:", err);
+      setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-        try {
-            const response = await authApi.forgotPassword(email);
-
-            // Always show success to prevent email enumeration
-            // The backend also returns success even if email doesn't exist
-            if (response.success) {
-                setIsSuccess(true);
-            } else {
-                // In case backend explicitly returns failure
-                setError(response.message || "요청 처리에 실패했습니다. 다시 시도해 주세요.");
-            }
-        } catch (err) {
-            console.error("Forgot password error:", err);
-            setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const cardTitle = isSuccess ? "이메일 전송 완료" : "비밀번호 찾기";
-    const cardSubtitle = isSuccess
-        ? undefined
-        : "가입하신 이메일 주소를 입력하시면 비밀번호 재설정 링크를 보내드립니다.";
-
+  if (isSuccess) {
     return (
-        <div data-component="auth-forgot-password-main" className="flex h-full items-center justify-center">
-            <CardContainer
-                data-component="auth-forgot-password"
-                dataComponents={{
-                    container: "auth-forgot-password",
-                    card: "auth-forgot-password-card",
-                    header: "auth-forgot-password-header",
-                    title: "auth-forgot-password-title",
-                    subtitle: "auth-forgot-password-subtitle",
-                    content: "auth-forgot-password-content",
-                }}
-                className="max-w-[400px] border bg-card text-card-foreground shadow-lg"
-                contentClassName="flex flex-col gap-6"
-                title={cardTitle}
-                subtitle={cardSubtitle}
-            >
-                {isSuccess ? (
-                    <div data-component="auth-forgot-password-success" className="flex flex-col items-center gap-6 text-center">
-                        <div data-component="auth-forgot-password-success-icon" className="rounded-full bg-success/10 p-3">
-                            <CheckCircle className="h-12 w-12 text-success" />
-                        </div>
-                        <div className="flex flex-col text-center text-muted-foreground">
-                            <div className="flex flex-col">
-                                <p>
-                                    <strong className="text-foreground">{email}</strong>로
-                                </p>
-                                <p>
-                                    비밀번호 재설정 링크가 전송되었습니다.
-                                </p>
-                            </div>
-                        </div>
-                        <p className="text-center text-muted-foreground">
-                            이메일을 확인하여 비밀번호를 재설정해 주세요.
-                        </p>
-                        <Alert variant="info" className="w-full text-left">
-                            이메일이 도착하지 않았다면 스팸 폴더를 확인해 주세요.
-                        </Alert>
-                        <Button
-                            data-component="auth-forgot-password-login-btn"
-                            size="lg"
-                            className="w-full rounded-2xl"
-                            onClick={() => router.push("/login")}
-                        >
-                            로그인 페이지로 돌아가기
-                        </Button>
-                    </div>
-                ) : (
-                    <>
-                        {error && (
-                            <Alert variant="destructive" onClose={() => setError(null)}>
-                                {error}
-                            </Alert>
-                        )}
-
-                        <form onSubmit={handleSubmit} data-component="auth-forgot-password-form" className="flex flex-col gap-4">
-                            <InputField
-                                title="이메일"
-                                message={fieldError}
-                                messageTone="error"
-                                messageId={fieldError ? "forgot-password-email-error" : undefined}
-                                className="gap-2"
-                                labelClassName="text-sm"
-                                inputClassName={fieldError ? "border-destructive focus:border-destructive" : undefined}
-                                inputProps={{
-                                    id: "forgot-password-email",
-                                    type: "email",
-                                    value: email,
-                                    onChange: (e) => {
-                                        setEmail(e.target.value);
-                                        if (fieldError) {
-                                            setFieldError(null);
-                                        }
-                                    },
-                                    disabled: isLoading,
-                                    autoComplete: "email",
-                                    autoFocus: true,
-                                    "aria-invalid": !!fieldError,
-                                    "aria-describedby": fieldError ? "forgot-password-email-error" : undefined,
-                                }}
-                                renderInput={(resolvedInputProps) => (
-                                    <Input
-                                        {...resolvedInputProps}
-                                        data-component="auth-forgot-password-email-field"
-                                    />
-                                )}
-                            />
-
-                            <Button
-                                data-component="auth-forgot-password-submit-btn"
-                                type="submit"
-                                size="lg"
-                                className="w-full rounded-2xl"
-                                disabled={isLoading || !email.trim()}
-                            >
-                                {isLoading ? <Spinner size="sm" /> : "비밀번호 재설정 링크 전송"}
-                            </Button>
-                        </form>
-
-                        <AuthInlineLink
-                            dataComponent="auth-forgot-password-login-link"
-                            href="/login"
-                            prefixText="비밀번호가 기억나셨나요?"
-                            linkLabel="로그인"
-                        />
-                    </>
-                )}
-            </CardContainer>
+      <div className="auth-page" data-component="auth-forgot-password">
+        <div className="auth-brand" data-component="auth-forgot-password-brand">
+          <div className="auth-logo" data-component="auth-forgot-password-logo">
+            <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
+          </div>
+          <div className="auth-title" data-component="auth-forgot-password-title">
+            이메일 전송 완료
+          </div>
+          <div className="auth-sub-stack" data-component="auth-forgot-password-subtitle-stack">
+            <div className="auth-sub sub-variant active" data-component="auth-forgot-password-subtitle">
+              메일을 확인하여 비밀번호를 재설정해 주세요.
+            </div>
+          </div>
         </div>
+
+        <div
+          className="auth-step-view active"
+          data-auth-step="2"
+          data-component="auth-forgot-password-success"
+        >
+          <div className="auth-status" data-component="auth-forgot-password-status">
+            <div className="status-icon success" data-component="auth-forgot-password-status-icon">
+              <Check size={32} strokeWidth={2.5} />
+            </div>
+            <div className="status-message" data-component="auth-forgot-password-status-message">
+              <strong>{email}</strong>로
+              <br />
+              비밀번호 재설정 링크가 전송되었습니다.
+            </div>
+            <div className="status-message status-message-muted" data-component="auth-forgot-password-status-submessage">
+              이메일을 확인하여 비밀번호를 재설정해 주세요.
+            </div>
+            <div className="status-info" data-component="auth-forgot-password-status-info">
+              이메일이 도착하지 않았다면 스팸 폴더를 확인해 주세요.
+            </div>
+          </div>
+
+          <div className="auth-form auth-success-actions" data-component="auth-forgot-password-success-actions">
+            <button
+              type="button"
+              className="auth-btn secondary"
+              onClick={() => router.push("/login")}
+              data-component="auth-forgot-password-login-btn"
+            >
+              로그인 페이지로 돌아가기
+            </button>
+          </div>
+        </div>
+      </div>
     );
+  }
+
+  return (
+    <div className="auth-page" data-component="auth-forgot-password">
+      <div className="auth-brand" data-component="auth-forgot-password-brand">
+        <div className="auth-logo" data-component="auth-forgot-password-logo">
+          <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
+        </div>
+        <div className="auth-title" data-component="auth-forgot-password-title">
+          비밀번호 찾기
+        </div>
+        <div className="auth-sub-stack" data-component="auth-forgot-password-subtitle-stack">
+          <div className="auth-sub sub-variant active" data-component="auth-forgot-password-subtitle">
+            가입하신 이메일 주소를 입력하시면
+            <br />
+            비밀번호 재설정 링크를 보내드립니다.
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="auth-server-error" role="alert" data-component="auth-forgot-password-server-error">
+          {error}
+        </div>
+      )}
+
+      <form className="auth-form" onSubmit={handleSubmit} data-component="auth-forgot-password-form">
+        <div className="auth-input-group" data-component="auth-forgot-password-email-field">
+          <label className="auth-label" htmlFor="forgot-email">
+            이메일
+          </label>
+          <input
+            id="forgot-email"
+            className={`auth-input ${fieldError ? "error" : ""}`}
+            type="email"
+            placeholder="example@email.com"
+            autoComplete="email"
+            autoFocus
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (fieldError) setFieldError(null);
+            }}
+            disabled={isLoading}
+            aria-invalid={!!fieldError}
+            aria-describedby={fieldError ? "forgot-email-error" : undefined}
+          />
+          {fieldError && (
+            <div
+              className="auth-helper error"
+              id="forgot-email-error"
+              data-component="auth-forgot-password-email-error"
+            >
+              {fieldError}
+            </div>
+          )}
+        </div>
+
+        <button
+          type="submit"
+          className="auth-btn"
+          disabled={isLoading}
+          data-component="auth-forgot-password-submit-btn"
+        >
+          {isLoading ? "처리 중…" : "비밀번호 재설정 링크 전송"}
+        </button>
+      </form>
+
+      <div className="auth-footer-link" data-component="auth-forgot-password-footer-link">
+        <span>비밀번호가 기억나셨나요?&nbsp;</span>
+        <Link href="/login" data-component="auth-forgot-password-login-link">
+          로그인
+        </Link>
+      </div>
+    </div>
+  );
 }

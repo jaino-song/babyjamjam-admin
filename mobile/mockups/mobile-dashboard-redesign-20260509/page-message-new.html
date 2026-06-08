@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>새 메시지 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.msg-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 14px 100px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.form-card {
+  background: white;
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.form-row { margin-bottom: 12px; }
+.form-row:last-child { margin-bottom: 0; }
+.form-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--v3-text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.form-label .req { color: var(--v3-burgundy); margin-left: 2px; }
+.form-input, .form-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--v3-border);
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--v3-dark);
+  background: var(--v3-dim-white);
+  outline: none;
+  box-sizing: border-box;
+}
+.form-input.filled { background: white; }
+.form-textarea { min-height: 180px; resize: vertical; line-height: 1.55; font-size: 0.84rem; }
+.form-input:focus, .form-textarea:focus { border-color: var(--v3-primary); background: white; }
+.form-helper {
+  font-size: 0.65rem;
+  color: var(--v3-text-muted);
+  margin-top: 4px;
+}
+
+.recipient-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.recipient-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--v3-primary-light);
+  color: var(--v3-primary);
+  font-size: 0.78rem; font-weight: 600;
+  padding: 5px 6px 5px 5px;
+  border-radius: 999px;
+}
+.recipient-chip-avatar {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--v3-primary);
+  color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.62rem; font-weight: 800;
+}
+.recipient-chip-x {
+  border: 0; background: rgba(0,0,0,0.08);
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  color: var(--v3-primary);
+  font-size: 0.7rem;
+}
+
+.chan-toggle-row { display: flex; gap: 6px; }
+.chan-toggle {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--v3-border);
+  border-radius: 10px;
+  background: white;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--v3-text);
+  cursor: pointer;
+  font-family: inherit;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.chan-toggle.selected {
+  background: var(--v3-primary);
+  color: white;
+  border-color: var(--v3-primary);
+}
+
+.tpl-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.tpl-pick {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--v3-border);
+  border-radius: 12px;
+  background: white;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.tpl-pick.selected {
+  border-color: var(--v3-primary);
+  background: var(--v3-primary-light);
+}
+.tpl-pick-radio {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--v3-border);
+  flex-shrink: 0;
+  position: relative;
+}
+.tpl-pick.selected .tpl-pick-radio { border-color: var(--v3-primary); }
+.tpl-pick.selected .tpl-pick-radio::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--v3-primary);
+}
+.tpl-pick-info { flex: 1; min-width: 0; }
+.tpl-pick-name {
+  font-size: 0.84rem; font-weight: 700;
+  color: var(--v3-dark);
+}
+.tpl-pick-meta {
+  font-size: 0.66rem;
+  color: var(--v3-text-muted);
+  margin-top: 2px;
+  font-family: 'SF Mono', monospace;
+}
+
+.var-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.var-chip {
+  font-size: 0.66rem;
+  font-weight: 600;
+  background: var(--v3-primary-light);
+  color: var(--v3-primary);
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-family: 'SF Mono', monospace;
+  cursor: pointer;
+  border: 0;
+}
+
+.preview-card {
+  background: hsl(50, 100%, 96%);
+  border: 1px solid hsl(50, 70%, 80%);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: var(--v3-dark);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.preview-card-label {
+  font-size: 0.58rem;
+  font-weight: 800;
+  color: hsl(45, 70%, 30%);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.msg-actions {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: white;
+  border-top: 1px solid var(--v3-border);
+  padding: 10px 14px 16px;
+  display: flex; gap: 8px;
+  z-index: 100;
+}
+.msg-btn {
+  flex: 1;
+  padding: 13px;
+  border-radius: 14px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: 0;
+}
+.msg-btn.secondary {
+  background: var(--v3-dim-white);
+  color: var(--v3-text);
+}
+.msg-btn.primary {
+  background: var(--v3-primary);
+  color: white;
+  flex: 2;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  height: 52px;
+  padding: 0 4px;
+  background: white;
+  border-bottom: 1px solid var(--v3-border);
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack">
+
+      <div class="nav-page list" style="display: flex; flex-direction: column;">
+        <div class="detail-header">
+          <button class="detail-back">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+            <span>메시지</span>
+          </button>
+          <div class="detail-title">새 메시지</div>
+        </div>
+
+        <div class="msg-scroll">
+          <!-- Step: Recipients -->
+          <div class="form-card pop-up">
+            <div class="form-row">
+              <label class="form-label">수신자 <span class="req">*</span></label>
+              <input class="form-input" placeholder="고객 이름, 연락처 검색" />
+              <div class="recipient-chips">
+                <span class="recipient-chip">
+                  <span class="recipient-chip-avatar">박</span>
+                  박서연
+                  <button class="recipient-chip-x">×</button>
+                </span>
+                <span class="recipient-chip">
+                  <span class="recipient-chip-avatar" style="background: hsl(34, 100%, 55%);">김</span>
+                  김도윤
+                  <button class="recipient-chip-x">×</button>
+                </span>
+              </div>
+              <div class="form-helper">총 2명 선택됨 · 한 번에 최대 50명까지 발송 가능</div>
+            </div>
+          </div>
+
+          <!-- Step: Channel + Template -->
+          <div class="form-card pop-up" style="animation-delay: 60ms;">
+            <div class="form-row">
+              <label class="form-label">채널</label>
+              <div class="chan-toggle-row">
+                <button class="chan-toggle selected" type="button">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  알림톡
+                </button>
+                <button class="chan-toggle" type="button">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  SMS
+                </button>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label class="form-label">템플릿 선택</label>
+              <div class="tpl-pick-list">
+                <button class="tpl-pick selected" type="button">
+                  <span class="tpl-pick-radio"></span>
+                  <div class="tpl-pick-info">
+                    <div class="tpl-pick-name">서비스 시작 D-1 안내</div>
+                    <div class="tpl-pick-meta">서비스 시작 (D-1)</div>
+                  </div>
+                </button>
+                <button class="tpl-pick" type="button">
+                  <span class="tpl-pick-radio"></span>
+                  <div class="tpl-pick-info">
+                    <div class="tpl-pick-name">방문 일정 변경 안내</div>
+                    <div class="tpl-pick-meta">사용자 작성</div>
+                  </div>
+                </button>
+                <button class="tpl-pick" type="button">
+                  <span class="tpl-pick-radio"></span>
+                  <div class="tpl-pick-info">
+                    <div class="tpl-pick-name">서비스 만족도 조사</div>
+                    <div class="tpl-pick-meta">사용자 작성</div>
+                  </div>
+                </button>
+                <button class="tpl-pick" type="button">
+                  <span class="tpl-pick-radio"></span>
+                  <div class="tpl-pick-info">
+                    <div class="tpl-pick-name">직접 작성</div>
+                    <div class="tpl-pick-meta">템플릿 없이 작성</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step: Body -->
+          <div class="form-card pop-up" style="animation-delay: 120ms;">
+            <div class="form-row">
+              <label class="form-label">메시지 본문</label>
+              <textarea class="form-textarea">안녕하세요 #{clientName} 고객님,
+
+내일 오전 9시 #{employeeName} 매니저가 방문 예정입니다. 준비물은 별도로 안내드린 사항을 참고해 주세요.
+
+문의사항이 있으시면 언제든지 연락 주세요.
+
+아가잼잼 #{branchName}</textarea>
+              <div class="form-helper">변수는 수신자 정보로 자동 치환됩니다. 칩을 탭하면 본문에 삽입됩니다.</div>
+              <div class="var-chips">
+                <button class="var-chip" type="button">#{clientName}</button>
+                <button class="var-chip" type="button">#{employeeName}</button>
+                <button class="var-chip" type="button">#{serviceStartDate}</button>
+                <button class="var-chip" type="button">#{branchName}</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Preview (first recipient) -->
+          <div class="form-card pop-up" style="animation-delay: 180ms;">
+            <div class="info-card-title" style="margin-bottom: 4px;">미리보기 · 박서연 기준</div>
+            <div class="preview-card">
+              <div class="preview-card-label">알림톡 미리보기</div>안녕하세요 박서연 고객님,
+
+내일 오전 9시 김민지 매니저가 방문 예정입니다. 준비물은 별도로 안내드린 사항을 참고해 주세요.
+
+문의사항이 있으시면 언제든지 연락 주세요.
+
+아가잼잼 인천점</div>
+          </div>
+        </div>
+
+        <div class="msg-actions">
+          <button class="msg-btn secondary">임시저장</button>
+          <button class="msg-btn primary">2명에게 발송</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">새 메시지 · /messages/new</div>
+<script>
+document.querySelectorAll('.chan-toggle').forEach(c=>c.addEventListener('click',()=>{
+  c.parentElement.querySelectorAll('.chan-toggle').forEach(x=>x.classList.remove('selected'));
+  c.classList.add('selected');
+}));
+document.querySelectorAll('.tpl-pick').forEach(t=>t.addEventListener('click',()=>{
+  document.querySelectorAll('.tpl-pick').forEach(x=>x.classList.remove('selected'));
+  t.classList.add('selected');
+}));
+document.querySelectorAll('.recipient-chip-x').forEach(b=>b.addEventListener('click',(e)=>{
+  e.preventDefault();
+  b.parentElement.remove();
+}));
+document.querySelectorAll('.var-chip').forEach(v=>v.addEventListener('click',()=>{
+  const ta=document.querySelector('.form-textarea');
+  if(!ta)return;
+  const text=v.textContent;
+  const start=ta.selectionStart, end=ta.selectionEnd;
+  ta.value=ta.value.slice(0,start)+text+ta.value.slice(end);
+  ta.focus();
+  ta.selectionStart=ta.selectionEnd=start+text.length;
+}));
+</script>
+</body>
+</html>

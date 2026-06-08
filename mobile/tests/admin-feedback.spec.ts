@@ -1,4 +1,12 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
+
+interface MockAuthUser {
+  id: string;
+  name: string;
+  email: string;
+  profile_image: string;
+  role: string;
+}
 
 // Mock for admin user
 const MOCK_ADMIN_USER = {
@@ -7,15 +15,6 @@ const MOCK_ADMIN_USER = {
   email: 'admin@example.com',
   profile_image: '',
   role: 'admin',
-};
-
-// Mock for regular user
-const MOCK_REGULAR_USER = {
-  id: 'regular-user',
-  name: '일반 사용자',
-  email: 'user@example.com',
-  profile_image: '',
-  role: 'user',
 };
 
 // Mock feedback data
@@ -51,16 +50,16 @@ const MOCK_FEEDBACK_STATS = {
 };
 
 // Helper to setup auth mocks
-const setupAuthMocks = async (page: any, user: any) => {
+const setupAuthMocks = async (page: Page, user: MockAuthUser) => {
   await page.addInitScript(() => {
     (window as typeof window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
   });
   
-  await page.route('**/api/auth/me', async (route: any) => {
+  await page.route('**/api/auth/me', async (route: Route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(user) });
   });
   
-  await page.route('**/auth/me', async (route: any) => {
+  await page.route('**/auth/me', async (route: Route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(user) });
   });
 };
@@ -78,10 +77,10 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 15000 });
     
     // Should see the feedback list
-    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('홍길동')).toBeVisible();
   });
 
@@ -99,7 +98,7 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 15000 });
     
     // Click negative filter
     await page.getByRole('button', { name: '부정적' }).click();
@@ -120,13 +119,14 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 15000 });
     
     await expect(page.getByText('전체').first()).toBeVisible();
     await expect(page.getByText('긍정적').first()).toBeVisible();
     await expect(page.getByText('부정적').first()).toBeVisible();
     
-    const statsCards = page.locator('.bg-white.rounded-lg.shadow.p-6');
+    // Stats render via the v3 StatsBar/StatMini cards now.
+    const statsCards = page.locator('[data-component="stat-mini"]');
     await expect(statsCards.nth(0)).toContainText('15');
     await expect(statsCards.nth(1)).toContainText('10');
     await expect(statsCards.nth(2)).toContainText('5');
@@ -144,15 +144,10 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 15000 });
     
-    // Check table headers
-    await expect(page.getByText('날짜')).toBeVisible();
-    await expect(page.getByText('사용자')).toBeVisible();
-    await expect(page.getByText('유형')).toBeVisible();
-    await expect(page.getByText('코멘트')).toBeVisible();
-    
-    // Check feedback items
+    // The redesigned list renders icon + name + truncated comment + date per
+    // row (no table headers anymore).
     await expect(page.getByText('홍길동')).toBeVisible();
     await expect(page.getByText('김철수')).toBeVisible();
     await expect(page.getByText('답변이 부정확합니다')).toBeVisible();
@@ -170,9 +165,9 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 15000 });
     
-    await expect(page.getByText('피드백이 없습니다.')).toBeVisible();
+    await expect(page.getByText('피드백이 없습니다')).toBeVisible();
   });
 
   test('positive filter shows only positive feedback', async ({ page }) => {
@@ -189,7 +184,7 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 15000 });
     
     // Click positive filter
     await page.getByRole('button', { name: '긍정적' }).click();
@@ -211,9 +206,9 @@ test.describe('Admin Feedback Page', () => {
     });
     
     await page.goto('/admin');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 15000 });
     
     // Should see the feedback list
-    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 5000 });
   });
 });

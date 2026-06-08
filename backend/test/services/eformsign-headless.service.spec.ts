@@ -40,8 +40,15 @@ describe("EformsignHeadlessService", () => {
             close: jest.fn().mockResolvedValue(undefined),
             evaluate: jest.fn().mockImplementation((fn: unknown) => {
                 const source = String(fn);
+                if (source.includes("__eformsignSuccess") && source.includes("__eformsignError")) {
+                    return Promise.resolve({
+                        hasSuccess: true,
+                        hasError: false,
+                        success: { document_id: "doc-from-callback" },
+                    });
+                }
                 if (source.includes("__eformsignSuccess")) {
-                    return Promise.resolve("doc-from-callback");
+                    return Promise.resolve(true);
                 }
                 return Promise.resolve(undefined);
             }),
@@ -66,6 +73,7 @@ describe("EformsignHeadlessService", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        delete process.env["EFORMSIGN_BROWSER_HEADLESS"];
         pageMock = buildPageMock();
         contextMock = buildContextMock();
         browserMock = buildBrowserMock();
@@ -88,18 +96,56 @@ describe("EformsignHeadlessService", () => {
         expect(browserMock.newContext).toHaveBeenCalledTimes(1);
     });
 
+    it("launches Chromium headed when EFORMSIGN_BROWSER_HEADLESS=false", async () => {
+        process.env["EFORMSIGN_BROWSER_HEADLESS"] = "false";
+
+        const result = await service.dispatchCreation({
+            documentOption: { mode: { type: "01" } },
+        });
+
+        expect(result.ok).toBe(true);
+        expect(launchMock).toHaveBeenCalledWith(expect.objectContaining({
+            headless: false,
+        }));
+    });
+
     it("dispatchCreation returns ok=false when the SDK success callback never fires", async () => {
-        // First waitForFunction (iframe src) resolves; second (success latch)
+        // First waitForFunction (iframe src) resolves; second (terminal SDK callback)
         // rejects to simulate eformsign never confirming dispatch.
         (pageMock.waitForFunction as jest.Mock)
             .mockResolvedValueOnce(undefined)
-            .mockRejectedValueOnce(new Error("Timeout 90000ms exceeded"));
+            .mockRejectedValueOnce(new Error("Timeout 30000ms exceeded"));
 
         const result = await service.dispatchCreation({ documentOption: { mode: { type: "01" } } });
 
         expect(result.ok).toBe(false);
         if (!result.ok) {
             expect(result.reason).toContain("Timeout");
+        }
+    });
+
+    it("dispatchCreation returns ok=false when the SDK error callback fires", async () => {
+        pageMock.evaluate = jest.fn().mockImplementation((fn: unknown) => {
+            const source = String(fn);
+            if (source.includes("__eformsignSuccess") && source.includes("__eformsignError")) {
+                return Promise.resolve({
+                    hasSuccess: false,
+                    hasError: true,
+                    error: { code: "EFORM_TEST", message: "request rejected" },
+                });
+            }
+            if (source.includes("__eformsignSuccess")) {
+                return Promise.resolve(false);
+            }
+            return Promise.resolve(undefined);
+        });
+
+        const result = await service.dispatchCreation({ documentOption: { mode: { type: "01" } } });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+            expect(result.reason).toContain("eformsign SDK error");
+            expect(result.reason).toContain("request rejected");
         }
     });
 

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { infoMsgTemplate } from "../templates/messageTemplate/infoMsg";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -12,19 +12,13 @@ import { GeneratedMsg } from "../templates/GeneratedMsg";
 export const InfoMessageForm = () => {
   const locale = useLocale();
   const { toast } = useToast();
-  const [generatedMessage, setGeneratedMessage] = useState("");
-  const [isDirty, setIsDirty] = useState(false);
+  const [editedMessage, setEditedMessage] = useState<string | null>(null);
   const { data: systemTemplate } = useSystemTemplate("INFO");
 
-  useEffect(() => {
-    if (isDirty) return;
-
-    const message = systemTemplate?.content
-      ? renderTemplate(systemTemplate.content, {})
-      : infoMsgTemplate();
-
-    setGeneratedMessage(message);
-  }, [isDirty, systemTemplate?.content]);
+  const defaultMessage = systemTemplate?.content
+    ? renderTemplate(systemTemplate.content, {})
+    : infoMsgTemplate();
+  const generatedMessage = editedMessage ?? defaultMessage;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
@@ -44,8 +38,7 @@ export const InfoMessageForm = () => {
             copyButtonText={t(locale, "common.copy-button")}
             message={generatedMessage}
             onMessageChange={(message) => {
-              setIsDirty(true);
-              setGeneratedMessage(message);
+              setEditedMessage(message);
             }}
             handleCopy={handleCopy}
           />

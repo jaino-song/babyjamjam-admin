@@ -87,9 +87,6 @@ export class CreateAndSendContractUsecase {
                 { id: "본인부담금 수령 년도", value: today.year },
                 { id: "본인부담금 수령 월", value: today.month },
                 { id: "본인부담금 수령 일", value: today.day },
-                { id: "영수증 년도", value: today.year },
-                { id: "영수증 월", value: today.month },
-                { id: "영수증 일", value: today.day },
                 { id: "서비스 기간", value: `${client.duration || 0}일` },
             ];
 

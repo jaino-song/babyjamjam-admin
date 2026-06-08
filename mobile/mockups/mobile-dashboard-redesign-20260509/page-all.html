@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>전체 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+/* No list pattern — menu/cards layout */
+.menu-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px 96px; /* extra bottom for floating nav */
+  display: flex; flex-direction: column;
+  gap: 14px;
+  scrollbar-width: none;
+}
+.menu-content::-webkit-scrollbar { display: none; }
+
+/* Profile card */
+.profile-card {
+  background: linear-gradient(135deg, var(--v3-primary), hsl(267, 50%, 46%));
+  color: white;
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow-v3);
+  display: flex; align-items: center; gap: 10px;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0; /* prevent the column-flex parent from squishing it */
+}
+.profile-card::after {
+  content: '';
+  position: absolute;
+  right: -30px; bottom: -30px;
+  width: 120px; height: 120px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.08);
+  filter: blur(20px);
+}
+.profile-avatar {
+  width: 36px; height: 36px;
+  border-radius: 11px;
+  background: rgba(255,255,255,0.22);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+.profile-info { flex: 1; min-width: 0; position: relative; z-index: 1; line-height: 1.1; }
+.profile-name { font-size: 0.95rem; font-weight: 700; }
+.profile-role {
+  font-size: 0.62rem; opacity: 0.85;
+  margin-top: 3px;
+  display: flex; align-items: center; gap: 5px;
+  font-weight: 600;
+}
+.profile-role .role-dot {
+  width: 3px; height: 3px;
+  background: rgba(255,255,255,0.7);
+  border-radius: 50%;
+}
+.profile-edit {
+  background: rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.25);
+  color: white;
+  padding: 5px 7px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  position: relative;
+  z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* iOS plain-list menu groups — no card chrome, rows sit directly on page bg */
+.menu-group { /* transparent group container */ }
+.menu-group-title {
+  padding: 10px 18px 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--v3-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.menu-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  border-top: 1px solid var(--v3-border);
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+}
+.menu-row:first-of-type { border-top: 0; }
+.menu-row:hover { background: rgba(255,255,255,0.6); }
+.menu-icon {
+  width: 36px; height: 36px;
+  border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.menu-text { flex: 1; min-width: 0; }
+.menu-label { font-size: 0.88rem; font-weight: 600; color: var(--v3-dark); }
+.menu-right {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--v3-text-muted);
+}
+.menu-badge {
+  background: var(--v3-burgundy);
+  color: white;
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.menu-value {
+  font-size: 0.78rem;
+  color: var(--v3-text-muted);
+  font-weight: 600;
+}
+
+/* Logout button */
+.logout-btn {
+  width: 100%;
+  background: white;
+  border: 1px solid var(--v3-border);
+  color: var(--v3-burgundy);
+  padding: 14px;
+  border-radius: 18px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  box-shadow: var(--shadow-v3);
+}
+.app-version {
+  text-align: center;
+  font-size: 0.65rem;
+  color: var(--v3-text-muted);
+  padding: 8px 0;
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="menu-content">
+          <!-- Profile card -->
+          <div class="profile-card pop-up">
+            <div class="profile-avatar">송</div>
+            <div class="profile-info">
+              <div class="profile-name">송진호</div>
+              <div class="profile-role">
+                <span>지점장</span>
+                <span class="role-dot"></span>
+                <span>인천점</span>
+              </div>
+            </div>
+            <button class="profile-edit">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+            </button>
+          </div>
+
+          <!-- 업무 menu -->
+          <div class="menu-group pop-up" style="animation-delay: 120ms;">
+            <div class="menu-group-title">지점 관리</div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-burgundy-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(355,36%,45%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">상담</div>
+              </div>
+              <div class="menu-right">
+                <span class="menu-badge">3</span>
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-primary-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">고객</div>
+              </div>
+              <div class="menu-right">
+                <span class="menu-value">42명</span>
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: hsl(267, 50%, 92%);">
+                <svg width="18" height="18" fill="none" stroke="hsl(267,50%,46%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">제공인력</div>
+              </div>
+              <div class="menu-right">
+                <span class="menu-value">12명</span>
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-orange-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(34,100%,55%)" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">일정 캘린더</div>
+              </div>
+              <div class="menu-right">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-green-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(137,34%,31%)" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">통계 보고서</div>
+              </div>
+              <div class="menu-right">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- 서비스 관리 menu -->
+          <div class="menu-group pop-up" style="animation-delay: 150ms;">
+            <div class="menu-group-title">서비스 관리</div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-orange-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(34,100%,55%)" stroke-width="2.5" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">가격표</div>
+              </div>
+              <div class="menu-right">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-primary-light);">
+                <svg width="18" height="18" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">메시지</div>
+              </div>
+              <div class="menu-right">
+                <span class="menu-value">36건</span>
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: hsl(50, 100%, 88%);">
+                <svg width="18" height="18" fill="none" stroke="hsl(45,70%,30%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M3 3h3l3 9 7-7v9H6L3 3z"/><circle cx="9" cy="20" r="1"/><circle cx="17" cy="20" r="1"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">알림톡</div>
+              </div>
+              <div class="menu-right">
+                <span class="menu-value">4종</span>
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- 설정 menu -->
+          <div class="menu-group pop-up" style="animation-delay: 180ms;">
+            <div class="menu-group-title">설정</div>
+            <a class="menu-row" href="page-notification.html?v=frame-removal">
+              <div class="menu-icon" style="background: var(--v3-dim-white);">
+                <svg width="18" height="18" fill="none" stroke="var(--v3-text)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">알림 설정</div>
+              </div>
+              <div class="menu-right">
+                <span class="menu-value">활성</span>
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </a>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-dim-white);">
+                <svg width="18" height="18" fill="none" stroke="var(--v3-text)" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">보안</div>
+              </div>
+              <div class="menu-right">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-dim-white);">
+                <svg width="18" height="18" fill="none" stroke="var(--v3-text)" stroke-width="2.5" viewBox="0 0 24 24"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">언어</div>
+              </div>
+              <div class="menu-right">
+                <span class="menu-value">한국어</span>
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- 지원 menu -->
+          <div class="menu-group pop-up" style="animation-delay: 240ms;">
+            <div class="menu-group-title">지원</div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-dim-white);">
+                <svg width="18" height="18" fill="none" stroke="var(--v3-text)" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">도움말</div>
+              </div>
+              <div class="menu-right">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+            <div class="menu-row">
+              <div class="menu-icon" style="background: var(--v3-dim-white);">
+                <svg width="18" height="18" fill="none" stroke="var(--v3-text)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </div>
+              <div class="menu-text">
+                <div class="menu-label">문의하기</div>
+              </div>
+              <div class="menu-right">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Logout -->
+          <button class="logout-btn pop-up" style="animation-delay: 300ms;">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            로그아웃
+          </button>
+
+          <div class="app-version">아가잼잼 어드민 v2.4.1</div>
+        </div>
+      </div>
+
+      <!-- No detail sheet for this page (menu items are direct navigation) -->
+
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-burgundy-light);"><svg width="15" height="15" fill="none" stroke="hsl(355,36%,45%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg></div><div class="notif-body"><div class="notif-title">매니저 배정 요청</div><div class="notif-snippet">[더미] 정유진 고객님의 서비스에 매니저 배정이 필요합니다.</div><div class="notif-time">방금 전</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 전체) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item active">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">전체 · All / Settings page</div>
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+</script>
+</body>
+</html>

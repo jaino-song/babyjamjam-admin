@@ -1,0 +1,66 @@
+import { NextRequest, NextResponse } from "next/server";
+
+import { serverAPIClient } from "@/lib/api/server";
+import {
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
+
+function buildSystemTemplatePath(key: string, suffix = ""): string {
+    return `/system-templates/${encodeURIComponent(key)}${suffix}`;
+}
+
+async function requireAuthToken(request: NextRequest): Promise<string | NextResponse> {
+    const token = getAuthToken(request);
+    if (!token) {
+        return unauthorizedResponse("Authentication required. Please log in.");
+    }
+    return token;
+}
+
+export async function proxySystemTemplateGet(
+    request: NextRequest,
+    key: string,
+    suffix: string,
+    context: string,
+): Promise<NextResponse> {
+    const token = await requireAuthToken(request);
+    if (typeof token !== "string") {
+        return token;
+    }
+
+    try {
+        const response = await serverAPIClient.get(buildSystemTemplatePath(key, suffix), {
+            headers: getAuthHeaders(token),
+        });
+
+        return NextResponse.json(response.data, { status: response.status });
+    } catch (error) {
+        return errorResponse(error, context);
+    }
+}
+
+export async function proxySystemTemplatePost(
+    request: NextRequest,
+    key: string,
+    suffix: string,
+    context: string,
+): Promise<NextResponse> {
+    const token = await requireAuthToken(request);
+    if (typeof token !== "string") {
+        return token;
+    }
+
+    try {
+        const body = await request.json().catch(() => ({}));
+        const response = await serverAPIClient.post(buildSystemTemplatePath(key, suffix), body, {
+            headers: getAuthHeaders(token),
+        });
+
+        return NextResponse.json(response.data, { status: response.status });
+    } catch (error) {
+        return errorResponse(error, context);
+    }
+}

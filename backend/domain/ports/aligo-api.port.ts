@@ -57,9 +57,45 @@ export interface AligoCreateTemplateParams {
     image?: AligoTemplateImagePayload;
 }
 
+export interface AligoTemplateListButton {
+    name: string;
+    linkType: "WL" | "AL" | "BK" | "MD" | "DS" | "AC";
+    linkM?: string;
+    linkP?: string;
+    linkI?: string;
+    linkA?: string;
+    ordering?: string;
+}
+
+export interface AligoTemplateListItem {
+    templtCode: string;
+    templtName: string;
+    templtContent: string;
+    templtTitle?: string;
+    templtSubtitle?: string;
+    templtType: "BA" | "EX" | "AD" | "MI";
+    emphasizeType: "NONE" | "TEXT" | "IMAGE";
+    templtExtra?: string;
+    templtAd?: string;
+    inspStatus?: string;
+    status?: string;
+    ctgCategory?: string;
+    buttons?: AligoTemplateListButton[];
+    createDate?: string;
+    updateDate?: string;
+    senderKey?: string;
+}
+
+export interface AligoTemplateListResponse {
+    code: number;
+    message: string;
+    list?: AligoTemplateListItem[];
+}
+
 export interface IAligoApiPort {
     sendAlimtalk(params: AligoSendAlimtalkParams): Promise<AligoAlimtalkResponse>;
     createTemplate(params: AligoCreateTemplateParams): Promise<AligoTemplateCreateResponse>;
+    listTemplates(): Promise<AligoTemplateListResponse>;
 }
 
 export const ALIGO_API_PORT = Symbol("ALIGO_API_PORT");

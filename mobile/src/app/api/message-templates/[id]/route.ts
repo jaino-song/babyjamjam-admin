@@ -1,13 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
+function isValidTemplateId(id: string): boolean {
+    return /^[A-Za-z0-9_-]+$/.test(id);
 }
 
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
+function invalidTemplateIdResponse(): NextResponse {
+    return NextResponse.json({ error: "Invalid message template id" }, { status: 400 });
 }
+
+// Mirrors backend UpdateMessageTemplateDto: every field is optional, so this is
+// a passthrough object that only type-checks the known fields when present.
+const updateMessageTemplateSchema = z
+    .object({
+        name: z.string().max(10_000).optional(),
+        content: z.string().max(10_000).optional(),
+        variables: z.array(z.unknown()).optional(),
+    })
+    .passthrough();
 
 export async function GET(
     request: NextRequest,
@@ -16,20 +35,16 @@ export async function GET(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { id } = await params;
         const response = await serverAPIClient.get(`/message-templates/${id}`, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error(`[API] Error fetching message template ${request.url}:`, error);
-        return NextResponse.json(
-            { error: "Failed to fetch message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch message template");
     }
 }
 
@@ -40,21 +55,28 @@ export async function PATCH(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { id } = await params;
-        const body = await request.json();
-        const response = await serverAPIClient.patch(`/message-templates/${id}`, body, {
+        if (!isValidTemplateId(id)) {
+            return invalidTemplateIdResponse();
+        }
+
+        const { data, response: invalidBody } = await parseBody(
+            updateMessageTemplateSchema,
+            request,
+        );
+        if (invalidBody) {
+            return invalidBody;
+        }
+
+        const response = await serverAPIClient.patch(`/message-templates/${id}`, data, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error(`[API] Error updating message template ${request.url}:`, error);
-        return NextResponse.json(
-            { error: "Failed to update message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "update message template");
     }
 }
 
@@ -65,19 +87,15 @@ export async function DELETE(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { id } = await params;
-        await serverAPIClient.delete(`/message-templates/${id}`, {
+        const response = await serverAPIClient.delete(`/message-templates/${id}`, {
             headers: getAuthHeaders(token),
         });
-        return new NextResponse(null, { status: 204 });
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error(`[API] Error deleting message template ${request.url}:`, error);
-        return NextResponse.json(
-            { error: "Failed to delete message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "delete message template");
     }
 }

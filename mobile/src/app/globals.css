@@ -6,6 +6,22 @@
    ======================================== */
 
 :root {
+  /* Motion duration scale - by intent, not magnitude */
+  --duration-instant: 100ms;
+  --duration-affordance: 150ms;
+  --duration-feedback: 200ms;
+  --duration-pop: 300ms;
+  --duration-spatial: 320ms;
+  --duration-emphasis: 420ms;
+
+  /* Motion easing scale - by motion character */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spatial: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-entrance: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-overshoot: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring-soft: cubic-bezier(0.32, 1.4, 0.5, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
   /* Background & Foreground - Gray-blue tint for subtle warmth */
   --background: 210 20% 98%;
   --foreground: 220 20% 10%;
@@ -300,8 +316,6 @@
   --animate-pulse-subtle: pulse-subtle 2s ease-in-out infinite;
   --animate-shimmer: shimmer 2s linear infinite;
   --animate-icon-bounce: icon-bounce 0.3s ease-out;
-  --animate-glow: glow 2s ease-in-out infinite;
-  --animate-spin-slow: spin 2s linear infinite;
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
 
@@ -310,8 +324,6 @@
   --animate-v3-pop-up: v3-pop-up 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   --animate-v3-slide-up: v3-slide-up 0.5s ease-out forwards;
   --animate-v3-slide-right: v3-slide-right 0.4s ease-out forwards;
-  --animate-v3-float: v3-float 3s ease-in-out infinite;
-
   /* Load More Animation - plays bounce then waits until 3s total cycle */
   --animate-ball-bounce: ball-bounce 3s ease-out infinite;
 }
@@ -435,18 +447,6 @@
 
   50% {
     transform: translateY(-4px);
-  }
-}
-
-@keyframes glow {
-
-  0%,
-  100% {
-    box-shadow: 0 0 5px hsl(var(--primary) / 0.3);
-  }
-
-  50% {
-    box-shadow: 0 0 20px hsl(var(--primary) / 0.6);
   }
 }
 
@@ -666,25 +666,6 @@
     opacity: 1 !important;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .v3-slide-up-children > * {
-      animation: none !important;
-      transform: none !important;
-      opacity: 1 !important;
-    }
-  }
-}
-
-@keyframes v3-float {
-
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-
-  50% {
-    transform: translateY(-6px);
-  }
 }
 
 /* Ball bounce - dampened bouncing effect for load more chevron
@@ -1281,4 +1262,28 @@ body {
 
 .animate-float {
   animation: float 3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Loaders must keep spinning - users with vestibular disorders tolerate steady rotation. */
+  .animate-spin,
+  [data-slot="spinner"] {
+    animation-duration: 1s !important;
+  }
+
+  .animate-pulse {
+    animation: none !important;
+    opacity: 0.6;
+  }
 }

@@ -16,7 +16,7 @@ export const ServiceInfoMessageForm = ({ onPreviewMessageChange }: ServiceInfoMe
   const locale = useLocale();
   const [name, setName] = useState("");
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
-  const { data: systemTemplate } = useSystemTemplate("service_info");
+  const { data: systemTemplate } = useSystemTemplate("SERVICE_INFO");
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedMessage);
