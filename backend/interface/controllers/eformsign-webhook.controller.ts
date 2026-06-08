@@ -7,6 +7,10 @@ import { WebhookGuard } from "infrastructure/auth/webhook.guard";
  * Controller for handling eformsign webhook callbacks
  * This endpoint is called by eformsign when document status changes
  * Protected by bearer token authentication configured in eformsign console
+ *
+ * NOTE: this payload is exempt from the global forbidNonWhitelisted rule via
+ * GlobalValidationPipe (eformsign sends undeclared fields like document.comment
+ * and document.recipients[]). The exemption keys on EformsignWebhookPayloadDto.
  */
 @Controller("webhooks/eformsign")
 @UseGuards(WebhookGuard)

@@ -1,10 +1,11 @@
-import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { INestApplication } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { EformsignWebhookService } from "application/services/eformsign-webhook.service";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { EformsignWebhookController } from "interface/controllers/eformsign-webhook.controller";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
+import { GlobalValidationPipe } from "infrastructure/pipes/global-validation.pipe";
 import request from "supertest";
 
 describe("EformsignWebhookController (Integration)", () => {
@@ -63,7 +64,10 @@ describe("EformsignWebhookController (Integration)", () => {
             .compile();
 
         app = moduleFixture.createNestApplication();
-        app.useGlobalPipes(new ValidationPipe({ transform: true }));
+        // Mirror the production global pipe (main.ts) so this suite proves the
+        // metatype-based exemption keeps webhooks permissive under the strict
+        // forbidNonWhitelisted policy that applies everywhere else.
+        app.useGlobalPipes(new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
         await app.init();
 
         webhookService = moduleFixture.get(EformsignWebhookService);
@@ -84,6 +88,41 @@ describe("EformsignWebhookController (Integration)", () => {
         expect(response.status).toBe(200);
         expect(response.body).toEqual({ success: true });
         expect(webhookService.processWebhook).toHaveBeenCalledWith(payload);
+    });
+
+    it("accepts eformsign payloads carrying fields our DTO does not declare", async () => {
+        // Real eformsign webhooks (webhook-example.md) include document.comment
+        // and document.recipients[] — undeclared here. Under the production
+        // global pipe (forbidNonWhitelisted) these would 400; the controller's
+        // own permissive @UsePipes must keep the completion webhook working.
+        webhookService.processWebhook.mockResolvedValue(undefined);
+
+        const payloadWithExtras = {
+            ...payload,
+            document: {
+                ...payload.document,
+                comment: "",
+                recipients: [
+                    {
+                        step_seq: "2",
+                        name: "송진호",
+                        id: "",
+                        sms: { country_code: "+82", phone_number: "1066211878" },
+                        token_id: "e638f0969f634156bb9c32652309017d",
+                        sms_template_index: 0,
+                    },
+                ],
+            },
+        };
+
+        const response = await request(app.getHttpServer())
+            .post("/webhooks/eformsign")
+            .set(authHeader)
+            .send(payloadWithExtras);
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ success: true });
+        expect(webhookService.processWebhook).toHaveBeenCalled();
     });
 
     it("returns retryable failure when webhook processing fails", async () => {

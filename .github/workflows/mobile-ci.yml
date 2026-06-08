@@ -66,12 +66,15 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: https://ci-build.invalid
         run: pnpm --filter babyjamjam-admin run build
 
-  # Manual-only for now even though the real backend stack is wired here.
-  # Keep this dispatch-only until the existing suite is proven stable enough
-  # to promote from exploratory coverage to a blocking check.
+  # Advisory on PRs: runs the real-backend suite on every pull request (and on
+  # manual dispatch), reporting pass/fail as a signal. It is intentionally NOT
+  # marked a required check in branch protection, so a red run does not block
+  # merges — promote it to required when you want the hard gate. (4 consecutive
+  # green runs + 0 flaky as of 2026-06-08.) No continue-on-error: the status
+  # must stay truthful (red when it fails) for the signal to be worth anything.
   e2e:
-    name: playwright e2e (dispatch-only real backend)
-    if: github.event_name == 'workflow_dispatch'
+    name: playwright e2e (advisory · real backend)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     needs: verify
     # 90: the full 266-test suite against the real stack needs headroom —
     # two 60-minute runs were cancelled mid-suite before any report upload.
