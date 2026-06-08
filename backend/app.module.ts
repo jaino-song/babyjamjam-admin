@@ -11,6 +11,7 @@ import { AuthModule } from "infrastructure/auth/auth.module";
 import { BankAccountInfoModule } from "module/bank-account-info.module";
 import { UserModule } from "module/user.module";
 import { MessageModule } from "module/message.module";
+import { MessageTemplateModule } from "module/message-template.module";
 import { VoucherPriceInfoModule } from "module/voucher-price-info.module";
 import { EmployeeModule } from "module/employee.module";
 import { ClientModule } from "module/client.module";
@@ -25,6 +26,7 @@ import { NotificationModule } from "module/notification.module";
 import { AIChatModule } from "module/ai-chat.module";
 import { MessageDeliveryModule } from "module/message-delivery.module";
 import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
+import { SystemAdminModule } from "module/system-admin.module";
 import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
 
 const ENV_FILE_PATHS = [
@@ -55,6 +57,7 @@ const ENV_FILE_PATHS = [
         UserModule,
         BankAccountInfoModule,
         MessageModule,
+        MessageTemplateModule,
         VoucherPriceInfoModule,
         EmployeeModule,
         ClientModule,
@@ -68,6 +71,7 @@ const ENV_FILE_PATHS = [
         AIChatModule,
         MessageDeliveryModule,
         ConsultationInquiryModule,
+        SystemAdminModule,
     ],
     controllers: [EformsignController],
     providers: [EformsignService, JwtStrategy],

@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { systemTemplateService } from '@/services/system-template.service';
 import { systemTemplateKeys } from './useSystemTemplates';
-import type { CustomVariable, SystemTemplate } from '../types';
+import type { CustomVariable, UpdateSystemTemplateResponse } from '../types';
 
 export interface ApiErrorResponse {
   message: string;
@@ -19,7 +19,7 @@ interface UpdateParams {
 export function useUpdateSystemTemplate() {
   const queryClient = useQueryClient();
   
-  return useMutation<SystemTemplate, ApiErrorResponse, UpdateParams>({
+  return useMutation<UpdateSystemTemplateResponse, ApiErrorResponse, UpdateParams>({
     mutationFn: ({ key, content, customVariables }) =>
       systemTemplateService.update(key, content, customVariables).then(r => r.data),
     onSuccess: (_, { key }) => {

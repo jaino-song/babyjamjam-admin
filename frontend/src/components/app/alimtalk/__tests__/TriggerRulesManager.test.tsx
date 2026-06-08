@@ -34,16 +34,52 @@ const mockedUseCreateAlimtalkTriggerRule = jest.mocked(useCreateAlimtalkTriggerR
 const mockedUseUpdateAlimtalkTriggerRule = jest.mocked(useUpdateAlimtalkTriggerRule);
 const mockedUseDeleteAlimtalkTriggerRule = jest.mocked(useDeleteAlimtalkTriggerRule);
 
+type QueryOptions = {
+  queryKey?: readonly unknown[];
+};
+
+interface SettingsQueryState {
+  providerEnabled?: boolean;
+  senderApproved?: boolean;
+}
+
+function useQueryResult<TData>(data: TData, isLoading = false): ReturnType<typeof useQuery> {
+  return {
+    data,
+    isLoading,
+  } as unknown as ReturnType<typeof useQuery>;
+}
+
+function mockSettingsQueries({
+  providerEnabled = false,
+  senderApproved = false,
+}: SettingsQueryState = {}) {
+  mockedUseQuery.mockImplementation((options: QueryOptions) => {
+    const queryKey = options.queryKey ?? [];
+
+    if (queryKey.includes("message-sender-approval")) {
+      return useQueryResult({
+        senderPhone: senderApproved ? "01012345678" : null,
+        senderPhoneFormatted: senderApproved ? "010-1234-5678" : null,
+        approvalStatus: senderApproved ? "approved" : "not_requested",
+        isApproved: senderApproved,
+        canRequest: !senderApproved,
+        requestedAt: null,
+        approvedAt: senderApproved ? "2026-06-05T00:00:00.000Z" : null,
+      });
+    }
+
+    return useQueryResult({
+      provider: "aligo",
+      enabled: providerEnabled,
+    });
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
 
-  mockedUseQuery.mockReturnValue({
-    data: {
-      provider: "aligo",
-      enabled: false,
-    },
-    isLoading: false,
-  } as ReturnType<typeof useQuery>);
+  mockSettingsQueries();
 
   mockedUseAlimtalkTriggerRules.mockReturnValue({
     data: [
@@ -62,7 +98,7 @@ beforeEach(() => {
       },
     ],
     isLoading: false,
-  } as ReturnType<typeof useAlimtalkTriggerRules>);
+  } as unknown as ReturnType<typeof useAlimtalkTriggerRules>);
 
   mockedUseAlimtalkTriggerTemplates.mockReturnValue({
     data: [
@@ -78,22 +114,22 @@ beforeEach(() => {
         },
       },
     ],
-  } as ReturnType<typeof useAlimtalkTriggerTemplates>);
+  } as unknown as ReturnType<typeof useAlimtalkTriggerTemplates>);
 
   mockedUseCreateAlimtalkTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as ReturnType<typeof useCreateAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useCreateAlimtalkTriggerRule>);
 
   mockedUseUpdateAlimtalkTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as ReturnType<typeof useUpdateAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useUpdateAlimtalkTriggerRule>);
 
   mockedUseDeleteAlimtalkTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as ReturnType<typeof useDeleteAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useDeleteAlimtalkTriggerRule>);
 });
 
 describe("TriggerRulesManager", () => {
@@ -113,5 +149,18 @@ describe("TriggerRulesManager", () => {
     ).toHaveLength(2);
     expect(container.querySelector('[data-component="detail-panel-scroll-content"]')).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "알림톡 발송 신청하기" })).not.toBeInTheDocument();
+  });
+
+  it("keeps trigger rules available when message sending is approved even if provider settings are disabled", () => {
+    mockSettingsQueries({ providerEnabled: false, senderApproved: true });
+
+    const { container } = render(<TriggerRulesManager />);
+
+    expect(screen.getByRole("button", { name: "새 규칙" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "활성화" })).toBeEnabled();
+    expect(container.querySelector('[data-component="list-panel-disabled-overlay"]')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요."),
+    ).not.toBeInTheDocument();
   });
 });

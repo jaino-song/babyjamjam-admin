@@ -17,7 +17,7 @@ export function SearchBox({ placeholder, value, onChange }: SearchBoxProps) {
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-transparent text-[0.85rem] outline-none border-none placeholder:text-v3-text-muted"
+        className="w-full bg-transparent text-[0.8rem] outline-none border-none placeholder:text-v3-text-muted"
       />
     </div>
   );

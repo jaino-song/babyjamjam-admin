@@ -675,6 +675,201 @@
   }
 }
 
+/* V3 split layout responsive mode. */
+[data-component="split-layout"][data-mode="compact"] {
+  display: block;
+  height: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  position: relative;
+  width: var(--compact-viewport-width, 100%);
+}
+
+[data-component="split-layout-track"][data-mode="compact"] {
+  display: flex;
+  gap: var(--compact-panel-gap, 0px);
+  height: 100%;
+}
+
+[data-component="split-layout-panel"][data-mode="compact"] {
+  flex-shrink: 0;
+  height: 100%;
+  overflow-y: auto;
+}
+
+[data-component="split-layout-panel"][data-mode="compact"][data-panel="list"] {
+  width: var(--compact-list-width, 100%);
+}
+
+[data-component="split-layout-panel"][data-mode="compact"][data-panel="detail"] {
+  width: var(--compact-detail-width, 100%);
+}
+
+[data-component="split-layout-panel"][data-mode="compact"] > [data-component="list-panel"],
+[data-component="split-layout-panel"][data-mode="compact"] > [data-component="detail-panel"] {
+  width: 100%;
+}
+
+[data-component="split-layout-panel"][data-mode="compact"] > [data-component="list-panel"],
+[data-component="split-layout-panel"][data-mode="compact"] > [data-component="detail-panel"],
+[data-component="split-layout-panel"][data-mode="compact"] > [data-component="dashboard-detail-empty"],
+[data-component="split-layout-panel"][data-mode="compact"] > [data-component="dashboard-activities-panel"] > div {
+  box-shadow: none;
+}
+
+[data-component="main-content"][data-mode="compact"] {
+  flex-direction: row;
+  padding-top: 16px;
+}
+
+[data-component="main-content"][data-mode="compact"] [data-component="messages-sections"],
+[data-component="main-content"][data-mode="compact"] [data-component="contracts-sections"],
+[data-component="main-content"][data-mode="compact"] [data-component="system-admin-sections"],
+[data-component="main-content"][data-mode="compact"] [data-component="alimtalk-sections"],
+[data-component="main-content"][data-mode="compact"] [data-component="settings-sections"] {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+@media (max-width: 1600px) {
+  [data-component="main-content"]:has(:is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  )) {
+    padding-top: 16px;
+  }
+
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) [data-component="section-nav"] {
+    width: 100%;
+  }
+
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) [data-component="section-nav-desktop"] {
+    display: none !important;
+  }
+
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) [data-component="section-nav-mobile"] {
+    display: block !important;
+  }
+
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) [data-component="split-layout"] {
+    display: block;
+    height: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+  }
+
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) [data-component="split-layout-track"] {
+    display: flex;
+    gap: var(--compact-panel-gap, 16px);
+    height: 100%;
+  }
+
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) [data-component="split-layout"][data-columns="2"][data-has-selection="true"] [data-component="split-layout-track"] {
+    transform: translateX(calc(-100% - var(--compact-panel-gap, 16px)));
+  }
+
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) [data-component="split-layout-panel"] {
+    flex-shrink: 0;
+    height: 100%;
+    overflow-y: auto;
+    width: 100%;
+  }
+
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) [data-component="split-layout-panel"] > [data-component="list-panel"],
+  :is(
+    [data-component="messages-sections"],
+    [data-component="contracts-sections"],
+    [data-component="system-admin-sections"],
+    [data-component="alimtalk-sections"],
+    [data-component="settings-sections"]
+  ) [data-component="split-layout-panel"] > [data-component="detail-panel"] {
+    width: 100%;
+  }
+}
+
+[data-component="section-nav"][data-mode="compact"] {
+  width: 100%;
+}
+
+[data-component="section-nav-desktop"][data-mode="compact"] {
+  display: none !important;
+}
+
+[data-component="section-nav-mobile"][data-mode="compact"] {
+  display: block !important;
+}
+
+@media (min-width: 768px) {
+  [data-component="floating-quick-actions"][data-mode="desktop"],
+  [data-component="floating-quick-actions"][data-mode="compact"] {
+    display: flex !important;
+  }
+}
+
 @keyframes v3-float {
 
   0%,

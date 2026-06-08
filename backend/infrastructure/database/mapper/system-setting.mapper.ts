@@ -8,13 +8,17 @@ export class SystemSettingMapper {
 
     static toPrismaUpsert(entity: SystemSettingEntity): {
         where: { key: string };
-        create: { key: string; value: string };
-        update: { value: string };
+        create: { key: string; value: string; updatedAt: Date };
+        update: { value: string; updatedAt: Date };
     } {
         return {
             where: { key: entity.key },
-            create: { key: entity.key, value: entity.value },
-            update: { value: entity.value },
+            create: {
+                key: entity.key,
+                value: entity.value,
+                updatedAt: entity.updatedAt,
+            },
+            update: { value: entity.value, updatedAt: entity.updatedAt },
         };
     }
 }

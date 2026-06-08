@@ -48,19 +48,30 @@ export function InputField({
         >
           {title}
         </label>
-        {message ? (
-          <span
-            id={messageId}
-            aria-live="polite"
-            className={cn(
-              "text-[0.7rem] font-semibold leading-none",
-              messageTone === "error" ? "text-v3-burgundy" : "text-v3-text-muted",
-              messageClassName
-            )}
-          >
-            {message}
-          </span>
-        ) : null}
+        <div
+          className="overflow-hidden"
+          style={{
+            transition:
+              "max-height var(--duration-affordance) var(--ease-standard), " +
+              "opacity var(--duration-affordance) var(--ease-standard)",
+            maxHeight: hasErrorMessage ? "2rem" : message ? "none" : "0",
+            opacity: hasErrorMessage ? 1 : message ? 1 : 0,
+          }}
+        >
+          {message ? (
+            <span
+              id={messageId}
+              aria-live="polite"
+              className={cn(
+                "text-[0.7rem] font-semibold leading-none",
+                messageTone === "error" ? "text-v3-burgundy" : "text-v3-text-muted",
+                messageClassName
+              )}
+            >
+              {message}
+            </span>
+          ) : null}
+        </div>
       </div>
       {renderInput ? renderInput(resolvedInputProps) : <Input {...resolvedInputProps} />}
     </div>

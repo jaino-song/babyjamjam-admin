@@ -3,6 +3,7 @@ import { EmployeeScheduleService } from "application/services/employee-schedule.
 import { CreateEmployeeScheduleDto, UpdateEmployeeScheduleDto } from "interface/dto/employee-schedule.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { parseInteger } from "interface/parse-integer";
 
 @Controller("employee-schedules")
 @UseGuards(JwtGuard, TenantGuard)
@@ -34,7 +35,7 @@ export class EmployeeScheduleController {
     ) {
         return this.employeeScheduleService.findByPrimaryEmployeeId(
             tenant.branchId ?? "",
-            Number(primaryEmployeeId)
+            parseInteger(primaryEmployeeId, "primaryEmployeeId", { min: 1 })
         );
     }
 
@@ -45,13 +46,13 @@ export class EmployeeScheduleController {
     ) {
         return this.employeeScheduleService.findBySecondaryEmployeeId(
             tenant.branchId ?? "",
-            Number(secondaryEmployeeId)
+            parseInteger(secondaryEmployeeId, "secondaryEmployeeId", { min: 1 })
         );
     }
 
     @Get("id")
     findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
-        return this.employeeScheduleService.findById(tenant.branchId ?? "", Number(id));
+        return this.employeeScheduleService.findById(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
     }
 
     @Patch()
@@ -60,7 +61,7 @@ export class EmployeeScheduleController {
         @Query("id") id: string,
         @Body() dto: UpdateEmployeeScheduleDto
     ) {
-        return this.employeeScheduleService.update(tenant.branchId ?? "", Number(id), {
+        return this.employeeScheduleService.update(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }), {
             workAddress: dto.workAddress,
             startDate: dto.startDate,
             endDate: dto.endDate,
@@ -70,6 +71,6 @@ export class EmployeeScheduleController {
 
     @Delete()
     delete(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
-        return this.employeeScheduleService.delete(tenant.branchId ?? "", Number(id));
+        return this.employeeScheduleService.delete(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
     }
 }

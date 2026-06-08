@@ -1,35 +1,16 @@
-export type VariableType = "text" | "phone" | "select" | "date" | "number" | "textarea";
+import type {
+    CreateMessageTemplateRequest,
+    MessageTemplate,
+    MessageTemplateVariable,
+    MessageTemplateVariableType,
+    UpdateMessageTemplateRequest,
+} from "@babyjamjam/shared/types/message";
 
-export interface TemplateVariable {
-    key: string;
-    type: VariableType;
-    label: string;
-    placeholder?: string;
-    required: boolean;
-    optionType?: "custom" | "dataSource";
-    options?: string[];
-    dataSource?: string;
-    min?: number;
-    max?: number;
-}
+export type VariableType = MessageTemplateVariableType;
+export type TemplateVariable = MessageTemplateVariable;
 
-export interface MessageTemplate {
-    id: string;
-    name: string;
-    content: string;
-    variables: TemplateVariable[];
-    createdAt: string;
-    updatedAt: string;
-}
-
-export interface CreateMessageTemplateRequest {
-    name: string;
-    content: string;
-    variables: TemplateVariable[];
-}
-
-export interface UpdateMessageTemplateRequest {
-    name?: string;
-    content?: string;
-    variables?: TemplateVariable[];
-}
+export type {
+    CreateMessageTemplateRequest,
+    MessageTemplate,
+    UpdateMessageTemplateRequest,
+};

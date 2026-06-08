@@ -1,6 +1,8 @@
 import { NextResponse, NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+import { getUpstreamErrorStatus, logUpstreamError, parseBody, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -10,27 +12,36 @@ interface APIErrorResponse {
     hasKakaoAccount?: boolean;
 }
 
-export async function POST(request: NextRequest) {
-    try {
-        const body = await request.json();
-        const { data, status } = await serverAPIClient.post("/auth/register", body);
+const registerSchema = z
+    .object({
+        email: z.string().email(),
+        password: z.string().min(8),
+        name: z.string().min(1),
+        phone: z.string().min(1),
+        birthDate: z.string().min(1),
+        branchId: z.string().min(1),
+        role: z.string().min(1),
+    })
+    .passthrough();
 
-        return NextResponse.json(data, { status });
+export async function POST(request: NextRequest) {
+    const { data, response } = await parseBody(registerSchema, request);
+    if (response) return response;
+
+    try {
+        const { data: responseData, status } = await serverAPIClient.post("/auth/register", data);
+
+        return NextResponse.json(responseData, { status });
     } catch (error) {
-        console.error("[Auth Register] Error:", error);
+        logUpstreamError("Auth Register", error);
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
-            const status = axiosError.response?.status || 500;
+            const status = getUpstreamErrorStatus(error);
             const responseData = axiosError.response?.data;
 
-            // Pass through the error response from backend
-            if (responseData) {
-                return NextResponse.json(responseData, { status });
-            }
-
             return NextResponse.json(
-                { error: axiosError.message || "Registration failed" },
+                sanitizeUpstreamClientError(responseData, "Registration failed"),
                 { status }
             );
         }

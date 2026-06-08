@@ -19,6 +19,39 @@ export interface ToolExecutionResult {
 
 type ToolArgs = Record<string, unknown>;
 
+interface ToolIntegerOptions {
+    min?: number;
+    max?: number;
+    defaultValue?: number;
+}
+
+interface ToolBooleanOptions {
+    defaultValue?: boolean;
+}
+
+interface ToolStringOptions {
+    allowedValues?: readonly string[];
+    defaultValue?: string;
+}
+
+const CLIENT_FILTERS = [
+    "no-contract",
+    "starting-soon",
+    "ending-soon",
+    "incomplete-contracts",
+] as const;
+
+const CLIENT_SERVICE_STATUSES = [
+    "waiting",
+    "replacement_requested",
+    "active",
+    "completed",
+    "terminated",
+] as const;
+
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const BIRTHDAY_PATTERN = /^(\d{2})(\d{2})(\d{2})$/;
+
 @Injectable()
 export class ToolExecutorService {
     private readonly logger = new Logger(ToolExecutorService.name);
@@ -48,75 +81,75 @@ export class ToolExecutorService {
         try {
             switch (toolName) {
                 case "searchClients":
-                    return this.searchClients(branchid, args);
+                    return await this.searchClients(branchid, args);
                 case "getClient":
-                    return this.getClient(branchid, args);
+                    return await this.getClient(branchid, args);
                 case "createClient":
-                    return this.createClient(branchid, args);
+                    return await this.createClient(branchid, args);
                 case "updateClient":
-                    return this.updateClient(branchid, args);
+                    return await this.updateClient(branchid, args);
                 case "deleteClient":
-                    return this.deleteClient(branchid, args);
+                    return await this.deleteClient(branchid, args);
                 case "searchEmployees":
-                    return this.searchEmployees(branchid, args);
+                    return await this.searchEmployees(branchid, args);
                 case "getEmployee":
-                    return this.getEmployee(branchid, args);
+                    return await this.getEmployee(branchid, args);
                 case "createEmployee":
-                    return this.createEmployee(branchid, args);
+                    return await this.createEmployee(branchid, args);
                 case "updateEmployee":
-                    return this.updateEmployee(branchid, args);
+                    return await this.updateEmployee(branchid, args);
                 case "deleteEmployee":
-                    return this.deleteEmployee(branchid, args);
+                    return await this.deleteEmployee(branchid, args);
                 case "getMessages":
-                    return this.getMessages(branchid);
+                    return await this.getMessages(branchid);
                 case "createMessage":
-                    return this.createMessage(branchid, args);
+                    return await this.createMessage(branchid, args);
                 case "updateMessage":
-                    return this.updateMessage(branchid, args);
+                    return await this.updateMessage(branchid, args);
                 case "deleteMessage":
-                    return this.deleteMessage(branchid, args);
+                    return await this.deleteMessage(branchid, args);
                 case "listAvailableTemplates":
-                    return this.listAvailableTemplates(branchid);
+                    return await this.listAvailableTemplates(branchid);
                 case "createAndSendContract":
-                    return this.createAndSendContract(branchid, args);
+                    return await this.createAndSendContract(branchid, args);
                 case "getContractStatus":
-                    return this.getContractStatus(branchid, args);
+                    return await this.getContractStatus(branchid, args);
                 case "getDashboardStats":
-                    return this.getDashboardStats(branchid);
+                    return await this.getDashboardStats(branchid);
                 // Client filters & actions
                 case "getClientsByFilter":
-                    return this.getClientsByFilter(branchid, args);
+                    return await this.getClientsByFilter(branchid, args);
                 case "terminateClientService":
-                    return this.terminateClientService(branchid, args);
+                    return await this.terminateClientService(branchid, args);
                 case "requestEmployeeReplacement":
-                    return this.requestEmployeeReplacement(branchid, args);
+                    return await this.requestEmployeeReplacement(branchid, args);
                 // Employee filters & actions
                 case "getAvailableEmployees":
-                    return this.getAvailableEmployees(branchid);
+                    return await this.getAvailableEmployees(branchid);
                 case "getEmployeesByWorkArea":
-                    return this.getEmployeesByWorkArea(branchid, args);
+                    return await this.getEmployeesByWorkArea(branchid, args);
                 case "getEmployeesByGrade":
-                    return this.getEmployeesByGrade(branchid, args);
+                    return await this.getEmployeesByGrade(branchid, args);
                 case "changeEmployeeAvailability":
-                    return this.changeEmployeeAvailability(branchid, args);
+                    return await this.changeEmployeeAvailability(branchid, args);
                 // Schedules
                 case "listSchedules":
-                    return this.listSchedules(branchid);
+                    return await this.listSchedules(branchid);
                 case "getSchedulesByEmployee":
-                    return this.getSchedulesByEmployee(branchid, args);
+                    return await this.getSchedulesByEmployee(branchid, args);
                 // Voucher prices
                 case "listVoucherPrices":
-                    return this.listVoucherPrices();
+                    return await this.listVoucherPrices(args);
                 case "getVoucherPriceByType":
-                    return this.getVoucherPriceByType(args);
+                    return await this.getVoucherPriceByType(args);
                 // Bank accounts
                 case "listBankAccounts":
-                    return this.listBankAccounts();
+                    return await this.listBankAccounts();
                 case "getBankAccountByArea":
-                    return this.getBankAccountByArea(args);
+                    return await this.getBankAccountByArea(args);
                 // Contracts
                 case "listAllContracts":
-                    return this.listAllContracts(branchid);
+                    return await this.listAllContracts(branchid);
                 default:
                     return { success: false, error: `Unknown tool: ${toolName}` };
             }
@@ -142,7 +175,7 @@ export class ToolExecutorService {
             createEmployee: `새 관리사 "${args['name']}"님을 등록하시겠습니까?`,
             updateEmployee: `관리사 ${employeeRef}의 정보를 수정하시겠습니까?`,
             deleteEmployee: `관리사 ${employeeRef}을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
-            changeEmployeeAvailability: `관리사 ${employeeRef}의 배정 상태를 ${args['available'] ? '가능' : '불가'}으로 변경하시겠습니까?`,
+            changeEmployeeAvailability: `관리사 ${employeeRef}의 배정 상태를 ${this.booleanLabel(args['available'], '가능', '불가')}으로 변경하시겠습니까?`,
             createMessage: `새 메시지 "${args['title']}"을(를) 등록하시겠습니까?`,
             updateMessage: `메시지 ID ${args['messageId']}을(를) 수정하시겠습니까?`,
             deleteMessage: `메시지 ID ${args['messageId']}을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
@@ -156,11 +189,245 @@ export class ToolExecutorService {
         };
     }
 
+    private isMissingArg(value: unknown): boolean {
+        return value === undefined || value === null || (typeof value === "string" && value.trim().length === 0);
+    }
+
+    private parseRequiredIntegerArg(args: ToolArgs, key: string, options: ToolIntegerOptions = {}): number {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            throw new Error(`${key}이(가) 필요합니다`);
+        }
+
+        return this.parseIntegerValue(value, key, options);
+    }
+
+    private parseOptionalIntegerArg(args: ToolArgs, key: string, options: ToolIntegerOptions = {}): number | undefined {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            return options.defaultValue;
+        }
+
+        return this.parseIntegerValue(value, key, options);
+    }
+
+    private parseNullableIntegerArg(args: ToolArgs, key: string, options: ToolIntegerOptions = {}): number | null {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            return null;
+        }
+
+        return this.parseIntegerValue(value, key, options);
+    }
+
+    private parseIntegerValue(value: unknown, key: string, options: ToolIntegerOptions): number {
+        let parsed: number;
+
+        if (typeof value === "number") {
+            parsed = value;
+        } else if (typeof value === "string" && /^[-+]?\d+$/.test(value.trim())) {
+            parsed = Number(value.trim());
+        } else {
+            throw new Error(this.integerErrorMessage(key, options));
+        }
+
+        if (!Number.isSafeInteger(parsed)) {
+            throw new Error(this.integerErrorMessage(key, options));
+        }
+
+        if (options.min !== undefined && parsed < options.min) {
+            throw new Error(this.integerErrorMessage(key, options));
+        }
+
+        if (options.max !== undefined && parsed > options.max) {
+            throw new Error(this.integerErrorMessage(key, options));
+        }
+
+        return parsed;
+    }
+
+    private integerErrorMessage(key: string, options: ToolIntegerOptions): string {
+        if (options.min !== undefined && options.max !== undefined) {
+            return `${key}은(는) ${options.min} 이상 ${options.max} 이하의 정수여야 합니다`;
+        }
+
+        if (options.min !== undefined) {
+            return `${key}은(는) ${options.min} 이상의 정수여야 합니다`;
+        }
+
+        if (options.max !== undefined) {
+            return `${key}은(는) ${options.max} 이하의 정수여야 합니다`;
+        }
+
+        return `${key}은(는) 정수여야 합니다`;
+    }
+
+    private parseRequiredBooleanArg(args: ToolArgs, key: string): boolean {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            throw new Error(`${key}이(가) 필요합니다`);
+        }
+
+        return this.parseBooleanValue(value, key);
+    }
+
+    private parseOptionalBooleanArg(args: ToolArgs, key: string, options: ToolBooleanOptions = {}): boolean | undefined {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            return options.defaultValue;
+        }
+
+        return this.parseBooleanValue(value, key);
+    }
+
+    private parseBooleanValue(value: unknown, key: string): boolean {
+        if (typeof value !== "boolean") {
+            throw new Error(`${key}은(는) true 또는 false여야 합니다`);
+        }
+
+        return value;
+    }
+
+    private booleanLabel(value: unknown, trueLabel: string, falseLabel: string): string {
+        if (value === true) {
+            return trueLabel;
+        }
+
+        if (value === false) {
+            return falseLabel;
+        }
+
+        return "지정된 상태";
+    }
+
+    private parseRequiredStringArg(args: ToolArgs, key: string, options: ToolStringOptions = {}): string {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            throw new Error(`${key}이(가) 필요합니다`);
+        }
+
+        return this.parseStringValue(value, key, options);
+    }
+
+    private parseOptionalStringArg(args: ToolArgs, key: string, options: ToolStringOptions = {}): string | undefined {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            return options.defaultValue;
+        }
+
+        return this.parseStringValue(value, key, options);
+    }
+
+    private parseNullableStringArg(args: ToolArgs, key: string, options: ToolStringOptions = {}): string | null {
+        const value = args[key];
+        if (this.isMissingArg(value)) {
+            return null;
+        }
+
+        return this.parseStringValue(value, key, options);
+    }
+
+    private parseOptionalStringListArg(args: ToolArgs, key: string): string[] {
+        const value = this.parseOptionalStringArg(args, key);
+        if (value === undefined) {
+            return [];
+        }
+
+        return value.split(",").map((item) => item.trim()).filter(Boolean);
+    }
+
+    private parseStringValue(value: unknown, key: string, options: ToolStringOptions): string {
+        if (typeof value !== "string") {
+            throw new Error(`${key}은(는) 문자열이어야 합니다`);
+        }
+
+        const parsed = value.trim();
+        if (parsed.length === 0) {
+            throw new Error(`${key}이(가) 필요합니다`);
+        }
+
+        if (options.allowedValues && !options.allowedValues.includes(parsed)) {
+            throw new Error(`${key}은(는) ${options.allowedValues.join(", ")} 중 하나여야 합니다`);
+        }
+
+        return parsed;
+    }
+
+    private parseOptionalDateArg(args: ToolArgs, key: string): string | undefined {
+        const value = this.parseOptionalStringArg(args, key);
+        if (value === undefined) {
+            return undefined;
+        }
+
+        return this.parseDateValue(value, key);
+    }
+
+    private parseNullableDateArg(args: ToolArgs, key: string): string | null {
+        const value = this.parseOptionalStringArg(args, key);
+        if (value === undefined) {
+            return null;
+        }
+
+        return this.parseDateValue(value, key);
+    }
+
+    private parseNullableBirthdayArg(args: ToolArgs, key: string): string | null {
+        const value = this.parseOptionalStringArg(args, key);
+        if (value === undefined) {
+            return null;
+        }
+
+        return this.parseBirthdayValue(value, key);
+    }
+
+    private parseDateValue(value: string, key: string): string {
+        const match = ISO_DATE_PATTERN.exec(value);
+        if (!match) {
+            throw new Error(`${key}은(는) YYYY-MM-DD 형식이어야 합니다`);
+        }
+
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        const isValidDate =
+            date.getUTCFullYear() === year
+            && date.getUTCMonth() === month - 1
+            && date.getUTCDate() === day;
+
+        if (!isValidDate) {
+            throw new Error(`${key}은(는) 유효한 날짜여야 합니다`);
+        }
+
+        return value;
+    }
+
+    private parseBirthdayValue(value: string, key: string): string {
+        const match = BIRTHDAY_PATTERN.exec(value);
+        if (!match) {
+            throw new Error(`${key}은(는) YYMMDD 형식이어야 합니다`);
+        }
+
+        const year = 2000 + Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        const isValidDate =
+            date.getUTCFullYear() === year
+            && date.getUTCMonth() === month - 1
+            && date.getUTCDate() === day;
+
+        if (!isValidDate) {
+            throw new Error(`${key}은(는) 유효한 생년월일이어야 합니다`);
+        }
+
+        return value;
+    }
+
     private async resolveClientId(branchid: string, args: ToolArgs): Promise<number> {
         const rawId = args['clientId'];
-        const parsedId = Number(rawId);
-        if (Number.isFinite(parsedId) && parsedId > 0) {
-            return parsedId;
+        if (!this.isMissingArg(rawId)) {
+            return this.parseRequiredIntegerArg(args, "clientId", { min: 1 });
         }
 
         const clientName = [args['clientName'], args['name'], args['query']]
@@ -190,9 +457,8 @@ export class ToolExecutorService {
         nameKey: string,
     ): Promise<number> {
         const rawId = args[idKey];
-        const parsedId = Number(rawId);
-        if (Number.isFinite(parsedId) && parsedId > 0) {
-            return parsedId;
+        if (!this.isMissingArg(rawId)) {
+            return this.parseRequiredIntegerArg(args, idKey, { min: 1 });
         }
 
         const employeeNameRaw = args[nameKey];
@@ -217,8 +483,9 @@ export class ToolExecutorService {
 
     private async searchClients(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const query = String(args['query'] || "");
-        const page = Number(args['page']) || 1;
-        const limit = Math.min(Number(args['limit']) || 10, 50);
+        const page = this.parseOptionalIntegerArg(args, "page", { defaultValue: 1, min: 1 }) ?? 1;
+        const requestedLimit = this.parseOptionalIntegerArg(args, "limit", { defaultValue: 10, min: 1 }) ?? 10;
+        const limit = Math.min(requestedLimit, 50);
 
         const result = await this.clientService.findAllPaginated(branchid, page, limit, query);
         return {
@@ -240,7 +507,7 @@ export class ToolExecutorService {
     }
 
     private async getClient(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const clientId = Number(args['clientId']);
+        const clientId = this.parseRequiredIntegerArg(args, "clientId", { min: 1 });
         const client = await this.clientService.findById(branchid, clientId);
         if (!client) {
             return { success: false, error: "산모를 찾을 수 없습니다" };
@@ -250,19 +517,19 @@ export class ToolExecutorService {
 
     private async createClient(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const client = await this.clientService.create(branchid, {
-            name: String(args['name']),
-            primaryEmployeeId: Number(args['primaryEmployeeId']),
-            secondaryEmployeeId: args['secondaryEmployeeId'] ? Number(args['secondaryEmployeeId']) : null,
-            address: args['address'] ? String(args['address']) : null,
-            phone: args['phone'] ? String(args['phone']) : null,
-            type: args['type'] ? String(args['type']) : null,
-            duration: args['duration'] ? Number(args['duration']) : null,
-            startDate: args['startDate'] ? String(args['startDate']) : null,
-            endDate: args['endDate'] ? String(args['endDate']) : null,
-            careCenter: Boolean(args['careCenter']),
-            voucherClient: Boolean(args['voucherClient']),
-            birthday: args['birthday'] ? String(args['birthday']) : null,
-            breastPump: Boolean(args['breastPump']),
+            name: this.parseRequiredStringArg(args, "name"),
+            primaryEmployeeId: this.parseRequiredIntegerArg(args, "primaryEmployeeId", { min: 1 }),
+            secondaryEmployeeId: this.parseOptionalIntegerArg(args, "secondaryEmployeeId", { min: 1 }) ?? null,
+            address: this.parseNullableStringArg(args, "address"),
+            phone: this.parseNullableStringArg(args, "phone"),
+            type: this.parseNullableStringArg(args, "type"),
+            duration: this.parseOptionalIntegerArg(args, "duration", { min: 1 }) ?? null,
+            startDate: this.parseNullableDateArg(args, "startDate"),
+            endDate: this.parseNullableDateArg(args, "endDate"),
+            careCenter: this.parseRequiredBooleanArg(args, "careCenter"),
+            voucherClient: this.parseRequiredBooleanArg(args, "voucherClient"),
+            birthday: this.parseNullableBirthdayArg(args, "birthday"),
+            breastPump: this.parseOptionalBooleanArg(args, "breastPump", { defaultValue: false }) ?? false,
         });
         return { success: true, data: { id: client.id, name: client.name, message: "산모가 등록되었습니다" } };
     }
@@ -271,16 +538,19 @@ export class ToolExecutorService {
         const clientId = await this.resolveClientId(branchid, args);
         const updateData: Record<string, unknown> = {};
         
-        if (args['name'] !== undefined) updateData['name'] = String(args['name']);
-        if (args['phone'] !== undefined) updateData['phone'] = args['phone'] ? String(args['phone']) : null;
-        if (args['address'] !== undefined) updateData['address'] = args['address'] ? String(args['address']) : null;
-        if (args['primaryEmployeeId'] !== undefined) updateData['primaryEmployeeId'] = Number(args['primaryEmployeeId']);
-        if (args['secondaryEmployeeId'] !== undefined) updateData['secondaryEmployeeId'] = args['secondaryEmployeeId'] ? Number(args['secondaryEmployeeId']) : null;
-        if (args['type'] !== undefined) updateData['type'] = args['type'] ? String(args['type']) : null;
-        if (args['duration'] !== undefined) updateData['duration'] = args['duration'] ? Number(args['duration']) : null;
-        if (args['startDate'] !== undefined) updateData['startDate'] = args['startDate'] ? String(args['startDate']) : null;
-        if (args['endDate'] !== undefined) updateData['endDate'] = args['endDate'] ? String(args['endDate']) : null;
-        if (args['serviceStatus'] !== undefined) updateData['serviceStatus'] = args['serviceStatus'] ? String(args['serviceStatus']) : null;
+        if (args['name'] !== undefined) {
+            const name = this.parseOptionalStringArg(args, "name");
+            if (name !== undefined) updateData['name'] = name;
+        }
+        if (args['phone'] !== undefined) updateData['phone'] = this.parseNullableStringArg(args, "phone");
+        if (args['address'] !== undefined) updateData['address'] = this.parseNullableStringArg(args, "address");
+        if (args['primaryEmployeeId'] !== undefined) updateData['primaryEmployeeId'] = this.parseRequiredIntegerArg(args, "primaryEmployeeId", { min: 1 });
+        if (args['secondaryEmployeeId'] !== undefined) updateData['secondaryEmployeeId'] = this.parseNullableIntegerArg(args, "secondaryEmployeeId", { min: 1 });
+        if (args['type'] !== undefined) updateData['type'] = this.parseNullableStringArg(args, "type");
+        if (args['duration'] !== undefined) updateData['duration'] = this.parseNullableIntegerArg(args, "duration", { min: 1 });
+        if (args['startDate'] !== undefined) updateData['startDate'] = this.parseNullableDateArg(args, "startDate");
+        if (args['endDate'] !== undefined) updateData['endDate'] = this.parseNullableDateArg(args, "endDate");
+        if (args['serviceStatus'] !== undefined) updateData['serviceStatus'] = this.parseNullableStringArg(args, "serviceStatus", { allowedValues: CLIENT_SERVICE_STATUSES });
 
         const client = await this.clientService.update(
             branchid,
@@ -298,9 +568,11 @@ export class ToolExecutorService {
 
     private async searchEmployees(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const query = String(args['query'] || "");
+        const openToNextWork = this.parseOptionalBooleanArg(args, "openToNextWork");
         const employees = await this.employeeService.findAll(branchid);
         const filtered = employees.filter(e => 
-            e.name.includes(query) || e.phone.includes(query)
+            (e.name.includes(query) || e.phone.includes(query))
+            && (openToNextWork === undefined || e.openToNextWork === openToNextWork)
         );
         return {
             success: true,
@@ -315,7 +587,7 @@ export class ToolExecutorService {
     }
 
     private async getEmployee(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
         const employee = await this.employeeService.findById(branchid, employeeId);
         if (!employee) {
             return { success: false, error: "관리사를 찾을 수 없습니다" };
@@ -325,25 +597,34 @@ export class ToolExecutorService {
 
     private async createEmployee(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const employee = await this.employeeService.create(branchid, {
-            name: String(args['name']),
-            phone: String(args['phone']),
-            grade: String(args['grade']),
-            workArea: args['workArea'] ? String(args['workArea']).split(",").map(s => s.trim()) : [],
-            openToNextWork: args['openToNextWork'] !== false,
-            registeredDate: args['companyRegisteredDate'] ? String(args['companyRegisteredDate']) : undefined,
+            name: this.parseRequiredStringArg(args, "name"),
+            phone: this.parseRequiredStringArg(args, "phone"),
+            grade: this.parseRequiredStringArg(args, "grade"),
+            workArea: this.parseOptionalStringListArg(args, "workArea"),
+            openToNextWork: this.parseOptionalBooleanArg(args, "openToNextWork", { defaultValue: true }) ?? true,
+            registeredDate: this.parseOptionalDateArg(args, "companyRegisteredDate"),
         });
         return { success: true, data: { id: employee.id, name: employee.name, message: "관리사가 등록되었습니다" } };
     }
 
     private async updateEmployee(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
         const updateData: Record<string, unknown> = {};
         
-        if (args['name'] !== undefined) updateData['name'] = String(args['name']);
-        if (args['phone'] !== undefined) updateData['phone'] = String(args['phone']);
-        if (args['grade'] !== undefined) updateData['grade'] = String(args['grade']);
-        if (args['workArea'] !== undefined) updateData['workArea'] = String(args['workArea']).split(",").map(s => s.trim());
-        if (args['openToNextWork'] !== undefined) updateData['openToNextWork'] = Boolean(args['openToNextWork']);
+        if (args['name'] !== undefined) {
+            const name = this.parseOptionalStringArg(args, "name");
+            if (name !== undefined) updateData['name'] = name;
+        }
+        if (args['phone'] !== undefined) {
+            const phone = this.parseOptionalStringArg(args, "phone");
+            if (phone !== undefined) updateData['phone'] = phone;
+        }
+        if (args['grade'] !== undefined) {
+            const grade = this.parseOptionalStringArg(args, "grade");
+            if (grade !== undefined) updateData['grade'] = grade;
+        }
+        if (args['workArea'] !== undefined) updateData['workArea'] = this.parseOptionalStringListArg(args, "workArea");
+        if (args['openToNextWork'] !== undefined) updateData['openToNextWork'] = this.parseRequiredBooleanArg(args, "openToNextWork");
 
         const employee = await this.employeeService.update(
             branchid,
@@ -354,7 +635,7 @@ export class ToolExecutorService {
     }
 
     private async deleteEmployee(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
         await this.employeeService.delete(branchid, employeeId);
         return { success: true, data: { message: "관리사가 삭제되었습니다" } };
     }
@@ -376,23 +657,23 @@ export class ToolExecutorService {
     private async createMessage(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const message = await this.messageService.create(
             branchid,
-            String(args['title']),
-            String(args['text']),
+            this.parseRequiredStringArg(args, "title"),
+            this.parseRequiredStringArg(args, "text"),
         );
         return { success: true, data: { id: message.id, title: message.title, message: "메시지가 등록되었습니다" } };
     }
 
     private async updateMessage(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const messageId = Number(args['messageId']);
-        const title = args['title'] !== undefined ? String(args['title']) : "";
-        const text = args['text'] !== undefined ? String(args['text']) : "";
+        const messageId = this.parseRequiredIntegerArg(args, "messageId", { min: 1 });
+        const title = this.parseRequiredStringArg(args, "title");
+        const text = this.parseRequiredStringArg(args, "text");
 
         const message = await this.messageService.update(branchid, messageId, title, text);
         return { success: true, data: { id: message.id, title: message.title, message: "메시지가 수정되었습니다" } };
     }
 
     private async deleteMessage(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const messageId = Number(args['messageId']);
+        const messageId = this.parseRequiredIntegerArg(args, "messageId", { min: 1 });
         await this.messageService.delete(branchid, messageId);
         return { success: true, data: { message: "메시지가 삭제되었습니다" } };
     }
@@ -410,8 +691,8 @@ export class ToolExecutorService {
     }
 
     private async createAndSendContract(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const clientId = Number(args['clientId']);
-        const areaId = String(args['areaId']);
+        const clientId = this.parseRequiredIntegerArg(args, "clientId", { min: 1 });
+        const areaId = this.parseRequiredStringArg(args, "areaId");
 
         const template = await this.areaTemplateService.findByArea(branchid, areaId);
         if (!template) {
@@ -438,16 +719,18 @@ export class ToolExecutorService {
     }
 
     private async getContractStatus(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        if (args['documentId']) {
-            const doc = await this.eformsignDocService.findByDocumentId(branchid, String(args['documentId']));
+        if (!this.isMissingArg(args['documentId'])) {
+            const documentId = this.parseRequiredStringArg(args, "documentId");
+            const doc = await this.eformsignDocService.findByDocumentId(branchid, documentId);
             if (!doc) {
                 return { success: false, error: "문서를 찾을 수 없습니다" };
             }
             return { success: true, data: doc };
         }
 
-        if (args['clientId']) {
-            const docs = await this.eformsignDocService.findByClientId(branchid, Number(args['clientId']));
+        if (!this.isMissingArg(args['clientId'])) {
+            const clientId = this.parseRequiredIntegerArg(args, "clientId", { min: 1 });
+            const docs = await this.eformsignDocService.findByClientId(branchid, clientId);
             return { success: true, data: docs };
         }
 
@@ -478,7 +761,7 @@ export class ToolExecutorService {
     }
 
     private async getClientsByFilter(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const filter = String(args['filter']);
+        const filter = this.parseRequiredStringArg(args, "filter", { allowedValues: CLIENT_FILTERS });
         const clients = await this.clientService.findByFilter(branchid, filter);
         return {
             success: true,
@@ -500,12 +783,13 @@ export class ToolExecutorService {
 
     private async terminateClientService(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
         const clientId = await this.resolveClientId(branchid, args);
-        const reason = args['reason'] ? String(args['reason']) : undefined;
+        const reason = this.parseOptionalStringArg(args, "reason");
         const client = await this.clientService.terminateService(branchid, clientId, reason);
         return { success: true, data: { id: client.id, name: client.name, message: "서비스가 종료되었습니다" } };
     }
 
     private async requestEmployeeReplacement(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
+        const newSecondaryEmployeeId = this.parseOptionalIntegerArg(args, "newSecondaryEmployeeId", { min: 1 });
         const clientId = await this.resolveClientId(branchid, args);
         const newPrimaryEmployeeId = await this.resolveEmployeeId(
             branchid,
@@ -513,7 +797,6 @@ export class ToolExecutorService {
             "newPrimaryEmployeeId",
             "newPrimaryEmployeeName",
         );
-        const newSecondaryEmployeeId = args['newSecondaryEmployeeId'] ? Number(args['newSecondaryEmployeeId']) : undefined;
         const client = await this.clientService.requestReplacement(
             branchid,
             clientId,
@@ -538,7 +821,7 @@ export class ToolExecutorService {
     }
 
     private async getEmployeesByWorkArea(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const workArea = String(args['workArea']);
+        const workArea = this.parseRequiredStringArg(args, "workArea");
         const employees = await this.employeeService.findByWorkArea(branchid, workArea);
         return {
             success: true,
@@ -553,7 +836,7 @@ export class ToolExecutorService {
     }
 
     private async getEmployeesByGrade(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const grade = String(args['grade']);
+        const grade = this.parseRequiredStringArg(args, "grade");
         const employees = await this.employeeService.findByGrade(branchid, grade);
         return {
             success: true,
@@ -568,8 +851,8 @@ export class ToolExecutorService {
     }
 
     private async changeEmployeeAvailability(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
-        const available = Boolean(args['available']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
+        const available = this.parseRequiredBooleanArg(args, "available");
         const employee = await this.employeeService.changeOpenStatus(branchid, employeeId, available);
         return { 
             success: true, 
@@ -600,7 +883,7 @@ export class ToolExecutorService {
     }
 
     private async getSchedulesByEmployee(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const employeeId = Number(args['employeeId']);
+        const employeeId = this.parseRequiredIntegerArg(args, "employeeId", { min: 1 });
         const [primarySchedules, secondarySchedules] = await Promise.all([
             this.employeeScheduleService.findByPrimaryEmployeeId(branchid, employeeId),
             this.employeeScheduleService.findBySecondaryEmployeeId(branchid, employeeId),
@@ -626,11 +909,13 @@ export class ToolExecutorService {
         };
     }
 
-    private async listVoucherPrices(): Promise<ToolExecutionResult> {
+    private async listVoucherPrices(args: ToolArgs): Promise<ToolExecutionResult> {
+        const year = this.parseOptionalIntegerArg(args, "year", { min: 1900, max: 2200 });
         const vouchers = await this.voucherPriceInfoService.list();
+        const filteredVouchers = year === undefined ? vouchers : vouchers.filter((v) => v.year === year);
         return {
             success: true,
-            data: vouchers.map(v => ({
+            data: filteredVouchers.map(v => ({
                 id: v.id,
                 type: v.type,
                 duration: Number(v.duration),
@@ -643,8 +928,8 @@ export class ToolExecutorService {
     }
 
     private async getVoucherPriceByType(args: ToolArgs): Promise<ToolExecutionResult> {
-        const type = String(args['type']);
-        const year = args['year'] ? Number(args['year']) : undefined;
+        const type = this.parseRequiredStringArg(args, "type");
+        const year = this.parseOptionalIntegerArg(args, "year", { min: 1900, max: 2200 });
         const vouchers = await this.voucherPriceInfoService.findByType(type, year);
         return {
             success: true,
@@ -673,7 +958,7 @@ export class ToolExecutorService {
     }
 
     private async getBankAccountByArea(args: ToolArgs): Promise<ToolExecutionResult> {
-        const area = String(args['area']);
+        const area = this.parseRequiredStringArg(args, "area");
         const account = await this.bankAccountInfoService.findByArea(area);
         if (!account) {
             return { success: false, error: `${area} 지역의 계좌 정보를 찾을 수 없습니다` };

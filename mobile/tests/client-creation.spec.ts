@@ -1,538 +1,245 @@
-import { test, expect } from '@playwright/test';
+import { expect, test, type Page } from "@playwright/test";
 
-/**
- * ClientFormDialog E2E Tests
- *
- * Comprehensive tests for client creation and editing functionality:
- * - Form field validation
- * - Voucher type/duration select boxes
- * - Price auto-fill from API
- * - Toggle switches (voucherClient, careCenter, breastPump)
- * - Employee selection
- * - Date field handling
- */
+const VOUCHER_TYPE = "A가1형";
+const VOUCHER_DURATION = "10";
 
-test.describe('Client Creation Flow', () => {
-    test.beforeEach(async ({ page }) => {
-        await page.goto('/clients');
-        await page.waitForLoadState('networkidle');
+const EMPLOYEES = [
+  {
+    id: 11,
+    name: "테스트직원",
+    workArea: ["인천"],
+    phone: "010-1111-1111",
+    grade: "베스트",
+    openToNextWork: true,
+    registeredDate: "2026-06-01",
+    status: "available",
+  },
+  {
+    id: 12,
+    name: "보조직원",
+    workArea: ["인천"],
+    phone: "010-2222-2222",
+    grade: "프리미엄",
+    openToNextWork: true,
+    registeredDate: "2026-06-01",
+    status: "available",
+  },
+];
+
+const BANK_ACCOUNT_INFOS = [
+  {
+    area: "area-incheon",
+    bankName: "국민은행",
+    accNum: "123-456-7890",
+  },
+];
+
+const VOUCHER_PRICE_INFOS = [
+  {
+    id: 2,
+    type: VOUCHER_TYPE,
+    duration: VOUCHER_DURATION,
+    fullPrice: "1300000",
+    grant: "1000000",
+    actualPrice: "300000",
+  },
+];
+
+type CreateClientPayload = Record<string, unknown>;
+
+async function mockClientsWizardRoutes(page: Page, options?: { onCreate?: (payload: CreateClientPayload) => void }) {
+  await page.route("**/api/notifications/vapid-key**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ publicKey: "test-vapid-key" }),
     });
+  });
 
-    // ============================================
-    // Dialog Open/Close Tests
-    // ============================================
-    test.describe('Dialog Opening', () => {
-        test('should open ClientFormDialog when clicking add button', async ({ page }) => {
-            // Find and click the add button
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-
-            // Verify dialog opens
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-            await expect(dialog).toBeVisible();
-
-            // Verify it's in create mode (check title if visible)
-            await expect(dialog).toContainText(/신규|추가|등록|create/i);
-        });
-
-        test('should close dialog when clicking cancel button', async ({ page }) => {
-            // Open dialog
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-
-            // Click cancel
-            const cancelButton = page.locator('[data-testid="client-form-dialog"]').getByRole('button', { name: /취소|cancel/i });
-            await cancelButton.click();
-
-            // Dialog should be closed
-            await expect(page.locator('[data-testid="client-form-dialog"]')).not.toBeVisible();
-        });
+  await page.route("**/api/employees", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(EMPLOYEES),
     });
+  });
 
-    // ============================================
-    // Form Validation Tests
-    // ============================================
-    test.describe('Form Validation', () => {
-        test.beforeEach(async ({ page }) => {
-            // Open dialog before each validation test
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
-
-        test('should show error when submitting empty form', async ({ page }) => {
-            // Click submit without filling any fields
-            const submitButton = page.locator('[data-testid="client-form-dialog"]').getByRole('button', { name: /등록|생성|create|저장|save/i });
-            await submitButton.click();
-
-            // Should show error alert
-            const errorAlert = page.locator('[data-testid="client-form-dialog"]').locator('[role="alert"]');
-            await expect(errorAlert).toBeVisible({ timeout: 3000 });
-        });
-
-        test('should validate required fields one by one', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Fill name only and try to submit
-            const nameInput = dialog.locator('input').first();
-            await nameInput.fill('테스트 산모');
-
-            const submitButton = dialog.getByRole('button', { name: /등록|생성|create/i });
-            await submitButton.click();
-
-            // Should still show error (other fields missing)
-            const errorAlert = dialog.locator('[role="alert"]');
-            await expect(errorAlert).toBeVisible({ timeout: 3000 });
-        });
+  await page.route("**/api/bank-account-infos", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(BANK_ACCOUNT_INFOS),
     });
+  });
 
-    // ============================================
-    // Basic Info Section Tests
-    // ============================================
-    test.describe('Basic Info Section', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
-
-        test('should accept name input', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-            const nameInput = dialog.locator('input').first();
-
-            await nameInput.fill('홍길동');
-            await expect(nameInput).toHaveValue('홍길동');
-        });
-
-        test('should format birthday as YYMMDD', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Find birthday input (usually has placeholder YYMMDD)
-            const birthdayInput = dialog.locator('input[placeholder*="YYMMDD"], input').nth(1);
-
-            await birthdayInput.fill('900515');
-            await expect(birthdayInput).toHaveValue('900515');
-
-            // Should not accept more than 6 characters
-            await birthdayInput.fill('19900515');
-            const value = await birthdayInput.inputValue();
-            expect(value.length).toBeLessThanOrEqual(6);
-        });
-
-        test('should format phone number as XXX-XXXX-XXXX', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Find phone input (look for placeholder pattern)
-            const phoneInput = dialog.locator('input[placeholder*="010"], input').nth(2);
-
-            // Type raw digits
-            await phoneInput.fill('01012345678');
-
-            // Should be formatted
-            const formattedValue = await phoneInput.inputValue();
-            expect(formattedValue).toMatch(/\d{3}-\d{4}-\d{4}|01012345678/);
-        });
-
-        test('should accept address input', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Find address input
-            const inputs = dialog.locator('input[type="text"]');
-            const addressInput = inputs.nth(3);
-
-            await addressInput.fill('인천광역시 연수구 테스트동 123');
-            await expect(addressInput).toHaveValue('인천광역시 연수구 테스트동 123');
-        });
+  await page.route("**/api/clients/check-phone**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ exists: false }),
     });
+  });
 
-    // ============================================
-    // Voucher Type/Duration Select Box Tests
-    // ============================================
-    test.describe('Voucher Type and Duration Select Boxes', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
+  await page.route("**/api/voucher-price-infos/type**", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    const type = requestUrl.searchParams.get("type");
 
-        test('should display voucher type select with grouped options', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Find the voucher type select (first dropdown in service section)
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
-
-            // Click to open
-            await voucherTypeSelect.click();
-
-            // Should show grouped options
-            const listbox = page.locator('[role="listbox"]');
-            await expect(listbox).toBeVisible({ timeout: 3000 });
-
-            // Should have group headers (disabled menu items)
-            const groupHeaders = listbox.locator('[role="option"][aria-disabled="true"]');
-            const headerCount = await groupHeaders.count();
-            expect(headerCount).toBeGreaterThan(0);
-        });
-
-        test('should enable duration select after selecting voucher type', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Duration select should be disabled initially
-            const selects = dialog.locator('.MuiFormControl-root').filter({ has: page.locator('.MuiSelect-select') });
-
-            // Click on voucher type select
-            const voucherTypeSelect = selects.first().locator('.MuiSelect-select');
-            await voucherTypeSelect.click();
-
-            // Select a type (e.g., A가-1형)
-            const option = page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first();
-            await option.click();
-
-            // Wait for API to load duration options
-            await page.waitForTimeout(500);
-
-            // Duration select should now be clickable
-            const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-            await durationSelect.click();
-
-            // Should show duration options
-            const durationListbox = page.locator('[role="listbox"]');
-            await expect(durationListbox).toBeVisible({ timeout: 3000 });
-        });
-
-        test('should show loading indicator while fetching durations', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Click on voucher type select
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
-            await voucherTypeSelect.click();
-
-            // Select a type
-            const option = page.locator('[role="option"]').filter({ hasText: /A|B|C/ }).first();
-            await option.click();
-
-            // May briefly show loading indicator (timing-dependent)
-            // This is more of a smoke test
-        });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(type === VOUCHER_TYPE ? VOUCHER_PRICE_INFOS : []),
     });
+  });
 
-    // ============================================
-    // Price Auto-fill Tests
-    // ============================================
-    test.describe('Price Auto-fill', () => {
-        test('should auto-fill prices when type and duration selected', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+  await page.route("**/api/clients", async (route) => {
+    if (route.request().method() === "POST") {
+      options?.onCreate?.(route.request().postDataJSON() as CreateClientPayload);
 
-            // Open dialog
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(dialog).toBeVisible();
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: 501,
+          name: "홍테스트 고객",
+        }),
+      });
+      return;
+    }
 
-            // Select voucher type
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
-            await voucherTypeSelect.click();
-            const typeOption = page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first();
-            await typeOption.click();
-
-            // Wait for duration options to load
-            await page.waitForTimeout(1000);
-
-            // Select duration
-            const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-            await durationSelect.click();
-
-            const durationListbox = page.locator('[role="listbox"]');
-            await expect(durationListbox).toBeVisible({ timeout: 5000 });
-
-            const durationOption = page.locator('[role="option"]').filter({ hasText: /\d+일/ }).first();
-            await durationOption.click();
-
-            // Wait for price auto-fill
-            await page.waitForTimeout(500);
-
-            // Price fields should have values (check if not empty)
-            const priceInputs = dialog.locator('input').filter({ has: page.locator('text=원') });
-            // Note: The actual price inputs may be text fields without specific markers
-        });
-
-        test('should show "Auto-filled" chip when prices are auto-filled', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Open dialog
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(dialog).toBeVisible();
-
-            // Select voucher type and duration
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
-            await voucherTypeSelect.click();
-            await page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first().click();
-
-            await page.waitForTimeout(1000);
-
-            const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-            await durationSelect.click();
-            await expect(page.locator('[role="listbox"]')).toBeVisible({ timeout: 5000 });
-            await page.locator('[role="option"]').filter({ hasText: /\d+일/ }).first().click();
-
-            // Wait for auto-fill
-            await page.waitForTimeout(500);
-
-            // Should show auto-filled indicator chip
-            const autoFilledChip = dialog.locator('.MuiChip-root').filter({ hasText: /자동|auto/i });
-            // The chip may or may not appear depending on locale
-        });
-
-        test('should hide auto-fill chip when user manually edits price', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Open dialog and select type/duration to trigger auto-fill
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(dialog).toBeVisible();
-
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
-            await voucherTypeSelect.click();
-            await page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first().click();
-
-            await page.waitForTimeout(1000);
-
-            const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-            await durationSelect.click();
-            await expect(page.locator('[role="listbox"]')).toBeVisible({ timeout: 5000 });
-            await page.locator('[role="option"]').filter({ hasText: /\d+일/ }).first().click();
-
-            await page.waitForTimeout(500);
-
-            // Manually edit a price field (find price inputs in the pricing section)
-            // Price inputs are typically labeled with "원" (won) suffix
-            const priceInputs = dialog.locator('input[type="text"]');
-            const priceInputCount = await priceInputs.count();
-            if (priceInputCount > 4) {
-                // Price inputs are usually after the first few text fields (name, birthday, phone, address)
-                await priceInputs.nth(4).fill('1000000');
-            }
-        });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
     });
+  });
+}
 
-    // ============================================
-    // Toggle Switches (Flags) Tests
-    // ============================================
-    test.describe('Toggle Switches', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
+async function fillStepZero(page: Page) {
+  await page.getByPlaceholder("홍길동").fill("홍테스트 고객");
+  await page.getByPlaceholder("010-1234-5678").fill("01011112222");
+  await page.getByPlaceholder("YYMMDD").nth(0).fill("950101");
+  await page.getByPlaceholder("YYMMDD").nth(1).fill("260615");
+  await page.getByPlaceholder("서울시 강남구...").fill("인천광역시 연수구 테스트로 10");
 
-        test('should have voucherClient toggle defaulted to ON', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+  await expect(
+    page.locator('[data-component="clients-new-basic-contact-card"] [data-component="clients-new-form-helper"]')
+  ).toContainText("등록 가능한 번호입니다.");
+}
 
-            // Find the switch for voucherClient
-            const voucherSwitch = dialog.locator('[role="checkbox"]').first();
+async function goToStepOne(page: Page) {
+  await fillStepZero(page);
+  await page.locator('[data-component="clients-new-actions"] button').nth(1).click();
+  await expect(page.locator('[data-component="clients-new-voucher-card"]')).toBeVisible();
+  await expect(page.locator('[data-component="clients-new-step-count"]')).toHaveText("2 / 3 단계");
+}
 
-            // Should be checked by default (based on form default value)
-            // Note: The exact state depends on the default value in the form
-        });
+async function fillDeterministicVoucherFields(page: Page) {
+  const voucherTypeSelect = page.locator('[data-component="clients-new-voucher-card"] select').first();
+  await voucherTypeSelect.selectOption(VOUCHER_TYPE);
 
-        test('should toggle careCenter switch', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+  const durationSelect = page.locator('[data-component="clients-new-duration-select-wrap"] select');
+  await expect(durationSelect.locator(`option[value="${VOUCHER_DURATION}"]`)).toHaveCount(1);
+  await durationSelect.selectOption(VOUCHER_DURATION);
 
-            // Find care center switch (typically labeled with Korean text)
-            const switches = dialog.locator('.MuiSwitch-root');
+  await expect(page.locator('[data-component="clients-new-full-price-input-wrap"] input')).toHaveValue("1,300,000");
+  await expect(page.locator('[data-component="clients-new-grant-input-wrap"] input')).toHaveValue("1,000,000");
+  await expect(page.locator('[data-component="clients-new-actual-price-input-wrap"] input')).toHaveValue("300,000");
+}
 
-            // Toggle the second switch (careCenter)
-            const careCenterSwitch = switches.nth(1);
-            await careCenterSwitch.click();
+test.use({ viewport: { width: 390, height: 844 } });
 
-            // The switch should change state (visual check)
-        });
+test.describe("clients/new wizard", () => {
+  test("renders the wizard shell and the initial basic-info step", async ({ page }) => {
+    await mockClientsWizardRoutes(page);
+    await page.goto("/clients/new");
 
-        test('should toggle breastPump switch', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+    await expect(page.locator('[data-component="clients-new-page-shell"]')).toBeVisible();
+    await expect(page.locator('[data-component="clients-new-wizard"]')).toBeVisible();
+    await expect(page.locator('[data-component="clients-new-navbar-title"]')).toHaveText("새 고객 추가");
+    await expect(page.locator('[data-component="clients-new-step-count"]')).toHaveText("1 / 3 단계");
+    await expect(page.getByRole("heading", { name: "기본 정보" })).toBeVisible();
+    await expect(page.getByPlaceholder("홍길동")).toBeVisible();
+    await expect(page.getByPlaceholder("010-1234-5678")).toBeVisible();
+  });
 
-            // Find breast pump switch (typically the third toggle)
-            const switches = dialog.locator('.MuiSwitch-root');
+  test("blocks advancing from step 0 while required fields are empty", async ({ page }) => {
+    await mockClientsWizardRoutes(page);
+    await page.goto("/clients/new");
 
-            // Toggle the third switch
-            const breastPumpSwitch = switches.nth(2);
-            await breastPumpSwitch.click();
-        });
+    const primaryButton = page.locator('[data-component="clients-new-actions"] button').nth(1);
+
+    await expect(primaryButton).toBeDisabled();
+    await expect(page.locator('[data-component="clients-new-step-count"]')).toHaveText("1 / 3 단계");
+    await expect(page.locator('[data-component="clients-new-voucher-card"]')).toHaveCount(0);
+  });
+
+  test("advances to step 1 after filling the basic info step", async ({ page }) => {
+    await mockClientsWizardRoutes(page);
+    await page.goto("/clients/new");
+
+    await fillStepZero(page);
+
+    const primaryButton = page.locator('[data-component="clients-new-actions"] button').nth(1);
+    await expect(primaryButton).toBeEnabled();
+    await primaryButton.click();
+
+    await expect(page.locator('[data-component="clients-new-step-count"]')).toHaveText("2 / 3 단계");
+    await expect(page.getByText("서비스 설정")).toBeVisible();
+    await expect(page.locator('[data-component="clients-new-voucher-card"]')).toBeVisible();
+    await expect(page.locator('[data-component="clients-new-pricing-card"]')).toBeVisible();
+  });
+
+  test("renders voucher selects on step 1 and auto-fills prices from mocked voucher data", async ({ page }) => {
+    await mockClientsWizardRoutes(page);
+    await page.goto("/clients/new");
+
+    await goToStepOne(page);
+    await fillDeterministicVoucherFields(page);
+
+    await expect(page.locator('[data-component="clients-new-pricing-card"]')).toContainText("자동입력");
+  });
+
+  test("submits the minimal valid wizard payload and navigates back to /clients", async ({ page }) => {
+    let createdPayload: CreateClientPayload | null = null;
+
+    await mockClientsWizardRoutes(page, {
+      onCreate: (payload) => {
+        createdPayload = payload;
+      },
     });
+    await page.goto("/clients/new");
 
-    // ============================================
-    // Date Fields Tests
-    // ============================================
-    test.describe('Date Fields', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
+    await fillStepZero(page);
+    await page.locator('[data-component="clients-new-actions"] button').nth(1).click();
 
-        test('should accept start date input', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+    await fillDeterministicVoucherFields(page);
+    await page.locator('[data-component="clients-new-bank-account-select"]').selectOption("area-incheon");
+    await page.locator('[data-component="clients-new-actions"] button').nth(1).click();
 
-            // Find date inputs
-            const dateInputs = dialog.locator('input[type="date"]');
+    await expect(page.locator('[data-component="clients-new-step-count"]')).toHaveText("3 / 3 단계");
+    await expect(page.locator('[data-component="clients-new-contract-status-card"]')).toBeVisible();
 
-            // Fill start date
-            const startDateInput = dateInputs.first();
-            await startDateInput.fill('2025-02-01');
+    await page.locator('[data-component="clients-new-actions"] button').nth(1).click();
 
-            await expect(startDateInput).toHaveValue('2025-02-01');
-        });
-
-        test('should accept end date input', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Find date inputs
-            const dateInputs = dialog.locator('input[type="date"]');
-
-            // Fill end date
-            const endDateInput = dateInputs.nth(1);
-            await endDateInput.fill('2025-03-31');
-
-            await expect(endDateInput).toHaveValue('2025-03-31');
-        });
-    });
-
-    // ============================================
-    // Contract/Service Status Tests
-    // ============================================
-    test.describe('Service Status Select', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
-
-        test('should display service status options', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Find the service status select (usually labeled as 계약 상태 or similar)
-            // It's typically in the contract section
-            const statusSelect = dialog.locator('.MuiSelect-select').filter({ hasText: /대기|진행|완료|Waiting|Active/i }).first();
-
-            if (await statusSelect.count() > 0) {
-                await statusSelect.click();
-
-                const listbox = page.locator('[role="listbox"]');
-                await expect(listbox).toBeVisible({ timeout: 3000 });
-
-                // Should have status options
-                await expect(listbox.locator('[role="option"]')).toHaveCount(5);
-            }
-        });
-    });
-
-    // ============================================
-    // Employee Selection Integration Tests
-    // ============================================
-    test.describe('Employee Selection', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
-
-        test('should have primary employee autocomplete', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-            const employeeAutocomplete = dialog.locator('[data-testid="employee-autocomplete"]').first();
-
-            await expect(employeeAutocomplete).toBeVisible();
-        });
-
-        test('should have secondary employee autocomplete', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-            const employeeAutocompletes = dialog.locator('[data-testid="employee-autocomplete"]');
-
-            // Should have 2 autocompletes (primary and secondary)
-            await expect(employeeAutocompletes).toHaveCount(2);
-        });
-
-        test('should exclude selected primary employee from secondary options', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Focus on primary employee autocomplete
-            const primaryAutocomplete = dialog.locator('[data-testid="employee-autocomplete"] input').first();
-            await primaryAutocomplete.click();
-
-            // Wait for dropdown
-            await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible({ timeout: 5000 });
-
-            // Type to search
-            await primaryAutocomplete.fill('김');
-            await page.waitForTimeout(300);
-
-            // Select first option if available
-            const firstOption = page.locator('[role="option"]').first();
-            if (await firstOption.count() > 0 && !(await firstOption.getAttribute('aria-disabled'))) {
-                await firstOption.click();
-            }
-
-            // Now the secondary autocomplete should exclude the selected employee
-            // This would require checking the filtered options
-        });
-    });
-});
-
-// ============================================
-// Complete Client Creation Flow Test
-// ============================================
-test.describe('Complete Client Creation Flow', () => {
-    test('should create client with all required fields', async ({ page }) => {
-        await page.goto('/clients');
-        await page.waitForLoadState('networkidle');
-
-        // Open dialog
-        const addButton = page.locator('[data-testid="add-client-button"]');
-        await addButton.click();
-
-        const dialog = page.locator('[data-testid="client-form-dialog"]');
-        await expect(dialog).toBeVisible();
-
-        // Fill basic info
-        const inputs = dialog.locator('input[type="text"]');
-        await inputs.first().fill('테스트 산모'); // name
-        await inputs.nth(1).fill('900515'); // birthday
-        await inputs.nth(2).fill('01012345678'); // phone
-        await inputs.nth(3).fill('인천시 연수구'); // address
-
-        // Select primary employee (type and select)
-        const primaryEmployeeInput = dialog.locator('[data-testid="employee-autocomplete"] input').first();
-        await primaryEmployeeInput.click();
-        await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible({ timeout: 5000 });
-        await primaryEmployeeInput.fill('김');
-        await page.waitForTimeout(500);
-
-        // Try to select first matching employee
-        const employeeOption = page.locator('[role="option"]:not([aria-disabled="true"])').first();
-        if (await employeeOption.count() > 0) {
-            await employeeOption.click();
-        }
-
-        // Select voucher type
-        const voucherSelect = dialog.locator('.MuiSelect-select').first();
-        await voucherSelect.click();
-        await page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first().click();
-
-        // Wait for duration options
-        await page.waitForTimeout(1000);
-
-        // Select duration
-        const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-        await durationSelect.click();
-        await expect(page.locator('[role="listbox"]')).toBeVisible({ timeout: 5000 });
-        await page.locator('[role="option"]').filter({ hasText: /\d+일/ }).first().click();
-
-        // Fill dates
-        const dateInputs = dialog.locator('input[type="date"]');
-        await dateInputs.first().fill('2025-02-01');
-        await dateInputs.nth(1).fill('2025-03-31');
-
-        // Note: Actual submission would create data, so we skip in E2E test
-        // If needed, add: await submitButton.click();
-    });
+    await expect(page).toHaveURL(/\/clients$/);
+    expect(createdPayload).toEqual(
+      expect.objectContaining({
+        name: "홍테스트 고객",
+        birthday: "950101",
+        dueDate: "2026-06-15",
+        address: "인천광역시 연수구 테스트로 10",
+        phone: "010-1111-2222",
+        type: VOUCHER_TYPE,
+        duration: 10,
+        fullPrice: "1300000",
+        grant: "1000000",
+        actualPrice: "300000",
+        careCenter: false,
+        voucherClient: true,
+        breastPump: false,
+        serviceStatus: "waiting",
+        areaId: "area-incheon",
+      })
+    );
+  });
 });

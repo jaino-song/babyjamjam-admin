@@ -63,10 +63,6 @@ SYNONYMS: 제공인력 = 관리사 = 이모님 = 직원 = employee`,
     parameters: {
         type: "object",
         properties: {
-            id: {
-                type: "number",
-                description: "Employee ID number (관리사 번호)",
-            },
             name: {
                 type: "string",
                 description: "Employee's full name (이름)",
@@ -96,7 +92,7 @@ SYNONYMS: 제공인력 = 관리사 = 이모님 = 직원 = employee`,
                 description: "Set to true to confirm. Set to false to request confirmation first.",
             },
         },
-        required: ["id", "name", "phone", "grade", "confirmed"],
+        required: ["name", "phone", "grade", "confirmed"],
     },
 };
 

@@ -14,8 +14,14 @@ export interface DocumentCategory {
 export class DocumentCategoryService {
     constructor(private readonly prisma: PrismaService) {}
 
-    async findAll(): Promise<DocumentCategory[]> {
+    async findAll(branchId: string): Promise<DocumentCategory[]> {
         const categories = await this.prisma.document_category.findMany({
+            where: {
+                OR: [
+                    { branchId },
+                    { branchId: null },
+                ],
+            },
             orderBy: { createdAt: "asc" },
         });
         return categories.map((c) => ({
@@ -29,12 +35,14 @@ export class DocumentCategoryService {
     }
 
     async create(params: {
+        branchId: string;
         value: string;
         label: string;
         color: string;
     }): Promise<DocumentCategory> {
         const category = await this.prisma.document_category.create({
             data: {
+                branchId: params.branchId,
                 value: params.value,
                 label: params.label,
                 color: params.color,
@@ -51,9 +59,13 @@ export class DocumentCategoryService {
         };
     }
 
-    async delete(id: string): Promise<void> {
-        await this.prisma.document_category.delete({
-            where: { id },
+    async delete(branchId: string, id: string): Promise<void> {
+        await this.prisma.document_category.deleteMany({
+            where: {
+                id,
+                branchId,
+                isCustom: true,
+            },
         });
     }
 }

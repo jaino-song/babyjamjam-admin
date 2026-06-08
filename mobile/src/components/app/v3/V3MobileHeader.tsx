@@ -1,23 +1,34 @@
 "use client";
 
-import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 import { NotificationBell } from "@/components/app/notifications/NotificationBell";
+import { useInitialUser } from "@/providers/UserProvider";
+import "@/components/app/mobile-redesign/redesign.css";
+
+const DEFAULT_USER_LABEL = "사용자";
+const DEFAULT_BRANCH_LABEL = "지점 미선택";
 
 export function V3MobileHeader() {
   const pathname = usePathname();
+  const user = useInitialUser();
+
   if (!pathname || isLayoutExcluded(pathname)) return null;
 
-  return (
-    <header data-component="mobile-header" className="fixed top-0 left-1/2 z-40 flex w-full max-w-[430px] -translate-x-1/2 items-center justify-between px-4 py-3 bg-white shadow-v3" style={{ borderRadius: '0 0 24px 24px' }}>
-      <div data-component="mobile-header-logo" className="flex items-center gap-2.5">
-        <Image src="/assets/logo.svg" alt="아가잼잼" width={40} height={40} className="w-10 h-10 rounded-2xl" />
-        <span className="text-xl font-bold text-v3-primary">아가잼잼</span>
-      </div>
+  const userLabel = user?.name ? `${user.name} 님` : DEFAULT_USER_LABEL;
+  const branchLabel = user?.branchName ?? DEFAULT_BRANCH_LABEL;
 
-      <div data-component="mobile-header-notifications">
-        <NotificationBell />
+  return (
+    <header
+      data-component="mobile-header"
+      className="existing-navbar fixed top-0 left-1/2 z-40 w-full max-w-[430px] -translate-x-1/2"
+    >
+      <div className="navbar-identity" data-component="mobile-header-identity">
+        <span className="navbar-user">{userLabel}</span>
+        <span className="navbar-branch">{branchLabel}</span>
+      </div>
+      <div className="navbar-icons" data-component="mobile-header-icons">
+        <NotificationBell className="!h-[38px] !w-[38px] !rounded-xl bg-transparent hover:bg-transparent hover:scale-100 active:scale-100 text-v3-text" />
       </div>
     </header>
   );

@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
+import {
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
+import {
+    documentPath,
+    invalidFileIdResponse,
+    isValidFileId,
+} from "../../../file-route-utils";
 
 export async function GET(
     request: NextRequest,
@@ -12,25 +19,29 @@ export async function GET(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const { fileId } = await params;
+        if (!isValidFileId(fileId)) {
+            return invalidFileIdResponse();
+        }
+
         const { searchParams } = new URL(request.url);
         const attachment = searchParams.get("attachment");
 
-        const url = attachment === "true"
-            ? `/documents/${fileId}/download?attachment=true`
-            : `/documents/${fileId}/download`;
+        const url = documentPath(
+            fileId,
+            attachment === "true" ? "/download?attachment=true" : "/download",
+        );
 
         const response = await serverAPIClient.get(url, {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
+            headers: getAuthHeaders(token),
             responseType: "arraybuffer",
         });
 
         return new NextResponse(response.data, {
+            status: response.status,
             headers: {
                 "Content-Type": response.headers["content-type"] || "application/octet-stream",
                 "Content-Disposition": response.headers["content-disposition"] || "inline",
@@ -44,6 +55,6 @@ export async function GET(
                 return NextResponse.json({ error: "Document not found" }, { status: 404 });
             }
         }
-        return NextResponse.json({ error: "Download failed" }, { status: 500 });
+        return errorResponse(error, "download document");
     }
 }

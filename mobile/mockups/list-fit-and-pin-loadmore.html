@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>List Fit + Pin Load-More — Mockup</title>
+<style>
+  :root {
+    --v3-primary: 214 100% 34%;
+    --v3-primary-light: 214 100% 95%;
+    --v3-dark: 214 50% 18%;
+    --v3-text: 214 30% 28%;
+    --v3-text-muted: 214 15% 50%;
+    --v3-border: 214 25% 90%;
+    --v3-green: 137 34% 31%;
+    --v3-dim-white: 214 30% 96%;
+    --gap: 0.5rem;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "SF Pro Text", sans-serif;
+    background: hsl(214, 30%, 94%);
+    color: hsl(var(--v3-text));
+    padding: 32px 16px 80px;
+    min-height: 100vh;
+  }
+  h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: hsl(var(--v3-dark));
+    margin-bottom: 6px;
+    text-align: center;
+  }
+  .sub {
+    font-size: 0.82rem;
+    color: hsl(var(--v3-text-muted));
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .stage {
+    display: flex;
+    gap: 32px;
+    justify-content: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .col { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .col-title { font-size: 0.78rem; font-weight: 700; color: hsl(var(--v3-dark)); letter-spacing: 0.02em; }
+  .col-note { font-size: 0.7rem; color: hsl(var(--v3-text-muted)); max-width: 290px; text-align: center; line-height: 1.4; }
+
+  /* Phone frame */
+  .phone {
+    width: 320px;
+    height: 600px;
+    border-radius: 36px;
+    background: hsl(214, 30%, 96%);
+    border: 8px solid hsl(214, 25%, 22%);
+    box-shadow: 0 20px 60px hsla(214, 50%, 20%, 0.18);
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .header {
+    flex: 0 0 auto;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: hsl(var(--v3-dark));
+    background: hsl(214, 30%, 96%);
+    border-bottom: 1px solid hsl(var(--v3-border));
+  }
+  .shell-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    padding: 12px 14px 12px;
+  }
+  .bottom-nav {
+    flex: 0 0 auto;
+    height: 56px;
+    background: white;
+    margin: 0 14px 12px;
+    border-radius: 14px;
+    box-shadow: 0 6px 18px hsla(214, 50%, 20%, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    font-size: 0.62rem;
+    color: hsl(var(--v3-text-muted));
+  }
+
+  /* List card */
+  .list-card {
+    flex: 1;
+    background: white;
+    border-radius: 18px;
+    box-shadow: 0 4px 18px hsla(214, 50%, 20%, 0.06);
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+  .list-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 10px 12px 4px;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: hsl(var(--v3-dark));
+  }
+  .list-title .count {
+    font-size: 0.66rem;
+    font-weight: 500;
+    color: hsl(var(--v3-text-muted));
+    margin-left: 4px;
+  }
+  .list-title .action {
+    font-size: 0.66rem;
+    font-weight: 700;
+    color: hsl(var(--v3-primary));
+  }
+  .filter-row {
+    display: flex;
+    gap: 5px;
+    padding: 5px 10px;
+    overflow-x: auto;
+  }
+  .filter-row::-webkit-scrollbar { display: none; }
+  .filter-pill {
+    flex-shrink: 0;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: white;
+    border: 1px solid hsl(var(--v3-border));
+    font-size: 0.64rem;
+    font-weight: 600;
+    color: hsl(var(--v3-text));
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .filter-pill.active {
+    background: hsl(var(--v3-primary));
+    border-color: hsl(var(--v3-primary));
+    color: white;
+  }
+  .filter-pill .cnt {
+    background: rgba(0, 0, 0, 0.08);
+    padding: 1px 5px;
+    border-radius: 999px;
+    font-size: 0.56rem;
+    font-weight: 800;
+  }
+  .filter-pill.active .cnt { background: rgba(255, 255, 255, 0.25); }
+
+  /* The scroll region — items + sentinel */
+  .list-card-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+    scrollbar-width: none;
+    min-height: 0;
+    position: relative;
+  }
+  .list-card-scroll::-webkit-scrollbar { display: none; }
+
+  /* The new footer slot — button anchored at bottom */
+  .list-card-footer {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: center;
+    padding: 6px 0 4px;
+  }
+  .loadmore-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    background: none;
+    border: 0;
+    color: hsl(var(--v3-primary));
+    font-family: inherit;
+    cursor: pointer;
+    padding: 4px 16px;
+  }
+  .loadmore-btn .lbl { font-size: 0.72rem; font-weight: 700; }
+  .loadmore-btn .chev {
+    display: block;
+    width: 18px;
+    height: 10px;
+    color: hsl(var(--v3-primary));
+  }
+  @keyframes peek {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(3px); }
+  }
+  .loadmore-btn { animation: peek 1.6s ease-in-out infinite; }
+
+  /* Item row */
+  .list-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    background: white;
+  }
+  .avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    background: hsl(var(--v3-primary));
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.72rem;
+    flex-shrink: 0;
+  }
+  .avatar.g { background: hsl(var(--v3-green)); }
+  .avatar.b { background: hsl(355, 36%, 45%); }
+  .avatar.o { background: hsl(34, 100%, 55%); }
+  .avatar.p { background: hsl(267, 50%, 46%); }
+  .info { flex: 1; min-width: 0; }
+  .name { font-size: 0.76rem; font-weight: 700; color: hsl(var(--v3-dark)); }
+  .meta { font-size: 0.62rem; color: hsl(var(--v3-text-muted)); margin-top: 1px; }
+  .dday {
+    font-size: 0.62rem;
+    font-weight: 800;
+    color: hsl(var(--v3-primary));
+    padding: 2px 6px;
+    background: hsl(var(--v3-primary-light));
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+  .dday.warn { color: hsl(355, 50%, 40%); background: hsl(355, 60%, 95%); }
+
+  /* Annotation overlays */
+  .annot {
+    position: absolute;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: hsl(214, 100%, 34%);
+    background: hsla(214, 100%, 95%, 0.95);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid hsla(214, 100%, 34%, 0.3);
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .annot.right { right: -118px; }
+  .annot.left { left: -110px; }
+  .annot-line {
+    position: absolute;
+    background: hsl(214, 100%, 34%);
+    z-index: 4;
+    pointer-events: none;
+  }
+  .annot-line.h { height: 1px; }
+  .annot-line.v { width: 1px; }
+
+  /* Layer for showing the math */
+  .measure-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 3;
+  }
+  .measure-band {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: hsla(214, 100%, 50%, 0.06);
+    border-top: 1px dashed hsla(214, 100%, 34%, 0.4);
+    border-bottom: 1px dashed hsla(214, 100%, 34%, 0.4);
+  }
+
+  /* Tiny scroll hint on right state */
+  .scroll-fade {
+    position: absolute;
+    bottom: 12px;
+    left: 6px;
+    right: 6px;
+    height: 24px;
+    background: linear-gradient(to bottom, transparent, white);
+    pointer-events: none;
+  }
+
+  .formula {
+    margin-top: 18px;
+    padding: 14px 18px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 4px 18px hsla(214, 50%, 20%, 0.06);
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 0.78rem;
+    color: hsl(var(--v3-dark));
+    max-width: 720px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.6;
+  }
+  .formula .k { color: hsl(214, 100%, 34%); font-weight: 700; }
+  .formula .c { color: hsl(var(--v3-text-muted)); }
+
+  /* Legend */
+  .legend {
+    margin-top: 16px;
+    display: flex;
+    gap: 18px;
+    justify-content: center;
+    font-size: 0.72rem;
+    color: hsl(var(--v3-text-muted));
+    flex-wrap: wrap;
+  }
+  .legend-dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+</style>
+</head>
+<body>
+  <h1>list-card · 아이템 자동 fit + 하단 핀 load-more</h1>
+  <p class="sub">.list-card-scroll 의 measured 높이 ÷ row 높이 = 화면에 들어갈 만큼만 채우고, 버튼은 카드 하단에 고정</p>
+
+  <div class="stage">
+
+    <!-- ───────── State A: Initial (isInitialLoad=true) ───────── -->
+    <div class="col">
+      <div class="col-title">A. INITIAL · isInitialLoad = true</div>
+      <div class="phone">
+        <div class="header">고객</div>
+        <div class="shell-content">
+          <div class="list-card">
+            <div class="list-title">
+              <span>고객 목록 <span class="count">42</span></span>
+              <span class="action">+ 신규</span>
+            </div>
+            <div class="filter-row">
+              <div class="filter-pill active">전체 <span class="cnt">42</span></div>
+              <div class="filter-pill">신규 <span class="cnt">8</span></div>
+              <div class="filter-pill">계약중 <span class="cnt">11</span></div>
+              <div class="filter-pill">완료 <span class="cnt">23</span></div>
+            </div>
+
+            <!-- scroll region: exactly fit N items, no actual scroll on initial -->
+            <div class="list-card-scroll">
+              <div class="list-item"><div class="avatar">김</div><div class="info"><div class="name">김민지 고객</div><div class="meta">서울 강남구 · 2024-04-15 등록</div></div><span class="dday">D-3</span></div>
+              <div class="list-item"><div class="avatar g">박</div><div class="info"><div class="name">박지수 고객</div><div class="meta">서울 송파구 · 2024-04-12 등록</div></div><span class="dday warn">D-1</span></div>
+              <div class="list-item"><div class="avatar b">이</div><div class="info"><div class="name">이서연 고객</div><div class="meta">경기 성남시 · 2024-04-10 등록</div></div><span class="dday">D-5</span></div>
+              <div class="list-item"><div class="avatar o">최</div><div class="info"><div class="name">최예린 고객</div><div class="meta">서울 마포구 · 2024-04-08 등록</div></div><span class="dday">D-7</span></div>
+              <div class="list-item"><div class="avatar p">정</div><div class="info"><div class="name">정유진 고객</div><div class="meta">서울 용산구 · 2024-04-06 등록</div></div><span class="dday">D-9</span></div>
+              <div class="list-item"><div class="avatar">한</div><div class="info"><div class="name">한지민 고객</div><div class="meta">인천 서구 · 2024-04-04 등록</div></div><span class="dday">D-11</span></div>
+            </div>
+
+            <!-- NEW: footer slot, anchored at card bottom -->
+            <div class="list-card-footer">
+              <button class="loadmore-btn" type="button">
+                <span class="lbl">탭하여 더보기</span>
+                <svg class="chev" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 3 L12 9 L19 3" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="bottom-nav">
+          <span>대시보드</span><span>고객</span><span>상담</span><span>계약</span><span>더보기</span>
+        </div>
+      </div>
+      <div class="col-note">
+        측정으로 N개 행이 정확히 들어맞음 — 스크롤 불필요.<br/>
+        "탭하여 더보기" 는 카드 하단에 핀.
+      </div>
+    </div>
+
+    <!-- ───────── State B: After first tap (isInitialLoad=false) ───────── -->
+    <div class="col">
+      <div class="col-title">B. AFTER TAP · isInitialLoad = false</div>
+      <div class="phone">
+        <div class="header">고객</div>
+        <div class="shell-content">
+          <div class="list-card">
+            <div class="list-title">
+              <span>고객 목록 <span class="count">42</span></span>
+              <span class="action">+ 신규</span>
+            </div>
+            <div class="filter-row">
+              <div class="filter-pill active">전체 <span class="cnt">42</span></div>
+              <div class="filter-pill">신규 <span class="cnt">8</span></div>
+              <div class="filter-pill">계약중 <span class="cnt">11</span></div>
+              <div class="filter-pill">완료 <span class="cnt">23</span></div>
+            </div>
+
+            <!-- scroll region now takes the full freed height; items overflow + scroll -->
+            <div class="list-card-scroll">
+              <div class="list-item"><div class="avatar">김</div><div class="info"><div class="name">김민지 고객</div><div class="meta">서울 강남구 · 2024-04-15 등록</div></div><span class="dday">D-3</span></div>
+              <div class="list-item"><div class="avatar g">박</div><div class="info"><div class="name">박지수 고객</div><div class="meta">서울 송파구 · 2024-04-12 등록</div></div><span class="dday warn">D-1</span></div>
+              <div class="list-item"><div class="avatar b">이</div><div class="info"><div class="name">이서연 고객</div><div class="meta">경기 성남시 · 2024-04-10 등록</div></div><span class="dday">D-5</span></div>
+              <div class="list-item"><div class="avatar o">최</div><div class="info"><div class="name">최예린 고객</div><div class="meta">서울 마포구 · 2024-04-08 등록</div></div><span class="dday">D-7</span></div>
+              <div class="list-item"><div class="avatar p">정</div><div class="info"><div class="name">정유진 고객</div><div class="meta">서울 용산구 · 2024-04-06 등록</div></div><span class="dday">D-9</span></div>
+              <div class="list-item"><div class="avatar">한</div><div class="info"><div class="name">한지민 고객</div><div class="meta">인천 서구 · 2024-04-04 등록</div></div><span class="dday">D-11</span></div>
+              <div class="list-item"><div class="avatar g">윤</div><div class="info"><div class="name">윤소영 고객</div><div class="meta">부산 해운대 · 2024-04-02 등록</div></div><span class="dday">D-13</span></div>
+              <div class="list-item"><div class="avatar b">강</div><div class="info"><div class="name">강하늘 고객</div><div class="meta">대구 수성구 · 2024-03-30 등록</div></div><span class="dday">D-15</span></div>
+              <div class="list-item"><div class="avatar o">조</div><div class="info"><div class="name">조민혁 고객</div><div class="meta">광주 북구 · 2024-03-28 등록</div></div><span class="dday">D-17</span></div>
+              <div class="list-item"><div class="avatar p">서</div><div class="info"><div class="name">서지우 고객</div><div class="meta">대전 유성 · 2024-03-26 등록</div></div><span class="dday">D-19</span></div>
+              <div class="list-item"><div class="avatar">노</div><div class="info"><div class="name">노은비 고객</div><div class="meta">울산 남구 · 2024-03-24 등록</div></div><span class="dday">D-21</span></div>
+              <!-- sentinel sits at end as a 1px observer target, hidden -->
+              <div aria-hidden="true" style="height:1px"></div>
+            </div>
+
+            <div class="scroll-fade"></div>
+            <!-- NO .list-card-footer here — DOM gone, scroll absorbs the height -->
+          </div>
+        </div>
+        <div class="bottom-nav">
+          <span>대시보드</span><span>고객</span><span>상담</span><span>계약</span><span>더보기</span>
+        </div>
+      </div>
+      <div class="col-note">
+        버튼 제거 · IntersectionObserver 가 sentinel 통해 자동 로드.<br/>
+        스크롤 영역이 풀 height 흡수.
+      </div>
+    </div>
+
+    <!-- ───────── State C: Measurement diagram ───────── -->
+    <div class="col">
+      <div class="col-title">C. 측정 다이어그램</div>
+      <div class="phone" style="position: relative;">
+        <div class="header">고객</div>
+        <div class="shell-content">
+          <div class="list-card" style="position: relative;">
+            <div class="list-title">
+              <span>고객 목록 <span class="count">42</span></span>
+              <span class="action">+ 신규</span>
+            </div>
+            <div class="filter-row">
+              <div class="filter-pill active">전체 <span class="cnt">42</span></div>
+              <div class="filter-pill">신규 <span class="cnt">8</span></div>
+              <div class="filter-pill">완료 <span class="cnt">23</span></div>
+            </div>
+
+            <div class="list-card-scroll" id="measureScroll">
+              <div class="list-item" id="measureRow"><div class="avatar">김</div><div class="info"><div class="name">김민지 고객</div><div class="meta">서울 강남구</div></div><span class="dday">D-3</span></div>
+              <div class="list-item"><div class="avatar g">박</div><div class="info"><div class="name">박지수 고객</div><div class="meta">서울 송파구</div></div><span class="dday warn">D-1</span></div>
+              <div class="list-item"><div class="avatar b">이</div><div class="info"><div class="name">이서연 고객</div><div class="meta">경기 성남시</div></div><span class="dday">D-5</span></div>
+              <div class="list-item"><div class="avatar o">최</div><div class="info"><div class="name">최예린 고객</div><div class="meta">서울 마포구</div></div><span class="dday">D-7</span></div>
+              <div class="list-item"><div class="avatar p">정</div><div class="info"><div class="name">정유진 고객</div><div class="meta">서울 용산구</div></div><span class="dday">D-9</span></div>
+              <div class="list-item"><div class="avatar">한</div><div class="info"><div class="name">한지민 고객</div><div class="meta">인천 서구</div></div><span class="dday">D-11</span></div>
+            </div>
+
+            <div class="list-card-footer" id="measureFooter">
+              <button class="loadmore-btn" type="button">
+                <span class="lbl">탭하여 더보기</span>
+                <svg class="chev" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 3 L12 9 L19 3" />
+                </svg>
+              </button>
+            </div>
+
+            <!-- annotation lines drawn via JS once rendered -->
+            <div class="measure-overlay" id="overlay"></div>
+          </div>
+        </div>
+        <div class="bottom-nav">
+          <span>대시보드</span><span>고객</span><span>상담</span><span>계약</span><span>더보기</span>
+        </div>
+      </div>
+      <div class="col-note">
+        파랑 띠 = 첫 행 (rowH 측정).<br/>
+        scrollH 는 카드 하단 footer 위까지.
+      </div>
+    </div>
+
+  </div>
+
+  <div class="formula">
+    <div><span class="c">// useLayoutEffect, 매 resize · resetKey 변경 시 재측정</span></div>
+    <div><span class="k">const</span> scroll = scrollContainerRef.current;</div>
+    <div><span class="k">const</span> firstRow = scroll.querySelector(<span class="c">'.list-item, .contract-item'</span>);</div>
+    <div><span class="k">const</span> scrollH = scroll.clientHeight; <span class="c">// 이미 footer 제외됨 (flex sibling)</span></div>
+    <div><span class="k">const</span> rowH = firstRow.offsetHeight;</div>
+    <div><span class="k">const</span> gap = parseFloat(getComputedStyle(scroll).rowGap) || 8;</div>
+    <div><span class="k">const</span> fit = Math.max(1, Math.floor((scrollH + gap) / (rowH + gap)));</div>
+    <div>setVisibleCount(fit);</div>
+  </div>
+
+  <div class="legend">
+    <span><span class="legend-dot" style="background: hsl(214, 100%, 50%); opacity: 0.3;"></span>측정된 1행</span>
+    <span><span class="legend-dot" style="background: hsla(214, 100%, 34%, 0.95);"></span>주석</span>
+    <span><span class="legend-dot" style="background: white; border: 1px solid hsl(var(--v3-border));"></span>.list-card-footer (신규)</span>
+  </div>
+
+<script>
+  // Draw annotation lines on the measurement diagram
+  window.addEventListener('load', () => {
+    const overlay = document.getElementById('overlay');
+    const scroll = document.getElementById('measureScroll');
+    const row = document.getElementById('measureRow');
+    const footer = document.getElementById('measureFooter');
+    if (!overlay || !scroll || !row || !footer) return;
+
+    const cardRect = overlay.parentElement.getBoundingClientRect();
+    const scrollRect = scroll.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const footerRect = footer.getBoundingClientRect();
+
+    // Helper to convert global rect to overlay-local
+    const local = (rect) => ({
+      top: rect.top - cardRect.top,
+      left: rect.left - cardRect.left,
+      width: rect.width,
+      height: rect.height,
+      bottom: rect.bottom - cardRect.top,
+      right: rect.right - cardRect.left,
+    });
+
+    const s = local(scrollRect);
+    const r = local(rowRect);
+    const f = local(footerRect);
+
+    // Band over first row
+    const band = document.createElement('div');
+    band.className = 'measure-band';
+    band.style.top = (r.top - 2) + 'px';
+    band.style.height = (r.height + 4) + 'px';
+    overlay.appendChild(band);
+
+    // rowH label on left
+    const rowLabel = document.createElement('div');
+    rowLabel.className = 'annot left';
+    rowLabel.textContent = 'rowH ≈ ' + Math.round(r.height) + 'px';
+    rowLabel.style.top = (r.top + r.height / 2 - 10) + 'px';
+    overlay.appendChild(rowLabel);
+
+    // scrollH bracket on right
+    const scrollAnnot = document.createElement('div');
+    scrollAnnot.className = 'annot right';
+    scrollAnnot.textContent = 'scrollH ≈ ' + Math.round(s.height) + 'px';
+    scrollAnnot.style.top = (s.top + s.height / 2 - 10) + 'px';
+    overlay.appendChild(scrollAnnot);
+
+    // footer height label
+    const footerAnnot = document.createElement('div');
+    footerAnnot.className = 'annot right';
+    footerAnnot.textContent = 'footer ≈ ' + Math.round(f.height) + 'px';
+    footerAnnot.style.top = (f.top + f.height / 2 - 10) + 'px';
+    overlay.appendChild(footerAnnot);
+  });
+</script>
+
+</body>
+</html>

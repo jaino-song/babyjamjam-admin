@@ -1,43 +1,57 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
+// Mirrors backend CreateDocumentCategoryDto: `value`, `label`, `color` are all
+// required strings (@IsString, no @IsOptional). Other fields pass through to the
+// backend's authoritative ValidationPipe.
+const createDocumentCategorySchema = z
+    .object({
+        value: z.string().max(10_000),
+        label: z.string().max(10_000),
+        color: z.string().max(10_000),
+    })
+    .passthrough();
 
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
-        const response = await serverAPIClient.get("/document-categories");
-        return NextResponse.json(response.data);
+        const response = await serverAPIClient.get("/document-categories", {
+            headers: getAuthHeaders(token),
+        });
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[document-categories] GET error:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch document categories" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch document categories");
     }
 }
 
 export async function POST(request: NextRequest) {
-    try {
-        const token = getAuthToken(request);
-        if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+    const token = getAuthToken(request);
+    if (!token) {
+        return unauthorizedResponse("Unauthorized");
+    }
 
-        const body = await request.json();
-        const response = await serverAPIClient.post("/document-categories", body);
-        return NextResponse.json(response.data, { status: 201 });
+    const { data, response } = await parseBody(createDocumentCategorySchema, request);
+    if (response) return response;
+
+    try {
+        const backendResponse = await serverAPIClient.post("/document-categories", data, {
+            headers: getAuthHeaders(token),
+        });
+        return backendJsonResponse(backendResponse);
     } catch (error) {
-        console.error("[document-categories] POST error:", error);
-        return NextResponse.json(
-            { error: "Failed to create document category" },
-            { status: 500 }
-        );
+        return errorResponse(error, "create document category");
     }
 }

@@ -1,11 +1,13 @@
 import type { FrameLocator, Page } from "playwright-core";
 import type { Logger as NestLogger } from "@nestjs/common";
 import {
+    EFORMSIGN_CLICK_TIMEOUT_MS,
     EFORMSIGN_GATE_POLL_MS,
     FINALIZE_REQUEST_SEND_DIALOG_SELECTOR,
-    findVisibleLocator,
+    findVisibleEnabledLocator,
     getEformsignGateSnapshot,
     isSuccessLatched,
+    throwIfEformsignErrorLatched,
 } from "./eformsign-gate-utils";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 
@@ -39,43 +41,45 @@ export async function runEformsignFinalizeGates(
     };
 
     while (Date.now() < deadline) {
+        await throwIfEformsignErrorLatched(page);
+
         if (await isSuccessLatched(page)) {
             return "success-latched";
         }
 
         const requestSendDialog = eformsignFrame.locator(FINALIZE_REQUEST_SEND_DIALOG_SELECTOR);
 
-        const requestSendButton = await findVisibleLocator(
+        const requestSendButton = await findVisibleEnabledLocator(
             requestSendDialog.getByRole("button", { name: "전송" }),
         );
         if (requestSendButton) {
             (logger as NestLogger).log?.("[finalize-gate] clicked popup 전송") ??
                 console.log("[finalize-gate] clicked popup 전송");
             emitCreating();
-            await requestSendButton.click();
+            await requestSendButton.click({ timeout: EFORMSIGN_CLICK_TIMEOUT_MS });
             return "request-send-clicked";
         }
 
         const requestSendDialogVisible = await requestSendDialog.isVisible().catch(() => false);
         const topLevelSendButton = requestSendDialogVisible
             ? null
-            : await findVisibleLocator(eformsignFrame.getByRole("button", { name: "전송" }));
+            : await findVisibleEnabledLocator(eformsignFrame.getByRole("button", { name: "전송" }));
         if (topLevelSendButton) {
             (logger as NestLogger).log?.("[finalize-gate] clicked top-level 전송") ??
                 console.log("[finalize-gate] clicked top-level 전송");
             emitCreating();
-            await topLevelSendButton.click();
+            await topLevelSendButton.click({ timeout: EFORMSIGN_CLICK_TIMEOUT_MS });
             lastAction = "clicked top-level 전송";
             await page.waitForTimeout(250);
             continue;
         }
 
         // mode:"02" sometimes shows a 확인 dialog before allowing 전송.
-        const confirmButton = await findVisibleLocator(eformsignFrame.getByRole("button", { name: "확인" }));
+        const confirmButton = await findVisibleEnabledLocator(eformsignFrame.getByRole("button", { name: "확인" }));
         if (confirmButton) {
             (logger as NestLogger).log?.("[finalize-gate] clicked 확인") ??
                 console.log("[finalize-gate] clicked 확인");
-            await confirmButton.click();
+            await confirmButton.click({ timeout: EFORMSIGN_CLICK_TIMEOUT_MS });
             lastAction = "clicked 확인";
             await page.waitForTimeout(250);
             continue;

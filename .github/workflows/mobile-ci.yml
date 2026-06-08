@@ -1,0 +1,173 @@
+name: Mobile CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, dev, preview, "feature/**", "fix/**" ]
+    paths:
+      - 'mobile/**'
+      - 'packages/shared/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/mobile-ci.yml'
+  # No paths filter on pull_request: this job is a REQUIRED check on dev,
+  # so it must report on every PR — path-filtered required checks block
+  # merges as eternally "expected" when the paths don't match.
+  pull_request:
+    branches: [ main, dev, preview, "feature/**", "fix/**" ]
+
+jobs:
+  verify:
+    name: type-check · lint · test · build
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Fail fast on the cheapest, most deterministic gate first.
+      - name: Type check
+        run: pnpm --filter babyjamjam-admin run type-check
+
+      # The shared package is otherwise only type-checked transitively through
+      # its consumers; an orphaned export would ship green (review finding).
+      - name: Type check shared package
+        run: pnpm --filter @babyjamjam/shared run type-check
+
+      - name: Lint
+        run: pnpm --filter babyjamjam-admin run lint
+
+      - name: Unit tests
+        run: pnpm --filter babyjamjam-admin test
+        env:
+          CI: true
+
+      - name: Build
+        # The env module (mobile/src/lib/env.ts) fails fast when a production
+        # build has no public backend URL. CI builds are compile-only, so a
+        # placeholder satisfies validation without implying a real target.
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://ci-build.invalid
+        run: pnpm --filter babyjamjam-admin run build
+
+  # Advisory on PRs: runs the real-backend suite on every pull request (and on
+  # manual dispatch), reporting pass/fail as a signal. It is intentionally NOT
+  # marked a required check in branch protection, so a red run does not block
+  # merges — promote it to required when you want the hard gate. (4 consecutive
+  # green runs + 0 flaky as of 2026-06-08.) No continue-on-error: the status
+  # must stay truthful (red when it fails) for the signal to be worth anything.
+  e2e:
+    name: playwright e2e (advisory · real backend)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    needs: verify
+    # 90: the full 266-test suite against the real stack needs headroom —
+    # two 60-minute runs were cancelled mid-suite before any report upload.
+    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: http://localhost:3000
+      CI: true
+      DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+      DEVELOPMENT_API_BASE_URL: http://localhost:3001
+      DEVELOPMENT_FRONTEND_URL: http://localhost:3000
+      DIRECT_URL: postgresql://postgres@localhost:5432/postgres
+      E2E_VENDOR_STUBS: '1'
+      # Webhook guard inputs for the critical-flows spec — e2e-only literals,
+      # not real secrets (the CI backend never talks to real eformsign).
+      EFORMSIGN_COMPANY_ID: e2e-stub-company
+      EFORMSIGN_WEBHOOK_SECRET: e2e-webhook-secret
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      NODE_ENV: development
+      STORAGE_BOOTSTRAP_DISABLED: '1'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply database migrations
+        run: pnpm --filter babyjamjam-staff-backend run db:migrate:deploy
+
+      - name: Seed e2e fixtures
+        run: pnpm --filter babyjamjam-staff-backend run db:seed:e2e
+
+      - name: Start backend
+        run: |
+          pnpm --filter babyjamjam-staff-backend run start > /tmp/bjj-backend.log 2>&1 &
+          echo $! > /tmp/bjj-backend.pid
+
+      - name: Wait for backend
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3001/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Backend failed to become ready"
+          cat /tmp/bjj-backend.log
+          exit 1
+
+      - name: Install Playwright browsers
+        run: pnpm --filter babyjamjam-admin exec playwright install --with-deps chromium
+
+      - name: Playwright tests
+        run: pnpm --filter babyjamjam-admin run test:e2e
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-playwright-report
+          path: mobile/playwright-report/
+          retention-days: 30
+
+      - name: Upload backend log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-backend-log
+          path: /tmp/bjj-backend.log
+          retention-days: 30

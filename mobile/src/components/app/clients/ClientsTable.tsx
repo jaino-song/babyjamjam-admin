@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Plus, Search, Users } from "lucide-react";
 import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
@@ -70,7 +70,7 @@ export function ClientsTable() {
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
-    const { data, isLoading, error } = useClients(
+    const { data, isLoading } = useClients(
         page + 1,
         rowsPerPage,
         searchQuery.trim() ? searchQuery.trim() : undefined
@@ -78,13 +78,9 @@ export function ClientsTable() {
     const deleteClient = useDeleteClient();
 
     const { data: clientFromParam } = useClient(clientIdParam ? Number(clientIdParam) : 0);
-
-    useEffect(() => {
-        if (clientIdParam && clientFromParam) {
-            setSelectedClient(clientFromParam);
-            setDetailModalOpen(true);
-        }
-    }, [clientIdParam, clientFromParam]);
+    const routeSelectedClient = clientIdParam && clientFromParam ? clientFromParam : null;
+    const detailClient = routeSelectedClient ?? selectedClient;
+    const isDetailModalOpen = Boolean(routeSelectedClient) || detailModalOpen;
 
     const handleAddNew = () => {
         setEditingClient(null);
@@ -138,11 +134,11 @@ export function ClientsTable() {
         setPage(newPage);
     };
 
-    const clients = data?.data || [];
     const filteredClients = useMemo(() => {
+        const clients = data?.data ?? [];
         if (!statusFilter) return clients;
         return clients.filter((client) => client.serviceStatus === statusFilter);
-    }, [clients, statusFilter]);
+    }, [data?.data, statusFilter]);
 
     const total = data?.total || 0;
 
@@ -291,9 +287,9 @@ export function ClientsTable() {
             </ContentPaper>
 
             <ClientDetailModal
-                open={detailModalOpen}
+                open={isDetailModalOpen}
                 onClose={handleDetailModalClose}
-                client={selectedClient}
+                client={detailClient}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
             />

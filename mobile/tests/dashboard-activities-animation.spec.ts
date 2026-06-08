@@ -1,5 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
+import { diffBusinessDaysKr, isoDateInKorea } from "../src/lib/date/business-days";
+
 declare global {
   interface Window {
     __v3AnimEvents?: Array<{ name: string; comp: string | null; t: number }>;
@@ -44,7 +46,7 @@ type ClientsApiResponse = {
   totalPages: number;
 };
 
-const DEFAULT_STATS = {
+const DEFAULT_ANALYTICS = {
   activeClients: 1,
   contractsNotSent: 2,
   contractsPendingSignature: 3,
@@ -110,7 +112,7 @@ async function mockClientsRoute(
 ) {
   await page.route("**/api/clients*", async (route) => {
     const url = route.request().url();
-    if (url.includes("/api/clients/stats")) {
+    if (url.includes("/api/clients/analytics")) {
       await route.fallback();
       return;
     }
@@ -124,8 +126,8 @@ async function mockClientsRoute(
   });
 }
 
-async function mockStatsRoute(page: Page, delayMs = 0, body = DEFAULT_STATS) {
-  await page.route("**/api/clients/stats", async (route) => {
+async function mockAnalyticsRoute(page: Page, delayMs = 0, body = DEFAULT_ANALYTICS) {
+  await page.route("**/api/clients/analytics", async (route) => {
     if (delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
@@ -138,7 +140,7 @@ async function mockStatsRoute(page: Page, delayMs = 0, body = DEFAULT_STATS) {
 }
 
 test.describe("Dashboard activities animations", () => {
-  test("does not re-run intro/list animations when stats loading completes", async ({ page }) => {
+  test("does not re-run intro/list animations when analytics loading completes", async ({ page }) => {
     // Collect only our v3 animations
     await page.addInitScript(() => {
       window.__v3AnimEvents = [];
@@ -190,10 +192,10 @@ test.describe("Dashboard activities animations", () => {
       ]),
     }));
 
-    // Delay stats
-    await mockStatsRoute(page, 1200);
+    // Delay analytics
+    await mockAnalyticsRoute(page, 1200);
 
-    const statsResponse = page.waitForResponse("**/api/clients/stats");
+    const analyticsResponse = page.waitForResponse("**/api/clients/analytics");
     await page.goto("/dashboard");
 
     const panel = page.locator('[data-component="dashboard-activities-panel"]');
@@ -206,12 +208,12 @@ test.describe("Dashboard activities animations", () => {
     await page.waitForTimeout(400);
     const beforeResolve = await page.evaluate(() => window.__v3AnimEvents ?? []);
 
-    // After stats resolves
-    await statsResponse;
+    // After analytics resolves
+    await analyticsResponse;
     await page.waitForTimeout(300);
     const afterResolve = await page.evaluate(() => window.__v3AnimEvents ?? []);
 
-    // Activities panel must not re-animate when stats resolve
+    // Activities panel must not re-animate when analytics resolve
     const panelBefore = beforeResolve.filter((e) => e.comp === "dashboard-activities-panel").length;
     const panelAfter = afterResolve.filter((e) => e.comp === "dashboard-activities-panel").length;
     expect(panelAfter).toBe(panelBefore);
@@ -237,7 +239,7 @@ test.describe("Dashboard activities animations", () => {
         }),
       ]),
     }));
-    await mockStatsRoute(page);
+    await mockAnalyticsRoute(page);
 
     await page.goto("/dashboard");
     await expect(page.getByText("조치 필요")).toBeVisible();
@@ -247,6 +249,177 @@ test.describe("Dashboard activities animations", () => {
     await expect(items.nth(0)).toContainText("김교체");
     await expect(items.nth(1)).toContainText("박서명");
     await expect(items.nth(2)).toContainText("이발송");
+  });
+
+  test("merges duplicated client states in the all dashboard feed", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    const twoDaysAgo = new Date();
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+    twoDaysAgo.setHours(12, 0, 0, 0);
+
+    const twentyFiveDaysLater = new Date();
+    twentyFiveDaysLater.setDate(twentyFiveDaysLater.getDate() + 25);
+    twentyFiveDaysLater.setHours(12, 0, 0, 0);
+    const endIso = isoDateInKorea(twentyFiveDaysLater);
+    const endLabel = `~${Number(endIso.slice(5, 7))}/${Number(endIso.slice(8, 10))}`;
+    const remainingBusinessDays = diffBusinessDaysKr(endIso, isoDateInKorea());
+    if (remainingBusinessDays === null) {
+      throw new Error(`Failed to calculate business-day diff for ${endIso}`);
+    }
+
+    await mockClientsRoute(page, () => ({
+      body: createClientsResponse([
+        createMockClient({
+          id: 1,
+          name: "가나다",
+          serviceStatus: "active",
+          eDocId: null,
+          documentStatus: null,
+          startDate: twoDaysAgo.toISOString(),
+          endDate: twentyFiveDaysLater.toISOString(),
+        }),
+      ]),
+    }));
+    await mockAnalyticsRoute(page);
+
+    await page.goto("/dashboard");
+
+    const rows = page.locator('[data-component="mobile-redesign-list-row"]', { hasText: "가나다" });
+    await expect(rows).toHaveCount(1);
+
+    const row = rows.first();
+    await expect(row.locator('[data-component="mobile-redesign-list-row-badges"] .badge')).toHaveText([
+      "발송 대기",
+      "진행중",
+    ]);
+    await expect(row.locator(".dday")).toHaveText(`${remainingBusinessDays}일 남음`);
+    await expect(row.locator(".list-right")).toContainText(endLabel);
+    await expect(page.getByRole("button", { name: /전체\s+1/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /조치 필요\s+1/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /종료 예정\s+1/ })).toBeVisible();
+
+    const headerBox = await page.locator('[data-component="mobile-header"]').boundingBox();
+    const analyticsBox = await page.locator('[data-component="mobile-dashboard-analytics-grid"]').boundingBox();
+    const contentBox = await page.locator('[data-component="mobile-dashboard-content"]').boundingBox();
+    expect(headerBox).not.toBeNull();
+    expect(analyticsBox).not.toBeNull();
+    expect(contentBox).not.toBeNull();
+    expect(analyticsBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height - 1);
+    expect(contentBox!.y - (analyticsBox!.y + analyticsBox!.height)).toBeLessThanOrEqual(20);
+
+    const cardBox = await page.locator('[data-component="mobile-redesign-list-card"]').boundingBox();
+    expect(cardBox).not.toBeNull();
+    const pillBoxes = await page.locator('[data-component="mobile-redesign-filter-pill"]').evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: rect.width };
+      })
+    );
+    expect(Math.min(...pillBoxes.map((box) => box.left))).toBeGreaterThanOrEqual(cardBox!.x + 8);
+    expect(new Set(pillBoxes.map((box) => Math.round(box.width))).size).toBeGreaterThan(1);
+  });
+
+  test("renders dashboard card skeletons while initial data loads", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await mockClientsRoute(page, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      return { body: createClientsResponse([]) };
+    });
+    await mockAnalyticsRoute(page, 600);
+
+    await page.goto("/dashboard");
+
+    await expect(page.locator('[data-component="mobile-redesign-list-card"]')).toBeVisible();
+    await expect(page.locator('[data-component="mobile-redesign-filter-pill"][data-loading="true"]')).toHaveCount(4);
+    await expect(page.locator('[data-component="mobile-dashboard-analytic-skeleton"]')).toHaveCount(4);
+    await expect(page.locator('[data-component="mobile-dashboard-loading-skeleton"]')).toBeVisible();
+    await expect(page.locator('[data-component="mobile-dashboard-row-skeleton"]')).toHaveCount(4);
+  });
+
+  test("renders dashboard analytics values after data loads", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await mockClientsRoute(page, () => ({
+      body: createClientsResponse([]),
+    }));
+    await mockAnalyticsRoute(page);
+
+    await page.goto("/dashboard");
+
+    const analyticsCards = page.locator('[data-component="mobile-dashboard-analytic"]');
+    await expect(analyticsCards).toHaveCount(4);
+    await expect(analyticsCards.nth(0)).toContainText("1");
+    await expect(analyticsCards.nth(0)).toContainText("서비스 진행 중");
+    await expect(analyticsCards.nth(1)).toContainText("4");
+    await expect(analyticsCards.nth(1)).toContainText("7일 내 시작 예정");
+    await expect(analyticsCards.nth(2)).toContainText("3");
+    await expect(analyticsCards.nth(2)).toContainText("검토 필요 문서");
+    await expect(analyticsCards.nth(3)).toContainText("2");
+    await expect(analyticsCards.nth(3)).toContainText("계약서 미완료");
+    await expect(page.locator('[data-component="mobile-dashboard-analytic-skeleton"]')).toHaveCount(0);
+  });
+
+  test("keeps dashboard analytics height stable from skeleton to loaded cards", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await mockClientsRoute(page, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      return { body: createClientsResponse([]) };
+    });
+    await mockAnalyticsRoute(page, 700);
+
+    await page.goto("/dashboard");
+
+    const grid = page.locator('[data-component="mobile-dashboard-analytics-grid"]');
+    await expect(page.locator('[data-component="mobile-dashboard-analytic-skeleton"]')).toHaveCount(4);
+    const skeletonBox = await grid.boundingBox();
+    const firstSkeletonBox = await page
+      .locator('[data-component="mobile-dashboard-analytic-skeleton"]')
+      .first()
+      .boundingBox();
+
+    await expect(page.locator('[data-component="mobile-dashboard-analytic"]')).toHaveCount(4);
+    const loadedBox = await grid.boundingBox();
+    const firstLoadedBox = await page
+      .locator('[data-component="mobile-dashboard-analytic"]')
+      .first()
+      .boundingBox();
+
+    expect(skeletonBox).not.toBeNull();
+    expect(loadedBox).not.toBeNull();
+    expect(firstSkeletonBox).not.toBeNull();
+    expect(firstLoadedBox).not.toBeNull();
+    expect(Math.abs(loadedBox!.height - skeletonBox!.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(firstLoadedBox!.height - firstSkeletonBox!.height)).toBeLessThanOrEqual(1);
+  });
+
+  test("does not exceed viewport height on short desktop previews", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await mockClientsRoute(page, () => ({
+      body: createClientsResponse([]),
+    }));
+    await mockAnalyticsRoute(page);
+
+    await page.goto("/dashboard");
+    await expect(page.locator('[data-component="mobile-dashboard-analytics-grid"]')).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const appRoot = document.querySelector('[data-component="app-root"]');
+      const appRootRect = appRoot?.getBoundingClientRect();
+      return {
+        innerHeight: window.innerHeight,
+        bodyScrollHeight: document.body.scrollHeight,
+        htmlScrollHeight: document.documentElement.scrollHeight,
+        appRootHeight: appRootRect?.height ?? 0,
+      };
+    });
+
+    expect(metrics.appRootHeight).toBeLessThanOrEqual(metrics.innerHeight);
+    expect(metrics.bodyScrollHeight).toBeLessThanOrEqual(metrics.innerHeight);
+    expect(metrics.htmlScrollHeight).toBeLessThanOrEqual(metrics.innerHeight);
   });
 
   test("renders upcoming items with relative date labels", async ({ page }) => {
@@ -266,7 +439,7 @@ test.describe("Dashboard activities animations", () => {
         }),
       ]),
     }));
-    await mockStatsRoute(page);
+    await mockAnalyticsRoute(page);
 
     await page.goto("/dashboard");
     await expect(page.getByText("곧 시작")).toBeVisible();
@@ -292,7 +465,7 @@ test.describe("Dashboard activities animations", () => {
         }),
       ]),
     }));
-    await mockStatsRoute(page);
+    await mockAnalyticsRoute(page);
 
     await page.goto("/dashboard");
 
@@ -337,7 +510,7 @@ test.describe("Dashboard activities animations", () => {
         ]),
       };
     });
-    await mockStatsRoute(page);
+    await mockAnalyticsRoute(page);
 
     await page.goto("/dashboard");
 
@@ -354,7 +527,7 @@ test.describe("Dashboard activities animations", () => {
     await mockClientsRoute(page, () => ({
       body: createClientsResponse([], 0),
     }));
-    await mockStatsRoute(page);
+    await mockAnalyticsRoute(page);
 
     await page.goto("/dashboard");
 
@@ -375,7 +548,7 @@ test.describe("Dashboard activities animations", () => {
         100
       ),
     }));
-    await mockStatsRoute(page);
+    await mockAnalyticsRoute(page);
 
     await page.goto("/dashboard");
 

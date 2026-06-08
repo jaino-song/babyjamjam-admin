@@ -1,35 +1,49 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
+import { invalidClientIdResponse, isValidClientId } from "../../client-route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+// Mirrors backend TerminateServiceDto: `reason` is @IsOptional @IsString, so
+// the body is all-optional. Type-check the known field; passthrough preserves
+// any forward-compatible fields for the backend's authoritative ValidationPipe.
+const terminateServiceSchema = z
+    .object({
+        reason: z.string(),
+    })
+    .partial()
+    .passthrough();
 
 // PATCH /api/clients/[id]/terminate - Terminate client service
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
-    try {
-        const token = getAuthToken(request);
-        if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+    const token = getAuthToken(request);
+    if (!token) {
+        return unauthorizedResponse("Unauthorized");
+    }
 
-        const { id } = await params;
-        const body = await request.json().catch(() => ({}));
-        const response = await serverAPIClient.patch(`/clients/${id}/terminate`, body, {
+    const { id } = await params;
+    if (!isValidClientId(id)) {
+        return invalidClientIdResponse();
+    }
+
+    const { data, response } = await parseBody(terminateServiceSchema, request);
+    if (response) return response;
+
+    try {
+        const backendResponse = await serverAPIClient.patch(`/clients/${id}/terminate`, data, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(backendResponse);
     } catch (error) {
-        console.error("[API] Error terminating client service:", error);
-        return NextResponse.json(
-            { error: "Failed to terminate client service" },
-            { status: 500 }
-        );
+        return errorResponse(error, "terminate client service");
     }
 }

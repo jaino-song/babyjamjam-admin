@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useAllVoucherPriceInfos, useVoucherYears } from "@/hooks";
 import { ContentPaper } from "@/components/app/root/content-paper";
+import { CardHeader } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -58,7 +59,8 @@ function PillToggle({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-3 py-1 text-xs font-medium transition-colors min-w-[3.25rem] text-center",
+        "rounded-full border px-2 py-0.5 text-[0.7rem] font-medium transition-colors min-w-[2.65rem] text-center",
+        "xl:min-w-[3.25rem] xl:px-3 xl:py-1 xl:text-xs",
         "border-[hsl(var(--v3-primary))]",
         active
           ? "bg-[hsl(var(--v3-primary))] text-white"
@@ -93,32 +95,32 @@ function useToggleSet<T>(initial: T[]) {
 function TableSkeleton() {
   return (
     <div data-component="voucher-price-table-skeleton" className="flex-1 overflow-y-auto min-h-0">
-      <Table>
+      <Table className={TABLE_TEXT_CLASS_NAME}>
         <TableHeader className="sticky top-0 bg-card z-10">
           <TableRow>
-            <TableHead className="w-[180px]">유형</TableHead>
-            <TableHead className="w-[100px]">기간 (일)</TableHead>
-            <TableHead>서비스 비용</TableHead>
-            <TableHead>정부지원금</TableHead>
-            <TableHead>본인부담금</TableHead>
+            <TableHead className="h-10 w-[150px] px-1.5 xl:h-12 xl:w-[180px] xl:px-2">유형</TableHead>
+            <TableHead className="h-10 w-[80px] px-1.5 xl:h-12 xl:w-[100px] xl:px-2">기간 (일)</TableHead>
+            <TableHead className="h-10 px-1.5 xl:h-12 xl:px-2">서비스 비용</TableHead>
+            <TableHead className="h-10 px-1.5 xl:h-12 xl:px-2">정부지원금</TableHead>
+            <TableHead className="h-10 px-1.5 xl:h-12 xl:px-2">본인부담금</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {Array.from({ length: 10 }).map((_, index) => (
             <TableRow key={index} data-component="voucher-price-table-skeleton-row">
-              <TableCell className="font-medium">
+              <TableCell className="px-1.5 py-3 font-medium xl:px-2 xl:py-4">
                 <Skeleton className="h-4 w-20 mx-auto bg-v3-dim-white" />
               </TableCell>
-              <TableCell>
+              <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">
                 <Skeleton className="h-4 w-10 mx-auto bg-v3-dim-white" />
               </TableCell>
-              <TableCell>
+              <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">
                 <Skeleton className="h-4 w-24 mx-auto bg-v3-dim-white" />
               </TableCell>
-              <TableCell>
+              <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">
                 <Skeleton className="h-4 w-24 mx-auto bg-v3-dim-white" />
               </TableCell>
-              <TableCell>
+              <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">
                 <Skeleton className="h-4 w-20 mx-auto bg-v3-dim-white" />
               </TableCell>
             </TableRow>
@@ -133,6 +135,10 @@ const CATEGORIES = ["A", "B", "C", "D"] as const;
 const SUBTYPES = ["가", "통합", "라"] as const;
 const GRADES = ["1", "2", "3"] as const;
 const DURATIONS = [5, 10, 15, 20, 25, 40] as const;
+const FILTER_ROW_CLASS_NAME = "flex items-center gap-1.5 xl:gap-3";
+const FILTER_GROUP_CLASS_NAME = "flex items-center gap-1 xl:gap-1.5";
+const FILTER_LABEL_CLASS_NAME = "text-xs font-medium text-muted-foreground w-8 shrink-0 xl:w-10 xl:text-sm";
+const TABLE_TEXT_CLASS_NAME = "text-[0.76rem] xl:text-sm";
 
 export function VoucherPriceTable() {
   const currentYear = new Date().getFullYear();
@@ -183,46 +189,51 @@ export function VoucherPriceTable() {
     });
   }, [sortedPrices, selectedCategories, selectedSubtypes, selectedGrades, selectedDurations]);
 
-  const isFiltered = selectedCategories.size > 0 || selectedSubtypes.size > 0 || selectedGrades.size > 0 || selectedDurations.size > 0;
-
   return (
-    <ContentPaper variant="v3" className="h-full [&>div]:h-full">
-      <div data-component="voucher-price-table" className="flex flex-col h-full">
-      <div className="shrink-0 mb-4 flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--v3-primary))]/10">
-          <CreditCard size={20} className="text-[hsl(var(--v3-primary))]" />
-        </div>
-        <div className="flex-1">
-          <h2 className="text-lg font-bold text-foreground">바우처 요금표</h2>
-          <p className="text-sm text-muted-foreground">연도별 바우처 가격 정보를 확인합니다.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="price-table-year" className="text-sm whitespace-nowrap">연도</Label>
-          <Select
-            value={String(selectedYear)}
-            onValueChange={(v) => setSelectedYear(Number(v))}
-            disabled={isYearsLoading}
-          >
-            <SelectTrigger id="price-table-year" className="w-[100px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {yearOptions.map((year) => (
-                <SelectItem key={year} value={String(year)}>
-                  {year}년
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      <Separator className="shrink-0 mb-4" />
-
+    <ContentPaper
+      variant="v3"
+      className="flex h-full flex-col overflow-hidden"
+      contentClassName="flex min-h-0 flex-1 flex-col pt-4 xl:pt-5"
+      header={(
+        <CardHeader
+          variant="v3"
+          data-component="voucher-price-table-header"
+          className="flex-row items-center gap-2.5 px-6 py-4 xl:gap-3 xl:py-5"
+        >
+          <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-[hsl(var(--v3-primary))]/10 xl:h-10 xl:w-10">
+            <CreditCard className="size-4 text-[hsl(var(--v3-primary))] xl:size-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-bold text-foreground xl:text-lg">바우처 요금표</h2>
+            <p className="text-xs text-muted-foreground xl:text-sm">연도별 바우처 가격 정보를 확인합니다.</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5 xl:gap-2">
+            <Label htmlFor="price-table-year" className="text-xs whitespace-nowrap xl:text-sm">연도</Label>
+            <Select
+              value={String(selectedYear)}
+              onValueChange={(v) => setSelectedYear(Number(v))}
+              disabled={isYearsLoading}
+            >
+              <SelectTrigger id="price-table-year" className="h-8 w-[100px] px-3 text-[0.76rem] xl:h-10 xl:w-[108px] xl:px-4 xl:text-[0.85rem]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {yearOptions.map((year) => (
+                  <SelectItem key={year} value={String(year)}>
+                    {year}년
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+      )}
+    >
+      <div data-component="voucher-price-table" className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 mb-4 space-y-3">
-        <div className="flex items-center gap-3">
-          <Label className="text-sm font-medium text-muted-foreground w-10 shrink-0">유형</Label>
-          <div className="flex items-center gap-1.5">
+        <div className={FILTER_ROW_CLASS_NAME}>
+          <Label className={FILTER_LABEL_CLASS_NAME}>유형</Label>
+          <div className={FILTER_GROUP_CLASS_NAME}>
             {CATEGORIES.map((cat) => (
               <PillToggle
                 key={cat}
@@ -232,8 +243,8 @@ export function VoucherPriceTable() {
               />
             ))}
           </div>
-          <Separator orientation="vertical" className="h-6" />
-          <div className="flex items-center gap-1.5">
+          <Separator orientation="vertical" className="h-5 xl:h-6" />
+          <div className={FILTER_GROUP_CLASS_NAME}>
             {SUBTYPES.map((sub) => (
               <PillToggle
                 key={sub}
@@ -243,8 +254,8 @@ export function VoucherPriceTable() {
               />
             ))}
           </div>
-          <Separator orientation="vertical" className="h-6" />
-          <div className="flex items-center gap-1.5">
+          <Separator orientation="vertical" className="h-5 xl:h-6" />
+          <div className={FILTER_GROUP_CLASS_NAME}>
             {GRADES.map((g) => (
               <PillToggle
                 key={g}
@@ -256,9 +267,9 @@ export function VoucherPriceTable() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <Label className="text-sm font-medium text-muted-foreground w-10 shrink-0">기간</Label>
-          <div className="flex items-center gap-1.5">
+        <div className={FILTER_ROW_CLASS_NAME}>
+          <Label className={FILTER_LABEL_CLASS_NAME}>기간</Label>
+          <div className={FILTER_GROUP_CLASS_NAME}>
             {DURATIONS.map((d) => (
               <PillToggle
                 key={d}
@@ -272,7 +283,7 @@ export function VoucherPriceTable() {
           <button
             type="button"
             onClick={clearDurations}
-            className="rounded-full border border-[hsl(var(--v3-primary))]/30 px-3 py-1 text-xs font-medium text-[hsl(var(--v3-primary))] hover:bg-[hsl(var(--v3-primary))]/10 transition-colors"
+            className="rounded-full border border-[hsl(var(--v3-primary))]/30 px-2 py-0.5 text-[0.7rem] font-medium text-[hsl(var(--v3-primary))] hover:bg-[hsl(var(--v3-primary))]/10 transition-colors xl:px-3 xl:py-1 xl:text-xs"
           >
             모두 해제
           </button>
@@ -295,24 +306,24 @@ export function VoucherPriceTable() {
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto min-h-0">
-          <Table>
+          <Table className={TABLE_TEXT_CLASS_NAME}>
             <TableHeader className="sticky top-0 bg-card z-10">
               <TableRow>
-                <TableHead className="w-[180px]">유형</TableHead>
-                <TableHead className="w-[100px]">기간 (일)</TableHead>
-                <TableHead>서비스 비용</TableHead>
-                <TableHead>정부지원금</TableHead>
-                <TableHead>본인부담금</TableHead>
+                <TableHead className="h-10 w-[150px] px-1.5 xl:h-12 xl:w-[180px] xl:px-2">유형</TableHead>
+                <TableHead className="h-10 w-[80px] px-1.5 xl:h-12 xl:w-[100px] xl:px-2">기간 (일)</TableHead>
+                <TableHead className="h-10 px-1.5 xl:h-12 xl:px-2">서비스 비용</TableHead>
+                <TableHead className="h-10 px-1.5 xl:h-12 xl:px-2">정부지원금</TableHead>
+                <TableHead className="h-10 px-1.5 xl:h-12 xl:px-2">본인부담금</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredPrices.map((price) => (
                 <TableRow key={price.id}>
-                  <TableCell className="font-medium">{formatTypeLabel(price.type)}</TableCell>
-                  <TableCell>{price.duration}일</TableCell>
-                  <TableCell>{formatPrice(price.fullPrice)}</TableCell>
-                  <TableCell>{formatPrice(price.grant)}</TableCell>
-                  <TableCell>{formatPrice(price.actualPrice)}</TableCell>
+                  <TableCell className="px-1.5 py-3 font-medium xl:px-2 xl:py-4">{formatTypeLabel(price.type)}</TableCell>
+                  <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">{price.duration}일</TableCell>
+                  <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">{formatPrice(price.fullPrice)}</TableCell>
+                  <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">{formatPrice(price.grant)}</TableCell>
+                  <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">{formatPrice(price.actualPrice)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -320,11 +331,6 @@ export function VoucherPriceTable() {
         </div>
       )}
 
-      <div className="shrink-0 mt-3 text-xs text-muted-foreground text-right">
-        {isFiltered
-          ? `${filteredPrices.length}개 / 총 ${prices.length}개 항목`
-          : `총 ${prices.length}개 항목`}
-      </div>
       </div>
     </ContentPaper>
   );

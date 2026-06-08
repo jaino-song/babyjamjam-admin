@@ -47,6 +47,16 @@ interface UpsertRuleParams {
     templateKey: AlimtalkTriggerTemplateKey;
 }
 
+const DEFAULT_SERVICE_INFO_TRIGGER: UpsertRuleParams = {
+    name: "서비스 시작 7일 전 서비스 안내",
+    isActive: true,
+    eventType: AlimtalkTriggerEventType.SERVICE_START,
+    offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+    offsetDays: 7,
+    recipientType: AlimtalkTriggerRecipientType.CLIENT,
+    templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+};
+
 export interface UpcomingAlimtalkTriggerJobView {
     id: string;
     ruleId: string;
@@ -126,7 +136,8 @@ export class AlimtalkTriggerService {
         if (!(await this.hasTriggerSchema())) {
             return [];
         }
-        return this.ruleRepository.findAll(branchId);
+        const rules = await this.ruleRepository.findAll(branchId);
+        return this.ensureDefaultServiceInfoTrigger(branchId, rules);
     }
 
     async listUpcomingJobs(
@@ -175,12 +186,13 @@ export class AlimtalkTriggerService {
     async listHistory(
         branchId: string,
         limit = 200,
+        skip = 0,
     ): Promise<AlimtalkHistoryRecordView[]> {
         if (!(await hasTable(this.prisma, "alimtalk_log"))) {
             return [];
         }
 
-        const logs = await this.logRepository.findRecentByBranch(branchId, limit);
+        const logs = await this.logRepository.findRecentByBranch(branchId, limit, skip);
         if (logs.length === 0) {
             return [];
         }
@@ -433,6 +445,32 @@ export class AlimtalkTriggerService {
         return rules.length > 0;
     }
 
+    private async ensureDefaultServiceInfoTrigger(
+        branchId: string,
+        rules: AlimtalkTriggerRuleEntity[],
+    ): Promise<AlimtalkTriggerRuleEntity[]> {
+        if (!branchId) return rules;
+
+        const existingDefault = rules.find((rule) => (
+            rule.eventType === DEFAULT_SERVICE_INFO_TRIGGER.eventType &&
+            rule.offsetType === DEFAULT_SERVICE_INFO_TRIGGER.offsetType &&
+            rule.offsetDays === DEFAULT_SERVICE_INFO_TRIGGER.offsetDays &&
+            rule.recipientType === DEFAULT_SERVICE_INFO_TRIGGER.recipientType &&
+            rule.templateKey === DEFAULT_SERVICE_INFO_TRIGGER.templateKey
+        ));
+        if (existingDefault) return rules;
+
+        const created = await this.ruleRepository.create(
+            branchId,
+            AlimtalkTriggerRuleEntity.create({
+                branchId,
+                ...DEFAULT_SERVICE_INFO_TRIGGER,
+            }),
+        );
+        await this.rebuildJobsForRule(branchId, created, false);
+        return [created, ...rules];
+    }
+
     private async rebuildJobsForRule(
         branchId: string,
         rule: AlimtalkTriggerRuleEntity,
@@ -578,6 +616,11 @@ export class AlimtalkTriggerService {
                     clientName: client.name,
                     serviceStartDate: this.formatDate(client.startDate),
                     timingText: this.describeTiming(rule, "서비스 시작"),
+                };
+            case AlimtalkTriggerTemplateKey.SERVICE_INFO:
+                return {
+                    name: client.name,
+                    clientName: client.name,
                 };
             case AlimtalkTriggerTemplateKey.SERVICE_END_REMINDER:
                 return {

@@ -16,6 +16,7 @@ const baseInquiry = {
   preferredCaregiverName: "서경자",
   referralSource: "시군구청",
   privacyAcceptedAt: "2026-04-23T08:42:36.733Z",
+  additionalNotes: "밤 시간 상담을 원합니다.",
   source: "website",
   status: "new",
   readAt: "2026-04-23T08:50:00.000Z",
@@ -59,11 +60,13 @@ describe("SelectedServicesCard", () => {
     );
 
     expect(screen.getByText("서비스 정보")).toBeInTheDocument();
-    expect(screen.getByText("산후도우미서비스 플랜")).toBeInTheDocument();
+    expect(screen.getByText("서비스 플랜")).toBeInTheDocument();
     expect(screen.getByText("프리미엄 · 2,400,000원")).toBeInTheDocument();
+    expect(screen.getByText("서비스 기간")).toBeInTheDocument();
+    expect(screen.getByText("15일")).toBeInTheDocument();
     expect(screen.getByText("추가 서비스")).toBeInTheDocument();
-    expect(screen.getByText("첫만남 이용권 · 200,000원 · 수량 2")).toBeInTheDocument();
-    expect(screen.getByText("가사 연장 · 150,000원 · 수량 1")).toBeInTheDocument();
+    expect(screen.getByText("첫만남 이용권 × 2 · 200,000원")).toBeInTheDocument();
+    expect(screen.getByText("가사 연장 · 150,000원")).toBeInTheDocument();
   });
 
   it("renders an empty fallback when selected services are missing", () => {

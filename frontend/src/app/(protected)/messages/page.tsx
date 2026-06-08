@@ -5,6 +5,7 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
+import type { SystemTemplateKey } from "@/features/system-templates/types";
 import {
   useAlimtalkHistory,
   useUpcomingAlimtalkJobs,
@@ -364,9 +365,9 @@ const TEMPLATE_DETAIL_TABS = [
   { key: "preview", label: "미리보기" },
 ];
 
-const BUILTIN_TEMPLATE_SYSTEM_KEYS: Record<BuiltinTemplateType, string> = {
+const BUILTIN_TEMPLATE_SYSTEM_KEYS: Record<BuiltinTemplateType, SystemTemplateKey> = {
   greeting: "GREETING",
-  "service-info": "service_info",
+  "service-info": "SERVICE_INFO",
   "price-info": "PRICE_INFO",
   reminder: "REMINDER",
   thanks: "THANKS",
@@ -426,6 +427,7 @@ const HISTORY_EVENT_ICON_BY_TYPE: Record<TriggerEventType, typeof MessageCircle>
 const HISTORY_TEMPLATE_LABELS: Record<TriggerTemplateKey, string> = {
   CLIENT_WELCOME: "고객 등록 안내",
   SERVICE_START_REMINDER: "서비스 시작 리마인드",
+  SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 안내",
   EMPLOYEE_ASSIGNED: "직원 배정 완료",
 };
@@ -1571,7 +1573,7 @@ function MessageHistorySection() {
               slotClassName={({ item, isLoading: slotLoading }) => {
                 const isActive = !slotLoading && item && item.id === selectedRecord?.id;
                 return cn(
-                  "flex items-start gap-3 rounded-[18px] border-2 border-transparent bg-white p-4 text-left transition-all duration-200",
+                  "flex items-center gap-2.5 rounded-[16px] border-2 border-transparent bg-white p-3 text-left transition-all duration-200",
                   !slotLoading && "cursor-pointer",
                   isActive
                     ? "border-v3-primary bg-v3-primary-light"
@@ -1585,14 +1587,13 @@ function MessageHistorySection() {
                     <>
                       <div
                         data-component="messages-history-list-skeleton-icon"
-                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white"
                       >
                         <Skeleton className="h-4 w-4 rounded-md bg-white/80" />
                       </div>
-                      <div data-component="messages-history-list-skeleton-copy" className="min-w-0 flex-1 space-y-2">
+                      <div data-component="messages-history-list-skeleton-copy" className="min-w-0 flex-1 space-y-1.5">
                         <Skeleton className="h-4 w-36 bg-v3-dim-white" />
-                        <Skeleton className="h-3 w-32 bg-v3-dim-white" />
-                        <Skeleton className="h-3 w-24 bg-v3-dim-white" />
+                        <Skeleton className="h-3 w-44 bg-v3-dim-white" />
                       </div>
                     </>
                   );
@@ -1606,23 +1607,22 @@ function MessageHistorySection() {
                   <>
                     <div
                       data-component="messages-history-list-item-icon"
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white text-v3-primary"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white text-v3-primary"
                     >
                       <ItemIcon className="h-4 w-4" />
                     </div>
 
                     <div data-component="messages-history-list-item-copy" className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-v3-dark">{record.title}</p>
-                      <p className="mt-1 truncate text-[0.78rem] text-v3-text-muted">
-                        {record.recipientName} · {record.recipientPhone}
+                      <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{record.title}</p>
+                      <p className="mt-0.5 truncate text-[0.72rem] text-v3-text-muted">
+                        {record.recipientName} · {record.recipientPhone} · {formatHistoryDate(record.sentAt)}
                       </p>
-                      <p className="mt-1 text-[0.72rem] text-v3-text-muted">{formatHistoryDate(record.sentAt)}</p>
                     </div>
 
                     <span
                       data-component="messages-history-list-item-status"
                       className={cn(
-                        "inline-flex items-center rounded-full px-2.5 py-1 text-[0.68rem] font-semibold",
+                        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[0.64rem] font-semibold",
                         statusMeta.tone
                       )}
                     >
@@ -1750,7 +1750,7 @@ export default function MessagesPage() {
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
 
   const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
-  const userTemplates = useMemo(() => userTemplatesData?.data ?? [], [userTemplatesData]);
+  const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
 
   const userTemplateItems = useMemo<TemplateListItem[]>(() => {
     return userTemplates.map((template) => ({
@@ -1764,6 +1764,7 @@ export default function MessagesPage() {
     () => (templateFilter === "builtin" ? BUILTIN_TEMPLATES : userTemplateItems),
     [templateFilter, userTemplateItems]
   );
+  const isTemplateListLoading = templateFilter === "branch" && isLoadingUserTemplates;
 
   const handleTemplateSelect = useCallback((id: string) => {
     setSelectedValue(id);
@@ -1835,7 +1836,7 @@ export default function MessagesPage() {
           onSelect={(id) => setActiveSection(id as MessageSectionId)}
         />
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div data-component="messages-section-content" className="flex min-h-0 min-w-0 flex-1 flex-col">
           {activeSection === "scheduled" ? (
             <section data-component="messages-scheduled-section" className="flex min-h-0 flex-1 flex-col">
               <MessageScheduledSection />
@@ -1874,18 +1875,18 @@ export default function MessagesPage() {
                   }
                 >
                   <div data-component="messages-templates-list" className="space-y-2 pb-2">
-                    {visibleItems.length > 0 ? (
+                    {isTemplateListLoading || visibleItems.length > 0 ? (
                       <AnimatedSlotList<TemplateListItem>
                         items={visibleItems}
-                        isLoading={false}
+                        isLoading={isTemplateListLoading}
                         className="space-y-2"
-                        slotClassName={({ item }) =>
+                        slotClassName={({ item, isLoading }) =>
                           cn(
                             "flex items-center gap-3 rounded-[16px] border-2 p-3 text-left transition-all duration-200",
-                            item?.id === activeTemplateId
+                            !isLoading && item?.id === activeTemplateId
                               ? "border-v3-primary bg-v3-primary-light"
                               : "border-transparent bg-white",
-                            "cursor-pointer hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
+                            !isLoading && "cursor-pointer hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
                           )
                         }
                         onSlotClick={(item) => handleTemplateSelect(item.id)}
@@ -1922,14 +1923,6 @@ export default function MessagesPage() {
                           );
                         }}
                       />
-                    ) : null}
-                    {templateFilter === "branch" && isLoadingUserTemplates ? (
-                      <div
-                        data-component="messages-templates-loading-note"
-                        className="rounded-[16px] border border-dashed border-v3-border px-4 py-3 text-[0.76rem] text-v3-text-muted"
-                      >
-                        지점 템플릿을 불러오는 중입니다.
-                      </div>
                     ) : null}
                     {templateFilter === "branch" && !isLoadingUserTemplates && visibleItems.length === 0 ? (
                       <ListEmptyState

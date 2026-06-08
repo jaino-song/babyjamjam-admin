@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Plus, Search, Users } from "lucide-react";
 import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
-import { Client, SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
+import { Client, SERVICE_STATUS_OPTIONS, type ServiceStatus } from "@/lib/client/types";
 import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -17,27 +17,27 @@ import { ContentPaper } from "../root/content-paper";
 import { DataTablePagination } from "../ui/datatable/DataTablePagination";
 import { cn } from "@/lib/utils";
 
-const STATUS_FILTER_OPTIONS = [
+const STATUS_FILTER_OPTIONS: Array<{ value: ServiceStatus | null; label: string }> = [
     { value: null, label: "전체" },
+    { value: "waiting", label: "대기" },
+    { value: "replacement_requested", label: "교체 요청" },
     { value: "active", label: "진행중" },
-    { value: "pending", label: "대기" },
     { value: "completed", label: "완료" },
     { value: "terminated", label: "중단" },
 ];
 
-const getStatusBadgeVariant = (status: string | null) => {
+const getStatusBadgeVariant = (status: ServiceStatus | null) => {
     switch (status) {
-        case "active": return "v3-active";
-        case "pending": return "v3-pending";
         case "waiting": return "v3-pending";
+        case "replacement_requested": return "v3-expired";
+        case "active": return "v3-active";
         case "terminated": return "v3-expired";
-        case "cancelled": return "v3-expired";
         case "completed": return "outline";
         default: return "outline";
     }
 };
 
-const getStatusLabel = (status: string | null) => {
+const getStatusLabel = (status: ServiceStatus | null) => {
     const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
     return option ? option.label : "-";
 };
@@ -68,7 +68,7 @@ export function ClientsTable() {
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
-    const [statusFilter, setStatusFilter] = useState<string | null>(null);
+    const [statusFilter, setStatusFilter] = useState<ServiceStatus | null>(null);
 
     const { data, isLoading } = useClients(
         page + 1,
@@ -131,7 +131,7 @@ export function ClientsTable() {
         setPage(0);
     };
 
-    const handleFilterChange = (value: string | null) => {
+    const handleFilterChange = (value: ServiceStatus | null) => {
         setStatusFilter(value);
         setPage(0);
     };

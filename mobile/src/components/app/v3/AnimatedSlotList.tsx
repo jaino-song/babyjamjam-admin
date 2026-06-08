@@ -160,7 +160,7 @@ export function AnimatedSlotList<T>({
               shouldHide && "hidden"
             )}
             style={{
-              animationDelay: animate ? `${index * delayStepSeconds}s` : undefined,
+              animationDelay: animate ? `${Math.min(index, 4) * delayStepSeconds}s` : undefined,
               opacity: isLoading ? 1 : itemOpacity,
             }}
             onClick={

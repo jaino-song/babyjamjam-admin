@@ -31,6 +31,24 @@ const formatDate = (dateString: string): string => {
   });
 };
 
+function TemplateEditorLoadingSkeleton({ name }: { name: string }) {
+  return (
+    <div data-component={name} className="flex flex-col gap-6">
+      <div data-component={`${name}-name`} className="space-y-2">
+        <Skeleton className="h-3 w-28 bg-v3-dim-white" />
+        <Skeleton className="h-11 w-full rounded-[14px] bg-v3-dim-white" />
+      </div>
+      <div data-component={`${name}-content`} className="space-y-2">
+        <Skeleton className="h-3 w-24 bg-v3-dim-white" />
+        <Skeleton className="h-48 w-full rounded-[14px] bg-v3-dim-white" />
+      </div>
+      <div data-component={`${name}-action`} className="flex justify-end">
+        <Skeleton className="h-10 w-20 rounded-[12px] bg-v3-dim-white" />
+      </div>
+    </div>
+  );
+}
+
 function BranchTemplateDetail({ templateId }: { templateId: string }) {
   const { data: template, isLoading } = useMessageTemplate(templateId);
   const updateMutation = useUpdateMessageTemplate();
@@ -47,11 +65,7 @@ function BranchTemplateDetail({ templateId }: { templateId: string }) {
   }
 
   if (isLoading) {
-    return (
-      <div data-component="messages-templates-user-loading" className="flex items-center justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-v3-primary" />
-      </div>
-    );
+    return <TemplateEditorLoadingSkeleton name="messages-templates-user-loading" />;
   }
 
   if (!template) {
@@ -128,7 +142,7 @@ export default function TemplatesPage() {
   const [selectedValue, setSelectedValue] = useState<string | null>(null);
 
   const { data: branchTemplatesData, isLoading: isLoadingBranchTemplates } = useMessageTemplates(1, 100);
-  const branchTemplates = useMemo(() => branchTemplatesData?.data ?? [], [branchTemplatesData]);
+  const branchTemplates = useMemo(() => branchTemplatesData ?? [], [branchTemplatesData]);
 
   const branchItems = useMemo<TemplateListItem[]>(
     () =>
@@ -170,18 +184,18 @@ export default function TemplatesPage() {
           }
         >
           <div data-component="messages-templates-list" className="space-y-2 pb-2">
-            {branchItems.length > 0 ? (
+            {isLoadingBranchTemplates || branchItems.length > 0 ? (
               <AnimatedSlotList<TemplateListItem>
                 items={branchItems}
-                isLoading={false}
+                isLoading={isLoadingBranchTemplates}
                 className="space-y-2"
-                slotClassName={({ item }) =>
+                slotClassName={({ item, isLoading }) =>
                   cn(
                     "flex items-center gap-3 rounded-[16px] border-2 p-3 text-left transition-all duration-200",
-                    item?.id === activeTemplateId
+                    !isLoading && item?.id === activeTemplateId
                       ? "border-v3-primary bg-v3-primary-light"
                       : "border-transparent bg-white",
-                    "cursor-pointer hover:border-v3-primary/30 hover:bg-v3-primary-light/50",
+                    !isLoading && "cursor-pointer hover:border-v3-primary/30 hover:bg-v3-primary-light/50",
                   )
                 }
                 onSlotClick={(item) => handleTemplateSelect(item.id)}
@@ -229,14 +243,6 @@ export default function TemplatesPage() {
                   );
                 }}
               />
-            ) : null}
-            {isLoadingBranchTemplates ? (
-              <div
-                data-component="messages-templates-list-loading"
-                className="rounded-[16px] border border-dashed border-v3-border p-4 text-[0.76rem] text-v3-text-muted"
-              >
-                지점 템플릿을 불러오는 중입니다.
-              </div>
             ) : null}
             {!isLoadingBranchTemplates && branchItems.length === 0 ? (
               <ListEmptyState name="messages-templates-list-empty" message="등록된 지점 템플릿이 없습니다." />

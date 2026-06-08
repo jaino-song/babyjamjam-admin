@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
 import {
     CreateClientUsecase,
     DeleteClientUsecase,
@@ -10,19 +10,27 @@ import {
 import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { computeServiceStatus, SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
+import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { AlimtalkService } from "./alimtalk.service";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { ClientGreetingSmsAutomationService } from "./client-greeting-sms-automation.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
 const ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS = 2;
 const ACTION_REQUIRED_SEND_THRESHOLD_DAYS = 6;
+const COMPLETED_DOCUMENT_STATUS_TYPES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
+const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
+const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["040", "042", "045", "090"]);
+const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
+const OPENED_DOCUMENT_STATUS_TYPES = new Set(["020"]);
+const CREATED_DOCUMENT_STATUS_TYPES = new Set(["001", "002", "010", "043"]);
+const REQUESTED_DOCUMENT_STATUS_TYPES = new Set(["030", "060", "070"]);
 
 // Document status type for eformsign documents
 // Maps to eformsign_doc.statusType values:
+// - 003/050: completed (완료)
 // - 010: created (문서 생성됨)
 // - 020: opened (서명 페이지 열림)
-// - 050: completed (완료)
 // - 060: requested (서명 요청됨/진행중)
 // - 080: rejected (거부됨)
 // - 090: revoked (철회됨)
@@ -50,6 +58,7 @@ export interface ClientWithEmployees {
     serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
+    areaId: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatusType;
     primaryEmployee: { id: number; name: string } | null;
@@ -101,7 +110,39 @@ export class ClientService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         @Optional() private readonly triggerService?: AlimtalkTriggerService,
+        @Optional() private readonly clientGreetingSmsAutomationService?: ClientGreetingSmsAutomationService,
     ) {}
+
+    private assertAllowedServiceStatus(status: string | null | undefined): void {
+        if (status == null) return;
+
+        if (!isServiceStatus(status)) {
+            throw new BadRequestException(
+                `serviceStatus must be one of: ${SERVICE_STATUS_VALUES.join(", ")}`
+            );
+        }
+    }
+
+    private async assertAllowedClientArea(branchid: string, areaId: string | null | undefined): Promise<void> {
+        if (!areaId) return;
+
+        const areaScope = branchid
+            ? [{ branchId: branchid }, { branchId: null }]
+            : [{ branchId: null }];
+        const bankAccountInfo = await this.prismaService.bank_account_info.findFirst({
+            where: {
+                areaId,
+                area: {
+                    OR: areaScope,
+                },
+            },
+            select: { areaId: true },
+        });
+
+        if (!bankAccountInfo) {
+            throw new BadRequestException("areaId must reference an available bank account");
+        }
+    }
 
     async create(branchid: string, params: {
         name: string;
@@ -123,10 +164,14 @@ export class ClientService {
         serviceStatus?: string | null;
         breastPump: boolean;
         eDocId?: string | null;
+        areaId?: string | null;
+        suppressGreetingSms?: boolean;
     }): Promise<ClientEntity> {
-        const startDate = params.startDate ? new Date(params.startDate) : new Date();
-        const endDate = params.endDate ? new Date(params.endDate) : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
+        const startDate = params.startDate ? new Date(params.startDate) : null;
+        const endDate = params.endDate ? new Date(params.endDate) : null;
         const dueDate = params.dueDate ? new Date(params.dueDate) : null;
+        this.assertAllowedServiceStatus(params.serviceStatus);
+        await this.assertAllowedClientArea(branchid, params.areaId);
 
         // First create the client
         const client = await this.createClientUsecase.execute(branchid, {
@@ -147,6 +192,7 @@ export class ClientService {
             serviceStatus: params.serviceStatus ?? null,
             breastPump: params.breastPump,
             eDocId: params.eDocId ?? null,
+            areaId: params.areaId ?? null,
         });
 
         // Then create employee_schedule (optional - only when primary employee is assigned)
@@ -159,8 +205,8 @@ export class ClientService {
                     primaryEmployeeId: params.primaryEmployeeId,
                     secondaryEmployeeId: params.secondaryEmployeeId ?? null,
                     workAddress: params.address ?? "",
-                    startDate: startDate,
-                    endDate: endDate,
+                    startDate: startDate ?? new Date(),
+                    endDate: endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
                     replaced: false,
                 },
             });
@@ -173,6 +219,11 @@ export class ClientService {
         if (this.triggerService) {
             this.triggerService.syncClientRulesForClient(branchid, client.id, true).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
+            });
+        }
+        if (this.clientGreetingSmsAutomationService && !params.suppressGreetingSms) {
+            this.clientGreetingSmsAutomationService.sendClientGreetingSms(branchid, client).catch((error) => {
+                this.logger.error(`Failed to send new client greeting SMS: ${error}`);
             });
         }
         if (createdScheduleId !== null) {
@@ -329,6 +380,7 @@ export class ClientService {
                     serviceStatus: computedStatus, // Return computed status, not stored one
                     breastPump: client.breastPump,
                     eDocId: client.eDocId,
+                    areaId: client.areaId,
                     hasSigned: client.eDocId !== null,
                     documentStatus: this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? '')),
                     primaryEmployee: schedule?.primaryEmployee
@@ -375,16 +427,17 @@ export class ClientService {
     }
 
     private mapStatusTypeToDocumentStatus(statusType?: string): DocumentStatusType {
-        switch (statusType) {
-            case '010': return 'created';
-            case '020': return 'opened';
-            case '050': return 'completed';
-            case '060': return 'requested';
-            case '080': return 'rejected';
-            case '090': return 'revoked';
-            case '099': return 'deleted';
-            default: return null;
-        }
+        const normalized = statusType?.trim().padStart(3, "0");
+        if (!normalized) return null;
+
+        if (COMPLETED_DOCUMENT_STATUS_TYPES.has(normalized)) return "completed";
+        if (REJECTED_DOCUMENT_STATUS_TYPES.has(normalized)) return "rejected";
+        if (REVOKED_DOCUMENT_STATUS_TYPES.has(normalized)) return "revoked";
+        if (DELETED_DOCUMENT_STATUS_TYPES.has(normalized)) return "deleted";
+        if (OPENED_DOCUMENT_STATUS_TYPES.has(normalized)) return "opened";
+        if (CREATED_DOCUMENT_STATUS_TYPES.has(normalized)) return "created";
+        if (REQUESTED_DOCUMENT_STATUS_TYPES.has(normalized)) return "requested";
+        return null;
     }
 
     async update(branchid: string, id: number, params: {
@@ -407,12 +460,15 @@ export class ClientService {
         serviceStatus?: string | null;
         breastPump?: boolean;
         eDocId?: string | null;
+        areaId?: string | null;
     }): Promise<ClientEntity> {
         // Get existing client
         const existingClient = await this.findClientByIdUsecase.execute(branchid, id);
         if (!existingClient) {
             throw new Error(`Client with id ${id} not found`);
         }
+        this.assertAllowedServiceStatus(params.serviceStatus);
+        await this.assertAllowedClientArea(branchid, params.areaId);
 
         const startDate = params.startDate ? new Date(params.startDate) : existingClient.startDate ?? new Date();
         const endDate = params.endDate ? new Date(params.endDate) : existingClient.endDate ?? new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
@@ -487,6 +543,7 @@ export class ClientService {
             serviceStatus: params.serviceStatus,
             breastPump: params.breastPump,
             eDocId: params.eDocId,
+            areaId: params.areaId,
         });
         if (this.triggerService) {
             this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {

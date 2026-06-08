@@ -100,7 +100,7 @@ export function ListPanel({
               component="list-panel"
               title={title}
               subtitle={subtitle}
-              titleClassName="text-xl"
+              titleClassName="text-lg"
             />
           </div>
           {headerActions && (
@@ -135,7 +135,7 @@ export function ListPanel({
                     }}
                     disabled={disabled}
                     className={cn(
-                      "flex items-center gap-1.5 text-[0.8rem] font-semibold text-v3-dark px-3 py-1.5 rounded-[10px] border border-v3-border hover:bg-v3-dim-white transition-colors",
+                      "flex items-center gap-1.5 text-[0.75rem] font-semibold text-v3-dark px-3 py-1.5 rounded-[10px] border border-v3-border hover:bg-v3-dim-white transition-colors",
                       disabled && "cursor-not-allowed opacity-60 hover:bg-white",
                     )}
                   >
@@ -150,7 +150,7 @@ export function ListPanel({
                           key={tab.value}
                           onClick={() => { onTabChange?.(tab.value); setDropdownOpen(false); }}
                           className={cn(
-                            "w-full text-left text-[0.8rem] px-4 py-2 transition-colors",
+                            "w-full text-left text-[0.75rem] px-4 py-2 transition-colors",
                             activeTab === tab.value
                               ? cn("font-semibold bg-v3-primary-light", tab.activeClassName ?? "text-v3-primary")
                               : "text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-text"
@@ -172,7 +172,7 @@ export function ListPanel({
                       disabled={disabled}
                       onClick={() => onTabChange?.(tab.value)}
                       className={cn(
-                        "relative px-3 pb-2 text-[0.8rem] transition-colors",
+                        "relative px-3 pb-2 text-[0.75rem] transition-colors",
                         activeTab === tab.value
                           ? cn("font-semibold", tab.activeClassName ?? "text-primary")
                           : "text-v3-text-muted hover:text-v3-text",

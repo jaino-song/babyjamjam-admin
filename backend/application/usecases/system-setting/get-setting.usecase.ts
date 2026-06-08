@@ -3,6 +3,7 @@ import {
     ISystemSettingRepository,
     SYSTEM_SETTING_REPOSITORY,
 } from "domain/repositories/system-setting.repository.interface";
+import { SystemSettingEntity } from "domain/entities/system-setting.entity";
 
 @Injectable()
 export class GetSettingUsecase {
@@ -14,6 +15,10 @@ export class GetSettingUsecase {
     async execute(key: string): Promise<string | null> {
         const entity = await this.repository.findByKey(key);
         return entity?.value ?? null;
+    }
+
+    async executeEntity(key: string): Promise<SystemSettingEntity | null> {
+        return this.repository.findByKey(key);
     }
 
     async executeWithDefault(key: string, defaultValue: string): Promise<string> {

@@ -4,6 +4,7 @@ import React from "react";
 import { ChevronLeft } from "lucide-react";
 import { PanelTitleGroup } from "./PanelTitleGroup";
 import { useSplitLayoutNavOptional } from "./SplitLayoutContext";
+import { useScrollActivity } from "./useScrollActivity";
 
 interface DetailPanelProps {
   /** Fully custom header (escape hatch for centered layouts etc.) */
@@ -20,6 +21,7 @@ interface DetailPanelProps {
   trailing?: React.ReactNode;
   /** Optional action row rendered between header and tabs. */
   headerAction?: React.ReactNode;
+  compactBackLabel?: React.ReactNode;
   tabs?: React.ReactNode;
   overlay?: React.ReactNode;
   emptyState?: React.ReactNode;
@@ -34,27 +36,29 @@ export function DetailPanel({
   badges,
   trailing,
   headerAction,
+  compactBackLabel = "목록으로 돌아가기",
   tabs,
   overlay,
   emptyState,
   children,
 }: DetailPanelProps) {
-  const nav = useSplitLayoutNavOptional();
-  const showBackButton = nav?.isMobile;
+  const splitLayoutNav = useSplitLayoutNavOptional();
+  const { isScrollActive, handleScroll } = useScrollActivity();
   const resolvedOverlay = overlay ?? emptyState;
+  const showCompactBackButton = splitLayoutNav?.isMobile ?? false;
 
   const hasStructuredHeader = !!title;
 
   const renderedHeader = hasStructuredHeader ? (
     <div className="flex items-center justify-between gap-4">
-      <div className="flex items-center gap-4 min-w-0">
+      <div className="flex items-center gap-3 min-w-0">
         {avatar}
         <PanelTitleGroup
           component="detail-panel"
           title={title}
           subtitle={subtitle}
           badges={badges}
-          titleClassName="text-xl"
+          titleClassName="text-base"
         />
       </div>
       {trailing}
@@ -63,17 +67,17 @@ export function DetailPanel({
 
   return (
     <div data-component="detail-panel" className="relative bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
-      {/* Back button - mobile only */}
-      {showBackButton && (
-        <button
-          onClick={nav?.goToList}
-          className="flex items-center gap-1 px-4 pt-4 text-[0.8rem] text-v3-text-muted hover:text-v3-primary transition-colors"
-        >
-          <ChevronLeft className="w-5 h-5" />
-        </button>
-      )}
-
-      {renderedHeader && <div data-component="detail-panel-header" className={showBackButton ? "px-6 pt-2" : "p-6"}>
+      {(showCompactBackButton || renderedHeader) && <div data-component="detail-panel-header" className="px-6 py-5">
+        {showCompactBackButton && (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 text-[0.75rem] md:text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
+            onClick={splitLayoutNav?.goToList}
+          >
+            <ChevronLeft className="w-[18px] h-[18px] md:w-5 md:h-5" aria-hidden="true" />
+            {compactBackLabel}
+          </button>
+        )}
         {renderedHeader}
       </div>}
       {headerAction && <div className="px-6 pb-6">{headerAction}</div>}
@@ -89,7 +93,9 @@ export function DetailPanel({
       <div className="relative flex-1 min-h-0">
         <div
           data-component="detail-panel-scroll-content"
-          className="overflow-y-auto h-full px-6 pt-6 pb-6"
+          className="overflow-y-auto scrollbar-on-scroll h-full px-6 pt-6 pb-6"
+          data-scroll-active={isScrollActive ? "true" : "false"}
+          onScroll={handleScroll}
         >
           {children}
         </div>

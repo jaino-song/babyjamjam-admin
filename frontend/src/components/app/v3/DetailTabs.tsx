@@ -20,7 +20,7 @@ export function DetailTabs({ tabs, activeTab, onTabChange }: DetailTabsProps) {
           key={tab.key}
           onClick={() => onTabChange(tab.key)}
           className={cn(
-            "relative px-3 pb-2 text-[0.8rem] transition-colors",
+            "relative px-3 pb-2 text-[0.75rem] transition-colors",
             activeTab === tab.key
               ? "text-primary font-semibold"
               : "text-v3-text-muted hover:text-v3-text"

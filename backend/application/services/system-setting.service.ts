@@ -27,6 +27,10 @@ export class SystemSettingService {
         return value as AlimtalkProvider;
     }
 
+    async getAlimtalkProviderSetting(): Promise<SystemSettingEntity | null> {
+        return this.getSettingUsecase.executeEntity(SystemSettingEntity.ALIMTALK_PROVIDER_KEY);
+    }
+
     async setAlimtalkProvider(provider: AlimtalkProvider): Promise<SystemSettingEntity> {
         if (!ALIMTALK_PROVIDERS.includes(provider)) {
             throw new Error(

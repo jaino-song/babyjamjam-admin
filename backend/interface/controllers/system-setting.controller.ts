@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Post, Put, Request, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Put, Request, UseGuards } from "@nestjs/common";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { SystemSettingService } from "application/services/system-setting.service";
 import {
     UpdateAlimtalkProviderDto,
@@ -27,12 +28,15 @@ export class SystemSettingController {
 
     @Get("alimtalk-provider")
     async getAlimtalkProvider(): Promise<AlimtalkProviderResponseDto> {
-        const provider = await this.systemSettingService.getAlimtalkProvider();
-        const enabled = await this.systemSettingService.isAlimtalkEnabled();
-        return AlimtalkProviderResponseDto.from(provider, enabled);
+        const setting = await this.systemSettingService.getAlimtalkProviderSetting();
+        const provider = setting?.getAlimtalkProvider()
+            ?? await this.systemSettingService.getAlimtalkProvider();
+        const enabled = provider !== "none";
+        return AlimtalkProviderResponseDto.from(provider, enabled, setting?.updatedAt);
     }
 
     @Put("alimtalk-provider")
+    @UseGuards(OwnerOrAdminGuard)
     async updateAlimtalkProvider(
         @Body() dto: UpdateAlimtalkProviderDto
     ): Promise<AlimtalkProviderResponseDto> {
@@ -120,6 +124,23 @@ export class SystemSettingController {
         return MessageSenderApprovalResponseDto.from({
             ...state,
             canRequest: this.messageSenderApprovalService.canRequest(tenant.branchRole),
+        });
+    }
+
+    @Post("message-sender-approval/:branchId/approve")
+    @UseGuards(OwnerGuard)
+    async approveMessageSenderApproval(
+        @Param("branchId") branchId: string,
+        @Request() request: { user: { userId: string } },
+    ): Promise<MessageSenderApprovalResponseDto> {
+        const state = await this.messageSenderApprovalService.approvePendingRequest({
+            branchId,
+            userId: request.user.userId,
+        });
+
+        return MessageSenderApprovalResponseDto.from({
+            ...state,
+            canRequest: false,
         });
     }
 }

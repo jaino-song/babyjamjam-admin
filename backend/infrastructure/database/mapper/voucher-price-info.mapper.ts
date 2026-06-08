@@ -25,7 +25,6 @@ export class VoucherPriceInfoMapper {
 
     static toPrismaCreate(entity: VoucherPriceInfoEntity) {
         return {
-            id: entity.id,
             type: entity.type,
             duration: entity.duration,
             fullPrice: entity.fullPrice,

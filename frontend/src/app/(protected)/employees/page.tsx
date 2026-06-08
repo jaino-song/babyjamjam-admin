@@ -63,7 +63,7 @@ function getGradeBadge(grade: string) {
     const { label, variant } = getEmployeeGradeBadgeStyle(grade);
 
     return (
-        <StatusPill variant={variant} size="sm">
+        <StatusPill variant={variant} size="sm" className="px-2.5 py-0.5 text-[0.6rem]">
             {label}
         </StatusPill>
     );
@@ -71,7 +71,7 @@ function getGradeBadge(grade: string) {
 
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
     return (
-        <StatusPill variant={openToNextWork ? "success" : "neutral"} size="sm">
+        <StatusPill variant={openToNextWork ? "success" : "neutral"} size="sm" className="px-2.5 py-0.5 text-[0.6rem]">
             {openToNextWork ? "근무 가능" : "근무 불가"}
         </StatusPill>
     );
@@ -159,6 +159,7 @@ export default function EmployeesPage() {
         <PageSection name="employees">
             <StatsBar
                 name="employees"
+                isLoading={isLoading}
                 items={[
                     { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
                     { icon: Briefcase, value: stats.working, label: "근무 중", counter: "명", colorIndex: 2 },
@@ -237,11 +238,11 @@ export default function EmployeesPage() {
 
                                         <div data-component="employees-list-item-info" className="flex-1 min-w-0">
                                             <div data-component="employees-list-item-name-row" className="flex items-center gap-2 mb-0.5">
-                                                <span className="font-bold text-[0.85rem] text-v3-dark truncate">
+                                                <span className="font-bold text-[0.8rem] text-v3-dark truncate">
                                                     {employee.name}
                                                 </span>
                                             </div>
-                                            <div data-component="employees-list-item-meta-row" className="flex items-center gap-3 text-[0.7rem] text-v3-text-muted">
+                                            <div data-component="employees-list-item-meta-row" className="flex items-center gap-3 text-[0.65rem] text-v3-text-muted">
                                                 <span className="flex items-center gap-1 truncate">
                                                     <Phone className="w-3 h-3" />
                                                     {formatPhoneNumber(employee.phone)}
@@ -289,8 +290,8 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
     return (
         <DetailPanel
             avatar={
-                <div data-component="employees-detail-avatar" className="w-16 h-16 rounded-[20px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white shadow-lg shrink-0">
-                    <UserCheck className="w-7 h-7 shrink-0 transition-colors text-white" aria-hidden="true" />
+                <div data-component="employees-detail-avatar" className="w-12 h-12 rounded-[16px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white shadow-lg shrink-0">
+                    <UserCheck className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
                 </div>
             }
             title={employee.name}
@@ -302,7 +303,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
             }
             subtitle={
                 <span className="inline-flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5" />
+                    <Calendar className="w-3 h-3" />
                     등록일 {formatDate(employee.registeredDate)}
                 </span>
             }
@@ -354,7 +355,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                                 {employee.workArea.map((area) => (
                                     <span
                                         key={area}
-                                        className="inline-flex items-center rounded-full bg-v3-primary-light text-v3-primary px-2 py-0.5 text-[0.7rem] font-medium"
+                                        className="inline-flex items-center rounded-full bg-v3-primary-light text-v3-primary px-2 py-0.5 text-[0.65rem] font-medium"
                                     >
                                         {formatWorkAreaLabel(area)}
                                     </span>

@@ -1,10 +1,11 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import { TemplateEditor } from "@/components/app/my-templates/template-editor";
 import { useMessageTemplate } from "@/hooks/use-message-templates";
 import { ContentPaper } from "@/components/app/root/content-paper";
@@ -23,6 +24,24 @@ function BackButton() {
     );
 }
 
+function TemplateEditorPageSkeleton() {
+    return (
+        <div data-component="messages-template-edit-loading-skeleton" className="space-y-6">
+            <div data-component="messages-template-edit-loading-field" className="space-y-2">
+                <Skeleton className="h-4 w-24 bg-v3-dim-white" />
+                <Skeleton className="h-11 w-full rounded-[14px] bg-v3-dim-white" />
+            </div>
+            <div data-component="messages-template-edit-loading-field" className="space-y-2">
+                <Skeleton className="h-4 w-20 bg-v3-dim-white" />
+                <Skeleton className="h-52 w-full rounded-[14px] bg-v3-dim-white" />
+            </div>
+            <div data-component="messages-template-edit-loading-actions" className="flex justify-end">
+                <Skeleton className="h-10 w-24 rounded-[12px] bg-v3-dim-white" />
+            </div>
+        </div>
+    );
+}
+
 export default function EditTemplatePage() {
     const params = useParams();
     const id = params.id as string;
@@ -37,9 +56,9 @@ export default function EditTemplatePage() {
                     <BackButton />
                     <ContentPaper
                         title={t(locale, "template-editor.edit-title")}
-                        className="min-h-[70vh] flex justify-center items-center"
+                        className="min-h-[70vh]"
                     >
-                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                        <TemplateEditorPageSkeleton />
                     </ContentPaper>
                 </div>
             </div>

@@ -33,6 +33,7 @@ function toEntity(row: InquiryWithBranch): ConsultationInquiryEntity {
         referralSource: row.referralSource,
         privacyAcceptedAt: row.privacyAcceptedAt,
         selectedServices: row.selectedServices as ConsultationSelectedServices | null,
+        additionalNotes: row.additionalNotes,
         source: row.source,
         status: row.status,
         readAt: row.readAt,
@@ -121,6 +122,7 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
                 ...(params.selectedServices
                     ? { selectedServices: params.selectedServices as unknown as Prisma.InputJsonValue }
                     : {}),
+                additionalNotes: params.additionalNotes,
                 source: params.source,
                 status: params.status,
                 readAt: params.readAt ?? null,

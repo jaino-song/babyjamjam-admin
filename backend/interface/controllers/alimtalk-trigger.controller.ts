@@ -11,6 +11,7 @@ import {
     CreateAlimtalkTriggerRuleDto,
     UpdateAlimtalkTriggerRuleDto,
 } from "interface/dto/alimtalk-trigger.dto";
+import { parseInteger } from "interface/parse-integer";
 
 @Controller()
 @UseGuards(JwtGuard, TenantGuard)
@@ -27,25 +28,23 @@ export class AlimtalkTriggerController {
         @CurrentTenant() tenant: { branchId?: string },
         @Query("limit") limit?: string,
     ) {
-        const parsedLimit = Number(limit);
-        const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
-            ? Math.min(Math.floor(parsedLimit), 500)
-            : 200;
-
-        return this.triggerService.listUpcomingJobs(tenant.branchId ?? "", safeLimit);
+        return this.triggerService.listUpcomingJobs(
+            tenant.branchId ?? "",
+            parseInteger(limit, "limit", { defaultValue: 200, min: 1, max: 500 }),
+        );
     }
 
     @Get("alimtalk-logs")
     listHistory(
         @CurrentTenant() tenant: { branchId?: string },
         @Query("limit") limit?: string,
+        @Query("skip") skip?: string,
     ) {
-        const parsedLimit = Number(limit);
-        const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
-            ? Math.min(Math.floor(parsedLimit), 500)
-            : 200;
-
-        return this.triggerService.listHistory(tenant.branchId ?? "", safeLimit);
+        return this.triggerService.listHistory(
+            tenant.branchId ?? "",
+            parseInteger(limit, "limit", { defaultValue: 200, min: 1, max: 500 }),
+            parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
+        );
     }
 
     @Post("alimtalk-trigger-rules")

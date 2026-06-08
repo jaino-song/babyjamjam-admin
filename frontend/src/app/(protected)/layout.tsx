@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 
-import { FloatingQuickActions } from "@/components/app/v3/FloatingQuickActions";
 import { V3MainContent } from "@/components/app/v3/V3MainContent";
 import { V3MobileHeader } from "@/components/app/v3/V3MobileHeader";
 import { V3Sidebar } from "@/components/app/v3/V3Sidebar";
@@ -26,7 +25,6 @@ export default async function ProtectedLayout({
       <V3Sidebar />
       <V3MobileHeader />
       <V3MainContent>{children}</V3MainContent>
-      <FloatingQuickActions />
       <MobileBottomNav />
     </UserProvider>
   );

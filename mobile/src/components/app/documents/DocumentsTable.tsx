@@ -378,6 +378,7 @@ export function DocumentsTable() {
 
             {/* Edit Modal */}
             <DocumentEditModal
+                key={editDoc?.id ?? "doc-edit-closed"}
                 open={!!editDoc}
                 onClose={() => setEditDoc(null)}
                 doc={editDoc}

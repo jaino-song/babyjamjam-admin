@@ -34,13 +34,14 @@ jest.mock("@/hooks/useChatStream", () => ({
     }),
 }));
 
+import { ChatFullscreen } from "../ChatFullscreen";
+
 describe("ChatFullscreen shortcut chips", () => {
     beforeEach(() => {
         mockSendMessage.mockClear();
     });
 
     test("renders shortcut chips above input", () => {
-        const { ChatFullscreen } = require("../ChatFullscreen");
         render(<ChatFullscreen open onClose={jest.fn()} />);
 
         expect(screen.getByText("산모 등록")).toBeInTheDocument();
@@ -49,7 +50,6 @@ describe("ChatFullscreen shortcut chips", () => {
     });
 
     test("clicking chips sends the chip label as message", () => {
-        const { ChatFullscreen } = require("../ChatFullscreen");
         render(<ChatFullscreen open onClose={jest.fn()} />);
 
         fireEvent.click(screen.getByText("산모 등록"));

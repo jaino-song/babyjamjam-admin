@@ -4,6 +4,10 @@ import * as path from "path";
 import crypto from "crypto";
 
 function readJwtSecret(): string {
+  // CI provides the secret via env; local dev falls back to backend/.env.
+  const fromEnv = process.env.JWT_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+
   const envPath = path.resolve(process.cwd(), "../backend/.env");
   const env = fs.readFileSync(envPath, "utf-8");
   const line = env
@@ -11,7 +15,7 @@ function readJwtSecret(): string {
     .find((l) => l.startsWith("JWT_SECRET="))
     ?.trim();
   if (!line) {
-    throw new Error("JWT_SECRET not found in ../backend/.env");
+    throw new Error("JWT_SECRET not found in env or ../backend/.env");
   }
   return line.slice("JWT_SECRET=".length);
 }

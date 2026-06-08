@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { Body, Controller, Get, Post, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { AlimtalkTemplateService } from "application/services/alimtalk-template.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -9,6 +9,11 @@ import { CreateAlimtalkTemplateDto } from "interface/dto/alimtalk-template.dto";
 @UseGuards(JwtGuard, TenantGuard)
 export class AlimtalkTemplateController {
     constructor(private readonly alimtalkTemplateService: AlimtalkTemplateService) {}
+
+    @Get()
+    list() {
+        return this.alimtalkTemplateService.list();
+    }
 
     @Post()
     @UseInterceptors(FileInterceptor("image"))

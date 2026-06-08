@@ -1,7 +1,7 @@
 "use client";
 
 import { useDeferredValue, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Bell,
@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import {
   DetailPanel,
+  DetailSkeleton,
   InfoCard,
   InfoRow,
   ListEmptyState,
@@ -43,7 +44,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getSystemAdminUsers, type SystemAdminUser } from "@/lib/api/users";
+import {
+  approveSystemAdminMessageSenderApproval,
+  getSystemAdminBranchRequests,
+  type SystemAdminBranchRequest,
+} from "@/lib/api/system-admin";
 import { cn } from "@/lib/utils";
 
 type AdminSectionId = "signups" | "branches" | "accounts" | "notifications" | "subsidies";
@@ -65,6 +72,12 @@ interface AdminRequest {
   statusLabel: string;
   detailRows: readonly AdminDetailRow[];
   applicantRows?: readonly AdminDetailRow[];
+  action?: AdminRequestAction;
+}
+
+interface AdminRequestAction {
+  type: "approve-message-sender";
+  branchId: string;
 }
 
 interface AdminRecord {
@@ -162,7 +175,7 @@ function getAdminRolePillVariant(roleLabel: string): AdminTagPillVariant {
 
 function getApplicantLabel(record: AdminRecord) {
   const applicantName = record.applicantRows?.find((row) => row.label === "신청자")?.value ?? record.owner;
-  return applicantName ? `신청인: ${applicantName}` : null;
+  return applicantName ? `지점장: ${applicantName}` : null;
 }
 
 function usesUserAvatar(sectionId: AdminSectionId) {
@@ -177,6 +190,10 @@ function getBranchRequestPillVariant(category: string): AdminTagPillVariant {
       return "sky";
     case "alimtalk":
       return "indigo";
+    case "approved":
+      return "emerald";
+    case "not_requested":
+      return "neutral";
     default:
       return "emerald";
   }
@@ -231,6 +248,13 @@ const PERSISTENT_SYSTEM_ADMIN_STATS: readonly StatsBarItem[] = [
   { icon: Building2, value: 3, label: "지점 개설 신청", counter: "건", colorIndex: 1 },
   { icon: MessageCircle, value: 1, label: "메시지 신청", counter: "건", colorIndex: 2 },
   { icon: KakaoTalkIcon, value: 1, label: "알림톡 신청", counter: "건" },
+] as const;
+
+const BRANCH_MANAGEMENT_TABS: AdminSection["tabs"] = [
+  { label: "전체 지점", value: "all" },
+  { label: "메시지 신청", value: "messaging" },
+  { label: "승인 완료", value: "approved" },
+  { label: "미신청", value: "not_requested" },
 ] as const;
 
 const OWNER_ADMIN_SECTIONS: readonly AdminSection[] = [
@@ -845,6 +869,8 @@ const CATEGORY_BADGE_STYLE: Record<string, { bg: string; text: string; icon?: st
   launch: { bg: "bg-v3-green-light", text: "text-v3-green" },
   messaging: { bg: "bg-v3-orange-light", text: "text-v3-orange" },
   alimtalk: { bg: "bg-v3-primary-light", text: "text-v3-primary" },
+  approved: { bg: "bg-v3-green-light", text: "text-v3-green", icon: "bg-emerald-500/12 text-emerald-600" },
+  not_requested: { bg: "bg-slate-100", text: "text-slate-700", icon: "bg-slate-500/12 text-slate-700" },
   notifications: { bg: "bg-indigo-100", text: "text-indigo-700", icon: "bg-indigo-500/12 text-indigo-700" },
   owner: { bg: "bg-v3-green-light", text: "text-v3-green", icon: "bg-emerald-500/12 text-emerald-600" },
   admin: { bg: "bg-v3-green-light", text: "text-v3-green", icon: "bg-emerald-500/12 text-emerald-600" },
@@ -1020,11 +1046,157 @@ function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
   });
 }
 
+function formatOptionalDate(value: string | null) {
+  return value ? formatAccountDate(value) : "-";
+}
+
+function getBranchLocationLabel(branch: SystemAdminBranchRequest) {
+  const location = [branch.region, branch.district].filter(Boolean).join(" ");
+  return location || branch.address || branch.slug;
+}
+
+function getBranchMessageStatus(
+  branch: SystemAdminBranchRequest
+): { category: string; statusLabel: string; statusVariant: StatusVariant } {
+  switch (branch.messageSenderApproval.approvalStatus) {
+    case "pending":
+      return {
+        category: "messaging",
+        statusLabel: "메시지 신청",
+        statusVariant: "warning",
+      };
+    case "approved":
+      return {
+        category: "approved",
+        statusLabel: "승인 완료",
+        statusVariant: "success",
+      };
+    default:
+      return {
+        category: "not_requested",
+        statusLabel: "미신청",
+        statusVariant: "info",
+      };
+  }
+}
+
+function buildBranchStats(branches: readonly SystemAdminBranchRequest[]): readonly StatsBarItem[] {
+  const pendingMessageRequests = branches.filter(
+    (branch) => branch.messageSenderApproval.approvalStatus === "pending"
+  ).length;
+  const approvedMessageRequests = branches.filter(
+    (branch) => branch.messageSenderApproval.approvalStatus === "approved"
+  ).length;
+  const inactiveBranches = branches.filter((branch) => !branch.isActive).length;
+
+  return [
+    { icon: Building2, value: branches.length, label: "전체 지점", counter: "곳" },
+    { icon: MessageCircle, value: pendingMessageRequests, label: "메시지 신청", counter: "건", colorIndex: 1 },
+    { icon: CheckCircle2, value: approvedMessageRequests, label: "승인 완료", counter: "건", colorIndex: 2 },
+    { icon: AlertTriangle, value: inactiveBranches, label: "비활성 지점", counter: "곳" },
+  ];
+}
+
+function buildBranchRecords(branches: readonly SystemAdminBranchRequest[]): AdminRecord[] {
+  return branches.map((branch) => {
+    const messageStatus = getBranchMessageStatus(branch);
+    const requester = branch.messageSenderApproval.requestedBy;
+    const applicantRows = requester
+      ? [
+          { label: "신청자", value: requester.name ?? "-" },
+          { label: "전화번호", value: requester.phone ?? "-" },
+          { label: "이메일", value: requester.email ?? "-" },
+          { label: "역할", value: getAccountRoleLabel(requester.role) },
+          { label: "신청 날짜", value: formatOptionalDate(branch.messageSenderApproval.requestedAt) },
+        ]
+      : undefined;
+    const branchRows = [
+      { label: "지점명", value: branch.name },
+      { label: "지역", value: getBranchLocationLabel(branch) },
+      { label: "주소", value: branch.address ?? "-" },
+      { label: "대표 전화", value: branch.phone ?? "-" },
+      { label: "이메일", value: branch.email ?? "-" },
+      { label: "운영 상태", value: branch.isActive ? "운영 중" : "비활성" },
+      { label: "오너", value: branch.owner.name ?? branch.owner.email ?? "-" },
+      { label: "수정일", value: formatOptionalDate(branch.updatedAt) },
+    ];
+    const pendingMessageRequest: AdminRequest | null =
+      branch.messageSenderApproval.approvalStatus === "pending"
+        ? {
+            category: "messaging",
+            statusLabel: "메시지 승인 신청",
+            applicantRows,
+            detailRows: [
+              { label: "기관명", value: branch.name },
+              { label: "요청 기능", value: "SMS/LMS 발송" },
+              { label: "발신번호", value: branch.messageSenderApproval.senderPhone ?? "-" },
+              { label: "상태", value: "접수 대기" },
+            ],
+            action: {
+              type: "approve-message-sender",
+              branchId: branch.id,
+            },
+          }
+        : null;
+
+    return {
+      id: branch.id,
+      title: branch.name,
+      subtitle: getBranchLocationLabel(branch),
+      listTitle: branch.name,
+      listSubtitle: getBranchLocationLabel(branch),
+      category: messageStatus.category,
+      statusLabel: messageStatus.statusLabel,
+      statusVariant: messageStatus.statusVariant,
+      updatedAt: formatOptionalDate(branch.updatedAt ?? branch.createdAt),
+      owner: branch.owner.name ?? branch.owner.email ?? "-",
+      applicantRows: pendingMessageRequest ? applicantRows : undefined,
+      summary:
+        branch.messageSenderApproval.approvalStatus === "pending"
+          ? "메시지 발신번호 승인 신청이 접수되었습니다."
+          : branch.messageSenderApproval.approvalStatus === "approved"
+            ? "메시지 발신번호 승인이 완료된 지점입니다."
+            : "메시지 발신번호 승인 신청이 아직 없습니다.",
+      tags: [],
+      detailRows: branchRows,
+      requests: pendingMessageRequest ? [pendingMessageRequest] : undefined,
+    };
+  });
+}
+
 function buildOwnerAdminSections(
   users: readonly SystemAdminUser[],
-  options: { isAccountsLoading: boolean; hasAccountsError: boolean }
+  branches: readonly SystemAdminBranchRequest[],
+  options: {
+    isAccountsLoading: boolean;
+    hasAccountsError: boolean;
+    isBranchesLoading: boolean;
+    hasBranchesError: boolean;
+  }
 ): readonly AdminSection[] {
   return OWNER_ADMIN_SECTIONS.map((section) => {
+    if (section.id === "branches") {
+      return {
+        ...section,
+        tabs: BRANCH_MANAGEMENT_TABS,
+        stats: buildBranchStats(branches),
+        records: buildBranchRecords(branches),
+        listSubtitle: "실제 지점과 메시지 권한 신청 상태를 관리할 수 있어요",
+        emptyMessage: options.hasBranchesError
+          ? "지점 정보를 불러오지 못했습니다."
+          : options.isBranchesLoading
+            ? "지점 정보를 불러오는 중입니다."
+            : branches.length === 0
+              ? "등록된 지점이 없습니다."
+              : section.emptyMessage,
+        detailEmptyMessage: options.hasBranchesError
+          ? "지점 정보를 다시 불러와 주세요."
+          : options.isBranchesLoading
+            ? "지점 정보를 불러오는 중입니다."
+            : section.detailEmptyMessage,
+      };
+    }
+
     if (section.id !== "accounts") {
       return section;
     }
@@ -1116,6 +1288,7 @@ function resolveSelectedRecordId(
 
 export function OwnerAdminConsole() {
   const [activeSectionId, setActiveSectionId] = useState<AdminSectionId>("signups");
+  const queryClient = useQueryClient();
   const {
     data: systemAdminUsers = [],
     isLoading: isSystemAdminUsersLoading,
@@ -1124,13 +1297,36 @@ export function OwnerAdminConsole() {
     queryKey: ["systemAdminUsers"],
     queryFn: getSystemAdminUsers,
   });
+  const {
+    data: systemAdminBranchRequests = [],
+    isLoading: isSystemAdminBranchRequestsLoading,
+    error: systemAdminBranchRequestsError,
+  } = useQuery({
+    queryKey: ["systemAdminBranchRequests"],
+    queryFn: getSystemAdminBranchRequests,
+  });
+  const approveMessageSenderMutation = useMutation({
+    mutationFn: approveSystemAdminMessageSenderApproval,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["systemAdminBranchRequests"] });
+    },
+  });
   const sections = useMemo(
     () =>
-      buildOwnerAdminSections(systemAdminUsers, {
+      buildOwnerAdminSections(systemAdminUsers, systemAdminBranchRequests, {
         isAccountsLoading: isSystemAdminUsersLoading,
         hasAccountsError: Boolean(systemAdminUsersError),
+        isBranchesLoading: isSystemAdminBranchRequestsLoading,
+        hasBranchesError: Boolean(systemAdminBranchRequestsError),
       }),
-    [systemAdminUsers, isSystemAdminUsersLoading, systemAdminUsersError]
+    [
+      systemAdminUsers,
+      systemAdminBranchRequests,
+      isSystemAdminUsersLoading,
+      systemAdminUsersError,
+      isSystemAdminBranchRequestsLoading,
+      systemAdminBranchRequestsError,
+    ]
   );
   const [viewStateBySection, setViewStateBySection] = useState<Record<AdminSectionId, SectionViewState>>(
     createInitialViewState
@@ -1145,6 +1341,8 @@ export function OwnerAdminConsole() {
 
   const activeTheme = SECTION_THEME_CLASSNAMES[activeSection.id];
   const isApprovalSection = activeSection.id === "signups" || activeSection.id === "branches";
+  const isAccountsSectionLoading =
+    activeSection.id === "accounts" && isSystemAdminUsersLoading && !systemAdminUsersError;
 
   const filteredRecords = useMemo(() => {
     return filterSectionRecords(activeSection, activeViewState.tab, deferredSearchQuery);
@@ -1175,9 +1373,12 @@ export function OwnerAdminConsole() {
 
   return (
     <PageSection name="system-admin">
-      <StatsBar name="system-admin" items={PERSISTENT_SYSTEM_ADMIN_STATS} />
+      <StatsBar name="system-admin" items={activeSection.stats} />
 
-      <div className="flex flex-1 min-h-0 flex-col gap-6 lg:flex-row">
+      <div
+        data-component="system-admin-sections"
+        className="flex flex-1 min-h-0 flex-col gap-6 lg:flex-row"
+      >
         <SectionNav
           items={sections.map((section) => ({
             id: section.id,
@@ -1234,7 +1435,28 @@ export function OwnerAdminConsole() {
               }
               searchPlaceholder={activeSection.searchPlaceholder}
             >
-              {filteredRecords.length === 0 ? (
+              {isAccountsSectionLoading ? (
+                <div data-component="system-admin-accounts-list-skeleton" className="space-y-2 pb-4">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <div
+                      key={index}
+                      data-component="system-admin-accounts-list-skeleton-item"
+                      className="min-h-[76px] rounded-[18px] border-2 border-transparent bg-white p-4"
+                    >
+                      <div className="flex min-h-11 items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-v3-dim-white">
+                          <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <Skeleton className="h-4 w-28 bg-v3-dim-white" />
+                          <Skeleton className="h-3 w-44 bg-v3-dim-white" />
+                        </div>
+                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : filteredRecords.length === 0 ? (
                 <ListEmptyState
                   name="system-admin-list-empty"
                   icon={activeSection.icon}
@@ -1251,11 +1473,12 @@ export function OwnerAdminConsole() {
                       activeSection.id === "branches"
                         ? getApplicantLabel(record)
                         : record.listSummary ?? (rolePillLabel ? null : record.summary);
+                    const listSubtitle = activeSection.id === "branches" ? null : record.listSubtitle;
                     const listPillItems = getListPillItems(activeSection.id, record);
                     const isBranchSection = activeSection.id === "branches";
                     const branchRequestCount = isBranchSection ? listPillItems.length : 0;
                     const branchHiddenPillCount = isBranchSection && branchRequestCount > 1 ? branchRequestCount - 1 : 0;
-                    const hasBranchAsidePill = isBranchSection && branchRequestCount > 0;
+                    const hasBranchAsidePill = isBranchSection && activeViewState.tab !== "all" && branchRequestCount > 0;
                     const hasSingleAsidePill = !isBranchSection && listPillItems.length === 1;
 
                     return (
@@ -1285,9 +1508,9 @@ export function OwnerAdminConsole() {
                             <p className="truncate text-[0.85rem] font-semibold text-v3-dark">
                               {record.listTitle ?? record.title}
                             </p>
-                            {record.listSubtitle ? (
+                            {listSubtitle ? (
                               <p className="mt-0.5 truncate text-[0.7rem] text-v3-text-muted">
-                                {record.listSubtitle}
+                                {listSubtitle}
                               </p>
                             ) : null}
                             {listSummary ? (
@@ -1335,7 +1558,17 @@ export function OwnerAdminConsole() {
               )}
             </ListPanel>
 
-            {selectedRecord ? (
+            {isAccountsSectionLoading ? (
+              <DetailSkeleton
+                name="system-admin-accounts-detail-skeleton"
+                headerBadge
+                headerActions={1}
+                sections={[
+                  { titleWidth: "w-24", rows: ["w-full", "w-4/5", "w-2/3"] },
+                  { titleWidth: "w-20", rows: ["w-full", "w-3/4", "w-5/6"] },
+                ]}
+              />
+            ) : selectedRecord ? (
               <DetailPanel
                 avatar={(() => {
                   const iconStyle = CATEGORY_BADGE_STYLE[selectedRecord.category]?.icon;
@@ -1398,6 +1631,10 @@ export function OwnerAdminConsole() {
                   ).map((req) => {
                     const infoTitle = activeSection.id === "signups" ? "회원가입 정보" : req.category === "launch" ? "지점 정보" : activeSection.id === "accounts" ? "계정 정보" : "신청 정보";
                     const showCardBadge = selectedRecord.requests && selectedRecord.requests.length > 1;
+                    const branchApproveAction =
+                      activeSection.id === "branches" && req.action?.type === "approve-message-sender"
+                        ? req.action
+                        : null;
                     return (
                       <div
                         key={req.category}
@@ -1420,7 +1657,22 @@ export function OwnerAdminConsole() {
                             <InfoRow key={row.label} label={row.label} value={row.value} />
                           ))}
                         </InfoCard>
-                        {activeSection.id !== "accounts" && (
+                        {activeSection.id === "branches" ? (
+                          branchApproveAction ? (
+                            <div className="flex flex-col gap-3 sm:flex-row">
+                              <Button
+                                type="button"
+                                size="md"
+                                variant="positive"
+                                className="w-full sm:flex-1"
+                                disabled={approveMessageSenderMutation.isPending}
+                                onClick={() => approveMessageSenderMutation.mutate(branchApproveAction.branchId)}
+                              >
+                                승인
+                              </Button>
+                            </div>
+                          ) : null
+                        ) : activeSection.id !== "accounts" ? (
                           <div className="flex flex-col gap-3 sm:flex-row">
                             <Button type="button" size="md" variant="positive" className="w-full sm:flex-1">
                               승인
@@ -1429,7 +1681,7 @@ export function OwnerAdminConsole() {
                               거부
                             </Button>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     );
                   })}

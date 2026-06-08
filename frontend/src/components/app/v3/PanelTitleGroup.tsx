@@ -23,15 +23,15 @@ export function PanelTitleGroup({
   subtitleClassName,
 }: PanelTitleGroupProps) {
   return (
-    <div data-component={`${component}-title-group`} className={cn("min-w-0 flex flex-col gap-1", className)}>
-      <div data-component={`${component}-title-row`} className="flex items-center gap-2 flex-wrap">
+    <div data-component={`${component}-title-group`} className={cn("min-w-0 flex flex-col gap-0.5", className)}>
+      <div data-component={`${component}-title-row`} className="flex items-center gap-1.5 flex-wrap">
         <h2 data-component={`${component}-title`} className={cn("truncate font-bold text-v3-dark", titleClassName)}>
           {title}
         </h2>
         {badges}
       </div>
       {subtitle ? (
-        <p data-component={`${component}-subtitle`} className={cn("text-sm text-v3-text-muted", subtitleClassName)}>
+        <p data-component={`${component}-subtitle`} className={cn("text-[0.8rem] text-v3-text-muted", subtitleClassName)}>
           {subtitle}
         </p>
       ) : null}

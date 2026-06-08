@@ -89,6 +89,17 @@ describe("EmployeeScheduleController (Integration)", () => {
         await app.close();
     });
 
+    describe("query validation", () => {
+        it("should reject invalid primary employee ids before calling service", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/employee-schedules/primary-employee")
+                .query({ primaryEmployeeId: "0.1" });
+
+            expect(response.status).toBe(400);
+            expect(employeeScheduleService.findByPrimaryEmployeeId).not.toHaveBeenCalled();
+        });
+    });
+
     // ============================================
     // POST /employee-schedules - Create
     // ============================================

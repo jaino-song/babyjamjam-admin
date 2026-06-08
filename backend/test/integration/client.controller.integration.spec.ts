@@ -151,6 +151,35 @@ describe("ClientController (Integration)", () => {
                     }),
                 );
             });
+
+            it("should pass suppressGreetingSms to the service when provided", async () => {
+                // Arrange
+                const createDto = {
+                    name: "Contract Client",
+                    address: "Incheon",
+                    phone: "010-1111-2222",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                    suppressGreetingSms: true,
+                };
+                clientService.create.mockResolvedValue(createMockClient({ id: 6, ...createDto }));
+
+                // Act
+                const response = await request(app.getHttpServer())
+                    .post("/clients")
+                    .send(createDto);
+
+                // Assert
+                expect(response.status).toBe(201);
+                expect(clientService.create).toHaveBeenCalledWith(
+                    expect.any(String),
+                    expect.objectContaining({
+                        name: "Contract Client",
+                        suppressGreetingSms: true,
+                    }),
+                );
+            });
         });
 
         describe("given missing required fields", () => {
@@ -249,6 +278,15 @@ describe("ClientController (Integration)", () => {
                     "Kim",
                 );
             });
+
+            it("should reject invalid pagination before calling service", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/clients")
+                    .query({ page: "abc", limit: "20" });
+
+                expect(response.status).toBe(400);
+                expect(clientService.findAllPaginated).not.toHaveBeenCalled();
+            });
         });
 
         it("should return dashboard overview", async () => {
@@ -280,6 +318,15 @@ describe("ClientController (Integration)", () => {
             expect(response.status).toBe(200);
             expect(response.body.stats.activeClients).toBe(1);
             expect(clientService.getDashboardOverview).toHaveBeenCalledWith(expect.any(String), 25);
+        });
+
+        it("should reject invalid dashboard overview limits before calling service", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/clients/dashboard-overview")
+                .query({ limit: "-1" });
+
+            expect(response.status).toBe(400);
+            expect(clientService.getDashboardOverview).not.toHaveBeenCalled();
         });
 
         it("should return action-required alerts", async () => {
@@ -353,6 +400,17 @@ describe("ClientController (Integration)", () => {
                 expect(response.status).toBe(200);
                 expect(response.body).toEqual({});
                 expect(clientService.findById).toHaveBeenCalledWith(expect.any(String), 999);
+            });
+        });
+
+        describe("given id param is not numeric", () => {
+            it("should return 400 without calling the service", async () => {
+                // Act
+                const response = await request(app.getHttpServer()).get("/clients/undefined");
+
+                // Assert
+                expect(response.status).toBe(400);
+                expect(clientService.findById).not.toHaveBeenCalled();
             });
         });
     });

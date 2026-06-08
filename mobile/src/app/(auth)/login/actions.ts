@@ -1,9 +1,11 @@
 "use server"
 
 import { cookies } from "next/headers";
-import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+
+import { serverAPIClient } from "@/lib/api/server";
+import { getServerRuntimeConfig } from "@/lib/env";
 
 interface TokenPayload {
     sub: string;
@@ -49,7 +51,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
 
         // Store tokens in httpOnly cookies
         const cookieStore = await cookies();
-        const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
+        const isSecureCookie = getServerRuntimeConfig().isSecureCookieEnv;
 
         let role = "user";
         try {

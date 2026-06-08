@@ -56,8 +56,22 @@ function formatDateTime(value: string): string {
 }
 
 function getInquirySourceLabel(source: string): string {
-    if (source === "website") return "홈페이지";
+    if (source === "website") return "웹사이트";
+    if (source === "app") return "앱";
+    if (source === "phone") return "전화";
     return source || "-";
+}
+
+function getInquiryRegion(address: string): string {
+    const parts = address.trim().split(/\s+/);
+    return parts.slice(0, 2).join(" ") || address || "-";
+}
+
+function getInquiryStatusLabel(status: string): string {
+    if (status === "new") return "신규";
+    if (status === "contacted") return "연락 중";
+    if (status === "closed") return "완료";
+    return status || "-";
 }
 
 function getReadLabel(readAt: string | null): string {
@@ -283,14 +297,27 @@ export default function ConsultationsPage() {
                                     <InfoRow label="주소" value={activeInquiry.address} />
                                     <InfoRow label="출산 예정일" value={formatDate(activeInquiry.dueDate)} />
                                     <InfoRow label="출산 경험" value={activeInquiry.birthExperience} />
+                                    <InfoRow label="바우처 유형" value={activeInquiry.voucherType || "-"} />
                                 </InfoCard>
 
-                                <InfoCard title="신청 정보" className="col-start-2 row-start-1">
-                                    <InfoRow label="바우처 유형" value={activeInquiry.voucherType || "-"} />
-                                    <InfoRow label="희망 관리사" value={activeInquiry.preferredCaregiverName || "-"} />
-                                    <InfoRow label="유입 경로" value={activeInquiry.referralSource} />
-                                    <InfoRow label="신청 경로" value={getInquirySourceLabel(activeInquiry.source)} />
+                                <InfoCard title="문의 정보" className="col-start-2 row-start-1">
+                                    <InfoRow label="근무 지역" value={getInquiryRegion(activeInquiry.address)} />
+                                    <InfoRow label="추천 경로" value={activeInquiry.referralSource || "-"} />
+                                    <InfoRow label="선호 매니저" value={activeInquiry.preferredCaregiverName || "-"} />
+                                    <InfoRow label="출처" value={getInquirySourceLabel(activeInquiry.source)} />
                                     <InfoRow label="담당 지점" value={activeInquiry.branchName ?? "-"} />
+                                    <InfoRow
+                                        label="추가 사항"
+                                        value={
+                                            activeInquiry.additionalNotes?.trim() ? (
+                                                <span className="whitespace-pre-wrap text-left inline-block">
+                                                    {activeInquiry.additionalNotes.trim()}
+                                                </span>
+                                            ) : (
+                                                "-"
+                                            )
+                                        }
+                                    />
                                     {previousConsultationDates.length > 0 ? (
                                         <div data-component="consultations-phone-history" className="flex items-start gap-4 py-2.5 border-b border-v3-border last:border-b-0">
                                             <span className="shrink-0 text-[0.8rem] text-v3-text-muted">이전 상담</span>
@@ -306,6 +333,19 @@ export default function ConsultationsPage() {
                                 </InfoCard>
 
                                 <SelectedServicesCard inquiry={activeInquiry} className="col-span-2" />
+
+                                <InfoCard title="문의 상태" className="col-span-2">
+                                    <InfoRow
+                                        label="확인 여부"
+                                        value={
+                                            activeInquiry.readAt
+                                                ? `읽음 · ${formatDateTime(activeInquiry.readAt)}`
+                                                : "읽지 않음"
+                                        }
+                                    />
+                                    <InfoRow label="진행 상태" value={getInquiryStatusLabel(activeInquiry.status)} />
+                                    <InfoRow label="개인정보 동의" value={formatDateTime(activeInquiry.privacyAcceptedAt)} />
+                                </InfoCard>
                             </div>
                         </div>
                     </DetailPanel>

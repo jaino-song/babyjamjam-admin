@@ -211,15 +211,15 @@ describe("AlimtalkTriggerController (Integration)", () => {
             expect(triggerService.listUpcomingJobs).toHaveBeenCalledWith(branchId, 200);
         });
 
-        it("caps the limit at 500", async () => {
+        it("rejects limits above 500", async () => {
             triggerService.listUpcomingJobs.mockResolvedValue([]);
 
             const response = await request(app.getHttpServer())
                 .get("/alimtalk-trigger-jobs/upcoming")
                 .query({ limit: 999 });
 
-            expect(response.status).toBe(200);
-            expect(triggerService.listUpcomingJobs).toHaveBeenCalledWith(branchId, 500);
+            expect(response.status).toBe(400);
+            expect(triggerService.listUpcomingJobs).not.toHaveBeenCalled();
         });
     });
 
@@ -233,7 +233,18 @@ describe("AlimtalkTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
-            expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25);
+            expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25, 0);
+        });
+
+        it("passes validated skip to history lookup", async () => {
+            triggerService.listHistory.mockResolvedValue([createMockHistoryRecord()]);
+
+            const response = await request(app.getHttpServer())
+                .get("/alimtalk-logs")
+                .query({ limit: 25, skip: 50 });
+
+            expect(response.status).toBe(200);
+            expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25, 50);
         });
     });
 
@@ -270,6 +281,45 @@ describe("AlimtalkTriggerController (Integration)", () => {
                     name: "서비스 시작 리마인드",
                     offsetDays: 2,
                     templateKey: "SERVICE_START_REMINDER",
+                }),
+            );
+        });
+
+        it("creates the service information rule for seven days before service start", async () => {
+            const createDto = {
+                name: "서비스 시작 7일 전 서비스 안내",
+                isActive: true,
+                eventType: "SERVICE_START",
+                offsetType: "BEFORE_DAYS",
+                offsetDays: 7,
+                recipientType: "CLIENT",
+                templateKey: "SERVICE_INFO",
+            };
+            triggerService.createRule.mockResolvedValue(
+                createMockRule({
+                    id: "rule-service-info",
+                    name: createDto.name,
+                    eventType: AlimtalkTriggerEventType.SERVICE_START,
+                    offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+                    offsetDays: 7,
+                    templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+                }),
+            );
+
+            const response = await request(app.getHttpServer())
+                .post("/alimtalk-trigger-rules")
+                .send(createDto);
+
+            expect(response.status).toBe(201);
+            expect(triggerService.createRule).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({
+                    name: "서비스 시작 7일 전 서비스 안내",
+                    eventType: "SERVICE_START",
+                    offsetType: "BEFORE_DAYS",
+                    offsetDays: 7,
+                    recipientType: "CLIENT",
+                    templateKey: "SERVICE_INFO",
                 }),
             );
         });

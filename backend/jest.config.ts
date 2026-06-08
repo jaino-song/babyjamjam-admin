@@ -11,6 +11,8 @@ const config: Config = {
         }],
     },
     testMatch: ["**/*.spec.ts"],
+    // test/e2e needs a live DB/env — it gets its own gated runner, keep the unit suite hermetic.
+    testPathIgnorePatterns: ["/node_modules/", "/dist/", "<rootDir>/test/e2e/"],
     moduleNameMapper: {
         "^application/(.*)$": "<rootDir>/application/$1",
         "^domain/(.*)$": "<rootDir>/domain/$1",

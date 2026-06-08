@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route, type Request } from '@playwright/test';
+import { expect, test, type Page, type Request, type Route } from '@playwright/test';
 
 const templateFixture = {
   id: 'tpl-thanks',
@@ -6,88 +6,66 @@ const templateFixture = {
   name: '감사',
   description: '감사 메시지',
   content: '감사합니다 {{name}}님',
-  requiredVariables: [
-    {
-      key: 'name',
-      label: '이름',
-      type: 'string',
-      required: true,
-    },
-  ],
+  requiredVariables: [{ key: 'name', label: '이름', type: 'string', required: true }],
   updatedAt: new Date('2026-01-01T00:00:00.000Z').toISOString(),
 } as const;
 
-async function mockTemplateApi(page: Page) {
-  await page.route('**/api/system-templates/THANKS', async (route: Route, request: Request) => {
-    if (request.method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(templateFixture),
-      });
-    }
-
-    if (request.method() === 'PUT') {
-      const body = request.postDataJSON() as { content?: string } | null;
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ ...templateFixture, content: body?.content ?? templateFixture.content }),
-      });
-    }
-
-    return route.continue();
+async function mockMessagesApproval(page: Page): Promise<void> {
+  await page.route('**/api/settings/message-sender-approval', async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        approvalStatus: 'approved',
+        isApproved: true,
+        canRequest: true,
+        senderPhone: '01012345678',
+        senderPhoneFormatted: '010-1234-5678',
+      }),
+    });
   });
 }
 
-test.describe('System Template Editor', () => {
+async function mockTemplateApi(page: Page): Promise<void> {
+  await page.route('**/api/system-templates/THANKS', async (route: Route, request: Request) => {
+    if (request.method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(templateFixture),
+    });
+  });
+}
+
+test.describe('System Template Detail', () => {
   test.beforeEach(async ({ page }) => {
+    await mockMessagesApproval(page);
     await mockTemplateApi(page);
     await page.goto('/messages/system-templates/THANKS');
-    await page.waitForLoadState('networkidle');
+    await expect(page.locator('[data-component="messages-system-template-detail"]')).toBeVisible({
+      timeout: 15000,
+    });
   });
 
-  test('should display template content', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: /감사 편집/ })).toBeVisible();
-
-    const editor = page.getByRole('textbox');
-    await expect(editor).toHaveValue(templateFixture.content);
+  test('displays the current read-only template content and required variables', async ({ page }) => {
+    await expect(page.getByText('감사', { exact: true })).toBeVisible();
+    await expect(page.getByText('감사 메시지')).toBeVisible();
+    await expect(page.locator('[data-component="messages-system-template-content"]')).toContainText(
+      templateFixture.content,
+    );
+    await expect(page.getByText('필수 변수')).toBeVisible();
+    await expect(page.getByText('이름')).toBeVisible();
   });
 
-  test('should show variable toolbar', async ({ page }) => {
-    await expect(page.getByText('변수 삽입')).toBeVisible();
-    await expect(page.getByRole('button', { name: '이름' })).toBeVisible();
-  });
-
-  test('should insert variable on click', async ({ page }) => {
-    const editor = page.getByRole('textbox');
-    await editor.fill('');
-
-    await page.getByRole('button', { name: '이름' }).click();
-    await expect(editor).toHaveValue('{{name}}');
-  });
-
-  test('should show validation errors', async ({ page }) => {
-    const editor = page.getByRole('textbox');
-    await editor.fill('감사합니다');
-
-    const errorAlert = page.locator('.MuiAlert-root[role="alert"]').filter({ hasText: '필수 변수 누락: {{name}}' });
-    await expect(errorAlert).toBeVisible();
-  });
-
-  test('should disable save when invalid', async ({ page }) => {
-    const editor = page.getByRole('textbox');
-    await editor.fill('감사합니다');
-
-    const saveButton = page.getByRole('button', { name: '저장' });
-    await expect(saveButton).toBeDisabled();
-  });
-
-  test('should save and show success', async ({ page }) => {
-    const saveButton = page.getByRole('button', { name: '저장' });
-    await expect(saveButton).toBeEnabled();
-
-    await saveButton.click();
-    await expect(page.getByText('저장되었습니다')).toBeVisible();
+  test('shows the current mobile-only guidance instead of the old editor UI', async ({ page }) => {
+    await expect(page.getByRole('button', { name: '뒤로' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '이 템플릿으로 보내기' })).toBeVisible();
+    await expect(
+      page.getByText('시스템 템플릿 본문 편집·버전 롤백은 데스크톱에서만 가능합니다.'),
+    ).toBeVisible();
   });
 });
