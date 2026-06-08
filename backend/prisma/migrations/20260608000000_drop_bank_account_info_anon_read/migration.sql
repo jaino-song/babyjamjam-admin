@@ -1,0 +1,17 @@
+-- Remove the public anon-read RLS policy on bank_account_info.
+--
+-- The rls_baseline migration reproduced this policy from the live DB and flagged
+-- it as a likely-unintended PII exposure: it grants SELECT on bank account
+-- numbers (accNum) to the Supabase `anon` role, so anyone holding the project's
+-- anon/publishable key can read them via PostgREST.
+--
+-- RLS stays ENABLED on the table; with no anon policy it is default-deny for
+-- anon. The application backend connects with the service role (Prisma over
+-- DATABASE_URL), which bypasses RLS, so its reads/writes are unaffected. No
+-- frontend/mobile path reads this table via the anon key — both apps go through
+-- the authenticated NestJS API (verified 2026-06-08: neither app imports
+-- @supabase/supabase-js nor references a NEXT_PUBLIC_SUPABASE key).
+--
+-- The sibling anon-read policy on voucher_price_info is intentional (public
+-- pricing) and is deliberately left in place.
+DROP POLICY IF EXISTS "Allow public read access on bankAccountInfo" ON "bank_account_info";
