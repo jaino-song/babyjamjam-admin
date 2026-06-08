@@ -1695,4 +1695,45 @@ export class AuthService {
             return null;
         }
     }
+
+    /**
+     * Create a Kakao login state token carrying the originating client (mobile/desktop) and a
+     * random nonce. The caller stores the nonce in a single-use httpOnly cookie so the callback
+     * can bind the round-trip to this browser (login-CSRF protection).
+     */
+    async createKakaoLoginState(client: 'mobile' | 'desktop'): Promise<{ signedState: string; nonce: string }> {
+        const nonce = crypto.randomBytes(32).toString('hex');
+        const signedState = await this.jwt.signAsync(
+            { client, purpose: 'kakao_login', nonce },
+            { expiresIn: '10m' },
+        );
+        return { signedState, nonce };
+    }
+
+    /**
+     * Verify a Kakao login state token and confirm its nonce matches the browser cookie.
+     * Returns the originating client, or null if the state is missing/forged/expired or the
+     * nonce does not match.
+     */
+    async verifyKakaoLoginState(
+        signedState: string,
+        expectedNonce: string | undefined,
+    ): Promise<{ client: 'mobile' | 'desktop' } | null> {
+        if (!expectedNonce) return null;
+        try {
+            const decoded = await this.jwt.verifyAsync<{ client?: string; purpose: string; nonce?: string }>(signedState);
+            if (decoded.purpose !== 'kakao_login') return null;
+            if (!decoded.nonce || !this.timingSafeEqualStrings(decoded.nonce, expectedNonce)) return null;
+            return { client: decoded.client === 'mobile' ? 'mobile' : 'desktop' };
+        } catch {
+            return null;
+        }
+    }
+
+    private timingSafeEqualStrings(a: string, b: string): boolean {
+        const bufA = Buffer.from(a);
+        const bufB = Buffer.from(b);
+        if (bufA.length !== bufB.length) return false;
+        return crypto.timingSafeEqual(bufA, bufB);
+    }
 }
