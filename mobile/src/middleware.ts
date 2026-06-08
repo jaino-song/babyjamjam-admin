@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { jwtDecode } from "jwt-decode";
 
+import { getServerRuntimeConfig } from "@/lib/env";
+
 interface TokenPayload {
   sub: string;
   role: string | null;
@@ -16,10 +18,10 @@ interface RefreshResponse {
   refreshToken?: string;
 }
 
-const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
-const API_URL = isProduction
-  ? process.env.NEXT_PUBLIC_API_BASE_URL
-  : process.env.DEVELOPMENT_API_BASE_URL;
+const {
+  backendBaseUrl: API_URL,
+  isProductionLike,
+} = getServerRuntimeConfig();
 
 function isAutoLoginEnabled(value: string | undefined): boolean {
   return value !== "0" && value !== "false";
@@ -95,7 +97,7 @@ function setSessionCookies(
 ): void {
   const baseCookieOptions = {
     httpOnly: true,
-    secure: isProduction,
+    secure: isProductionLike,
     sameSite: "lax" as const,
     path: "/",
   };
@@ -126,10 +128,6 @@ async function tryRefreshAuthSession(refreshToken: string): Promise<{
   refreshToken: string;
   role: string;
 } | null> {
-  if (!API_URL) {
-    return null;
-  }
-
   try {
     const refreshResponse = await fetch(`${API_URL}/auth/refresh-token`, {
       method: "POST",
@@ -169,28 +167,67 @@ const PUBLIC_ROUTES = [
   "/callback",
   "/logout",
   "/auth",
-  "/api",
   "/_next",
   "/favicon.ico",
   "/manifest.json",
   "/sw.js",
 ];
 
+const PUBLIC_API_ROUTES = [
+  "/api/auth/check-email",
+  "/api/auth/forgot-password",
+  "/api/auth/kakao",
+  "/api/auth/login",
+  "/api/auth/refresh",
+  "/api/auth/register",
+  "/api/auth/resend-verification",
+  "/api/auth/reset-password",
+  "/api/auth/token",
+  "/api/auth/verify-email",
+  "/api/health",
+];
+
 // Routes that require auth but NOT branch selection
 const AUTH_ONLY_ROUTES = [
   "/select-branch",
 ];
+const LOGIN_ROUTE = "/login";
+
+function isRouteMatch(pathname: string, route: string): boolean {
+  return pathname === route || pathname.startsWith(`${route}/`);
+}
+
+function isApiRoute(pathname: string): boolean {
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+
+function apiJsonResponse(error: string, status: number): NextResponse {
+  return NextResponse.json({ error }, { status });
+}
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  if (PUBLIC_API_ROUTES.some((route) => isRouteMatch(pathname, route))) {
+    return NextResponse.next();
+  }
+
+  // Prevent authenticated users from seeing the login screen.
+  let authToken = request.cookies.get("auth_token")?.value;
+  if (
+    isRouteMatch(pathname, LOGIN_ROUTE)
+    && authToken
+    && !isTokenExpired(authToken)
+  ) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+
   // Skip public routes
-  if (PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
+  if (PUBLIC_ROUTES.some((route) => isRouteMatch(pathname, route))) {
     return NextResponse.next();
   }
 
   // Get auth token
-  let authToken = request.cookies.get("auth_token")?.value;
   const refreshToken = request.cookies.get("refresh_token")?.value;
   const autoLogin = isAutoLoginEnabled(request.cookies.get("auto_login")?.value);
   let refreshedSession: {
@@ -221,6 +258,10 @@ export async function middleware(request: NextRequest) {
 
   // No auth token - redirect to login
   if (!authToken || isTokenExpired(authToken)) {
+    if (isApiRoute(pathname)) {
+      return apiJsonResponse("Authentication required", 401);
+    }
+
     const loginUrl = new URL("/login", request.url);
     const response = NextResponse.redirect(loginUrl);
     clearAuthCookies(response);
@@ -247,32 +288,14 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // For all other routes, check if branch is selected
-  try {
-    const decoded = jwtDecode<TokenPayload>(authToken);
-
-    // No branch selected - redirect to select-branch
-    if (!decoded.branchId) {
-      const selectBranchUrl = new URL("/select-branch", request.url);
-      const response = NextResponse.redirect(selectBranchUrl);
-      if (refreshedSession) {
-        setSessionCookies(response, {
-          accessToken: refreshedSession.accessToken,
-          refreshToken: refreshedSession.refreshToken,
-          role: refreshedSession.role,
-          autoLogin,
-        });
-      }
-      return response;
+  // For all other routes, check if a branch has been selected by the branch-selection action.
+  if (!request.cookies.get("selected_branch_id")?.value) {
+    if (isApiRoute(pathname)) {
+      return apiJsonResponse("Branch selection required", 403);
     }
 
-    const response = refreshedSession
-      ? nextWithUpdatedRequestCookies(request, {
-        accessToken: refreshedSession.accessToken,
-        refreshToken: refreshedSession.refreshToken,
-        autoLogin,
-      })
-      : NextResponse.next();
+    const selectBranchUrl = new URL("/select-branch", request.url);
+    const response = NextResponse.redirect(selectBranchUrl);
     if (refreshedSession) {
       setSessionCookies(response, {
         accessToken: refreshedSession.accessToken,
@@ -282,15 +305,24 @@ export async function middleware(request: NextRequest) {
       });
     }
     return response;
-  } catch {
-    // Invalid token - redirect to login
-    const loginUrl = new URL("/login", request.url);
-    const response = NextResponse.redirect(loginUrl);
-    // Clear invalid cookies
-    response.cookies.delete("auth_token");
-    response.cookies.delete("refresh_token");
-    return response;
   }
+
+  const response = refreshedSession
+    ? nextWithUpdatedRequestCookies(request, {
+      accessToken: refreshedSession.accessToken,
+      refreshToken: refreshedSession.refreshToken,
+      autoLogin,
+    })
+    : NextResponse.next();
+  if (refreshedSession) {
+    setSessionCookies(response, {
+      accessToken: refreshedSession.accessToken,
+      refreshToken: refreshedSession.refreshToken,
+      role: refreshedSession.role,
+      autoLogin,
+    });
+  }
+  return response;
 }
 
 export const config = {

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
 
 const mockAuthResponse = {
   id: 'test-user',
@@ -8,12 +8,12 @@ const mockAuthResponse = {
   role: 'admin',
 };
 
-const setupAuthMocks = async (page: any) => {
+const setupAuthMocks = async (page: Page) => {
   await page.addInitScript(() => {
     (window as typeof window & { __e2e_auth__?: boolean }).__e2e_auth__ = true;
   });
 
-  await page.route('**/api/auth/me', async (route: any) => {
+  await page.route('**/api/auth/me', async (route: Route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -21,7 +21,7 @@ const setupAuthMocks = async (page: any) => {
     });
   });
 
-  await page.route('**/auth/me', async (route: any) => {
+  await page.route('**/auth/me', async (route: Route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -77,9 +77,9 @@ test.describe('chat auto-retry', () => {
 
     // Navigate directly to chat page
     await page.goto('/chat');
-    await page.waitForLoadState('networkidle');
 
-    const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?');
+    const chatInput = page.locator('[data-component="chat-input"]');
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
     await chatInput.fill('테스트 메시지');
     await chatInput.press('Enter');
 
@@ -99,9 +99,9 @@ test.describe('chat auto-retry', () => {
 
     // Navigate directly to chat page
     await page.goto('/chat');
-    await page.waitForLoadState('networkidle');
 
-    const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?');
+    const chatInput = page.locator('[data-component="chat-input"]');
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
     await chatInput.fill('테스트 메시지');
     await chatInput.press('Enter');
 

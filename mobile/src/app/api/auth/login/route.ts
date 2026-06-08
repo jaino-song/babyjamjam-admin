@@ -1,8 +1,24 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
-import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+import { z } from "zod";
+
+import { getUpstreamErrorStatus, logUpstreamError, parseBody, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+import { serverAPIClient } from "@/lib/api/server";
+import { getServerRuntimeConfig } from "@/lib/env";
+
+// Mirrors backend LoginDto (email-auth.dto.ts): email is @IsEmail() and
+// password is @IsString() @IsNotEmpty(), both required. autoLogin is a
+// frontend-only flag controlling cookie maxAge (not forwarded to the backend).
+// Passthrough preserves any forward-compatible login fields.
+const loginSchema = z
+    .object({
+        email: z.string().email(),
+        password: z.string().min(1),
+        autoLogin: z.boolean().optional(),
+    })
+    .passthrough();
 
 interface TokenPayload {
     sub: string;
@@ -18,13 +34,11 @@ interface APIErrorResponse {
 }
 
 export async function POST(request: NextRequest) {
+    const { data: parsed, response: invalid } = await parseBody(loginSchema, request);
+    if (invalid) return invalid;
+
     try {
-        const body = await request.json();
-        const { autoLogin = true, ...loginPayload } = body as {
-            email: string;
-            password: string;
-            autoLogin?: boolean;
-        };
+        const { autoLogin = true, ...loginPayload } = parsed;
         const { data, status } = await serverAPIClient.post("/auth/login", loginPayload);
 
         // If login failed, return the response
@@ -34,7 +48,7 @@ export async function POST(request: NextRequest) {
 
         // Set auth cookies on successful login
         const cookieStore = await cookies();
-        const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
+        const isSecureCookie = getServerRuntimeConfig().isSecureCookieEnv;
 
         let role = "user";
         try {
@@ -78,19 +92,15 @@ export async function POST(request: NextRequest) {
             requiresBranchSelection: data.requiresBranchSelection,
         }, { status: 200 });
     } catch (error) {
-        console.error("[Auth Login] Error:", error);
+        logUpstreamError("Auth Login", error);
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
-            const status = axiosError.response?.status || 500;
+            const status = getUpstreamErrorStatus(error);
             const responseData = axiosError.response?.data;
 
-            if (responseData) {
-                return NextResponse.json(responseData, { status });
-            }
-
             return NextResponse.json(
-                { error: axiosError.message || "Login failed" },
+                sanitizeUpstreamClientError(responseData, "Login failed"),
                 { status }
             );
         }

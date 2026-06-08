@@ -12,6 +12,18 @@ export const SERVICE_STATUS = {
 
 export type ServiceStatusType = (typeof SERVICE_STATUS)[keyof typeof SERVICE_STATUS];
 
+export const SERVICE_STATUS_VALUES: ServiceStatusType[] = [
+    SERVICE_STATUS.WAITING,
+    SERVICE_STATUS.REPLACEMENT_REQUESTED,
+    SERVICE_STATUS.ACTIVE,
+    SERVICE_STATUS.COMPLETED,
+    SERVICE_STATUS.TERMINATED,
+];
+
+export function isServiceStatus(value: string | null | undefined): value is ServiceStatusType {
+    return typeof value === "string" && SERVICE_STATUS_VALUES.includes(value as ServiceStatusType);
+}
+
 // Manual statuses that should NOT be auto-updated based on dates
 const MANUAL_STATUSES: ServiceStatusType[] = [
     SERVICE_STATUS.TERMINATED,

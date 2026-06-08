@@ -6,6 +6,8 @@ import {
     getAuthHeaders,
     getAuthToken,
     getRefreshToken,
+    invalidJsonResponse,
+    readJsonObjectBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
@@ -16,7 +18,7 @@ export async function POST(request: NextRequest) {
             return unauthorizedResponse("Authentication required. Please log in.");
         }
 
-        const body = await request.json();
+        const body = await readJsonObjectBody(request);
         const accessToken =
             typeof body.accessToken === "string" && body.accessToken
                 ? body.accessToken
@@ -50,6 +52,11 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(response.data);
     } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
         return errorResponse(error, "generate staff document");
     }
 }

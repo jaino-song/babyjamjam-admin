@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException } from "@nestjs/common";
+import { Injectable, Inject, NotFoundException, ForbiddenException } from "@nestjs/common";
 import { DocumentEntity } from "domain/entities/document.entity";
 import { IDocumentRepository, DOCUMENT_REPOSITORY } from "domain/repositories/document.repository.interface";
 
@@ -21,6 +21,14 @@ export class DocumentService {
         branchid?: string;
         uploadedby: string;
     }): Promise<DocumentEntity> {
+        const isClaimedOutsideBranch = await this.documentRepository.existsByStoragePathOutsideBranch(
+            branchId,
+            params.storagepath,
+        );
+        if (isClaimedOutsideBranch) {
+            throw new ForbiddenException("storage path unavailable");
+        }
+
         const doc = DocumentEntity.create({
             name: params.name,
             description: params.description,

@@ -1,25 +1,65 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
+import {
+  backendJsonResponse,
+  errorResponse,
+  getAuthHeaders,
+  getAuthToken,
+  parseBody,
+  unauthorizedResponse,
+} from "@/lib/api/route-utils";
+
+// Mirrors backend CreateAlimtalkTemplateDto: name, tplType, tplEmType,
+// content and buttons are required; optional fields flow through passthrough.
+const createAlimtalkTemplateSchema = z
+  .object({
+    name: z.string().min(1).max(30),
+    tplType: z.enum(["BA", "EX", "AD", "MI"]),
+    tplEmType: z.enum(["NONE", "TEXT", "IMAGE"]),
+    content: z.string().min(1).max(1000),
+    buttons: z.array(z.unknown()).max(5),
+  })
+  .passthrough();
+
+export async function GET(request: NextRequest) {
+  const token = getAuthToken(request);
+  if (!token) {
+    return unauthorizedResponse("Unauthorized");
+  }
+
+  try {
+    const response = await serverAPIClient.get("/alimtalk-templates", {
+      headers: getAuthHeaders(token),
+    });
+
+    return backendJsonResponse(response);
+  } catch (error) {
+    return errorResponse(error, "fetch alimtalk templates");
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
-    const body = await request.json();
-    const response = await serverAPIClient.post("/alimtalk-templates", body, {
+    const { data, response: invalidBody } = await parseBody(
+      createAlimtalkTemplateSchema,
+      request,
+    );
+    if (invalidBody) {
+      return invalidBody;
+    }
+
+    const response = await serverAPIClient.post("/alimtalk-templates", data, {
       headers: getAuthHeaders(token),
     });
 
-    return NextResponse.json(response.data, { status: response.status });
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error creating alimtalk template:", error);
-    return NextResponse.json(
-      { error: "Failed to create alimtalk template" },
-      { status: 500 },
-    );
+    return errorResponse(error, "create alimtalk template");
   }
 }

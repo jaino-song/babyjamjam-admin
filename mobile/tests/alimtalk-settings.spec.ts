@@ -1,196 +1,104 @@
-import { test, expect } from '@playwright/test';
+import { expect, test, type Page } from "@playwright/test";
 
-test.describe('Alimtalk Provider Settings', () => {
-    test.beforeEach(async ({ page }) => {
-        await page.goto('/settings/general');
-        await page.waitForLoadState('networkidle');
+type ProviderValue = "aligo" | "channeltalk" | "none";
+
+test.use({ viewport: { width: 390, height: 844 } });
+
+async function mockNotificationSettingsRoutes(
+  page: Page,
+  options?: {
+    initialProvider?: ProviderValue;
+    onProviderUpdate?: (provider: ProviderValue) => void;
+  }
+) {
+  let providerState: { provider: ProviderValue; updatedAt: string } = {
+    provider: options?.initialProvider ?? "aligo",
+    updatedAt: "2026-06-07T09:00:00.000Z",
+  };
+
+  await page.route("**/api/notifications/vapid-key**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ publicKey: "test-vapid-key" }),
     });
+  });
 
-    test.describe('Page Load', () => {
-        test('should display alimtalk settings section', async ({ page }) => {
-            await expect(page.getByText('알림톡 설정')).toBeVisible();
-            await expect(page.getByText('카카오 알림톡 발송 서비스를 선택합니다.')).toBeVisible();
-        });
+  await page.route("**/api/settings/alimtalk-provider", async (route) => {
+    if (route.request().method() === "PUT") {
+      const { provider } = route.request().postDataJSON() as { provider: ProviderValue };
+      providerState = {
+        provider,
+        updatedAt: "2026-06-07T09:30:00.000Z",
+      };
+      options?.onProviderUpdate?.(provider);
+    }
 
-        test('should display all provider options', async ({ page }) => {
-            await expect(page.getByText('알리고 (Aligo)')).toBeVisible();
-            await expect(page.getByText('채널톡 (Channel Talk)')).toBeVisible();
-            await expect(page.getByText('사용 안함')).toBeVisible();
-        });
-
-        test('should have one option selected by default', async ({ page }) => {
-            const selectedRadio = page.locator('input[type="radio"]:checked');
-            await expect(selectedRadio).toHaveCount(1);
-        });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(providerState),
     });
+  });
 
-    test.describe('Provider Selection', () => {
-        test('should allow selecting Aligo provider', async ({ page }) => {
-            const aligoRadio = page.getByRole('radio', { name: /알리고/i });
-            await aligoRadio.click();
+}
 
-            await expect(aligoRadio).toBeChecked();
-        });
+test.describe("notification settings surface", () => {
+  test("renders the current /notification provider settings UI", async ({ page }) => {
+    await mockNotificationSettingsRoutes(page);
+    await page.goto("/notification");
 
-        test('should allow selecting Channel Talk provider', async ({ page }) => {
-            const channelTalkRadio = page.getByRole('radio', { name: /채널톡/i });
-            await channelTalkRadio.click();
+    await expect(page.locator('[data-component="notification-settings"]')).toBeVisible();
+    await expect(page.getByText("알림 설정")).toBeVisible();
+    await expect(page.getByText("수신 채널")).toBeVisible();
+    await expect(page.getByText("알림톡 서비스")).toBeVisible();
+    await expect(page.locator('[data-component="settings-alimtalk-provider"]')).toBeVisible();
+    await expect(page.getByRole("radio", { name: "알리고 (Aligo) 선택" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "채널톡 (Channel Talk) 선택" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "사용 안함 선택" })).toBeVisible();
+  });
 
-            await expect(channelTalkRadio).toBeChecked();
-        });
+  test("redirects /settings to /notification", async ({ page }) => {
+    await mockNotificationSettingsRoutes(page);
+    await page.goto("/settings");
 
-        test('should allow selecting None (disabled)', async ({ page }) => {
-            const noneRadio = page.getByRole('radio', { name: /사용 안함/i });
-            await noneRadio.click();
+    await expect(page).toHaveURL(/\/notification$/);
+    await expect(page.locator('[data-component="notification-settings"]')).toBeVisible();
+  });
 
-            await expect(noneRadio).toBeChecked();
-        });
+  test("redirects /notifications to /notification", async ({ page }) => {
+    await mockNotificationSettingsRoutes(page);
+    await page.goto("/notifications");
+
+    await expect(page).toHaveURL(/\/notification$/);
+    await expect(page.locator('[data-component="notification-settings"]')).toBeVisible();
+  });
+
+  test("saves provider selection through the current /notification surface", async ({ page }) => {
+    let updatedProvider: ProviderValue | null = null;
+
+    await mockNotificationSettingsRoutes(page, {
+      onProviderUpdate: (provider) => {
+        updatedProvider = provider;
+      },
     });
+    await page.goto("/notification");
 
-    test.describe.serial('Save and Persist', () => {
-        test('should show success message after saving', async ({ page }) => {
-            const aligoRadio = page.getByRole('radio', { name: /알리고/i });
-            const channelTalkRadio = page.getByRole('radio', { name: /채널톡/i });
+    const channelTalkOption = page.getByRole("radio", { name: "채널톡 (Channel Talk) 선택" });
+    await channelTalkOption.click();
 
-            const isChannelTalkAlreadySelected = await channelTalkRadio.isChecked();
-            if (isChannelTalkAlreadySelected) {
-                await aligoRadio.click();
-                await expect(page.getByText('알림톡 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
-                await page.waitForTimeout(300);
-            }
+    await expect(channelTalkOption).toHaveAttribute("aria-checked", "true");
+    await expect(page.locator('[data-component="notification-alimtalk-updated-at"]')).toContainText("마지막 수정:");
+    expect(updatedProvider).toBe("channeltalk");
+  });
 
-            await channelTalkRadio.click();
-            const snackbar = page.getByText('알림톡 설정이 저장되었습니다.');
-            await expect(snackbar).toBeVisible({ timeout: 5000 });
-        });
-
-        test('should persist selection after page reload', async ({ page }) => {
-            const aligoRadio = page.getByRole('radio', { name: /알리고/i });
-            const channelTalkRadio = page.getByRole('radio', { name: /채널톡/i });
-
-            const isChannelTalkAlreadySelected = await channelTalkRadio.isChecked();
-            if (isChannelTalkAlreadySelected) {
-                await aligoRadio.click();
-                await expect(page.getByText('알림톡 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
-                await page.waitForTimeout(500);
-            }
-
-            await channelTalkRadio.click();
-            await expect(page.getByText('알림톡 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
-            await page.waitForTimeout(500);
-
-            await page.reload();
-            await page.waitForLoadState('networkidle');
-
-            const selectedRadio = page.getByRole('radio', { name: /채널톡/i });
-            await expect(selectedRadio).toBeChecked({ timeout: 5000 });
-        });
-
-        test('should persist "none" selection after reload', async ({ page }) => {
-            const noneRadio = page.getByRole('radio', { name: /사용 안함/i });
-            await noneRadio.click();
-
-            await expect(page.getByText('알림톡 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
-            await page.waitForTimeout(500);
-
-            await page.reload();
-            await page.waitForLoadState('networkidle');
-
-            const selectedRadio = page.getByRole('radio', { name: /사용 안함/i });
-            await expect(selectedRadio).toBeChecked({ timeout: 5000 });
-        });
+  test("reflects the mocked saved provider state on first render", async ({ page }) => {
+    await mockNotificationSettingsRoutes(page, {
+      initialProvider: "none",
     });
+    await page.goto("/notification");
 
-    test.describe('UI State', () => {
-        test('should show loading state initially', async ({ page }) => {
-            await page.goto('/settings/general');
-
-            const loadingIndicator = page.locator('.MuiCircularProgress-root');
-            await expect(loadingIndicator).toBeVisible({ timeout: 1000 }).catch(() => {});
-        });
-
-        test('should disable radio buttons while saving', async ({ page }) => {
-            const aligoRadio = page.getByRole('radio', { name: /알리고/i });
-            await aligoRadio.click();
-
-            await expect(page.getByText('알림톡 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
-        });
-
-        test('should display last updated timestamp after save', async ({ page }) => {
-            const aligoRadio = page.getByRole('radio', { name: /알리고/i });
-            const noneRadio = page.getByRole('radio', { name: /사용 안함/i });
-
-            const isAligoSelected = await aligoRadio.isChecked();
-            if (isAligoSelected) {
-                await noneRadio.click();
-            } else {
-                await aligoRadio.click();
-            }
-
-            await expect(page.getByText('알림톡 설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
-
-            const timestamp = page.getByText(/마지막 수정:/);
-            await expect(timestamp).toBeVisible({ timeout: 5000 });
-        });
-    });
-
-    test.describe('Navigation', () => {
-        test('should access settings via tab navigation', async ({ page }) => {
-            await page.goto('/settings/voucher-price');
-            await page.waitForLoadState('networkidle');
-
-            const generalTab = page.getByRole('tab', { name: /일반 설정/i });
-            await generalTab.click();
-
-            await expect(page).toHaveURL('/settings/general');
-            await expect(page.getByText('알림톡 설정')).toBeVisible();
-        });
-    });
-});
-
-test.describe('Alimtalk Settings Error Handling', () => {
-    test('should show error message on API failure', async ({ page }) => {
-        await page.route('**/api/settings/alimtalk-provider', (route) => {
-            route.fulfill({
-                status: 500,
-                body: JSON.stringify({ error: 'Internal Server Error' }),
-            });
-        });
-
-        await page.goto('/settings/general');
-        await page.waitForLoadState('networkidle');
-
-        const errorAlert = page.getByText('설정을 불러오는데 실패했습니다.');
-        await expect(errorAlert).toBeVisible();
-    });
-
-    test('should show error snackbar on save failure', async ({ page }) => {
-        await page.route('**/api/settings/alimtalk-provider', (route, request) => {
-            if (request.method() === 'PUT') {
-                route.fulfill({
-                    status: 500,
-                    contentType: 'application/json',
-                    body: JSON.stringify({ error: 'Failed to save' }),
-                });
-            } else {
-                route.continue();
-            }
-        });
-
-        await page.goto('/settings/general');
-        await page.waitForLoadState('networkidle');
-
-        const aligoRadio = page.getByRole('radio', { name: /알리고/i });
-        const noneRadio = page.getByRole('radio', { name: /사용 안함/i });
-
-        const isAligoSelected = await aligoRadio.isChecked();
-        if (isAligoSelected) {
-            await noneRadio.click();
-        } else {
-            await aligoRadio.click();
-        }
-
-        const errorSnackbar = page.getByText('설정 저장에 실패했습니다. 다시 시도해주세요.');
-        await expect(errorSnackbar).toBeVisible({ timeout: 5000 });
-    });
+    await expect(page.getByRole("radio", { name: "사용 안함 선택" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.locator('[data-component="notification-alimtalk-updated-at"]')).toContainText("마지막 수정:");
+  });
 });

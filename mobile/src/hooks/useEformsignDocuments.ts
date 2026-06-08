@@ -1,21 +1,24 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { eformsignApi, withEformsignReauth } from "@/services/api";
+
+import { getStatusCategory, isDeletedStatusCode, DocumentFilterType } from "@/lib/eformsign/status-codes";
+import { IS_DEVELOPMENT } from "@/lib/env";
 import { EformsignDocumentsResponse, EformsignDocument } from "@/lib/eformsign/types";
-import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
+import { eformsignApi, withEformsignReauth } from "@/services/api";
 
 // Re-export types for convenience
 export type { DocumentFilterType } from "@/lib/eformsign/status-codes";
 
 // Debug logging (only in development)
-const isDev = process.env.NODE_ENV === "development";
+const isDev = IS_DEVELOPMENT;
 const debugLog = isDev ? console.log.bind(console) : () => {};
 
 // Filter documents by actual status code (not just inbox type)
 function filterByActualStatus(docs: EformsignDocument[], type: DocumentFilterType): EformsignDocument[] {
-  if (type === null) return docs;
-  return docs.filter(doc => getStatusCategory(doc.current_status?.status_type) === type);
+  const visibleDocs = docs.filter((doc) => !isDeletedStatusCode(doc.current_status?.status_type));
+  if (type === null) return visibleDocs;
+  return visibleDocs.filter(doc => getStatusCategory(doc.current_status?.status_type) === type);
 }
 
 // Query keys

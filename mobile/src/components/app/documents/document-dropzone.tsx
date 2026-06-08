@@ -251,6 +251,7 @@ export function DocumentDropzone({
         <div className="p-6 border border-border rounded-2xl">
           <div className="flex items-start gap-4 mb-6">
             {previewUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- Blob previews are local upload object URLs and cannot be optimized by next/image.
               <img
                 src={previewUrl}
                 alt="Preview"

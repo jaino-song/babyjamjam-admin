@@ -45,9 +45,6 @@ export function useParseVoucherImage() {
         "/voucher-price-infos/parse-image",
         formData,
         {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
           // 큰 파일과 AI 처리를 위한 타임아웃 연장
           timeout: 120000,
         },
@@ -79,7 +76,7 @@ export function useBulkUpdateVoucherPrices() {
     onSuccess: () => {
       // 모든 바우처 가격 정보 쿼리 무효화
       queryClient.invalidateQueries({
-        queryKey: voucherQueryKeys.voucherPriceInfos(""),
+        queryKey: voucherQueryKeys.voucherPriceInfosRoot,
       });
     },
   });

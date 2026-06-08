@@ -1,14 +1,41 @@
-import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
 import {
     ALIGO_API_PORT,
     AligoCreateTemplateParams,
     AligoTemplateButtonPayload,
     AligoTemplateCreateResponse,
+    AligoTemplateListItem,
     IAligoApiPort,
 } from "domain/ports/aligo-api.port";
 import { CreateAlimtalkTemplateDto, CreateAlimtalkTemplateButtonDto } from "interface/dto/alimtalk-template.dto";
 
 const ALLOWED_TEMPLATE_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png"]);
+
+export interface AlimtalkTemplateListItemDto {
+    templateCode: string;
+    name: string;
+    content: string;
+    title?: string;
+    subtitle?: string;
+    extra?: string;
+    advert?: string;
+    templateType: "BA" | "EX" | "AD" | "MI";
+    emphasisType: "NONE" | "TEXT" | "IMAGE";
+    inspectionStatus?: string;
+    isApproved: boolean;
+    category?: string;
+    buttons: Array<{
+        name: string;
+        linkType: string;
+        linkM?: string;
+        linkP?: string;
+        linkI?: string;
+        linkA?: string;
+    }>;
+    createdAt?: string;
+    updatedAt?: string;
+    senderKey?: string;
+}
 
 @Injectable()
 export class AlimtalkTemplateService {
@@ -18,6 +45,49 @@ export class AlimtalkTemplateService {
         @Inject(ALIGO_API_PORT)
         private readonly aligoApi: IAligoApiPort
     ) {}
+
+    async list(): Promise<AlimtalkTemplateListItemDto[]> {
+        let result;
+        try {
+            result = await this.aligoApi.listTemplates();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "알리고 템플릿 호출에 실패했습니다.";
+            this.logger.error(`[AlimtalkTemplate] list failed: ${message}`);
+            throw new BadGatewayException(message);
+        }
+        if (result.code !== 0) {
+            throw new BadRequestException(result.message || "알리고 템플릿 목록 조회에 실패했습니다.");
+        }
+        return (result.list ?? []).map((item) => this.mapTemplateListItem(item));
+    }
+
+    private mapTemplateListItem(item: AligoTemplateListItem): AlimtalkTemplateListItemDto {
+        return {
+            templateCode: item.templtCode,
+            name: item.templtName,
+            content: item.templtContent,
+            title: item.templtTitle || undefined,
+            subtitle: item.templtSubtitle || undefined,
+            extra: item.templtExtra || undefined,
+            advert: item.templtAd || undefined,
+            templateType: item.templtType,
+            emphasisType: item.emphasizeType,
+            inspectionStatus: item.inspStatus || undefined,
+            isApproved: item.inspStatus === "APR",
+            category: item.ctgCategory || undefined,
+            buttons: (item.buttons ?? []).map((button) => ({
+                name: button.name,
+                linkType: button.linkType,
+                linkM: button.linkM || undefined,
+                linkP: button.linkP || undefined,
+                linkI: button.linkI || undefined,
+                linkA: button.linkA || undefined,
+            })),
+            createdAt: item.createDate || undefined,
+            updatedAt: item.updateDate || undefined,
+            senderKey: item.senderKey || undefined,
+        };
+    }
 
     async create(dto: CreateAlimtalkTemplateDto, image?: Express.Multer.File) {
         this.validateDto(dto, image);

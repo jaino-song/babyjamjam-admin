@@ -10,7 +10,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
-import { Client, SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
+import { Client, SERVICE_STATUS_OPTIONS, type ServiceStatus } from "@/lib/client/types";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
@@ -38,10 +38,11 @@ import type { StatusType } from "@/components/app/v3";
 
 const FILTER_CHIPS = [
     { label: "전체", value: "all" },
+    { label: "대기", value: "waiting" },
+    { label: "교체 요청", value: "replacement_requested" },
     { label: "진행중", value: "active" },
-    { label: "대기", value: "pending" },
     { label: "완료", value: "completed" },
-    { label: "중단", value: "expired" },
+    { label: "중단", value: "terminated" },
 ];
 
 const getAvatarGradient = (name: string) => {
@@ -67,11 +68,10 @@ const mapServiceStatusToV3 = (status: string | null): StatusType => {
         case "active":
             return "active";
         case "waiting":
-        case "pending":
-        case "replacement_requested":
             return "pending";
+        case "replacement_requested":
+            return "terminated";
         case "terminated":
-        case "cancelled":
             return "terminated";
         case "completed":
             return "completed";
@@ -99,15 +99,17 @@ const toDate = (value: string | null): Date | null => {
     return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const filterValueToStatus = (filter: string): string | null => {
+const filterValueToStatus = (filter: string): ServiceStatus | null => {
     switch (filter) {
+        case "waiting":
+            return "waiting";
+        case "replacement_requested":
+            return "replacement_requested";
         case "active":
             return "active";
-        case "pending":
-            return "waiting";
         case "completed":
             return "completed";
-        case "expired":
+        case "terminated":
             return "terminated";
         default:
             return null;
@@ -178,9 +180,7 @@ export default function ClientsPage() {
         }).length;
 
         const activeCount = clients.filter((c) => c.serviceStatus === "active").length;
-        const pendingCount = clients.filter(
-            (c) => c.serviceStatus === "waiting" || c.serviceStatus === "pending"
-        ).length;
+        const pendingCount = clients.filter((c) => c.serviceStatus === "waiting").length;
 
         const endingSoonCount = clients.filter((c) => {
             const endDate = toDate(c.endDate);

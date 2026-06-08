@@ -96,7 +96,9 @@ pnpm dev          # Start dev server
 pnpm build        # Production build
 pnpm start        # Start production server
 pnpm lint         # Run ESLint
+pnpm type-check   # Run TypeScript checks
 pnpm test         # Run Jest tests
+pnpm test:e2e     # Run Playwright tests
 ```
 
 ## Figma Design

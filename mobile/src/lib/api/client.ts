@@ -1,10 +1,12 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
 import { parse } from "cookie";
+
 import { isPublicAuthPath } from "@/lib/auth/routes";
+import { getServerRuntimeConfig } from "@/lib/env";
 import { safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 
 const API_BASE_URL = typeof window === 'undefined'
-    ? (process.env.NEXT_PUBLIC_API_BASE_URL || process.env.DEVELOPMENT_API_BASE_URL || "http://localhost:3001")
+    ? getServerRuntimeConfig().backendBaseUrl
     : '/api';
 
 export const api = axios.create({
@@ -17,6 +19,24 @@ type QueueItem = {
     resolve: (value?: unknown) => void;
     reject: (reason?: unknown) => void;
 };
+
+const EFORMSIGN_TOKEN_ENDPOINT_PREFIXES = [
+    "/access-token",
+    "/refresh-access-token",
+    "/generate-document",
+    "/generate-staff-document",
+    "/generate-signature",
+    "/eformsign",
+    "/eformsign-docs",
+];
+
+export function isEformsignTokenEndpoint(url?: string): boolean {
+    if (!url) return false;
+
+    return EFORMSIGN_TOKEN_ENDPOINT_PREFIXES.some((prefix) => (
+        url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`)
+    ));
+}
 
 // Token refresh state management
 let isEformsignRefreshing = false;
@@ -67,13 +87,6 @@ api.interceptors.response.use(
         if (err.response?.status === 401 && originalRequest && !originalRequest._retry) {
             const url = originalRequest.url || '';
 
-            // Only handle eformsign-related endpoints with token refresh
-            const isEformsignEndpoint = url.includes('/documents') || 
-                url.includes('/access-token') || 
-                url.includes('/refresh-access-token') ||
-                url.includes('/generate-document') ||
-                url.includes('/generate-signature');
-
             // Don't retry auth refresh endpoint itself
             if (url.includes('/auth/refresh')) {
                 return Promise.reject(err);
@@ -85,7 +98,7 @@ api.interceptors.response.use(
             }
 
             // For eformsign endpoints, try token refresh
-            if (isEformsignEndpoint) {
+            if (isEformsignTokenEndpoint(url)) {
                 if (isEformsignRefreshing) {
                     return new Promise((resolve, reject) => {
                         eformsignFailedQueue.push({ resolve, reject });

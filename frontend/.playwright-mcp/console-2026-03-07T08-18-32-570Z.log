@@ -1,9 +1,0 @@
-[  315646ms] [WARNING] Detected `scroll-behavior: smooth` on the `<html>` element. To disable smooth scrolling during route transitions, add `data-scroll-behavior="smooth"` to your <html> element. Learn more: https://nextjs.org/docs/messages/missing-data-scroll-behavior @ http://localhost:3002/_next/static/chunks/99da6_next_dist_0f4b98bb._.js:2297
-[  363689ms] [WARNING] Detected `scroll-behavior: smooth` on the `<html>` element. To disable smooth scrolling during route transitions, add `data-scroll-behavior="smooth"` to your <html> element. Learn more: https://nextjs.org/docs/messages/missing-data-scroll-behavior @ http://localhost:3002/_next/static/chunks/99da6_next_dist_0f4b98bb._.js:2297
-[  638552ms] ReferenceError: handleConsultationClick is not defined
-    at ReviewsPage (about://React/Server/file:///Users/jaino/Development/dev/imirae-website/.next/dev/server/chunks/ssr/%5Broot-of-the-server%5D__8179e264._.js?4:1121:50)
-    at resolveErrorDev (http://localhost:3002/_next/static/chunks/99da6_next_dist_compiled_react-server-dom-turbopack_8b3fb0d1._.js:1894:106)
-    at processFullStringRow (http://localhost:3002/_next/static/chunks/99da6_next_dist_compiled_react-server-dom-turbopack_8b3fb0d1._.js:2402:29)
-    at processFullBinaryRow (http://localhost:3002/_next/static/chunks/99da6_next_dist_compiled_react-server-dom-turbopack_8b3fb0d1._.js:2361:9)
-    at processBinaryChunk (http://localhost:3002/_next/static/chunks/99da6_next_dist_compiled_react-server-dom-turbopack_8b3fb0d1._.js:2470:221)
-    at progress (http://localhost:3002/_next/static/chunks/99da6_next_dist_compiled_react-server-dom-turbopack_8b3fb0d1._.js:2640:13)

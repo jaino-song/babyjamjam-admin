@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>파일 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.list-card { background: white; border-radius: 22px; box-shadow: var(--shadow-v3); }
+.file-icon {
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.file-icon.pdf { background: var(--v3-burgundy-light); color: var(--v3-burgundy); }
+.file-icon.img { background: var(--v3-green-light); color: var(--v3-green); }
+.file-icon.doc { background: var(--v3-primary-light); color: var(--v3-primary); }
+.file-icon.xls { background: hsl(137, 50%, 92%); color: hsl(137, 60%, 28%); }
+.file-icon.misc { background: var(--v3-dim-white); color: var(--v3-text-muted); }
+.file-meta {
+  font-size: 0.66rem;
+  color: var(--v3-text-muted);
+  margin-top: 2px;
+  display: flex; align-items: center; gap: 5px;
+}
+.file-meta .sep { color: var(--v3-border); }
+.pdf-slider::-webkit-scrollbar, .pdf-page::-webkit-scrollbar { display: none; }
+.pdf-dot:hover { opacity: 0.7; }
+.pdf-page { transform-origin: 0 0; will-change: transform; touch-action: pan-x pan-y; }
+.pdf-page.zoomed { touch-action: none; cursor: grab; }
+.zoom-hint {
+  position: absolute; top: 14px; right: 14px;
+  font-size: 0.55rem; color: var(--v3-text-muted);
+  background: rgba(255,255,255,0.85); padding: 3px 7px; border-radius: 4px;
+  pointer-events: none; opacity: 0.8; backdrop-filter: blur(4px);
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="shell-content">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="list-title">
+              <span class="list-title-text">파일 <span class="list-count">87개</span></span>
+              <button class="list-action">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                업로드
+              </button>
+            </div>
+            <div class="search-bar" style="margin: 4px 12px 8px;">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" placeholder="파일명, 고객명 검색" />
+            </div>
+            <div class="filter-row">
+              <button class="filter-pill active">전체 <span class="count">87</span></button>
+              <button class="filter-pill">계약서 <span class="count">42</span></button>
+              <button class="filter-pill">사진 <span class="count">23</span></button>
+              <button class="filter-pill">견적서 <span class="count">12</span></button>
+              <button class="filter-pill">기타 <span class="count">10</span></button>
+            </div>
+
+            <div class="list-card-scroll">
+              <div class="section-block">
+                <div class="section-header">계약서 · 2건</div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="file-icon pdf">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">박서연_A라1형_계약서</div>
+                  <div class="file-meta">248KB <span class="sep">·</span> PDF</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">방금</span></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="file-icon pdf">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">장하늘_A통합1형_계약서</div>
+                  <div class="file-meta">312KB <span class="sep">·</span> PDF</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">5/9</span></div>
+              </div>
+              </div>
+
+              <div class="section-block">
+                <div class="section-header">사진 · 2건</div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="file-icon img">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5L5 22"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">방문현장_김도윤_5월10일</div>
+                  <div class="file-meta">1.2MB <span class="sep">·</span> JPG</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">3시간 전</span></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="file-icon img">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5L5 22"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">신분증_정유진</div>
+                  <div class="file-meta">432KB <span class="sep">·</span> JPG</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">5/9</span></div>
+              </div>
+              </div>
+
+              <div class="section-block">
+                <div class="section-header">견적서 · 1건</div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="file-icon xls">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h2M14 13h2M8 17h2M14 17h2"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">5월_이용현황</div>
+                  <div class="file-meta">96KB <span class="sep">·</span> XLSX</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">5/8</span></div>
+              </div>
+              </div>
+
+              <div class="section-block">
+                <div class="section-header">기타 · 2건</div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="file-icon doc">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">최예린_상담노트</div>
+                  <div class="file-meta">64KB <span class="sep">·</span> DOCX</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">5시간 전</span></div>
+              </div>
+
+              <div class="list-item" onclick="openDetail(this)">
+                <div class="file-icon misc">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                </div>
+                <div class="list-info">
+                  <div class="list-name">개인정보동의서_양식</div>
+                  <div class="file-meta">4KB <span class="sep">·</span> TXT</div>
+                </div>
+                <div class="list-right"><span class="dday-sub">4/30</span></div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <!-- Bottom sheet detail (file) -->
+      <div class="nav-page detail">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <button class="sheet-close" onclick="closeDetail()" style="margin-left: auto;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="client-detail-header pop-up">
+            <div class="client-detail-avatar-lg" style="background: var(--v3-burgundy-light); color: var(--v3-burgundy); box-shadow: none;">
+              <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            </div>
+            <div class="client-detail-title">
+              <div class="client-detail-name" style="font-size: 0.95rem;">박서연_A라1형_계약서.pdf</div>
+              <div class="client-detail-badges">
+                <span class="badge-mini burgundy">PDF</span>
+                <span class="badge-mini muted">계약서</span>
+                <span class="badge-mini muted">248KB</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-actions" style="margin-top: 0; padding: 14px 16px;">
+            <button class="btn btn-secondary">공유</button>
+            <button class="btn btn-primary">다운로드</button>
+          </div>
+
+          <div class="filter-row detail-tabs" style="padding: 0;">
+            <button class="filter-pill active" data-tab="preview">미리보기</button>
+            <button class="filter-pill" data-tab="info">파일 정보</button>
+            <button class="filter-pill" data-tab="description">설명</button>
+            <button class="filter-pill" data-tab="tags">태그</button>
+          </div>
+
+          <!-- Tab: 미리보기 (frontend의 DocumentPreviewModal 형식) -->
+          <div class="tab-content active" data-tab-content="preview">
+            <div class="info-card pop-up" style="padding: 8px; background: hsl(220, 15%, 90%); position: relative;">
+              <span class="zoom-hint">두 손가락으로 확대 · 두 번 탭</span>
+              <!-- Slide container (mobile swipe) -->
+              <div class="pdf-slider" id="pdfSlider" style="display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch;">
+                <!-- Page 1 -->
+                <div class="pdf-page" style="flex: 0 0 100%; scroll-snap-align: center; background: white; border-radius: 8px; padding: 18px 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); aspect-ratio: 0.707; max-height: 460px; overflow-y: auto; scrollbar-width: none;">
+                  <div style="text-align: center; padding-bottom: 12px; border-bottom: 2px solid var(--v3-dark);">
+                    <div style="font-size: 0.6rem; color: var(--v3-text-muted); letter-spacing: 0.1em;">아가잼잼 인천점</div>
+                    <div style="font-size: 0.92rem; font-weight: 800; color: var(--v3-dark); margin-top: 4px;">산모도우미 서비스 이용 계약서</div>
+                    <div style="font-size: 0.55rem; color: var(--v3-text-muted); margin-top: 4px; font-family: 'SF Mono', monospace;">C-2025-0426-022</div>
+                  </div>
+
+                  <div style="margin-top: 14px; font-size: 0.62rem; line-height: 1.7; color: var(--v3-dark);">
+                    <div style="font-weight: 700; margin-bottom: 4px;">제1조 (계약 당사자)</div>
+                    <div style="color: var(--v3-text-muted); padding-left: 8px;">
+                      "갑": 아가잼잼 인천점 (대표: 송진호)<br/>
+                      "을": 박서연 (생년월일: 921108)
+                    </div>
+
+                    <div style="font-weight: 700; margin-top: 10px; margin-bottom: 4px;">제2조 (서비스 내용)</div>
+                    <div style="color: var(--v3-text-muted); padding-left: 8px;">
+                      바우처 유형: A라1형<br/>
+                      서비스 기간: 14일<br/>
+                      시작일: 2025. 4. 27. ~ 종료일: 2025. 5. 15.
+                    </div>
+
+                    <div style="font-weight: 700; margin-top: 10px; margin-bottom: 4px;">제3조 (제공인력)</div>
+                    <div style="color: var(--v3-text-muted); padding-left: 8px;">
+                      제공인력 1: 김민지<br/>
+                      제공인력 2: 미배정
+                    </div>
+
+                    <div style="font-weight: 700; margin-top: 10px; margin-bottom: 4px;">제4조 (요금 및 정산)</div>
+                    <div style="color: var(--v3-text-muted); padding-left: 8px;">
+                      총 서비스 금액: 1,792,000원<br/>
+                      정부지원금: 1,254,000원<br/>
+                      본인부담금: 538,000원
+                    </div>
+
+                    <div style="margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--v3-border); display: flex; gap: 16px;">
+                      <div style="flex: 1;">
+                        <div style="font-size: 0.55rem; color: var(--v3-text-muted);">고객 (을)</div>
+                        <div style="margin-top: 18px; font-weight: 700; color: var(--v3-green); font-size: 0.55rem;">✓ 박서연 (4/29)</div>
+                      </div>
+                      <div style="flex: 1;">
+                        <div style="font-size: 0.55rem; color: var(--v3-text-muted);">관리사</div>
+                        <div style="margin-top: 18px; font-weight: 700; color: var(--v3-green); font-size: 0.55rem;">✓ 김민지 (5/1)</div>
+                      </div>
+                      <div style="flex: 1;">
+                        <div style="font-size: 0.55rem; color: var(--v3-text-muted);">지점장 (갑)</div>
+                        <div style="margin-top: 18px; font-weight: 700; color: var(--v3-orange); font-size: 0.55rem;">대기 중</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Page 2 -->
+                <div class="pdf-page" style="flex: 0 0 100%; scroll-snap-align: center; background: white; border-radius: 8px; padding: 18px 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); aspect-ratio: 0.707; max-height: 460px; overflow-y: auto; scrollbar-width: none;">
+                  <div style="text-align: center; padding-bottom: 12px; border-bottom: 1px solid var(--v3-border);">
+                    <div style="font-size: 0.55rem; color: var(--v3-text-muted); font-family: 'SF Mono', monospace;">C-2025-0426-022 · 2 / 3</div>
+                  </div>
+
+                  <div style="margin-top: 14px; font-size: 0.62rem; line-height: 1.7; color: var(--v3-dark);">
+                    <div style="font-weight: 700; margin-bottom: 4px;">제5조 (해지 및 환불)</div>
+                    <div style="color: var(--v3-text-muted); padding-left: 8px;">
+                      ① 서비스 시작 전 해지 시 전액 환불.<br/>
+                      ② 시작 후 7일 이내 해지 시 사용 일수에 따른 정산 후 환불.<br/>
+                      ③ 7일 경과 후에는 환불이 제한될 수 있음.
+                    </div>
+
+                    <div style="font-weight: 700; margin-top: 10px; margin-bottom: 4px;">제6조 (개인정보 보호)</div>
+                    <div style="color: var(--v3-text-muted); padding-left: 8px;">
+                      ① "갑"은 "을"의 개인정보를 서비스 제공 목적으로만 사용한다.<br/>
+                      ② 보관 기간: 계약 종료 후 5년.<br/>
+                      ③ "을"은 언제든 열람·정정·삭제를 요청할 수 있다.
+                    </div>
+
+                    <div style="font-weight: 700; margin-top: 10px; margin-bottom: 4px;">제7조 (서비스 수행 의무)</div>
+                    <div style="color: var(--v3-text-muted); padding-left: 8px;">
+                      ① 관리사는 계약된 시간을 준수해야 한다.<br/>
+                      ② 무단 결근 시 즉시 대체 인력을 배정한다.<br/>
+                      ③ 안전 사고 발생 시 24시간 내 보고 의무.
+                    </div>
+
+                    <div style="font-weight: 700; margin-top: 10px; margin-bottom: 4px;">제8조 (분쟁 해결)</div>
+                    <div style="color: var(--v3-text-muted); padding-left: 8px;">
+                      본 계약과 관련된 분쟁은 인천지방법원을 관할로 한다.
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Page 3 -->
+                <div class="pdf-page" style="flex: 0 0 100%; scroll-snap-align: center; background: white; border-radius: 8px; padding: 18px 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); aspect-ratio: 0.707; max-height: 460px; overflow-y: auto; scrollbar-width: none;">
+                  <div style="text-align: center; padding-bottom: 12px; border-bottom: 1px solid var(--v3-border);">
+                    <div style="font-size: 0.55rem; color: var(--v3-text-muted); font-family: 'SF Mono', monospace;">C-2025-0426-022 · 3 / 3 · 부속</div>
+                  </div>
+
+                  <div style="margin-top: 14px; font-size: 0.62rem; line-height: 1.7; color: var(--v3-dark);">
+                    <div style="font-weight: 700; margin-bottom: 4px;">[부속] 서비스 일정표</div>
+                    <div style="margin-top: 6px; border: 1px solid var(--v3-border); border-radius: 6px; overflow: hidden;">
+                      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--v3-bg-subtle); padding: 6px 8px; font-size: 0.55rem; font-weight: 700; color: var(--v3-text);">
+                        <span>날짜</span><span>시간</span><span>구분</span>
+                      </div>
+                      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 5px 8px; font-size: 0.55rem; color: var(--v3-text-muted); border-top: 1px solid var(--v3-border);">
+                        <span>4/27 (일)</span><span>09:00–18:00</span><span>주간</span>
+                      </div>
+                      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 5px 8px; font-size: 0.55rem; color: var(--v3-text-muted); border-top: 1px solid var(--v3-border);">
+                        <span>4/28 (월)</span><span>09:00–18:00</span><span>주간</span>
+                      </div>
+                      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 5px 8px; font-size: 0.55rem; color: var(--v3-text-muted); border-top: 1px solid var(--v3-border);">
+                        <span>4/29 (화)</span><span>09:00–18:00</span><span>주간</span>
+                      </div>
+                      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 5px 8px; font-size: 0.55rem; color: var(--v3-text-muted); border-top: 1px solid var(--v3-border);">
+                        <span>… (총 14일)</span><span>—</span><span>—</span>
+                      </div>
+                    </div>
+
+                    <div style="font-weight: 700; margin-top: 14px; margin-bottom: 4px;">[안내] 응급 연락처</div>
+                    <div style="color: var(--v3-text-muted); padding-left: 8px;">
+                      지점 대표: 송진호 (010-****-1234)<br/>
+                      24시 응급 핫라인: 1588-0000<br/>
+                      바우처 문의: 보건복지부 129
+                    </div>
+
+                    <div style="margin-top: 18px; padding: 10px; background: var(--v3-bg-subtle); border-radius: 6px; text-align: center; font-size: 0.55rem; color: var(--v3-text-muted);">
+                      본 계약서는 전자서명법에 따라 효력을 가집니다.<br/>
+                      C-2025-0426-022 · 발급일 2025. 4. 26.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Dot pagination -->
+              <div class="pdf-dots" style="text-align: center; padding: 12px 0 4px; display: flex; justify-content: center; gap: 7px; align-items: center;">
+                <span class="pdf-dot active" data-pdf-dot="0" style="width: 7px; height: 7px; border-radius: 50%; background: var(--v3-dark); display: inline-block; cursor: pointer; transition: all 0.2s;"></span>
+                <span class="pdf-dot" data-pdf-dot="1" style="width: 7px; height: 7px; border-radius: 50%; background: var(--v3-border); display: inline-block; cursor: pointer; transition: all 0.2s;"></span>
+                <span class="pdf-dot" data-pdf-dot="2" style="width: 7px; height: 7px; border-radius: 50%; background: var(--v3-border); display: inline-block; cursor: pointer; transition: all 0.2s;"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab: 파일 정보 -->
+          <div class="tab-content" data-tab-content="info">
+            <div class="info-card pop-up">
+              <div class="info-card-title">파일 정보</div>
+              <div class="info-row"><span class="info-row-label">파일명</span><span class="info-row-value" style="font-size: 0.72rem;">박서연_A라1형_계약서.pdf</span></div>
+              <div class="info-row"><span class="info-row-label">형식</span><span class="info-row-value">application/pdf</span></div>
+              <div class="info-row"><span class="info-row-label">카테고리</span><span class="info-row-value">계약서</span></div>
+              <div class="info-row"><span class="info-row-label">크기</span><span class="info-row-value">248 KB</span></div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">관련 정보</div>
+              <div class="info-row"><span class="info-row-label">관련 고객</span><span class="info-row-value">박서연</span></div>
+              <div class="info-row"><span class="info-row-label">업로더</span><span class="info-row-value">송진호 (지점장)</span></div>
+              <div class="info-row"><span class="info-row-label">근무 지역</span><span class="info-row-value">인천 부평구</span></div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 120ms;">
+              <div class="info-card-title">날짜</div>
+              <div class="info-row"><span class="info-row-label">등록일</span><span class="info-row-value">2025. 5. 11. 오전 9:14</span></div>
+              <div class="info-row"><span class="info-row-label">수정일</span><span class="info-row-value">2025. 5. 11. 오전 9:14</span></div>
+            </div>
+          </div>
+
+          <!-- Tab: 설명 -->
+          <div class="tab-content" data-tab-content="description">
+            <div class="info-card pop-up" style="padding: 16px;">
+              <div class="info-card-title">설명</div>
+              <div style="font-size: 0.84rem; line-height: 1.55; color: var(--v3-dark); white-space: pre-wrap;">박서연 고객 A라1형 산모도우미 서비스 계약서입니다.
+
+서비스 기간: 2025. 4. 27. ~ 2025. 5. 15. (14일)
+제공인력 1: 김민지
+
+eformsign으로 발송되어 고객 서명 완료된 최종본입니다.</div>
+            </div>
+          </div>
+
+          <!-- Tab: 태그 -->
+          <div class="tab-content" data-tab-content="tags">
+            <div class="info-card pop-up">
+              <div class="info-card-title">태그 · 4개</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0;">
+                <span class="badge-mini muted">계약서</span>
+                <span class="badge-mini muted">A라1형</span>
+                <span class="badge-mini muted">박서연</span>
+                <span class="badge-mini muted">2025-05</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-primary-light);"><svg width="15" height="15" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div><div class="notif-body"><div class="notif-title">파일 업로드 완료</div><div class="notif-snippet">박서연_A라1형_계약서.pdf 가 업로드되었습니다.</div><div class="notif-time">방금 전</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 전체) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">파일 · /files</div>
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+function openDetail(el){document.getElementById('stack').classList.add('show-detail');}
+function closeDetail(){document.getElementById('stack').classList.remove('show-detail');}
+document.querySelectorAll('.filter-pill').forEach(p=>p.addEventListener('click',()=>{
+  const row=p.closest('.filter-row');
+  row.querySelectorAll('.filter-pill').forEach(x=>x.classList.remove('active'));
+  p.classList.add('active');
+  if(p.dataset.tab){
+    document.querySelectorAll('.tab-content').forEach(c=>c.classList.toggle('active',c.dataset.tabContent===p.dataset.tab));
+  }
+}));
+(function(){
+  const slider=document.getElementById('pdfSlider');
+  if(!slider)return;
+  const dots=document.querySelectorAll('.pdf-dot');
+  function setActive(i){
+    dots.forEach((d,idx)=>{
+      const on=idx===i;
+      d.classList.toggle('active',on);
+      d.style.background=on?'var(--v3-dark)':'var(--v3-border)';
+      d.style.width=on?'18px':'7px';
+      d.style.borderRadius=on?'4px':'50%';
+    });
+  }
+  slider.addEventListener('scroll',()=>{
+    const i=Math.round(slider.scrollLeft/slider.clientWidth);
+    setActive(i);
+  },{passive:true});
+  dots.forEach(d=>d.addEventListener('click',()=>{
+    const i=parseInt(d.dataset.pdfDot,10);
+    slider.scrollTo({left:i*slider.clientWidth,behavior:'smooth'});
+  }));
+  setActive(0);
+
+  // Pinch-to-zoom + pan + double-tap on each .pdf-page
+  document.querySelectorAll('.pdf-page').forEach(page=>{
+    let scale=1, tx=0, ty=0;
+    const st={scale:1, tx:0, ty:0, dist:0, midX:0, midY:0, x:0, y:0};
+    let mode=null, lastTap=0;
+    const apply=()=>{ page.style.transform=`translate(${tx}px,${ty}px) scale(${scale})`; };
+    const animate=()=>{ page.style.transition='transform 0.22s'; setTimeout(()=>page.style.transition='',230); };
+    const reset=(anim)=>{
+      scale=1; tx=0; ty=0;
+      if(anim) animate();
+      apply();
+      page.classList.remove('zoomed');
+      page.style.overflow='auto';
+    };
+    const dist=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    const clamp=()=>{
+      const r=page.getBoundingClientRect();
+      const w=r.width/scale, h=r.height/scale;
+      const maxX=Math.max(0,(r.width-w)/2);
+      const maxY=Math.max(0,(r.height-h)/2);
+      tx=Math.max(-maxX*scale,Math.min(maxX*scale,tx));
+      ty=Math.max(-maxY*scale,Math.min(maxY*scale,ty));
+    };
+
+    page.addEventListener('touchstart',(e)=>{
+      if(e.touches.length===2){
+        e.preventDefault(); e.stopPropagation();
+        mode='pinch';
+        st.dist=dist(e.touches[0],e.touches[1]);
+        st.scale=scale; st.tx=tx; st.ty=ty;
+        st.midX=(e.touches[0].clientX+e.touches[1].clientX)/2;
+        st.midY=(e.touches[0].clientY+e.touches[1].clientY)/2;
+        page.classList.add('zoomed');
+        page.style.overflow='hidden';
+      } else if(e.touches.length===1 && scale>1){
+        mode='pan';
+        st.x=e.touches[0].clientX-tx;
+        st.y=e.touches[0].clientY-ty;
+      }
+    },{passive:false});
+
+    page.addEventListener('touchmove',(e)=>{
+      if(mode==='pinch' && e.touches.length===2){
+        e.preventDefault(); e.stopPropagation();
+        const d=dist(e.touches[0],e.touches[1]);
+        scale=Math.max(1,Math.min(3,st.scale*(d/st.dist)));
+        const midX=(e.touches[0].clientX+e.touches[1].clientX)/2;
+        const midY=(e.touches[0].clientY+e.touches[1].clientY)/2;
+        tx=st.tx+(midX-st.midX);
+        ty=st.ty+(midY-st.midY);
+        clamp(); apply();
+      } else if(mode==='pan' && e.touches.length===1 && scale>1){
+        e.preventDefault();
+        tx=e.touches[0].clientX-st.x;
+        ty=e.touches[0].clientY-st.y;
+        clamp(); apply();
+      }
+    },{passive:false});
+
+    page.addEventListener('touchend',(e)=>{
+      if(e.touches.length===0){
+        if(scale<=1.02){ reset(true); }
+        else { animate(); clamp(); apply(); }
+        // double-tap
+        if(e.changedTouches.length===1){
+          const now=Date.now();
+          if(now-lastTap<280){
+            if(scale>1){ reset(true); }
+            else {
+              scale=2; tx=0; ty=0;
+              page.classList.add('zoomed');
+              page.style.overflow='hidden';
+              animate(); apply();
+            }
+            lastTap=0;
+          } else lastTap=now;
+        }
+        mode=null;
+      } else if(e.touches.length===1 && scale>1){
+        mode='pan';
+        st.x=e.touches[0].clientX-tx;
+        st.y=e.touches[0].clientY-ty;
+      } else { mode=null; }
+    });
+  });
+})();
+</script>
+</body>
+</html>

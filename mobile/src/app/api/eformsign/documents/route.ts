@@ -1,5 +1,53 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+
 import { proxyDeleteRequest, proxyGetRequest } from "@/lib/api/route-utils";
+
+// Mirrors backend DeleteDocumentsRequestDto (eformsign.dto.ts):
+// document_ids is @IsArray() @ArrayNotEmpty() @IsString({ each: true }).
+// accessToken is forwarded as a query param by proxyDeleteRequest, not in the
+// body. Passthrough preserves forward-compatible fields (e.g. is_permanent).
+const deleteDocumentsSchema = z
+    .object({
+        document_ids: z.array(z.string()).nonempty(),
+    })
+    .passthrough();
+
+type IntegerParamOptions = {
+    defaultValue: number;
+    min: number;
+    max?: number;
+};
+
+function parseIntegerParam(
+    searchParams: URLSearchParams,
+    name: string,
+    { defaultValue, min, max }: IntegerParamOptions
+): { value: number } | { error: string } {
+    const rawValue = searchParams.get(name);
+    if (rawValue === null) {
+        return { value: defaultValue };
+    }
+
+    if (!/^-?\d+$/.test(rawValue)) {
+        return { error: `${name} must be an integer` };
+    }
+
+    const value = Number(rawValue);
+    if (!Number.isSafeInteger(value)) {
+        return { error: `${name} must be an integer` };
+    }
+
+    if (value < min) {
+        return { error: `${name} must be greater than or equal to ${min}` };
+    }
+
+    if (max !== undefined && value > max) {
+        return { error: `${name} must be between ${min} and ${max}` };
+    }
+
+    return { value };
+}
 
 /**
  * GET /api/eformsign/documents
@@ -11,12 +59,31 @@ import { proxyDeleteRequest, proxyGetRequest } from "@/lib/api/route-utils";
  */
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
-    const limit = searchParams.get("limit") || "100";
-    const skip = searchParams.get("skip") || "0";
+    const limitResult = parseIntegerParam(searchParams, "limit", {
+        defaultValue: 100,
+        min: 1,
+        max: 100,
+    });
+    if ("error" in limitResult) {
+        return NextResponse.json({ error: limitResult.error }, { status: 400 });
+    }
+
+    const skipResult = parseIntegerParam(searchParams, "skip", {
+        defaultValue: 0,
+        min: 0,
+    });
+    if ("error" in skipResult) {
+        return NextResponse.json({ error: skipResult.error }, { status: 400 });
+    }
+
+    const backendParams = new URLSearchParams({
+        limit: String(limitResult.value),
+        skip: String(skipResult.value),
+    });
 
     return proxyGetRequest(
         request,
-        `/api/documents?limit=${limit}&skip=${skip}`,
+        `/api/documents?${backendParams.toString()}`,
         "fetch all eformsign documents"
     );
 }
@@ -26,5 +93,7 @@ export async function GET(request: NextRequest) {
  * Delete one or more eformsign documents
  */
 export async function DELETE(request: NextRequest) {
-    return proxyDeleteRequest(request, "/api/documents", "delete eformsign documents");
+    return proxyDeleteRequest(request, "/api/documents", "delete eformsign documents", {
+        bodySchema: deleteDocumentsSchema,
+    });
 }

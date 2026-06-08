@@ -12,6 +12,7 @@ import {
     FetchDocumentsDto,
     FetchDocumentByIdDto,
     CreateEformsignDocLocalDto,
+    SyncEformsignDocStatusDto,
     DispatchHeadlessRequestDto,
     DispatchHeadlessResponseDto,
     FinalizeHeadlessRequestDto,
@@ -19,6 +20,7 @@ import {
 } from "interface/dto/eformsign-doc.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { parseInteger } from "interface/parse-integer";
 
 @Controller("eformsign-docs")
 @UseGuards(JwtGuard, TenantGuard)
@@ -132,7 +134,7 @@ export class EformsignDocController {
      */
     @Get("id")
     findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
-        return this.eformsignDocService.findById(tenant.branchId ?? "", Number(id));
+        return this.eformsignDocService.findById(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
     }
 
     /**
@@ -167,7 +169,10 @@ export class EformsignDocController {
         @CurrentTenant() tenant: { branchId?: string },
         @Query("clientId") clientId: string
     ) {
-        return this.eformsignDocService.findByClientId(tenant.branchId ?? "", Number(clientId));
+        return this.eformsignDocService.findByClientId(
+            tenant.branchId ?? "",
+            parseInteger(clientId, "clientId", { min: 1 }),
+        );
     }
 
     // ============ External API Endpoints ============
@@ -206,6 +211,22 @@ export class EformsignDocController {
     @Post("fetch")
     fetchFromApi(@Body() dto: FetchDocumentByIdDto) {
         return this.eformsignDocService.fetchFromApi(dto.accessToken, dto.documentId);
+    }
+
+    /**
+     * POST /eformsign-docs/sync-status
+     * Fetch current eformsign status and update the local eformsign_doc row.
+     */
+    @Post("sync-status")
+    syncStatusFromApi(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: SyncEformsignDocStatusDto
+    ) {
+        return this.eformsignDocService.syncStatusFromApi(
+            tenant.branchId ?? "",
+            dto.accessToken,
+            dto.documentId
+        );
     }
 
     /**

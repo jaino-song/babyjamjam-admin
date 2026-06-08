@@ -3,6 +3,7 @@
     "owner": "Owner",
     "admin": "Branch Manager",
     "manager": "Manager",
+    "member": "Staff",
     "user": "User",
     "unknown": "User"
   },

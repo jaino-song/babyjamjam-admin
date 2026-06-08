@@ -1,11 +1,12 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe, UnauthorizedException } from "@nestjs/common";
+import { ExecutionContext, INestApplication, ValidationPipe, UnauthorizedException } from "@nestjs/common";
 import request from "supertest";
 import { AuthController } from "interface/controllers/auth.controller";
 import { AuthService } from "application/services/auth.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { AuthGuard } from "@nestjs/passport";
+import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 
 describe("AuthController (Integration)", () => {
     // ============================================
@@ -15,6 +16,7 @@ describe("AuthController (Integration)", () => {
     let app: INestApplication;
     let authService: jest.Mocked<AuthService>;
     let prismaService: jest.Mocked<PrismaService>;
+    let rateLimitGuard: jest.Mocked<Pick<RateLimitGuard, "canActivate" | "resetForKey">>;
 
     const mockUser = {
         id: "user-uuid-123",
@@ -94,6 +96,10 @@ describe("AuthController (Integration)", () => {
                 create: jest.fn(),
             },
         };
+        const mockRateLimitGuard = {
+            canActivate: jest.fn(async (_context: ExecutionContext) => true),
+            resetForKey: jest.fn(),
+        } satisfies jest.Mocked<Pick<RateLimitGuard, "canActivate" | "resetForKey">>;
 
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [AuthController],
@@ -106,12 +112,18 @@ describe("AuthController (Integration)", () => {
                     provide: PrismaService,
                     useValue: mockPrismaService,
                 },
+                {
+                    provide: RateLimitGuard,
+                    useValue: mockRateLimitGuard,
+                },
             ],
         })
             .overrideGuard(JwtGuard)
             .useValue(mockJwtGuard)
             .overrideGuard(AuthGuard("kakao"))
             .useValue(mockKakaoGuard)
+            .overrideGuard(RateLimitGuard)
+            .useValue(mockRateLimitGuard)
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -120,6 +132,7 @@ describe("AuthController (Integration)", () => {
 
         authService = moduleFixture.get(AuthService);
         prismaService = moduleFixture.get(PrismaService);
+        rateLimitGuard = mockRateLimitGuard;
     });
 
     afterEach(async () => {
@@ -261,6 +274,28 @@ describe("AuthController (Integration)", () => {
     });
 
     describe("POST /auth/login", () => {
+        it("should reset the injected rate limiter on successful login", async () => {
+            const validationResult = {
+                user: mockUser.id,
+                ...mockTokens,
+            };
+            authService.validateEmailPassword.mockResolvedValue(validationResult);
+
+            const response = await request(app.getHttpServer())
+                .post("/auth/login")
+                .send({
+                    email: "test@example.com",
+                    password: "Password1!",
+                });
+
+            expect(response.status).toBe(201);
+            expect(response.body).toEqual({
+                success: true,
+                ...validationResult,
+            });
+            expect(rateLimitGuard.resetForKey).toHaveBeenCalledWith(expect.any(String), "test@example.com");
+        });
+
         it("should return pending onboarding payload for incomplete existing users", async () => {
             authService.validateEmailPassword.mockResolvedValue({
                 onboardingRequired: true,
@@ -306,7 +341,11 @@ describe("AuthController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(response.body).toEqual(mockUser);
+                expect(response.body).toEqual({
+                    ...mockUser,
+                    branchName: null,
+                    branchSlug: null,
+                });
                 expect(prismaService.user.findUnique).toHaveBeenCalledWith({
                     where: { id: mockUser.id },
                     select: {
@@ -333,7 +372,10 @@ describe("AuthController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(response.body).toEqual({ branchName: null });
+                expect(response.body).toEqual({
+                    branchName: null,
+                    branchSlug: null,
+                });
             });
         });
 

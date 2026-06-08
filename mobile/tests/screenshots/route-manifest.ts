@@ -21,7 +21,7 @@ export const mobileScreenshotRoutes: ScreenshotRoute[] = [
   { slug: "clients", path: "/clients", auth: "authenticated" },
   { slug: "clients-new", path: "/clients/new", auth: "authenticated" },
   { slug: "contracts", path: "/contracts", auth: "authenticated" },
-  { slug: "contracts-creation", path: "/contracts/creation", auth: "authenticated" },
+  { slug: "contracts-new", path: "/contracts/new", auth: "authenticated" },
   { slug: "dashboard", path: "/dashboard", auth: "authenticated" },
   { slug: "employees", path: "/employees", auth: "authenticated" },
   { slug: "employees-new", path: "/employees/new", auth: "authenticated" },

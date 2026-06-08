@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>새 제공인력 등록 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+.wizard-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--v3-dim-white);
+}
+
+.wizard-header {
+  background: white;
+  padding: 12px 16px 14px;
+  border-bottom: 1px solid var(--v3-border);
+  flex-shrink: 0;
+}
+.wizard-progress-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px;
+}
+.wizard-progress-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--v3-bg-subtle);
+  overflow: hidden;
+}
+.wizard-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, hsl(267, 50%, 46%), hsl(214, 100%, 50%));
+  border-radius: 999px;
+  transition: width 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.wizard-step-count {
+  font-size: 0.6rem; font-weight: 800;
+  color: var(--v3-text-muted);
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+.wizard-step-count .current { color: var(--v3-primary); }
+.wizard-step-title {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--v3-dark);
+  margin-bottom: 4px;
+}
+.wizard-step-desc {
+  font-size: 0.72rem;
+  color: var(--v3-text-muted);
+  line-height: 1.4;
+}
+
+.summary-pills {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 10px 16px 12px;
+  background: white;
+  border-bottom: 1px solid var(--v3-border);
+  flex-shrink: 0;
+}
+.summary-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.68rem; font-weight: 700;
+  background: var(--v3-green-light); color: var(--v3-green);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.summary-pill::before {
+  content: '✓';
+  font-size: 0.62rem; font-weight: 900;
+}
+
+.form-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px 100px;
+}
+.form-card {
+  background: white;
+  border-radius: 16px;
+  padding: 14px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.form-card-title {
+  font-size: 0.7rem; font-weight: 700;
+  color: var(--v3-text-muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin: 0 0 12px;
+}
+
+.form-row { margin-bottom: 14px; }
+.form-row:last-child { margin-bottom: 0; }
+.form-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--v3-text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.form-label .req { color: var(--v3-burgundy); margin-left: 2px; }
+
+.form-input {
+  width: 100%;
+  padding: 13px 14px;
+  border: 1.5px solid var(--v3-border);
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: var(--v3-dark);
+  background: white;
+  outline: none;
+  box-sizing: border-box;
+}
+.form-input:focus { border-color: var(--v3-primary); }
+.form-input::placeholder { color: var(--v3-text-muted); opacity: 0.6; }
+
+.form-helper {
+  font-size: 0.66rem;
+  color: var(--v3-text-muted);
+  margin-top: 5px;
+}
+.form-helper.ok { color: var(--v3-green); font-weight: 600; }
+.form-helper.err { color: var(--v3-burgundy); font-weight: 600; }
+.form-helper.pending { color: var(--v3-primary); }
+
+/* Grade chips (3-chip single-select) */
+.grade-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.grade-chip {
+  padding: 13px 6px;
+  border: 1.5px solid var(--v3-border);
+  border-radius: 12px;
+  background: white;
+  text-align: center;
+  cursor: pointer;
+}
+.grade-chip .grade-name {
+  font-size: 0.85rem; font-weight: 700;
+  color: var(--v3-dark);
+  margin-bottom: 2px;
+}
+.grade-chip .grade-sub {
+  font-size: 0.58rem; color: var(--v3-text-muted);
+}
+.grade-chip.selected {
+  border-color: var(--v3-primary);
+  background: var(--v3-primary-light);
+}
+.grade-chip.selected .grade-name { color: var(--v3-primary); }
+.grade-chip.selected .grade-sub { color: var(--v3-primary); opacity: 0.75; }
+
+/* Area chips (multi-select 4-col grid) */
+.area-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; }
+.area-chip {
+  padding: 10px 4px;
+  border: 1.5px solid var(--v3-border);
+  border-radius: 10px;
+  background: white;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--v3-text);
+  text-align: center;
+  cursor: pointer;
+}
+.area-chip.selected {
+  border-color: var(--v3-primary);
+  background: var(--v3-primary);
+  color: white;
+}
+
+/* Open status binary toggle */
+.open-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.open-chip {
+  padding: 18px 12px;
+  border: 1.5px solid var(--v3-border);
+  border-radius: 14px;
+  background: white;
+  text-align: center;
+  cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.open-chip .open-icon {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--v3-bg-subtle);
+  color: var(--v3-text-muted);
+}
+.open-chip .open-label {
+  font-size: 0.92rem; font-weight: 700;
+  color: var(--v3-dark);
+}
+.open-chip.selected.ok {
+  border-color: var(--v3-green);
+  background: var(--v3-green-light);
+}
+.open-chip.selected.ok .open-icon { background: var(--v3-green); color: white; }
+.open-chip.selected.ok .open-label { color: var(--v3-green); }
+.open-chip.selected.no {
+  border-color: var(--v3-burgundy);
+  background: var(--v3-burgundy-light);
+}
+.open-chip.selected.no .open-icon { background: var(--v3-burgundy); color: white; }
+.open-chip.selected.no .open-label { color: var(--v3-burgundy); }
+
+.wizard-step-view { display: none; }
+.wizard-step-view.active { display: block; }
+
+.wizard-actions {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: white;
+  border-top: 1px solid var(--v3-border);
+  padding: 12px 14px 18px;
+  display: flex; gap: 8px;
+  z-index: 100;
+}
+.wizard-btn {
+  flex: 1;
+  padding: 14px;
+  border-radius: 14px;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: 0;
+}
+.wizard-btn.secondary {
+  background: var(--v3-bg-subtle);
+  color: var(--v3-text);
+}
+.wizard-btn.primary {
+  background: var(--v3-primary);
+  color: white;
+  flex: 2;
+  box-shadow: 0 4px 14px rgba(20, 50, 100, 0.18);
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <button class="navbar-icon-btn" style="background: transparent;">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div style="font-size: 1rem; font-weight: 700; color: var(--v3-dark);">새 제공인력 등록</div>
+          <button class="navbar-icon-btn" style="background: transparent;">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <div class="wizard-content">
+          <div class="wizard-header">
+            <div class="wizard-progress-row">
+              <div class="wizard-progress-track">
+                <div class="wizard-progress-fill" id="progFill" style="width: 50%;"></div>
+              </div>
+              <div class="wizard-step-count"><span class="current" id="curStep">1</span> / 2 단계</div>
+            </div>
+            <div class="wizard-step-title" id="stepTitle">기본 정보</div>
+            <div class="wizard-step-desc" id="stepDesc">제공인력님의 기본 정보를 입력해주세요.</div>
+          </div>
+
+          <div class="summary-pills" id="summaryPills" style="display: none;"></div>
+
+          <!-- ============ STEP 1: 기본 정보 ============ -->
+          <div class="form-scroll wizard-step-view active" data-step="1">
+            <div class="form-card">
+              <div class="form-row">
+                <label class="form-label">이름 <span class="req">*</span></label>
+                <input class="form-input" id="f-name" type="text" placeholder="홍길동" value="김민지" />
+              </div>
+              <div class="form-row">
+                <label class="form-label">연락처 <span class="req">*</span></label>
+                <input class="form-input" id="f-phone" type="tel" inputmode="numeric" maxlength="13" placeholder="010-1234-5678" value="010-3456-7890" />
+                <div class="form-helper ok">✓ 사용 가능한 번호입니다.</div>
+              </div>
+            </div>
+
+            <div class="form-card">
+              <div class="form-card-title">등급 <span style="color: var(--v3-burgundy); margin-left: 2px;">*</span></div>
+              <div class="grade-row">
+                <div class="grade-chip" data-grade="프리미엄">
+                  <div class="grade-name">프리미엄</div>
+                  <div class="grade-sub">★★★</div>
+                </div>
+                <div class="grade-chip" data-grade="베스트">
+                  <div class="grade-name">베스트</div>
+                  <div class="grade-sub">★★</div>
+                </div>
+                <div class="grade-chip selected" data-grade="스탠다드">
+                  <div class="grade-name">스탠다드</div>
+                  <div class="grade-sub">★</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============ STEP 2: 근무 정보 ============ -->
+          <div class="form-scroll wizard-step-view" data-step="2">
+            <div class="form-card">
+              <div class="form-card-title">근무 지역 <span style="color: var(--v3-burgundy); margin-left: 2px;">*</span></div>
+              <div class="area-row">
+                <div class="area-chip selected" data-area="인천 부평구">부평구</div>
+                <div class="area-chip selected" data-area="인천 계양구">계양구</div>
+                <div class="area-chip" data-area="인천 연수구">연수구</div>
+                <div class="area-chip" data-area="인천 남동구">남동구</div>
+                <div class="area-chip" data-area="인천 미추홀구">미추홀구</div>
+                <div class="area-chip" data-area="인천 서구">서구</div>
+                <div class="area-chip" data-area="인천 중구">중구</div>
+                <div class="area-chip" data-area="인천 동구">동구</div>
+              </div>
+              <div class="form-helper" id="areaCount">2개 지역 선택됨 · 복수 선택 가능</div>
+            </div>
+
+            <div class="form-card">
+              <div class="form-card-title">근무 가능 여부</div>
+              <div class="open-row">
+                <div class="open-chip selected ok" data-open="true">
+                  <div class="open-icon">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.8" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                  <div class="open-label">근무 가능</div>
+                </div>
+                <div class="open-chip" data-open="false">
+                  <div class="open-icon">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.8" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </div>
+                  <div class="open-label">근무 불가</div>
+                </div>
+              </div>
+              <div class="form-helper">새로운 고객 매칭에 노출될지 여부입니다. 언제든 변경할 수 있습니다.</div>
+            </div>
+          </div>
+
+          <div class="wizard-actions">
+            <button class="wizard-btn secondary" id="prevBtn">이전</button>
+            <button class="wizard-btn primary" id="nextBtn">다음 →</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">새 제공인력 등록 · /employees/new (2-step wizard)</div>
+<script>
+const STEPS = [
+  null,
+  { title: '기본 정보', desc: '제공인력님의 기본 정보를 입력해주세요.' },
+  { title: '근무 정보', desc: '근무 지역과 근무 가능 여부를 선택해주세요.' },
+];
+const TOTAL = 2;
+let cur = 1;
+
+function clearPills(){
+  const pills = document.getElementById('summaryPills');
+  while(pills.firstChild) pills.removeChild(pills.firstChild);
+}
+
+function renderSummaryPills(){
+  const pills = document.getElementById('summaryPills');
+  clearPills();
+  if(cur === 1){
+    pills.style.display = 'none';
+    return;
+  }
+  const chips = [];
+  const name = document.getElementById('f-name').value.trim();
+  if(name) chips.push(name);
+  const grade = document.querySelector('.grade-chip.selected');
+  if(grade) chips.push(grade.dataset.grade);
+  if(chips.length === 0){
+    pills.style.display = 'none';
+    return;
+  }
+  pills.style.display = 'flex';
+  chips.forEach(text => {
+    const pill = document.createElement('span');
+    pill.className = 'summary-pill';
+    pill.appendChild(document.createTextNode(text));
+    pills.appendChild(pill);
+  });
+}
+
+function render(){
+  document.querySelectorAll('.wizard-step-view').forEach(v => {
+    v.classList.toggle('active', parseInt(v.dataset.step,10) === cur);
+  });
+  document.getElementById('progFill').style.width = (cur / TOTAL * 100) + '%';
+  document.getElementById('curStep').textContent = cur;
+  document.getElementById('stepTitle').textContent = STEPS[cur].title;
+  document.getElementById('stepDesc').textContent = STEPS[cur].desc;
+  const prev = document.getElementById('prevBtn');
+  const next = document.getElementById('nextBtn');
+  prev.style.opacity = cur === 1 ? '0.4' : '1';
+  prev.style.pointerEvents = cur === 1 ? 'none' : 'auto';
+  next.textContent = cur === TOTAL ? '✓ 등록' : '다음 →';
+  renderSummaryPills();
+  const scroll = document.querySelector(`.wizard-step-view[data-step="${cur}"]`);
+  if(scroll) scroll.scrollTop = 0;
+}
+
+document.getElementById('nextBtn').addEventListener('click', () => {
+  if(cur < TOTAL) { cur++; render(); }
+});
+document.getElementById('prevBtn').addEventListener('click', () => {
+  if(cur > 1) { cur--; render(); }
+});
+
+document.querySelectorAll('.grade-chip').forEach(c => c.addEventListener('click', () => {
+  document.querySelectorAll('.grade-chip').forEach(x => x.classList.remove('selected'));
+  c.classList.add('selected');
+}));
+
+function updateAreaCount(){
+  const n = document.querySelectorAll('.area-chip.selected').length;
+  document.getElementById('areaCount').textContent = n + '개 지역 선택됨 · 복수 선택 가능';
+}
+document.querySelectorAll('.area-chip').forEach(c => c.addEventListener('click', () => {
+  c.classList.toggle('selected');
+  updateAreaCount();
+}));
+
+document.querySelectorAll('.open-chip').forEach(c => c.addEventListener('click', () => {
+  document.querySelectorAll('.open-chip').forEach(x => {
+    x.classList.remove('selected');
+    x.classList.remove('ok');
+    x.classList.remove('no');
+  });
+  const ok = c.dataset.open === 'true';
+  c.classList.add('selected');
+  c.classList.add(ok ? 'ok' : 'no');
+}));
+
+render();
+</script>
+</body>
+</html>

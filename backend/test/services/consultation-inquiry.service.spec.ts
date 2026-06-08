@@ -32,6 +32,7 @@ describe("ConsultationInquiryService", () => {
         referralSource: "검색",
         privacyAcceptedAt: new Date("2026-04-21T00:00:00.000Z"),
         selectedServices: null,
+        additionalNotes: null,
         source: "website",
         status: "new",
         readAt: null,
@@ -83,6 +84,105 @@ describe("ConsultationInquiryService", () => {
             status: "new",
             source: "website",
             selectedServices: null,
+            additionalNotes: null,
+        }));
+    });
+
+    it("should pass additional notes when provided", async () => {
+        const inquiry = { ...createInquiry(), additionalNotes: "밤 시간 상담을 원합니다." };
+        repository.findActiveBranchBySlug.mockResolvedValue({
+            id: "branch-1",
+            name: "인천점",
+            slug: "incheon",
+        });
+        repository.create.mockResolvedValue(inquiry);
+        repository.findNotificationRecipientUserIds.mockResolvedValue([]);
+
+        await service.createPublicInquiry({
+            branchSlug: "incheon-yeonsu",
+            motherName: "김지은",
+            phone: "010-1234-5678",
+            address: "인천 연수구",
+            dueDate: "2026-05-01",
+            birthExperience: "초산",
+            referralSource: "검색",
+            privacyAccepted: true,
+            additionalNotes: "  밤 시간 상담을 원합니다.  ",
+        });
+
+        expect(repository.create).toHaveBeenCalledWith(expect.objectContaining({
+            additionalNotes: "밤 시간 상담을 원합니다.",
+        }));
+    });
+
+    it("should accept frontend booking payload contract", async () => {
+        const inquiry = {
+            ...createInquiry(),
+            dueDate: new Date("2026-06-01T00:00:00.000Z"),
+            additionalNotes: "모바일 parity 테스트",
+        };
+        repository.findActiveBranchBySlug.mockResolvedValue({
+            id: "branch-1",
+            name: "인천점",
+            slug: "incheon",
+        });
+        repository.create.mockResolvedValue(inquiry);
+        repository.findNotificationRecipientUserIds.mockResolvedValue([]);
+
+        await service.createPublicInquiry({
+            branchSlug: "incheon-yeonsu",
+            motherName: "테스트산모",
+            phone: "010-1234-5678",
+            address: "중구 테스트동",
+            dueDate: "2026-06-01",
+            birthExperience: "초산",
+            voucherType: null,
+            preferredCaregiverName: "",
+            referralSource: "네이버 검색",
+            additionalNotes: "모바일 parity 테스트",
+            privacyAccepted: true,
+            selectedServices: {
+                plan: null,
+                addons: [],
+            },
+        });
+
+        expect(repository.create).toHaveBeenCalledWith(expect.objectContaining({
+            dueDate: new Date("2026-06-01T00:00:00.000Z"),
+            voucherType: null,
+            preferredCaregiverName: null,
+            additionalNotes: "모바일 parity 테스트",
+            selectedServices: {
+                plan: null,
+                addons: [],
+            },
+        }));
+    });
+
+    it("should normalize unknown voucher sentinel to null", async () => {
+        const inquiry = createInquiry();
+        repository.findActiveBranchBySlug.mockResolvedValue({
+            id: "branch-1",
+            name: "인천점",
+            slug: "incheon",
+        });
+        repository.create.mockResolvedValue(inquiry);
+        repository.findNotificationRecipientUserIds.mockResolvedValue([]);
+
+        await service.createPublicInquiry({
+            branchSlug: "incheon-yeonsu",
+            motherName: "김지은",
+            phone: "010-1234-5678",
+            address: "인천 연수구",
+            dueDate: "2026-05-01",
+            birthExperience: "초산",
+            voucherType: "__unknown__",
+            referralSource: "검색",
+            privacyAccepted: true,
+        });
+
+        expect(repository.create).toHaveBeenCalledWith(expect.objectContaining({
+            voucherType: null,
         }));
     });
 
@@ -204,6 +304,26 @@ describe("ConsultationInquiryService", () => {
             referralSource: "검색",
             privacyAccepted: true,
         })).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it("should reject invalid calendar due date", async () => {
+        repository.findActiveBranchBySlug.mockResolvedValue({
+            id: "branch-1",
+            name: "인천점",
+            slug: "incheon",
+        });
+
+        await expect(service.createPublicInquiry({
+            branchSlug: "incheon-yeonsu",
+            motherName: "김지은",
+            phone: "010-1234-5678",
+            address: "인천 연수구",
+            dueDate: "2026-02-31",
+            birthExperience: "초산",
+            referralSource: "검색",
+            privacyAccepted: true,
+        })).rejects.toBeInstanceOf(BadRequestException);
+        expect(repository.create).not.toHaveBeenCalled();
     });
 
     it("should list branch-scoped inquiries with defaults", async () => {

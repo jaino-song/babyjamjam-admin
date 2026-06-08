@@ -28,17 +28,29 @@ export function SelectedServicesCard({
   return (
     <InfoCard title="서비스 정보" className={className}>
       {selectedServices?.plan && (
-        <InfoRow
-          label="산후도우미서비스 플랜"
-          value={`${selectedServices.plan.name} · ${selectedServices.plan.priceLabel}`}
-        />
+        <>
+          <InfoRow
+            label="서비스 플랜"
+            value={`${selectedServices.plan.name} · ${selectedServices.plan.priceLabel}`}
+          />
+          <InfoRow
+            label="서비스 기간"
+            value={
+              typeof selectedServices.plan.durationDays === "number"
+                ? `${selectedServices.plan.durationDays}일`
+                : "-"
+            }
+          />
+        </>
       )}
       {hasAddons && (
         <InfoRow
           label="추가 서비스"
           value={addons.map((addon) => (
             <span key={addon.id} className="block">
-              {`${addon.name} · ${addon.priceLabel} · 수량 ${addon.quantity}`}
+              {addon.quantity > 1
+                ? `${addon.name} × ${addon.quantity} · ${addon.priceLabel}`
+                : `${addon.name} · ${addon.priceLabel}`}
             </span>
           ))}
         />

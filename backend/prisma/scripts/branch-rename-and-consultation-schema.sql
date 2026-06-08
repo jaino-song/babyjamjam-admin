@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS "consultation_inquiry" (
   "referral_source" TEXT NOT NULL,
   "privacy_accepted_at" TIMESTAMPTZ(6) NOT NULL,
   "selected_services" JSONB,
+  "additional_notes" TEXT,
   "source" TEXT NOT NULL DEFAULT 'website',
   "status" TEXT NOT NULL DEFAULT 'new',
   "read_at" TIMESTAMPTZ(6),

@@ -1,24 +1,8 @@
 import { Injectable } from "@nestjs/common";
-import { IDocumentRepository, DocumentFilter } from "domain/repositories/document.repository.interface";
+import { IDocumentRepository } from "domain/repositories/document.repository.interface";
 import { DocumentEntity } from "domain/entities/document.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { DocumentMapper } from "infrastructure/database/mapper/document.mapper";
-
-type PrismaDocumentRow = {
-    id: string;
-    name: string;
-    description: string | null;
-    category: string;
-    tags: string[];
-    mime_type: string;
-    file_size: number;
-    storage_path: string;
-    storage_url: string | null;
-    org_id: string | null;
-    uploaded_by: string;
-    created_at: Date;
-    updated_at: Date;
-};
 
 @Injectable()
 export class DocumentRepository implements IDocumentRepository {
@@ -50,6 +34,21 @@ export class DocumentRepository implements IDocumentRepository {
             where: { branchId: branchid },
         });
         return docs.map(DocumentMapper.toDomain);
+    }
+
+    async existsByStoragePathOutsideBranch(branchid: string, storagePath: string): Promise<boolean> {
+        const existingDocument = await this.prismaService.document.findFirst({
+            where: {
+                storagePath,
+                OR: [
+                    { branchId: null },
+                    { branchId: { not: branchid } },
+                ],
+            },
+            select: { id: true },
+        });
+
+        return existingDocument !== null;
     }
 
     async create(branchid: string, doc: DocumentEntity): Promise<DocumentEntity> {

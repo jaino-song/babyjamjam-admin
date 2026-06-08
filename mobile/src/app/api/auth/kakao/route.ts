@@ -1,8 +1,7 @@
-import { redirect } from "next/navigation";
+import { NextResponse } from "next/server";
 
-const isProduction = process.env.NODE_ENV === "production";
-const API_URL = isProduction ? process.env.NEXT_PUBLIC_API_URL : process.env.DEVELOPMENT_API_URL;
+import { BACKEND_BASE_URL } from "@/lib/api/server";
 
 export async function GET() {
-    redirect(`${API_URL}/auth/kakao`);
+    return NextResponse.redirect(new URL("/auth/kakao", BACKEND_BASE_URL));
 }

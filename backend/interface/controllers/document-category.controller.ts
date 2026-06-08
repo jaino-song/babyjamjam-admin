@@ -1,6 +1,9 @@
-import { Controller, Get, Post, Delete, Body, Param } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { IsString } from "class-validator";
 import { DocumentCategoryService, DocumentCategory } from "application/services/document-category.service";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 
 class CreateDocumentCategoryDto {
     @IsString()
@@ -14,17 +17,23 @@ class CreateDocumentCategoryDto {
 }
 
 @Controller("document-categories")
+@UseGuards(JwtGuard, TenantGuard)
 export class DocumentCategoryController {
     constructor(private readonly documentCategoryService: DocumentCategoryService) {}
 
     @Get()
-    async findAll(): Promise<DocumentCategory[]> {
-        return this.documentCategoryService.findAll();
+    async findAll(@CurrentTenant() tenant: { branchId?: string }): Promise<DocumentCategory[]> {
+        return this.documentCategoryService.findAll(tenant.branchId ?? "");
     }
 
     @Post()
-    async create(@Body() dto: CreateDocumentCategoryDto): Promise<DocumentCategory> {
+    @UseGuards(OwnerOrAdminGuard)
+    async create(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: CreateDocumentCategoryDto,
+    ): Promise<DocumentCategory> {
         return this.documentCategoryService.create({
+            branchId: tenant.branchId ?? "",
             value: dto.value,
             label: dto.label,
             color: dto.color,
@@ -32,7 +41,11 @@ export class DocumentCategoryController {
     }
 
     @Delete(":id")
-    async delete(@Param("id") id: string): Promise<void> {
-        return this.documentCategoryService.delete(id);
+    @UseGuards(OwnerOrAdminGuard)
+    async delete(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("id") id: string,
+    ): Promise<void> {
+        return this.documentCategoryService.delete(tenant.branchId ?? "", id);
     }
 }

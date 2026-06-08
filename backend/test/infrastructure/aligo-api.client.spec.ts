@@ -3,8 +3,10 @@ import { AligoApiClient } from "infrastructure/api/aligo-api.client";
 import { AligoCreateTemplateParams, AligoSendAlimtalkParams } from "domain/ports/aligo-api.port";
 
 describe("AligoApiClient", () => {
-    const createMockConfigService = (overrides = {}): jest.Mocked<ConfigService> => {
-        const config: Record<string, string> = {
+    const createMockConfigService = (
+        overrides: Record<string, string | undefined> = {}
+    ): jest.Mocked<ConfigService> => {
+        const config: Record<string, string | undefined> = {
             ALIGO_API_URL: "https://kakaoapi.aligo.in",
             ALIGO_SMS_API_URL: "https://apis.aligo.in",
             ALIGO_API_KEY: "test_api_key",
@@ -40,21 +42,24 @@ describe("AligoApiClient", () => {
 
     describe("constructor", () => {
         it("should load all required config values", () => {
-            expect(configService.getOrThrow).toHaveBeenCalledWith("ALIGO_API_URL");
-            expect(configService.getOrThrow).toHaveBeenCalledWith("ALIGO_API_KEY");
-            expect(configService.getOrThrow).toHaveBeenCalledWith("ALIGO_USER_ID");
-            expect(configService.getOrThrow).toHaveBeenCalledWith("ALIGO_SENDER_KEY");
-            expect(configService.getOrThrow).toHaveBeenCalledWith("ALIGO_SENDER_PHONE");
+            expect(configService.get).toHaveBeenCalledWith("ALIGO_API_URL");
+            expect(configService.get).toHaveBeenCalledWith("ALIGO_SMS_API_URL");
+            expect(configService.get).toHaveBeenCalledWith("ALIGO_API_KEY");
+            expect(configService.get).toHaveBeenCalledWith("ALIGO_USER_ID");
+            expect(configService.get).toHaveBeenCalledWith("ALIGO_SENDER_KEY");
+            expect(configService.get).toHaveBeenCalledWith("ALIGO_SENDER_PHONE");
         });
 
-        it("should throw if required config is missing", () => {
-            const badConfig = createMockConfigService();
-            badConfig.getOrThrow.mockImplementation((key: string) => {
-                if (key === "ALIGO_API_KEY") throw new Error("Config not found");
-                return "value";
-            });
+        it("should disable integration and throw on use if required config is missing", async () => {
+            const badConfig = createMockConfigService({ ALIGO_API_KEY: undefined });
+            const disabledClient = new AligoApiClient(badConfig);
 
-            expect(() => new AligoApiClient(badConfig)).toThrow("Config not found");
+            await expect(
+                disabledClient.sendSms({
+                    receiver: "01011112222",
+                    message: "테스트",
+                }),
+            ).rejects.toThrow("Aligo integration is not configured.");
         });
     });
 
@@ -219,10 +224,17 @@ describe("AligoApiClient", () => {
         it("should send sms to the official send endpoint", async () => {
             mockFetch.mockResolvedValueOnce({
                 ok: true,
-                json: () => Promise.resolve({ result_code: 1, message: "", msg_type: "LMS" }),
+                json: () => Promise.resolve({
+                    result_code: "1",
+                    message: "success",
+                    msg_id: "123",
+                    success_cnt: "1",
+                    error_cnt: "0",
+                    msg_type: "LMS",
+                }),
             } as Response);
 
-            await client.sendSms({
+            const result = await client.sendSms({
                 receiver: "010-1111-2222",
                 message: "장문 테스트 메시지",
                 title: "안내",
@@ -254,6 +266,14 @@ describe("AligoApiClient", () => {
             expect(body.get("rdate")).toBe("20260309");
             expect(body.get("rtime")).toBe("2019");
             expect(body.get("testmode_yn")).toBe("Y");
+            expect(result).toEqual({
+                result_code: 1,
+                message: "success",
+                msg_id: 123,
+                success_cnt: 1,
+                error_cnt: 0,
+                msg_type: "LMS",
+            });
         });
 
         it("should throw when sms request returns a non-ok response", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Flag, Save } from "lucide-react";
 import { ContentPaper } from "@/components/app/root/content-paper";
@@ -55,8 +55,7 @@ function RibbonConfigSkeleton() {
 
 export default function WebsiteAdminPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("ribbon");
-  const [formDraft, setFormDraft] = useState<RibbonConfig | null>(null);
-  const [isDirty, setIsDirty] = useState(false);
+  const [draft, setDraft] = useState<Partial<RibbonConfig>>({});
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -64,14 +63,19 @@ export default function WebsiteAdminPage() {
     queryKey: ["settings", "ribbon-config"],
     queryFn: settingsApi.getRibbonConfig,
   });
-  const form = formDraft ?? ribbonQuery.data ?? DEFAULT_CONFIG;
+
+  const baseConfig = ribbonQuery.data ?? DEFAULT_CONFIG;
+  const isDirty = Object.keys(draft).length > 0;
+  const form = useMemo<RibbonConfig>(
+    () => ({ ...baseConfig, ...draft }),
+    [baseConfig, draft],
+  );
 
   const updateMutation = useMutation({
     mutationFn: settingsApi.updateRibbonConfig,
     onSuccess: (data) => {
       queryClient.setQueryData(["settings", "ribbon-config"], data);
-      setFormDraft(data);
-      setIsDirty(false);
+      setDraft({});
       toast({ title: "저장 완료", description: "리본 배너 설정이 저장되었습니다." });
     },
     onError: () => {
@@ -80,8 +84,7 @@ export default function WebsiteAdminPage() {
   });
 
   const updateField = <K extends keyof RibbonConfig>(key: K, value: RibbonConfig[K]) => {
-    setFormDraft((prev) => ({ ...(prev ?? ribbonQuery.data ?? DEFAULT_CONFIG), [key]: value }));
-    setIsDirty(true);
+    setDraft((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleSave = () => {

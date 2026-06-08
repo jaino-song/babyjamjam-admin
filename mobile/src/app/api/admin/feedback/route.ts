@@ -7,6 +7,9 @@ const API_BASE_URL = BACKEND_BASE_URL;
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const token = cookieStore.get('auth_token')?.value;
+  if (!token) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   
   const { searchParams } = new URL(request.url);
   const page = searchParams.get('page') || '1';

@@ -63,7 +63,7 @@ export class LiveEvalRunner {
 
     constructor(configService?: ConfigService) {
         this.apiKey = configService?.get<string>('GEMINI_API_KEY') || process.env['GEMINI_API_KEY'] || '';
-        this.model = configService?.get<string>('GEMINI_CHAT_MODEL') || process.env['GEMINI_CHAT_MODEL'] || 'gemini-2.0-flash-lite';
+        this.model = configService?.get<string>('GEMINI_CHAT_MODEL') || process.env['GEMINI_CHAT_MODEL'] || 'gemini-2.5-flash-lite';
     }
 
     /**

@@ -1,9 +1,11 @@
 "use server"
 
 import { cookies } from "next/headers";
-import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
+
+import { serverAPIClient } from "@/lib/api/server";
+import { getServerRuntimeConfig } from "@/lib/env";
 
 interface TokenPayload {
     sub: string;
@@ -28,7 +30,7 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
         const { data } = await serverAPIClient.post("/auth/token", { code });
 
         const cookieStore = await cookies();
-        const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
+        const isSecureCookie = getServerRuntimeConfig().isSecureCookieEnv;
 
         let role = "user";
         try {

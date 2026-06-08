@@ -1,31 +1,38 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+// Mirrors backend UpdateAlimtalkProviderDto: provider is @IsString()
+// @IsNotEmpty() @IsIn(ALIMTALK_PROVIDERS) required. The provider enum mirrors
+// backend ALIMTALK_PROVIDERS = ["channeltalk", "aligo", "none"]. Passthrough
+// preserves any forward-compatible fields.
+const updateAlimtalkProviderSchema = z
+    .object({
+        provider: z.enum(["channeltalk", "aligo", "none"]),
+    })
+    .passthrough();
 
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const response = await serverAPIClient.get("/settings/alimtalk-provider", {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error fetching alimtalk provider:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch alimtalk provider" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch alimtalk provider");
     }
 }
 
@@ -33,19 +40,19 @@ export async function PUT(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
-        const body = await request.json();
-        const response = await serverAPIClient.put("/settings/alimtalk-provider", body, {
+        const { data, response: invalid } = await parseBody(updateAlimtalkProviderSchema, request);
+        if (invalid) {
+            return invalid;
+        }
+
+        const response = await serverAPIClient.put("/settings/alimtalk-provider", data, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error updating alimtalk provider:", error);
-        return NextResponse.json(
-            { error: "Failed to update alimtalk provider" },
-            { status: 500 }
-        );
+        return errorResponse(error, "update alimtalk provider");
     }
 }

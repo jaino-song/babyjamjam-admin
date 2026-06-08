@@ -1,5 +1,6 @@
 import {
     IsBoolean,
+    IsInt,
     IsIn,
     IsNotEmpty,
     IsOptional,
@@ -31,6 +32,10 @@ export class SendSmsMessageDto {
     @IsOptional()
     @IsString()
     recipientName?: string;
+
+    @IsOptional()
+    @IsInt()
+    clientId?: number;
 
     @IsOptional()
     @IsIn(["AUTO", "SMS", "LMS"])

@@ -1,782 +1,625 @@
 "use client";
 
-import { useState, useMemo, useEffect, useLayoutEffect, useRef } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import {
-    Users,
-    Plus,
-    Phone,
-    MessageSquare,
-    FileText,
-    ClipboardList,
-    Clock,
-    UserCheck,
-    AlertTriangle,
-    MoreVertical,
-} from "lucide-react";
-import { useDeleteClient, useClient } from "@/hooks/useClients";
-import { toast } from "@/hooks/use-toast";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { User } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+
+import { clientQueryKeys, fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
+import { useEmployees } from "@/hooks/useEmployees";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
-import { Client, SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
-import {
-    ClientActionButtons,
-    type ClientActionButtonItem,
-} from "@/components/app/clients/ClientActionButtons";
-import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
-import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
+import { fetchAllAlimtalkLogs } from "@/lib/alimtalk/logs";
+import { Client } from "@/lib/client/types";
+import { getStatusCategory } from "@/lib/eformsign/status-codes";
 import { useLocale } from "@/providers/LocaleProvider";
+import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { t } from "@/lib/i18n/translations";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
-import {
-    StatsBar,
-    SplitLayout,
-    ListPanel,
-    DetailPanel,
-    InfoCard,
-    InfoRow,
-    StatusBadge,
-    AnimatedSlotList,
-    HeaderActionButton,
-    EmptyState,
-    ListEmptyState,
-    DetailTabs,
-} from "@/components/app/v3";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import type { StatusType } from "@/components/app/v3";
-import { useFormStore } from "@/stores/form-store";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { todayIsoDate } from "@/lib/contracts/date-input";
+import { parsePositiveIntQueryParam } from "@/lib/query-params";
+import { toast } from "@/hooks/use-toast";
+import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { useFormStore } from "@/stores/form-store";
+import {
+  Badge,
+  ListCard,
+  ListCountSkeleton,
+  ListItemRow,
+  ListLoadMoreButton,
+  ListLoadMoreSentinel,
+  ListRowsSkeleton,
+} from "@/components/app/mobile-redesign/primitives";
+import {
+  MobileDetailSheet,
+  MobileSearchBar,
+} from "@/components/app/mobile-redesign/detail-sheet";
+import { ClientDetailContent, GROUPS, shouldShowMissingContractBadge, type ClientGroup, type ClientNotificationLogRecord, type DetailTabId } from "@/components/app/clients/client-detail";
+import "@/components/app/mobile-redesign/redesign.css";
 
-const FILTER_CHIPS = [
-    { label: "전체", value: "all" },
-    { label: "진행중", value: "active" },
-    { label: "대기", value: "pending" },
-    { label: "완료", value: "completed" },
-    { label: "만료", value: "expired" },
-];
+const CLIENTS_ROUTE_BODY_CLASS = "mobile-clients-route";
+const ALL_FILTER = "전체";
 
-const DETAIL_SECTION_ORDER = ["basic", "service"] as const;
-type DetailSectionKey = (typeof DETAIL_SECTION_ORDER)[number];
+function defaultClientMeta(c: Client) {
+  const type = c.type ?? "유형 미정";
+  return c.primaryEmployee?.name
+    ? `${type} · ${c.primaryEmployee.name}`
+    : `${type} · 제공인력 미배정`;
+}
 
-const getDetailSectionIndex = (section: DetailSectionKey) =>
-    DETAIL_SECTION_ORDER.indexOf(section);
+function primaryEmployeeMeta(c: Client) {
+  return c.primaryEmployee?.name ?? "제공인력 미배정";
+}
 
-const isDetailSectionKey = (section: string): section is DetailSectionKey =>
-    DETAIL_SECTION_ORDER.includes(section as DetailSectionKey);
+function compactDateToIsoDate(value: string | null | undefined): string | null {
+  const digits = (value ?? "").replace(/\D/g, "");
+  if (digits.length < 8) return null;
 
-const getAvatarGradient = (name: string) => {
-    const charCode = name.charCodeAt(0);
-    const gradients = [
-        "bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]",
-        "bg-gradient-to-br from-[hsl(137,34%,31%)] to-[hsl(137,34%,25%)]",
-        "bg-gradient-to-br from-[hsl(355,36%,45%)] to-[hsl(355,36%,38%)]",
-        "bg-gradient-to-br from-[hsl(34,100%,55%)] to-[hsl(34,100%,45%)]",
-        "bg-gradient-to-br from-[hsl(175,60%,40%)] to-[hsl(175,60%,30%)]",
-        "bg-gradient-to-br from-[hsl(270,60%,55%)] to-[hsl(270,60%,45%)]",
-    ];
-    return gradients[charCode % gradients.length];
+  const year = digits.slice(0, 4);
+  const month = digits.slice(4, 6);
+  const day = digits.slice(6, 8);
+  const iso = `${year}-${month}-${day}`;
+  const date = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : iso;
+}
+
+function yymmddToIsoDate(value: string | null | undefined): string | null {
+  const digits = (value ?? "").replace(/\D/g, "");
+  if (digits.length !== 6) return null;
+
+  const yy = Number(digits.slice(0, 2));
+  const month = digits.slice(2, 4);
+  const day = digits.slice(4, 6);
+  const year = yy >= 70 ? 1900 + yy : 2000 + yy;
+  const iso = `${year}-${month}-${day}`;
+  const date = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : iso;
+}
+
+function formatKoreanDate(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null;
+
+  const dateOnlyMatch = dateStr.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (dateOnlyMatch) {
+    const year = dateOnlyMatch[1];
+    const month = dateOnlyMatch[2].padStart(2, "0");
+    const day = dateOnlyMatch[3].padStart(2, "0");
+    return `${year}년 ${month}월 ${day}일`;
+  }
+
+  const normalized = compactDateToIsoDate(dateStr) ?? yymmddToIsoDate(dateStr) ?? dateStr;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return null;
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}년 ${month}월 ${day}일`;
+}
+
+function labeledDateMeta(label: string, dateStr: string | null | undefined, c: Client): string {
+  const date = formatKoreanDate(dateStr);
+  return `${label} ${date ?? "-"} · ${primaryEmployeeMeta(c)}`;
+}
+
+function clientMeta(c: Client) {
+  switch (c.serviceStatus) {
+    case "waiting":
+      return labeledDateMeta("예정일", c.dueDate, c);
+    case "active":
+    case "completed":
+      return labeledDateMeta("종료일", c.endDate, c);
+    case "terminated":
+      return labeledDateMeta("중단일", c.updatedAt ?? c.endDate ?? c.createdAt, c);
+    case "replacement_requested":
+      return labeledDateMeta("교체 요청일", c.updatedAt ?? c.createdAt, c);
+    default:
+      return defaultClientMeta(c);
+  }
+}
+
+// "최근 활동순" 정렬 키 — clients는 활동 timestamp가 없어 서비스 시작일(startDate) 기준, 동률은 최신 id.
+function clientRecency(c: Client): number {
+  const t = c.startDate ? new Date(c.startDate).getTime() : NaN;
+  return Number.isFinite(t) ? t : 0;
+}
+
+function documentStatusFromStatusType(statusType: string | null | undefined): Client["documentStatus"] {
+  const normalized = statusType?.trim().padStart(3, "0");
+  if (!normalized) return null;
+
+  const category = getStatusCategory(normalized);
+  if (category === "completed") return "completed";
+  if (category === "rejected") return "rejected";
+  if (normalized === "020") return "opened";
+  if (["001", "002", "010", "043"].includes(normalized)) return "created";
+  if (["030", "060", "070"].includes(normalized)) return "requested";
+  return null;
+}
+
+export function buildAllClientRowsForList(clients: Client[]): Client[] {
+  return [...clients].sort((a, b) => clientRecency(b) - clientRecency(a) || b.id - a.id);
+}
+
+const UNKNOWN_CLIENT_GROUP: ClientGroup = {
+  key: "unknown",
+  title: "상태 미정",
+  badge: "상태 미정",
+  badgeTone: "muted",
+  badgeMini: "muted",
+  match: () => false,
+  counter: "명",
 };
 
-const getStatusLabel = (status: string | null) => {
-    const option = SERVICE_STATUS_OPTIONS.find((o) => o.value === status);
-    return option ? option.label : "-";
-};
+export function groupForClient(c: Client): ClientGroup {
+  return GROUPS.find((g) => g.match(c)) ?? UNKNOWN_CLIENT_GROUP;
+}
 
-const mapServiceStatusToV3 = (status: string | null): StatusType => {
-    switch (status) {
-        case "active":
-            return "active";
-        case "waiting":
-        case "pending":
-        case "replacement_requested":
-            return "pending";
-        case "terminated":
-        case "cancelled":
-            return "expired";
-        case "completed":
-            return "completed";
-        default:
-            return "pending";
-    }
-};
+function normalizePhone(value: string | null | undefined): string {
+  return (value ?? "").replace(/\D/g, "");
+}
 
-const formatDate = (dateStr: string | null): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
-};
+function contractPrefillDate(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
 
-const formatPrice = (price: string | null): string => {
-    if (!price) return "-";
-    const cleaned = price.replace(/,/g, "");
-    const num = parseInt(cleaned, 10);
-    if (isNaN(num)) return "-";
-    return `${num.toLocaleString("ko-KR")}원`;
-};
-
-const filterValueToStatus = (filter: string): string | null => {
-    switch (filter) {
-        case "active":
-            return "active";
-        case "pending":
-            return "waiting";
-        case "completed":
-            return "completed";
-        case "expired":
-            return "terminated";
-        default:
-            return null;
-    }
-};
+  const dateOnlyMatch = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  return dateOnlyMatch?.[1] ?? compactDateToIsoDate(value) ?? yymmddToIsoDate(value) ?? undefined;
+}
 
 export default function ClientsPage() {
-    const locale = useLocale();
-    const router = useRouter();
-    const searchParams = useSearchParams();
-    const clientIdParam = searchParams.get("id");
+  const locale = useLocale();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+  const selectedClientIdFromParam = parsePositiveIntQueryParam(searchParams.get("id"));
 
-    const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-    const [formDialogOpen, setFormDialogOpen] = useState(false);
-    const [editingClient, setEditingClient] = useState<Client | null>(null);
-    const [searchQuery, setSearchQuery] = useState("");
-    const [activeFilter, setActiveFilter] = useState("all");
-    const [detailModalOpen, setDetailModalOpen] = useState(false);
-    const [activeSection, setActiveSection] = useState<DetailSectionKey>("basic");
-    const [sectionDirection, setSectionDirection] = useState<-1 | 0 | 1>(0);
-    const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
-    const prefersReducedMotion = useReducedMotion();
-    const detailContentMotionRef = useRef<HTMLDivElement | null>(null);
-    const basicSectionRef = useRef<HTMLDivElement | null>(null);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [detailSheetTab, setDetailSheetTab] = useState<DetailTabId>("basic");
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
+  const selectClientRequestRef = useRef(0);
+  const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
 
-    const {
-        clients: filteredClients,
-        allClients,
-        total,
-        isLoading,
-        isFetchingNextPage,
-        hasNextPage,
-        fetchNextPage,
-        isInitialLoad,
-    } = useInfiniteClients({
-        filter: activeFilter,
-        search: searchQuery,
-        filterFn: (c, filterValue) => {
-            const statusValue = filterValueToStatus(filterValue);
-            return statusValue ? c.serviceStatus === statusValue : true;
-        },
-        searchFn: (c, query) => matchesKoreanSearch(c.name, query),
+  useEffect(() => {
+    document.body.classList.add(CLIENTS_ROUTE_BODY_CLASS);
+    return () => {
+      document.body.classList.remove(CLIENTS_ROUTE_BODY_CLASS);
+    };
+  }, []);
+
+  const { allClients, allFilteredClients, total, isLoading, isFetching } = useInfiniteClients({
+    filter: "all",
+    search: searchQuery,
+    filterFn: () => true,
+    searchFn: (c, query) =>
+      matchesKoreanSearch(c.name, query) ||
+      (c.primaryEmployee?.name
+        ? matchesKoreanSearch(c.primaryEmployee.name, query)
+        : false),
+  });
+  const isClientsFetching = isLoading || (isFetching && allClients.length === 0);
+
+  const deleteClient = useDeleteClient();
+  const { data: employees = [] } = useEmployees();
+  const { data: clientFromParam } = useClient(selectedClientIdFromParam ?? 0);
+  const detailClient = selectedClient ?? (selectedClientIdFromParam !== null ? clientFromParam ?? null : null);
+  const { data: notificationLogsData = [], isLoading: isNotificationLogsLoading } = useQuery<ClientNotificationLogRecord[]>({
+    queryKey: ["alimtalk", "logs", "all"],
+    queryFn: () => fetchAllAlimtalkLogs<ClientNotificationLogRecord>(),
+    enabled: Boolean(detailClient),
+    staleTime: 1000 * 60,
+  });
+  const { data: syncedContractDoc } = useQuery({
+    queryKey: ["eformsign-docs", "sync-status", detailClient?.eDocId],
+    queryFn: async () => {
+      if (!detailClient?.eDocId) {
+        throw new Error("documentId is required");
+      }
+      return withEformsignReauth(() => eformsignApi.syncDocumentStatus(detailClient.eDocId!));
+    },
+    enabled: Boolean(detailClient?.eDocId && detailSheetTab === "contracts"),
+    staleTime: 1000 * 30,
+    retry: 1,
+  });
+  const { data: detailContractDocument } = useQuery({
+    queryKey: ["eformsign-docs", "document", detailClient?.eDocId],
+    queryFn: async () => {
+      if (!detailClient?.eDocId) {
+        throw new Error("documentId is required");
+      }
+      return withEformsignReauth(() => eformsignApi.getDocument(detailClient.eDocId!));
+    },
+    enabled: Boolean(detailClient?.eDocId && (detailSheetTab === "basic" || detailSheetTab === "contracts")),
+    staleTime: 1000 * 60,
+    retry: 1,
+  });
+
+  const syncedDetailClient = useMemo(() => {
+    if (!detailClient) return null;
+
+    const documentStatus = documentStatusFromStatusType(syncedContractDoc?.statusType);
+    if (!documentStatus || syncedContractDoc?.documentId !== detailClient.eDocId) {
+      return detailClient;
+    }
+
+    return {
+      ...detailClient,
+      documentStatus,
+      hasSigned: documentStatus === "completed" ? true : detailClient.hasSigned,
+    };
+  }, [detailClient, syncedContractDoc]);
+
+  useEffect(() => {
+    if (!detailClient || syncedContractDoc?.documentId !== detailClient.eDocId) return;
+
+    const documentStatus = documentStatusFromStatusType(syncedContractDoc.statusType);
+    if (!documentStatus) return;
+
+    queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
+    queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(detailClient.id) });
+  }, [detailClient, queryClient, syncedContractDoc]);
+
+  const detailNotificationLogs = useMemo(() => {
+    if (!detailClient || !Array.isArray(notificationLogsData)) return [];
+
+    const clientPhone = normalizePhone(detailClient.phone);
+    return notificationLogsData
+      .filter((log) => {
+        if (log.clientId === detailClient.id) return true;
+        if (!clientPhone) return false;
+        return normalizePhone(log.receiver) === clientPhone;
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [detailClient, notificationLogsData]);
+
+  const handleSelectClient = async (client: Client) => {
+    const requestId = selectClientRequestRef.current + 1;
+    selectClientRequestRef.current = requestId;
+    setSelectedClient(client);
+    setDetailSheetTab("basic");
+
+    try {
+      const freshClient = await queryClient.fetchQuery({
+        queryKey: clientQueryKeys.detail(client.id),
+        queryFn: () => fetchClient(client.id),
+        staleTime: 0,
+      });
+      if (selectClientRequestRef.current !== requestId) return;
+
+      setSelectedClient(freshClient);
+
+      if (!freshClient.eDocId || freshClient.documentStatus === "completed") return;
+
+      const syncedDoc = await withEformsignReauth(() =>
+        eformsignApi.syncDocumentStatus(freshClient.eDocId!),
+      );
+      if (selectClientRequestRef.current !== requestId) return;
+
+      const documentStatus = documentStatusFromStatusType(syncedDoc.statusType);
+      if (!documentStatus || syncedDoc.documentId !== freshClient.eDocId) return;
+
+      setSelectedClient({
+        ...freshClient,
+        documentStatus,
+        hasSigned: documentStatus === "completed" ? true : freshClient.hasSigned,
+      });
+      queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(freshClient.id) });
+    } catch {
+      // Keep the already-open list row detail. Row selection should not be blocked by refresh failures.
+    }
+  };
+
+  const handleCloseDetailSheet = () => {
+    selectClientRequestRef.current += 1;
+    setSelectedClient(null);
+    if (selectedClientIdFromParam !== null) {
+      router.replace("/clients");
+    }
+  };
+
+  const handleEdit = (client: Client) => {
+    // 기존 ClientFormDialog(데스크탑 폼) 대신 mockup 디자인의 wizard로 라우팅 — `?clientId`로 편집 모드 진입.
+    setDetailModalOpen(false);
+    router.push(`/clients/new?clientId=${client.id}`);
+  };
+
+  const handleMessage = (client: Client) => {
+    router.push(`/messages?clientId=${client.id}`);
+  };
+
+  const handleIssueContract = (client: Client) => {
+    const primaryEmployee =
+      employees.find((employee) => employee.id === client.primaryEmployee?.id) ??
+      employees.find((employee) => employee.name.trim() === client.primaryEmployee?.name?.trim());
+
+    prefillContractCreation({
+      clientId: client.id,
+      name: client.name,
+      phone: client.phone ?? "",
+      birthday: client.birthday ?? "",
+      dueDate: contractPrefillDate(client.dueDate),
+      address: client.address ?? "",
+      employeeId: primaryEmployee?.id ?? client.primaryEmployee?.id ?? null,
+      employeeName: primaryEmployee?.name ?? client.primaryEmployee?.name ?? "",
+      employeePhone: primaryEmployee?.phone ?? "",
+      startDate: contractPrefillDate(client.startDate),
+      endDate: contractPrefillDate(client.endDate),
+      fullPrice: client.fullPrice ?? "",
+      grant: client.grant ?? "",
+      actualPrice: client.actualPrice ?? "",
+      paymentDate: todayIsoDate(),
+      voucherType: client.type ?? "",
+      voucherDuration: client.duration != null ? String(client.duration) : "",
+      area: "",
     });
-    const deleteClient = useDeleteClient();
+    router.push("/contracts/new");
+  };
 
-    const { data: clientFromParam } = useClient(
-        clientIdParam ? Number(clientIdParam) : 0
-    );
+  const handleDeleteRequest = (id: number) => {
+    setDeleteTargetClientId(id);
+  };
 
-    useEffect(() => {
-        if (clientIdParam && clientFromParam) {
-            setSelectedClient(clientFromParam);
-        }
-    }, [clientIdParam, clientFromParam]);
-
-    const stats = useMemo(() => {
-        const activeCount = allClients.filter((c) => c.serviceStatus === "active").length;
-        const pendingCount = allClients.filter(
-            (c) => c.serviceStatus === "waiting" || c.serviceStatus === "pending"
-        ).length;
-        const expiredCount = allClients.filter(
-            (c) => c.serviceStatus === "terminated" || c.serviceStatus === "cancelled"
-        ).length;
-        return { activeCount, pendingCount, expiredCount };
-    }, [allClients]);
-
-    const handleAddNew = () => {
-        router.push("/clients/new");
-    };
-
-    const handleSelectClient = (client: Client) => {
-        setSelectedClient(client);
-    };
-
-    const handleEdit = (client: Client) => {
-        setEditingClient(client);
-        setFormDialogOpen(true);
-    };
-
-    const handleDeleteRequest = (id: number) => {
-        setDeleteTargetClientId(id);
-    };
-
-    const handleDeleteConfirm = async () => {
-        if (deleteTargetClientId == null) {
-            return;
-        }
-
-        try {
-            await deleteClient.mutateAsync(deleteTargetClientId);
-            if (selectedClient?.id === deleteTargetClientId) {
-                setSelectedClient(null);
-            }
-            setDeleteTargetClientId(null);
-            toast({
-                title: t(locale, "clients.delete-success"),
-                description: t(locale, "clients.delete-success-description"),
-            });
-        } catch (err) {
-            toast({
-                title: t(locale, "clients.delete-fail"),
-                description: t(locale, "clients.delete-fail-description"),
-                variant: "destructive",
-            });
-        }
-    };
-
-    const handleFormDialogClose = () => {
-        setFormDialogOpen(false);
-        setEditingClient(null);
-    };
-
-    const handleDetailModalClose = () => {
+  const handleDeleteConfirm = async () => {
+    if (deleteTargetClientId == null) return;
+    try {
+      await deleteClient.mutateAsync(deleteTargetClientId);
+      if (detailClient?.id === deleteTargetClientId) {
+        setSelectedClient(null);
         setDetailModalOpen(false);
-        if (clientIdParam) {
-            router.replace("/clients");
-        }
+      }
+      setDeleteTargetClientId(null);
+      toast({
+        title: t(locale, "clients.delete-success"),
+        description: t(locale, "clients.delete-success-description"),
+      });
+    } catch {
+      toast({
+        title: t(locale, "clients.delete-fail"),
+        description: t(locale, "clients.delete-fail-description"),
+        variant: "destructive",
+      });
+    }
+  };
+
+  const grouped = useMemo(() => {
+    const counts: Record<string, number> = {};
+    const map: Record<string, Client[]> = {};
+    for (const g of GROUPS) {
+      const matched = allFilteredClients.filter(g.match);
+      counts[g.key] = matched.length;
+      map[g.key] = matched;
+    }
+    return { counts, map };
+  }, [allFilteredClients]);
+
+  const filterItems = useMemo(() => {
+    if (isClientsFetching) {
+      return [
+        { label: ALL_FILTER, count: "", skeleton: true },
+        ...GROUPS.map((g) => ({ label: g.title, count: "", skeleton: true })),
+      ];
+    }
+
+    const items = [
+      {
+        label: ALL_FILTER,
+        count: String(total ?? allClients.length),
+      },
+    ];
+    for (const g of GROUPS) {
+      items.push({
+        label: g.title,
+        count: String(grouped.counts[g.key] ?? 0),
+      });
+    }
+    return items;
+  }, [allClients.length, grouped.counts, isClientsFetching, total]);
+
+  const sectionsFull = useMemo(() => {
+    type Section = {
+      key: string;
+      title: string;
+      group: ClientGroup;
+      fullRows: Client[];
+      fullCount: number;
     };
 
-    const handleSectionChange = (nextSection: string) => {
-        if (!isDetailSectionKey(nextSection)) {
-            return;
-        }
+    // 전체: 카테고리 grouping 없이 최근 활동순 단일 리스트 (총 8개부터 teaser → 무한 스크롤).
+    if (activeFilter === ALL_FILTER) {
+      const flat = buildAllClientRowsForList(allFilteredClients);
+      return flat.length > 0
+        ? [{ key: "all", title: "", group: GROUPS[0], fullRows: flat, fullCount: flat.length }]
+        : [];
+    }
 
-        const currentIndex = getDetailSectionIndex(activeSection);
-        const nextIndex = getDetailSectionIndex(nextSection);
+    // 개별 필터: 해당 상태 그룹 단일 섹션.
+    const sections: Section[] = [];
+    for (const g of GROUPS) {
+      if (g.title !== activeFilter) continue;
+      const docs = grouped.map[g.key];
+      if (!docs || docs.length === 0) continue;
+      sections.push({
+        key: g.key,
+        title: `${g.title} · ${docs.length}${g.counter}`,
+        group: g,
+        fullRows: docs,
+        fullCount: docs.length,
+      });
+    }
+    return sections;
+  }, [activeFilter, grouped.map, allFilteredClients]);
 
-        if (nextIndex === currentIndex) {
-            setSectionDirection(0);
-            setActiveSection(nextSection);
-            return;
-        }
+  const maxFullCount = useMemo(
+    () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
+    [sectionsFull],
+  );
 
-        setSectionDirection(nextIndex > currentIndex ? 1 : -1);
-        setActiveSection(nextSection);
-    };
+  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+    useListInfiniteScroll({
+      resetKey: `${activeFilter}::${searchQuery}`,
+      totalItems: maxFullCount,
+    });
 
-    const getDetailContentEnterX = (direction: -1 | 0 | 1) => {
-        if (direction === 0) return 0;
-        return direction > 0 ? "100%" : "-100%";
-    };
+  const visibleSections = useMemo(
+    () =>
+      sectionsFull
+        .map((s) => ({ ...s, rows: s.fullRows.slice(0, visibleCount) }))
+        .filter((s) => s.rows.length > 0),
+    [sectionsFull, visibleCount],
+  );
 
-    const getDetailContentExitX = (direction: -1 | 0 | 1) => {
-        if (direction === 0) return 0;
-        return direction > 0 ? "-100%" : "100%";
-    };
-
-    const detailContentVariants = {
-        initial: (direction: -1 | 0 | 1) => ({
-            x: prefersReducedMotion ? 0 : getDetailContentEnterX(direction),
-        }),
-        animate: { x: 0 },
-        exit: (direction: -1 | 0 | 1) => ({
-            x: prefersReducedMotion ? 0 : getDetailContentExitX(direction),
-        }),
-    };
-
-    const detailContentTransition = prefersReducedMotion
-        ? { duration: 0 }
-        : {
-              type: "tween" as const,
-              duration: 0.32,
-              ease: [0.22, 1, 0.36, 1] as const,
-          };
-
-    useLayoutEffect(() => {
-        if (activeSection !== "basic") {
-            return;
-        }
-
-        const motionContainer = detailContentMotionRef.current;
-        const basicSectionElement = basicSectionRef.current;
-
-        if (!motionContainer || !basicSectionElement) {
-            return;
-        }
-
-        const updateMinHeight = () => {
-            motionContainer.style.minHeight = `${Math.ceil(
-                basicSectionElement.getBoundingClientRect().height
-            )}px`;
-        };
-
-        updateMinHeight();
-
-        const resizeObserver = new ResizeObserver(() => {
-            updateMinHeight();
-        });
-
-        resizeObserver.observe(basicSectionElement);
-
-        return () => {
-            resizeObserver.disconnect();
-        };
-    }, [activeSection, selectedClient?.id]);
-
-    const clientActionItems = useMemo<ClientActionButtonItem[]>(() => {
-        if (!selectedClient) return [];
-
-        const items: ClientActionButtonItem[] = [];
-
-        if (selectedClient.phone) {
-            items.push({
-                key: "phone",
-                label: "전화",
-                icon: Phone,
-                href: `tel:${selectedClient.phone}`,
-            });
-        }
-
-        items.push(
-            {
-                key: "message",
-                label: "메시지",
-                icon: MessageSquare,
-                onClick: () => {
-                    useFormStore.getState().prefillFromClient(selectedClient);
-                    router.push("/messages");
-                },
-            },
-            { key: "contract", label: "계약", icon: FileText },
-            { key: "document", label: "서류", icon: ClipboardList }
-        );
-
-        return items;
-    }, [selectedClient, router]);
-
-    return (
-        <section data-component="clients" className="space-y-6">
-            <StatsBar
-                name="clients"
-                isLoading={isLoading}
-                items={[
-                    { icon: Users, value: total, label: "전체 고객", counter: "명" },
-                    { icon: UserCheck, value: stats.activeCount, label: "진행중", counter: "명", colorIndex: 2 },
-                    { icon: Clock, value: stats.pendingCount, label: "대기중", counter: "명", colorIndex: 1 },
-                    { icon: AlertTriangle, value: stats.expiredCount, label: "만료임박", counter: "명", colorIndex: 3 },
-                ]}
-            />
-
-	            <SplitLayout hasSelection={!!selectedClient} onBack={() => setSelectedClient(null)} autoHeight>
-	                <ListPanel
-	                    title="고객 목록"
-	                    tabs={FILTER_CHIPS}
-	                    activeTab={activeFilter}
-	                    onTabChange={setActiveFilter}
-	                    searchValue={searchQuery}
-	                    onSearchChange={setSearchQuery}
-	                    searchPlaceholder={t(locale, "clients.search-placeholder")}
-	                    isLoading={isLoading}
-	                    headerActions={
-	                        <HeaderActionButton
-	                            icon={Plus}
-	                            label={t(locale, "clients.add")}
-	                            onClick={handleAddNew}
-	                            data-testid="add-client-button"
-	                            data-component="clients-header-add"
-	                        />
-	                    }
-	                >
-	                    <div className="space-y-2">
-	                        {!isLoading && filteredClients.length === 0 ? (
-	                            <ListEmptyState message={t(locale, "clients.no-data")} />
-	                        ) : (
-	                            <>
-                                <AnimatedSlotList<Client>
-                                    items={filteredClients}
-                                    isLoading={isLoading}
-                                    loadingCount={6}
-                                    className="space-y-2"
-                                    hasMore={hasNextPage}
-                                    onLoadMore={fetchNextPage}
-                                    isFetchingMore={isFetchingNextPage}
-                                    isInitialLoad={isInitialLoad}
-	                                    slotClassName={({ item, isLoading }) =>
-	                                        cn(
-	                                            "flex items-center gap-3 p-4 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent",
-	                                            !isLoading &&
-	                                                item &&
-	                                                (selectedClient?.id === item.id
-	                                                    ? "bg-v3-primary-light border-2 border-v3-primary"
-	                                                    : "bg-white border-2 border-transparent hover:bg-v3-primary-light/50 hover:border-v3-primary/30")
-	                                        )
-	                                    }
-	                                    onSlotClick={(client) => handleSelectClient(client)}
-	                                    render={({ item, isLoading }) => {
-	                                        const client = item;
-	                                        return (
-	                                            <>
-	                                                {isLoading ? (
-	                                                    <div className="w-11 h-11 rounded-2xl shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
-	                                                        <Skeleton className="w-5 h-5 rounded-2xl bg-white/70" />
-	                                                    </div>
-	                                                ) : (
-	                                                    client && (
-	                                                    <div
-	                                                            className={cn(
-	                                                                "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md",
-	                                                                getAvatarGradient(client.name)
-	                                                            )}
-	                                                        >
-	                                                            <Users className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
-	                                                        </div>
-	                                                    )
-	                                                )}
-
-	                                                <div className="flex-1 min-w-0">
-	                                                    <div className="flex items-center gap-2 mb-0.5">
-	                                                        {isLoading ? (
-	                                                            <>
-	                                                                <Skeleton className="h-4 w-28 bg-v3-dim-white" />
-	                                                                <Skeleton className="h-4 w-10 rounded-full bg-v3-dim-white" />
-	                                                            </>
-	                                                        ) : (
-	                                                            <>
-	                                                                <span className="font-bold text-[0.85rem] text-v3-dark truncate">
-	                                                                    {client?.name}
-	                                                                </span>
-                                                            </>
-                                                        )}
-                                                    </div>
-
-	                                                    {isLoading ? (
-	                                                        <Skeleton className="h-3 w-52 bg-v3-dim-white" />
-	                                                    ) : (
-	                                                        <div className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate">
-	                                                            {client?.phone && <span>{client.phone}</span>}
-	                                                            {client?.address && (
-	                                                                <span className="truncate">
-	                                                                    {client.address.split(" ")[1] || client.address}
-	                                                                </span>
-	                                                            )}
-	                                                        </div>
-	                                                    )}
-	                                                </div>
-
-	                                                <div className="shrink-0">
-	                                                    {isLoading ? (
-	                                                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
-	                                                    ) : (
-	                                                        client && (
-	                                                            <StatusBadge
-	                                                                status={mapServiceStatusToV3(client.serviceStatus)}
-	                                                                label={getStatusLabel(client.serviceStatus)}
-	                                                            />
-	                                                        )
-	                                                    )}
-	                                                </div>
-	                                            </>
-	                                        );
-	                                    }}
-	                                />
-	                            </>
-	                        )}
-	                    </div>
-	                </ListPanel>
-
-                {selectedClient ? (
-                    <DetailPanel
-                        mobileActions={
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        data-component="clients-detail-mobile-more-trigger"
-                                        className="h-9 w-9 rounded-full text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
-                                        aria-label="상세 액션 더보기"
-                                    >
-                                        <MoreVertical className="h-5 w-5" />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent
-                                    data-component="clients-detail-mobile-more-content"
-                                    align="end"
-                                    sideOffset={8}
-                                    avoidCollisions
-                                    className="min-w-[8.5rem]"
-                                >
-                                    <DropdownMenuItem
-                                        data-component="clients-detail-mobile-more-edit"
-                                        onClick={() => handleEdit(selectedClient)}
-                                    >
-                                        {t(locale, "common.edit")}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                        data-component="clients-detail-mobile-more-delete"
-                                        variant="destructive"
-                                        onClick={() => handleDeleteRequest(selectedClient.id)}
-                                    >
-                                        {t(locale, "common.delete")}
-                                    </DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
+  return (
+    <>
+      <MobileDetailSheet
+        name="clients"
+        isOpen={Boolean(detailClient)}
+        onClose={handleCloseDetailSheet}
+        list={
+          <div className="shell-content" data-component="mobile-clients-content">
+            <ListCard
+              title="고객"
+              count={
+                isClientsFetching
+                  ? <ListCountSkeleton dataComponentPrefix="mobile-clients" />
+                  : `${total ?? allClients.length}명`
+              }
+              actionLabel="+ 추가"
+              actionHref="/clients/new"
+              filters={filterItems}
+              activeFilter={activeFilter}
+              onFilterChange={setActiveFilter}
+              scrollRef={scrollContainerRef}
+              loadMoreFooter={
+                isInitialLoad && hasMore ? (
+                  <ListLoadMoreButton
+                    onLoadMore={loadMore}
+                    dataComponentPrefix="mobile-clients"
+                  />
+                ) : null
+              }
+              beforeFilters={
+                <MobileSearchBar
+                  placeholder="고객 이름, 매니저 검색"
+                  label="clients"
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                />
+              }
+            >
+              {isClientsFetching ? (
+                <ListRowsSkeleton dataComponentPrefix="mobile-clients" />
+              ) : visibleSections.length === 0 ? (
+                <div
+                  style={{
+                    padding: "32px 16px",
+                    textAlign: "center",
+                    fontSize: "0.82rem",
+                    color: "hsl(var(--v3-text-muted))",
+                  }}
+                  data-component="mobile-clients-empty"
+                >
+                  {searchQuery.trim() || activeFilter !== ALL_FILTER
+                    ? "조건에 맞는 고객이 없습니다."
+                    : "등록된 고객이 없습니다."}
+                </div>
+              ) : (
+                <>
+                {visibleSections.map((section) => (
+                  <div
+                    className="section-block"
+                    key={section.key}
+                    data-component="mobile-clients-section"
+                  >
+                    {section.rows.map((c, idx) => {
+                      const g = groupForClient(c);
+                      return (
+                      <ListItemRow
+                        key={c.id}
+                        style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
+	                        dataComponent="mobile-clients-row"
+	                        left={
+	                          <div className={`list-avatar av-${g.badgeTone}`} data-component="mobile-clients-row-avatar">
+	                            <User size={16} strokeWidth={2} />
+	                          </div>
+	                        }
+                        name={c.name}
+                        meta={clientMeta(c)}
+                        right={
+                          <div
+                            className="list-row-badges mobile-clients-row-badges"
+                            data-component="mobile-clients-row-badges"
+                          >
+                            <Badge label={g.badge} tone={g.badgeTone} />
+                            {shouldShowMissingContractBadge(c) && (
+                              <Badge label="계약서 없음" tone="burgundy" />
+                            )}
+                          </div>
                         }
-                        header={
-                            <div>
-                                <div className="flex items-center gap-4">
-                                    <div
-                                        className={cn(
-                                            "w-20 h-20 shrink-0 rounded-2xl flex items-center justify-center text-white shadow-lg",
-                                            getAvatarGradient(selectedClient.name)
-                                        )}
-                                    >
-                                        <Users className="w-7 h-7 shrink-0 transition-colors text-white" aria-hidden="true" />
-                                    </div>
-                                    <div>
-                                        <h2 className="text-xl font-bold text-v3-dark">
-                                            {selectedClient.name}
-                                        </h2>
-                                        <p className="text-[0.8rem] text-v3-text-muted mt-1">
-                                            {selectedClient.type || "일반"} ·{" "}
-                                            {selectedClient.duration
-                                                ? `${selectedClient.duration}일`
-                                                : "-"}
-                                        </p>
-                                        <div className="mt-2 flex flex-wrap gap-1.5">
-                                            <StatusBadge
-                                                status={mapServiceStatusToV3(
-                                                    selectedClient.serviceStatus
-                                                )}
-                                                label={getStatusLabel(
-                                                    selectedClient.serviceStatus
-                                                )}
-                                            />
-                                            <StatusBadge
-                                                status={selectedClient.voucherClient ? "active" : "expired"}
-                                                label={t(locale, "clients.form.voucher-client")}
-                                            />
-                                            <StatusBadge
-                                                status={selectedClient.breastPump ? "active" : "expired"}
-                                                label={t(locale, "clients.form.breast-pump")}
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        }
-                        actions={
-                            <ClientActionButtons items={clientActionItems} />
-                        }
-                        tabs={
-                            <DetailTabs
-                                tabs={[
-                                    { key: "basic", label: "기본 정보" },
-                                    { key: "service", label: "서비스 정보" },
-                                ]}
-                                activeTab={activeSection}
-                                onTabChange={handleSectionChange}
-                            />
-                        }
-                    >
-                        <div
-                            data-component="clients-detail-content-motion"
-                            className="relative overflow-hidden"
-                            ref={detailContentMotionRef}
-                        >
-                            <AnimatePresence mode="popLayout" initial={false} custom={sectionDirection}>
-                                <motion.div
-                                    key={activeSection}
-                                    custom={sectionDirection}
-                                    data-component="clients-detail-content"
-                                    className="space-y-4 transform-gpu will-change-transform"
-                                    ref={activeSection === "basic" ? basicSectionRef : undefined}
-                                    variants={detailContentVariants}
-                                    initial="initial"
-                                    animate="animate"
-                                    exit="exit"
-                                    transition={detailContentTransition}
-                                >
-                                    {activeSection === "basic" && (
-                                        <>
-                                            <InfoCard title="기본 정보">
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.name")}
-                                                    value={selectedClient.name}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.birthday")}
-                                                    value={selectedClient.birthday || "-"}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.due-date")}
-                                                    value={formatDate(selectedClient.dueDate)}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.phone")}
-                                                    value={selectedClient.phone || "-"}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.address")}
-                                                    value={selectedClient.address || "-"}
-                                                />
-                                            </InfoCard>
-                                            <InfoCard title="담당 관리사">
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.primary-employee")}
-                                                    value={selectedClient.primaryEmployee?.name ?? "-"}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.secondary-employee")}
-                                                    value={selectedClient.secondaryEmployee?.name ?? "-"}
-                                                />
-                                            </InfoCard>
-                                            <div
-                                                data-component="client-request-box"
-                                                className="bg-v3-dim-white rounded-2xl p-4"
-                                            >
-                                                <h3 className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold mb-3">
-                                                    요청 사항
-                                                </h3>
-                                                <textarea
-                                                    className="w-full min-h-[80px] bg-transparent text-[0.8rem] text-v3-dark placeholder:text-v3-text-muted resize-none outline-none"
-                                                    placeholder="고객 요청 사항을 입력하세요..."
-                                                />
-                                            </div>
-                                        </>
-                                    )}
-
-                                    {activeSection === "service" && (
-                                        <>
-                                            <InfoCard title="서비스 정보">
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.voucher-type")}
-                                                    value={selectedClient.type || "-"}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.duration")}
-                                                    value={
-                                                        selectedClient.duration
-                                                            ? `${selectedClient.duration}일`
-                                                            : "-"
-                                                    }
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.start-date")}
-                                                    value={formatDate(selectedClient.startDate)}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.end-date")}
-                                                    value={formatDate(selectedClient.endDate)}
-                                                />
-                                            </InfoCard>
-
-                                            <InfoCard title="요금 정보">
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.full-price")}
-                                                    value={formatPrice(selectedClient.fullPrice)}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.grant")}
-                                                    value={formatPrice(selectedClient.grant)}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.actual-price")}
-                                                    value={formatPrice(selectedClient.actualPrice)}
-                                                />
-                                            </InfoCard>
-
-                                            <InfoCard title={t(locale, "clients.form.section-flags")}>
-                                                <div className="flex flex-wrap gap-2">
-                                                    <StatusBadge
-                                                        status={
-                                                            selectedClient.voucherClient
-                                                                ? "active"
-                                                                : "expired"
-                                                        }
-                                                        label={t(locale, "clients.form.voucher-client")}
-                                                    />
-                                                    <StatusBadge
-                                                        status={
-                                                            selectedClient.careCenter
-                                                                ? "active"
-                                                                : "expired"
-                                                        }
-                                                        label={t(locale, "clients.form.care-center")}
-                                                    />
-                                                    <StatusBadge
-                                                        status={
-                                                            selectedClient.breastPump
-                                                                ? "active"
-                                                                : "expired"
-                                                        }
-                                                        label={t(locale, "clients.form.breast-pump")}
-                                                    />
-                                                </div>
-                                            </InfoCard>
-                                        </>
-                                    )}
-
-                                    <div
-                                        data-component="clients-detail-actions"
-                                        className="hidden lg:flex gap-3 pt-2"
-                                    >
-                                        <Button
-                                            variant="outline"
-                                            className="flex-1 rounded-full"
-                                            onClick={() => handleDeleteRequest(selectedClient.id)}
-                                        >
-                                            {t(locale, "common.delete")}
-                                        </Button>
-                                        <Button
-                                            variant="v3"
-                                            className="flex-1 rounded-full"
-                                            onClick={() => handleEdit(selectedClient)}
-                                        >
-                                            {t(locale, "common.edit")}
-                                        </Button>
-                                    </div>
-                                </motion.div>
-                            </AnimatePresence>
-                        </div>
-                    </DetailPanel>
-                ) : (
-                    <EmptyState name="clients-empty-state" icon={Users} message="고객을 선택하면 상세 정보가 표시됩니다" className="min-h-[400px]" />
+                        onClick={() => handleSelectClient(c)}
+                      />
+                      );
+                    })}
+                  </div>
+                ))}
+                {!isInitialLoad && hasMore && (
+                  <ListLoadMoreSentinel
+                    sentinelRef={sentinelRef}
+                    dataComponentPrefix="mobile-clients"
+                  />
                 )}
-            </SplitLayout>
-
-            <ClientDetailModal
-                open={detailModalOpen}
-                onClose={handleDetailModalClose}
-                client={selectedClient}
-                onEdit={handleEdit}
-                onDelete={handleDeleteRequest}
+                </>
+              )}
+            </ListCard>
+          </div>
+        }
+        detail={
+          detailClient ? (
+            <ClientDetailContent
+              client={syncedDetailClient ?? detailClient}
+              contractDocument={detailContractDocument ?? null}
+              activeTab={detailSheetTab}
+              notificationLogs={detailNotificationLogs}
+              isNotificationLogsLoading={isNotificationLogsLoading}
+              isIssuingContract={false}
+              onTabChange={setDetailSheetTab}
+              onMessage={() => handleMessage(syncedDetailClient ?? detailClient)}
+              onIssueContract={handleIssueContract}
+              onEdit={handleEdit}
+              onDelete={handleDeleteRequest}
             />
+          ) : (
+            <div className="detail-body" data-component="mobile-clients-detail-empty" />
+          )
+        }
+      />
 
-            <ConfirmActionModal
-                open={deleteTargetClientId != null}
-                title={t(locale, "common.delete")}
-                description={t(locale, "clients.delete-confirm")}
-                cancelLabel={t(locale, "common.cancel")}
-                confirmLabel={t(locale, "common.delete")}
-                loading={deleteClient.isPending}
-                onOpenChange={(open) => {
-                    if (!open && !deleteClient.isPending) {
-                        setDeleteTargetClientId(null);
-                    }
-                }}
-                onCancel={() => setDeleteTargetClientId(null)}
-                onConfirm={handleDeleteConfirm}
-            />
+      <ClientDetailModal
+        open={detailModalOpen}
+        onClose={() => setDetailModalOpen(false)}
+        client={detailClient}
+        onEdit={handleEdit}
+        onDelete={handleDeleteRequest}
+      />
 
-            <ClientFormDialog
-                open={formDialogOpen}
-                onClose={handleFormDialogClose}
-                client={editingClient}
-            />
-        </section>
-    );
+      <ConfirmActionModal
+        open={deleteTargetClientId != null}
+        title={t(locale, "common.delete")}
+        description={t(locale, "clients.delete-confirm")}
+        cancelLabel={t(locale, "common.cancel")}
+        confirmLabel={t(locale, "common.delete")}
+        loading={deleteClient.isPending}
+        onOpenChange={(open) => {
+          if (!open && !deleteClient.isPending) {
+            setDeleteTargetClientId(null);
+          }
+        }}
+        onCancel={() => setDeleteTargetClientId(null)}
+        onConfirm={handleDeleteConfirm}
+      />
+
+    </>
+  );
 }

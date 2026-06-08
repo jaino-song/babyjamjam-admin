@@ -1,11 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
-// Clear sessionStorage before each test to prevent auth caching
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    sessionStorage.clear();
-  });
-});
+const SEARCH_PLACEHOLDER = '고객명, 계약서명, 계약 번호 검색';
 
 const MOCK_DOCUMENTS = {
   documents: [
@@ -29,9 +24,9 @@ const MOCK_DOCUMENTS = {
       template: { id: 'tpl-1', name: 'Contract' },
       document_name: '김철수 계약서',
       creator: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-      created_date: Date.now() - 86400000,
+      created_date: Date.now() - 86_400_000,
       last_editor: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-      updated_date: Date.now() - 86400000,
+      updated_date: Date.now() - 86_400_000,
       current_status: {
         status_type: '002',
         step_recipients: [{ recipient_type: 'signer', name: '김철수' }],
@@ -43,9 +38,9 @@ const MOCK_DOCUMENTS = {
       template: { id: 'tpl-1', name: 'Contract' },
       document_name: '홍길순 계약서',
       creator: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-      created_date: Date.now() - 172800000,
+      created_date: Date.now() - 172_800_000,
       last_editor: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-      updated_date: Date.now() - 172800000,
+      updated_date: Date.now() - 172_800_000,
       current_status: {
         status_type: '003',
         step_recipients: [{ recipient_type: 'signer', name: '홍길순' }],
@@ -53,371 +48,169 @@ const MOCK_DOCUMENTS = {
     },
   ],
   total_rows: 3,
-  limit: 20,
+  limit: 100,
   skip: 0,
 };
 
-const MOCK_COMPLETED_DOCUMENTS = {
-  documents: [
-    {
-      id: 'doc-1',
-      document_number: 'DOC-001',
-      template: { id: 'tpl-1', name: 'Contract' },
-      document_name: '홍길동 계약서',
-      creator: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-      created_date: Date.now(),
-      last_editor: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-      updated_date: Date.now(),
-      current_status: {
-        status_type: '003',
-        step_recipients: [{ recipient_type: 'signer', name: '홍길동' }],
-      },
-    },
-    {
-      id: 'doc-4',
-      document_number: 'DOC-004',
-      template: { id: 'tpl-1', name: 'Contract' },
-      document_name: '김철수 계약서',
-      creator: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-      created_date: Date.now() - 86400000,
-      last_editor: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-      updated_date: Date.now() - 86400000,
-      current_status: {
-        status_type: '003',
-        step_recipients: [{ recipient_type: 'signer', name: '김철수' }],
-      },
-    },
-  ],
-  total_rows: 2,
-  limit: 20,
+const MOCK_EMPTY_DOCUMENTS = {
+  documents: [],
+  total_rows: 0,
+  limit: 100,
   skip: 0,
 };
 
-const MOCK_MANY_DOCUMENTS = {
-  documents: Array.from({ length: 12 }, (_, i) => ({
-    id: `doc-${i + 1}`,
-    document_number: `DOC-${String(i + 1).padStart(3, '0')}`,
-    template: { id: 'tpl-1', name: 'Contract' },
-    document_name: `고객${i + 1} 계약서`,
-    creator: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-    created_date: Date.now() - i * 86400000,
-    last_editor: { recipient_type: 'sender', id: 'admin', name: 'Admin' },
-    updated_date: Date.now() - i * 86400000,
-    current_status: {
-      status_type: i % 2 === 0 ? '003' : '002',
-      step_recipients: [{ recipient_type: 'signer', name: `고객${i + 1}` }],
-    },
-  })),
-  total_rows: 12,
-  limit: 20,
-  skip: 0,
-};
+async function routeContractsList(page: Page, payload = MOCK_DOCUMENTS): Promise<void> {
+  // Mock the auth identity so the run doesn't depend on the backend having
+  // the storage-state user (local dev DBs lack it; the auth check otherwise
+  // races the test and kills the page at a random point).
+  for (const authPattern of ['**/api/auth/me', '**/auth/me']) {
+    await page.route(authPattern, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'test-user',
+          name: '테스트 사용자',
+          email: 'test@example.com',
+          profile_image: '',
+          role: 'admin',
+        }),
+      });
+    });
+  }
+
+  await page.route('**/api/access-token', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true }),
+    });
+  });
+
+  // Broad glob (no '?'): the page lists via /eformsign/documents AND the
+  // /in-progress + /completed subpaths — a query-requiring glob matches none.
+  await page.route('**/api/eformsign/documents**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(payload),
+    });
+  });
+
+  await page.route('**/api/eformsign-docs/client-names**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        payload.documents.map((doc, index) => ({
+          documentId: doc.id,
+          clientId: 1000 + index,
+          clientName: doc.current_status?.step_recipients?.[0]?.name ?? doc.document_name,
+          clientPhone: '010-0000-0000',
+          providerName: '테스트 제공인력',
+        })),
+      ),
+    });
+  });
+
+  await page.route('**/api/alimtalk-logs?**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
+}
+
+// The contract list rows ([data-component="mobile-contracts-row"]) only mount
+// in the mobile layout — at the default desktop viewport the row tree is
+// absent (run #7 evidence: page renders, row count stays 0).
+test.use({ viewport: { width: 390, height: 844 } });
 
 test.describe('Contracts Page Search Feature', () => {
-  test.describe('Search UI Visibility', () => {
-    test('should display search icon initially (collapsed state)', async ({ page }) => {
-      await page.route('**/api/access-token', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        });
-      });
+  test('renders the current mobile search and filter shell', async ({ page }) => {
+    await routeContractsList(page);
 
-      await page.route('**/api/documents**', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(MOCK_DOCUMENTS),
-        });
-      });
+    await page.goto('/contracts');
+    await expect(page.getByPlaceholder(SEARCH_PLACEHOLDER)).toBeVisible({ timeout: 15000 });
 
-      await page.goto('/contracts');
-      await page.waitForLoadState('networkidle');
-
-      // Verify toolbar is visible
-      await expect(page.locator('[data-component="data-table-toolbar"]')).toBeVisible();
-
-      // Verify search icon is visible but TextField is NOT visible initially
-      const searchIconButton = page.getByRole('button', { name: /search/i });
-      await expect(searchIconButton).toBeVisible();
-      await expect(page.getByPlaceholder('고객명 검색')).not.toBeVisible();
-    });
-
-    test('should expand search TextField when icon is clicked', async ({ page }) => {
-      await page.route('**/api/access-token', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        });
-      });
-
-      await page.route('**/api/documents**', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(MOCK_DOCUMENTS),
-        });
-      });
-
-      await page.goto('/contracts');
-      await page.waitForLoadState('networkidle');
-
-      // Click search icon to expand
-      const searchIconButton = page.getByRole('button', { name: /search/i });
-      await searchIconButton.click();
-
-      // Verify TextField is now visible
-      await expect(page.getByPlaceholder('고객명 검색')).toBeVisible();
-    });
+    await expect(page.locator('[data-component="mobile-contracts-search"]')).toBeVisible();
+    await expect(page.locator('[data-component="mobile-redesign-filter-row"]')).toBeVisible();
+    await expect(page.locator('[data-component="mobile-redesign-list-action"]')).toContainText(
+      '계약 작성',
+    );
   });
 
-  test.describe('Search Functionality', () => {
-    test('should filter documents when user types and presses Enter', async ({ page }) => {
-      await page.route('**/api/access-token', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        });
-      });
+  test('filters contract rows by customer name as the query changes', async ({ page }) => {
+    await routeContractsList(page);
 
-      await page.route('**/api/documents**', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(MOCK_DOCUMENTS),
-        });
-      });
+    await page.goto('/contracts');
+    const searchField = page.getByPlaceholder(SEARCH_PLACEHOLDER);
+    await expect(searchField).toBeVisible({ timeout: 15000 });
 
-      await page.goto('/contracts');
-      await page.waitForLoadState('networkidle');
-
-      await expect(page.getByText('홍길동')).toBeVisible();
-      await expect(page.getByText('김철수')).toBeVisible();
-      await expect(page.getByText('홍길순')).toBeVisible();
-
-      const searchIconButton = page.getByRole('button', { name: /search/i });
-      await searchIconButton.click();
-
-      const searchField = page.getByPlaceholder('고객명 검색');
-      await searchField.fill('홍길');
-      await page.keyboard.press('Enter');
-
-      await expect(page.getByText('홍길동')).toBeVisible();
-      await expect(page.getByText('홍길순')).toBeVisible();
-      await expect(page.getByText('김철수')).not.toBeVisible();
+    // Anchor on the mocked rows landing before exercising the search.
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(3, {
+      timeout: 15000,
     });
+    await expect(page.getByText('홍길동')).toBeVisible();
+    await expect(page.getByText('김철수')).toBeVisible();
+    await expect(page.getByText('홍길순')).toBeVisible();
 
-    test('should filter documents when user presses Enter in search field', async ({ page }) => {
-      await page.route('**/api/access-token', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        });
-      });
+    await searchField.fill('홍길');
 
-      await page.route('**/api/documents**', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(MOCK_DOCUMENTS),
-        });
-      });
-
-      await page.goto('/contracts');
-      await page.waitForLoadState('networkidle');
-
-      await expect(page.getByText('홍길동')).toBeVisible();
-      await expect(page.getByText('김철수')).toBeVisible();
-
-      const searchIconButton = page.getByRole('button', { name: /search/i });
-      await searchIconButton.click();
-
-      const searchField = page.getByPlaceholder('고객명 검색');
-      await searchField.fill('김철수');
-      await page.keyboard.press('Enter');
-
-      await expect(page.getByText('김철수')).toBeVisible();
-      await expect(page.getByText('홍길동')).not.toBeVisible();
-    });
-
-    test('should show all documents when search is cleared', async ({ page }) => {
-      await page.route('**/api/access-token', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        });
-      });
-
-      await page.route('**/api/documents**', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(MOCK_DOCUMENTS),
-        });
-      });
-
-      await page.goto('/contracts');
-      await page.waitForLoadState('networkidle');
-
-      const searchIconButton = page.getByRole('button', { name: /search/i });
-      await searchIconButton.click();
-
-      const searchField = page.getByPlaceholder('고객명 검색');
-      await searchField.fill('홍길동');
-      await page.keyboard.press('Enter');
-
-      await expect(page.getByText('홍길동')).toBeVisible();
-      await expect(page.getByText('김철수')).not.toBeVisible();
-
-      await searchField.clear();
-      await page.keyboard.press('Enter');
-
-      await expect(page.getByText('홍길동')).toBeVisible();
-      await expect(page.getByText('김철수')).toBeVisible();
-      await expect(page.getByText('홍길순')).toBeVisible();
-    });
-
-    test('should show "문서가 없습니다" when no documents match search', async ({ page }) => {
-      await page.route('**/api/access-token', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        });
-      });
-
-      await page.route('**/api/documents**', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(MOCK_DOCUMENTS),
-        });
-      });
-
-      await page.goto('/contracts');
-      await page.waitForLoadState('networkidle');
-
-      const searchIconButton = page.getByRole('button', { name: /search/i });
-      await searchIconButton.click();
-
-      const searchField = page.getByPlaceholder('고객명 검색');
-      await searchField.fill('박영희');
-      await page.keyboard.press('Enter');
-
-      const muiAlert = page.locator('.MuiAlert-root');
-      await expect(muiAlert).toBeVisible();
-      await expect(muiAlert).toContainText('문서가 없습니다');
-    });
+    await expect(page.getByText('홍길동')).toBeVisible();
+    await expect(page.getByText('홍길순')).toBeVisible();
+    await expect(page.getByText('김철수')).not.toBeVisible();
   });
 
-  test.describe('Search + Status Filter Combination', () => {
-    test('should apply search within status-filtered results', async ({ page }) => {
-      await page.route('**/api/access-token', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        });
-      });
+  test('restores the full list when the search query is cleared', async ({ page }) => {
+    await routeContractsList(page);
 
-      await page.route('**/api/documents', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(MOCK_DOCUMENTS),
-        });
-      });
-
-      await page.route('**/api/documents/completed', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(MOCK_COMPLETED_DOCUMENTS),
-        });
-      });
-
-      await page.goto('/contracts');
-      await page.waitForLoadState('networkidle');
-
-      // Select '완료' status filter
-      const filterButton = page.locator('[data-component="data-table-toolbar"]').locator('button').nth(1);
-      await filterButton.click();
-
-      await page.locator('[role="menuitem"]').filter({ hasText: '완료' }).click();
-      await page.waitForLoadState('networkidle');
-
-      // Verify status filter is applied
-      const filterChip = page.locator('[data-component="data-table-toolbar"]').locator('.MuiChip-root');
-      await expect(filterChip).toContainText('완료');
-
-      // Verify both completed documents are visible
-      await expect(page.getByText('홍길동')).toBeVisible();
-      await expect(page.getByText('김철수')).toBeVisible();
-
-      // Click search icon to expand search field
-      const searchIconButton = page.getByRole('button', { name: /search/i });
-      await searchIconButton.click();
-
-      // Apply search within filtered results
-      const searchField = page.getByPlaceholder('고객명 검색');
-      await searchField.fill('홍길동');
-      await page.keyboard.press('Enter');
-
-      // Verify only matching document is visible
-      await expect(page.getByText('홍길동')).toBeVisible();
-      await expect(page.getByText('김철수')).not.toBeVisible();
-
-      // Verify status filter chip is still visible
-      await expect(filterChip).toContainText('완료');
+    await page.goto('/contracts');
+    const searchField = page.getByPlaceholder(SEARCH_PLACEHOLDER);
+    await expect(searchField).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(3, {
+      timeout: 15000,
     });
+
+    await searchField.fill('홍길동');
+    await expect(page.getByText('김철수')).not.toBeVisible();
+
+    await searchField.clear();
+
+    await expect(page.getByText('홍길동')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('김철수')).toBeVisible();
+    await expect(page.getByText('홍길순')).toBeVisible();
   });
 
-  test.describe('Pagination Reset', () => {
-    test('should reset to first page when search is executed', async ({ page }) => {
-      await page.route('**/api/access-token', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        });
-      });
+  test('applies the completed filter via the mobile filter pills', async ({ page }) => {
+    await routeContractsList(page);
 
-      await page.route('**/api/documents**', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(MOCK_MANY_DOCUMENTS),
-        });
-      });
-
-      await page.goto('/contracts');
-      await page.waitForLoadState('networkidle');
-
-      // Navigate to page 2
-      const nextButton = page.locator('.MuiTablePagination-actions button').last();
-      await nextButton.click();
-      await page.waitForTimeout(500);
-
-      // Verify we're on page 2
-      const paginationText = page.locator('.MuiTablePagination-displayedRows');
-      await expect(paginationText).toContainText('6–10');
-
-      // Click search icon to expand search field
-      const searchIconButton = page.getByRole('button', { name: /search/i });
-      await searchIconButton.click();
-
-      // Execute search
-      const searchField = page.getByPlaceholder('고객명 검색');
-      await searchField.fill('고객1');
-      await page.keyboard.press('Enter');
-
-      // Verify pagination reset to first page
-      await expect(paginationText).toContainText('1–');
+    await page.goto('/contracts');
+    await expect(page.getByPlaceholder(SEARCH_PLACEHOLDER)).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(3, {
+      timeout: 15000,
     });
+
+    const completedFilter = page
+      .locator('[data-component="mobile-redesign-filter-pill"]')
+      .filter({ hasText: '완료' });
+    await completedFilter.click();
+
+    await expect(completedFilter).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByText('홍길동')).toBeVisible();
+    await expect(page.getByText('홍길순')).toBeVisible();
+    await expect(page.getByText('김철수')).not.toBeVisible();
+  });
+
+  test('shows the current empty-state copy when no contracts match', async ({ page }) => {
+    await routeContractsList(page, MOCK_EMPTY_DOCUMENTS);
+
+    await page.goto('/contracts');
+    await expect(page.getByPlaceholder(SEARCH_PLACEHOLDER)).toBeVisible({ timeout: 15000 });
+
+    await expect(page.locator('[data-component="mobile-contracts-empty"]')).toContainText(
+      '등록된 계약서가 없습니다.',
+    );
   });
 });

@@ -13,7 +13,9 @@ describe("SbEmployeeRepository", () => {
         findFirst: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
         delete: jest.fn(),
+        deleteMany: jest.fn(),
     });
 
     const createEmployeeRow = (overrides = {}) => ({
@@ -312,13 +314,14 @@ describe("SbEmployeeRepository", () => {
                     phone: "010-2222-0000",
                     grade: "스탠다드",
                 });
-                employeeModel.update.mockResolvedValue(updatedRow);
+                employeeModel.updateMany.mockResolvedValue({ count: 1 });
+                employeeModel.findFirst.mockResolvedValue(updatedRow);
 
                 // Act
                 const result = await repository.update(branchId, entity);
 
                 // Assert
-                expect(employeeModel.update).toHaveBeenCalledWith({
+                expect(employeeModel.updateMany).toHaveBeenCalledWith({
                     where: { id: 7, branchId: branchId },
                     data: {
                         name: "Charlie",
@@ -340,13 +343,13 @@ describe("SbEmployeeRepository", () => {
         describe("given a valid employee id", () => {
             it("should delete the employee", async () => {
                 // Arrange
-                employeeModel.delete.mockResolvedValue(undefined);
+                employeeModel.deleteMany.mockResolvedValue({ count: 1 });
 
                 // Act
                 await repository.delete(branchId, 3);
 
                 // Assert
-                expect(employeeModel.delete).toHaveBeenCalledWith({
+                expect(employeeModel.deleteMany).toHaveBeenCalledWith({
                     where: { id: 3, branchId: branchId },
                 });
             });
@@ -490,13 +493,13 @@ describe("SbEmployeeRepository", () => {
         describe("given an employee id and new status", () => {
             it("should update the openToNextWork field", async () => {
                 // Arrange
-                employeeModel.update.mockResolvedValue(createEmployeeRow());
+                employeeModel.updateMany.mockResolvedValue({ count: 1 });
 
                 // Act
                 await repository.changeOpenToNextWork(branchId, 10, false);
 
                 // Assert
-                expect(employeeModel.update).toHaveBeenCalledWith({
+                expect(employeeModel.updateMany).toHaveBeenCalledWith({
                     where: { id: 10, branchId: branchId },
                     data: { openToNextWork: false },
                 });
@@ -506,13 +509,13 @@ describe("SbEmployeeRepository", () => {
         describe("given toggling status to true", () => {
             it("should set openToNextWork to true", async () => {
                 // Arrange
-                employeeModel.update.mockResolvedValue(createEmployeeRow({ openToNextWork: true }));
+                employeeModel.updateMany.mockResolvedValue({ count: 1 });
 
                 // Act
                 await repository.changeOpenToNextWork(branchId, 15, true);
 
                 // Assert
-                expect(employeeModel.update).toHaveBeenCalledWith({
+                expect(employeeModel.updateMany).toHaveBeenCalledWith({
                     where: { id: 15, branchId: branchId },
                     data: { openToNextWork: true },
                 });

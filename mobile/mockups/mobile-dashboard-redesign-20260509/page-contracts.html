@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>계약 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+/* ---- Contracts page additions (mirrors src/app/contracts/page.tsx + redesign.css) ---- */
+
+/* Avatar muted tone — used by drafting/rejected categories (redesign.css:1111) */
+.list-avatar.av-muted { background: hsl(214, 10%, 55%); }
+
+/* Step label on list-item meta */
+.step-label { font-size: 0.66rem; font-weight: 600; color: var(--v3-text); }
+.step-label.muted { color: var(--v3-text-muted); font-weight: 500; }
+
+/* Contract doc-icon tone helpers (used in detail signers/alimtalk tabs) */
+.contract-doc-icon-primary  { background: var(--v3-primary-light);  color: var(--v3-primary); }
+.contract-doc-icon-green    { background: var(--v3-green-light);    color: var(--v3-green); }
+.contract-doc-icon-orange   { background: var(--v3-orange-light);   color: var(--v3-orange); }
+.contract-doc-icon-burgundy { background: var(--v3-burgundy-light); color: var(--v3-burgundy); }
+.contract-doc-icon-muted    { background: var(--v3-dim-white);      color: var(--v3-text-muted); }
+
+/* ActivityTimeline (src/components/app/v3/ActivityTimeline.tsx) — used in signers tab */
+.activity-timeline {
+  max-height: 360px; overflow-y: auto;
+  padding: 0 4px;
+}
+.activity-row {
+  position: relative;
+  display: flex; gap: 12px;
+  padding-bottom: 16px;
+}
+.activity-row:last-child { padding-bottom: 0; }
+.activity-row:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 20px; top: 40px; bottom: 0;
+  width: 1px; background: var(--v3-border);
+}
+.activity-icon {
+  position: relative; z-index: 1;
+  width: 40px; height: 40px;
+  border-radius: 9999px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.activity-icon.tone-info     { background: var(--v3-primary-light);  color: var(--v3-primary); }
+.activity-icon.tone-success  { background: var(--v3-green-light);    color: var(--v3-green); }
+.activity-icon.tone-warning  { background: var(--v3-orange-light);   color: var(--v3-orange); }
+.activity-icon.tone-danger   { background: var(--v3-burgundy-light); color: var(--v3-burgundy); }
+.activity-body {
+  display: flex; flex-direction: column; justify-content: center;
+  min-width: 0;
+}
+.activity-text { font-size: 0.8rem; color: var(--v3-text); }
+.activity-time { font-size: 0.65rem; color: var(--v3-text-muted); }
+
+/* Inline action feedback (after 미리보기 / 지금 서명 click) */
+.action-feedback {
+  background: var(--v3-primary-light);
+  color: var(--v3-primary);
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+/* Empty state inside list-card-scroll */
+.empty-state {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--v3-text-muted);
+}
+
+/* ---- Finalize dialog overlay (mode:"02" staff completion) ---- */
+.finalize-dialog-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: none;
+  align-items: center; justify-content: center;
+  padding: 24px;
+  z-index: 150;
+}
+.finalize-dialog-backdrop.open { display: flex; }
+.finalize-dialog {
+  width: 100%; max-width: 320px;
+  background: white;
+  border-radius: 18px;
+  padding: 20px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+}
+.finalize-dialog h2 {
+  font-size: 1rem; font-weight: 800; color: var(--v3-dark);
+  margin-bottom: 4px;
+}
+.finalize-dialog .sub {
+  font-size: 0.72rem; color: var(--v3-text-muted);
+  margin-bottom: 16px;
+}
+.finalize-dialog label {
+  display: block;
+  font-size: 0.7rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--v3-text-muted);
+  margin-bottom: 6px;
+}
+.finalize-dialog input {
+  width: 100%; box-sizing: border-box;
+  border: 1.5px solid var(--v3-border);
+  border-radius: 12px;
+  background: white;
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: var(--v3-dark);
+  outline: none;
+}
+.finalize-dialog input:focus { border-color: var(--v3-primary); }
+.finalize-dialog .err-hint {
+  margin-top: 8px;
+  font-size: 0.72rem; font-weight: 600;
+  color: var(--v3-burgundy);
+}
+.finalize-dialog .actions {
+  margin-top: 20px;
+  display: flex; gap: 8px;
+}
+.finalize-dialog .actions button {
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 0.88rem; font-weight: 700;
+  font-family: inherit;
+  border: 0;
+  cursor: pointer;
+}
+.finalize-dialog .actions .cancel {
+  flex: 1; background: var(--v3-dim-white); color: var(--v3-text);
+}
+.finalize-dialog .actions .submit {
+  flex: 2; background: var(--v3-primary); color: white;
+  box-shadow: 0 4px 14px rgba(20,50,100,0.18);
+}
+
+/* ---- Headless progress modal (HeadlessProgressModal.module.css equivalent) ---- */
+.progress-modal {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: none;
+  align-items: center; justify-content: center;
+  padding: 24px;
+  z-index: 150;
+}
+.progress-modal.open { display: flex; }
+.progress-card {
+  width: 100%; max-width: 320px;
+  background: white;
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+}
+.progress-title {
+  font-size: 1.02rem; font-weight: 800; color: var(--v3-dark);
+  margin-bottom: 4px;
+}
+.progress-sub {
+  font-size: 0.74rem; color: var(--v3-text-muted);
+  margin-bottom: 16px;
+}
+.progress-list { display: flex; flex-direction: column; gap: 10px; }
+.progress-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  background: var(--v3-dim-white);
+  color: var(--v3-text-muted);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.progress-row.active {
+  background: var(--v3-primary-light);
+  color: var(--v3-primary);
+  font-weight: 700;
+}
+.progress-row.done {
+  background: var(--v3-green-light);
+  color: var(--v3-green);
+  font-weight: 700;
+}
+.progress-row.failed {
+  background: var(--v3-burgundy-light);
+  color: var(--v3-burgundy);
+  font-weight: 700;
+}
+.progress-indicator {
+  width: 22px; height: 22px;
+  border-radius: 9999px;
+  background: white;
+  border: 1.5px solid currentColor;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.progress-row.active .progress-indicator {
+  border-style: dashed;
+  animation: spin 1.2s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress-err-hint {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--v3-burgundy-light);
+  color: var(--v3-burgundy);
+  font-size: 0.74rem; font-weight: 600;
+}
+
+/* ---- Staff completion iframe modal (fallback when headless fails) ---- */
+.staff-iframe-modal {
+  position: absolute; inset: 0;
+  background: var(--v3-dim-white);
+  display: none;
+  flex-direction: column;
+  z-index: 200;
+}
+.staff-iframe-modal.open { display: flex; }
+.staff-iframe-header {
+  height: 56px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+  background: white;
+  border-bottom: 1px solid var(--v3-border);
+  font-size: 1rem; font-weight: 700; color: var(--v3-dark);
+}
+.staff-iframe-header button {
+  background: transparent; border: 0; cursor: pointer;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--v3-text);
+}
+.staff-iframe-body {
+  flex: 1;
+  background: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.85rem; color: var(--v3-text-muted);
+}
+
+/* ---- Finalize feedback toast ---- */
+.finalize-feedback {
+  position: absolute;
+  top: 12px; right: 12px;
+  z-index: 1001;
+  max-width: 280px;
+  background: var(--v3-primary);
+  color: white;
+  padding: 12px 16px;
+  border-radius: 16px;
+  font-size: 0.8rem; font-weight: 600;
+  box-shadow: 0 8px 24px rgba(20,50,100,0.25);
+  display: none;
+}
+.finalize-feedback.open { display: block; }
+
+/* ---- Demo toggle (variant inspector — sits below variant-label, outside phone-frame) ---- */
+.demo-toggle {
+  margin: 0 auto 24px;
+  width: fit-content;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
+  font-family: 'SF Mono', monospace;
+  font-size: 0.7rem;
+}
+.demo-toggle button {
+  background: var(--v3-dark);
+  color: white;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+.demo-toggle button:hover { background: hsl(214, 50%, 28%); }
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <!-- ====== LIST PAGE ====== -->
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="shell-content" data-component="mobile-contracts-content">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="list-title">
+              <span class="list-title-text">계약서 <span class="list-count">128건</span></span>
+              <a class="list-action" href="page-contract-new.html" data-component="mobile-contracts-create">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                계약 작성
+              </a>
+            </div>
+
+            <!-- Search bar (MobileSearchBar — src/components/app/mobile-redesign/detail-sheet.tsx:185) -->
+            <div class="search-bar" data-component="mobile-contracts-search">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input aria-label="고객명, 계약서명, 계약 번호 검색" placeholder="고객명, 계약서명, 계약 번호 검색" />
+            </div>
+
+            <div class="filter-row" style="padding-top: 0;">
+              <button class="filter-pill active">전체 <span class="count">128</span></button>
+              <button class="filter-pill">대기 <span class="count">3</span></button>
+              <button class="filter-pill">검토 필요 <span class="count" style="background: var(--v3-primary-light); color: var(--v3-primary);">2</span></button>
+              <button class="filter-pill">완료 <span class="count">123</span></button>
+              <button class="filter-pill">기간 만료 <span class="count">0</span></button>
+            </div>
+
+            <div class="list-card-scroll">
+              <!-- 전체 filter view: flat sorted-by-recency list (no section grouping per code's sectionsFull logic) -->
+              <div class="section-block">
+                <!-- Row 1: 검토 필요 (in-progress, all internal recipients) — selected by default -->
+                <button type="button" class="list-item" data-component="mobile-contracts-row" onclick="openDetail(this)" data-current="true">
+                  <div class="list-avatar av-primary" data-component="mobile-contracts-row-avatar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  </div>
+                  <div class="list-info">
+                    <div class="list-name">이수현 · A통합1형</div>
+                    <div class="list-meta"><span class="step-label">제공기관 검토 필요 · 5단계</span></div>
+                  </div>
+                  <div class="list-right"><span class="badge badge-primary">검토 필요</span></div>
+                </button>
+
+                <!-- Row 2: 검토 필요 -->
+                <button type="button" class="list-item" data-component="mobile-contracts-row" onclick="openDetail(this)">
+                  <div class="list-avatar av-primary" data-component="mobile-contracts-row-avatar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  </div>
+                  <div class="list-info">
+                    <div class="list-name">박서연 · A라1형</div>
+                    <div class="list-meta"><span class="step-label">제공기관 검토 필요 · 5단계</span></div>
+                  </div>
+                  <div class="list-right"><span class="badge badge-primary">검토 필요</span></div>
+                </button>
+
+                <!-- Row 3: 대기 (외부 서명 대기) — drafting category, muted avatar+badge, SquarePen icon -->
+                <button type="button" class="list-item" data-component="mobile-contracts-row" onclick="openDetail(this)">
+                  <div class="list-avatar av-muted" data-component="mobile-contracts-row-avatar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24"><path d="M11.5 14.5h2"/><path d="M14 16.5V12.5L18 8l3 3-4.5 4.5h-2zM6 22h6a2 2 0 0 0 2-2v-2"/><path d="M14 14V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2"/></svg>
+                  </div>
+                  <div class="list-info">
+                    <div class="list-name">최서윤 · B가1형</div>
+                    <div class="list-meta"><span class="step-label">이용자 서명 대기 · 4단계</span></div>
+                  </div>
+                  <div class="list-right"><span class="badge" style="background: var(--v3-dim-white); color: var(--v3-text-muted); border-color: var(--v3-border);">대기</span></div>
+                </button>
+
+                <!-- Row 4: 대기 (서명 완료 — review pending) -->
+                <button type="button" class="list-item" data-component="mobile-contracts-row" onclick="openDetail(this)">
+                  <div class="list-avatar av-muted" data-component="mobile-contracts-row-avatar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24"><path d="M11.5 14.5h2"/><path d="M14 16.5V12.5L18 8l3 3-4.5 4.5h-2zM6 22h6a2 2 0 0 0 2-2v-2"/><path d="M14 14V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2"/></svg>
+                  </div>
+                  <div class="list-info">
+                    <div class="list-name">[더미] 정유진 · A라1형</div>
+                    <div class="list-meta"><span class="step-label">이용자 문서 열람 · 3단계</span></div>
+                  </div>
+                  <div class="list-right"><span class="badge" style="background: var(--v3-dim-white); color: var(--v3-text-muted); border-color: var(--v3-border);">대기</span></div>
+                </button>
+
+                <!-- Row 5: 대기 (이용자 서명 완료 → review 직전) -->
+                <button type="button" class="list-item" data-component="mobile-contracts-row" onclick="openDetail(this)">
+                  <div class="list-avatar av-muted" data-component="mobile-contracts-row-avatar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24"><path d="M11.5 14.5h2"/><path d="M14 16.5V12.5L18 8l3 3-4.5 4.5h-2zM6 22h6a2 2 0 0 0 2-2v-2"/><path d="M14 14V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2"/></svg>
+                  </div>
+                  <div class="list-info">
+                    <div class="list-name">송진호 · A통합1형</div>
+                    <div class="list-meta"><span class="step-label">이용자 서명 완료 · 4단계</span></div>
+                  </div>
+                  <div class="list-right"><span class="badge" style="background: var(--v3-dim-white); color: var(--v3-text-muted); border-color: var(--v3-border);">대기</span></div>
+                </button>
+
+                <!-- Row 6: 완료 (completed, green tone, FileCheck2) -->
+                <button type="button" class="list-item" data-component="mobile-contracts-row" onclick="openDetail(this)">
+                  <div class="list-avatar av-green" data-component="mobile-contracts-row-avatar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15l2 2 4-4"/></svg>
+                  </div>
+                  <div class="list-info">
+                    <div class="list-name">장하늘 · A통합1형</div>
+                    <div class="list-meta"><span class="step-label muted">계약서 완료 · 6단계</span></div>
+                  </div>
+                  <div class="list-right"><span class="badge badge-green">완료</span></div>
+                </button>
+
+                <!-- Row 7: 완료 -->
+                <button type="button" class="list-item" data-component="mobile-contracts-row" onclick="openDetail(this)">
+                  <div class="list-avatar av-green" data-component="mobile-contracts-row-avatar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15l2 2 4-4"/></svg>
+                  </div>
+                  <div class="list-info">
+                    <div class="list-name">김도윤 · B가1형</div>
+                    <div class="list-meta"><span class="step-label muted">계약서 완료 · 6단계</span></div>
+                  </div>
+                  <div class="list-right"><span class="badge badge-green">완료</span></div>
+                </button>
+
+                <!-- Row 8: 만료/반려 — rejected category -->
+                <button type="button" class="list-item" data-component="mobile-contracts-row" onclick="openDetail(this)">
+                  <div class="list-avatar av-muted" data-component="mobile-contracts-row-avatar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  </div>
+                  <div class="list-info">
+                    <div class="list-name">최예린 · A통합1형</div>
+                    <div class="list-meta"><span class="step-label muted">기간 만료</span></div>
+                  </div>
+                  <div class="list-right"><span class="badge" style="background: var(--v3-dim-white); color: var(--v3-text-muted); border-color: var(--v3-border);">만료</span></div>
+                </button>
+              </div>
+
+              <!-- Empty state — hidden by default; shown when filteredDocuments.length === 0 -->
+              <!--
+              <div class="empty-state" data-component="mobile-contracts-empty">
+                조건에 맞는 계약서가 없습니다.
+              </div>
+              -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <!-- ====== DETAIL SHEET (selectedDoc = 이수현 · A통합1형, 검토 필요 → 확인하기 visible) ====== -->
+      <div class="nav-page detail">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <button class="sheet-close" onclick="closeDetail()" style="margin-left: auto;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body detail-column" data-component="mobile-contracts-detail" style="display: flex; flex-direction: column; gap: 12px;">
+
+          <!-- Header (client-detail-header) -->
+          <div class="client-detail-header pop-up">
+            <div class="client-detail-avatar-lg av-primary">
+              <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13l2 2 4-4"/></svg>
+            </div>
+            <div class="client-detail-title">
+              <div class="client-detail-name" style="font-size: 1rem;">이수현 · A통합1형 계약서</div>
+              <div class="client-detail-badges">
+                <span class="badge-mini primary">검토 필요</span>
+                <span class="badge-mini muted" style="font-family: 'SF Mono', monospace; font-size: 0.6rem;">C-2025-0427-008</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions: 미리보기 + (확인하기 when isReviewNeeded; 지금 서명 otherwise) -->
+          <div class="detail-actions">
+            <button class="btn btn-secondary" data-component="mobile-contracts-preview" onclick="showFeedback('이수현 · A통합1형 계약서 미리보기를 준비했습니다.')">미리보기</button>
+            <!-- isReviewNeeded(doc) === true → 확인하기 -->
+            <button class="btn btn-primary" data-component="mobile-contracts-finalize" onclick="openFinalizeDialog()">확인하기</button>
+            <!-- else → 지금 서명 (hidden in this state)
+            <button class="btn btn-primary" data-component="mobile-contracts-sign">지금 서명</button>
+            -->
+          </div>
+
+          <!-- Action feedback (transient inline status) — hidden by default -->
+          <div class="action-feedback" id="actionFeedback" style="display: none;" role="status"></div>
+
+          <!-- Tab pills -->
+          <div class="filter-row detail-tabs" style="padding: 0;">
+            <button class="filter-pill active" data-tab="basic">기본 정보</button>
+            <button class="filter-pill" data-tab="signers">서명 진행</button>
+            <button class="filter-pill" data-tab="alimtalk">알림 발송 현황</button>
+          </div>
+
+          <!-- ===== Tab: 기본 정보 ===== -->
+          <div class="tab-content active" data-tab-content="basic">
+            <div class="info-card pop-up">
+              <div class="info-card-title">계약 정보</div>
+              <div class="info-row"><span class="info-row-label">계약 번호</span><span class="info-row-value" style="font-family: 'SF Mono', monospace;">C-2025-0427-008</span></div>
+              <div class="info-row"><span class="info-row-label">계약서 유형</span><span class="info-row-value">A통합1형</span></div>
+              <div class="info-row"><span class="info-row-label">현재 단계</span><span class="info-row-value" style="color: var(--v3-primary);">검토 필요</span></div>
+              <div class="info-row"><span class="info-row-label">작성일</span><span class="info-row-value">2025. 4. 27.</span></div>
+            </div>
+
+            <div class="info-card pop-up" style="animation-delay: 60ms;">
+              <div class="info-card-title">관련 정보</div>
+              <div class="info-row"><span class="info-row-label">고객</span><span class="info-row-value">이수현</span></div>
+              <div class="info-row"><span class="info-row-label">제공인력</span><span class="info-row-value">박지영</span></div>
+              <div class="info-row"><span class="info-row-label">작성자</span><span class="info-row-value">송진호</span></div>
+              <div class="info-row"><span class="info-row-label">문서 ID</span><span class="info-row-value" style="font-family: 'SF Mono', monospace; word-break: break-all; font-size: 0.7rem;">2025042700000000123</span></div>
+            </div>
+          </div>
+
+          <!-- ===== Tab: 서명 진행 — ActivityTimeline of contract stages ===== -->
+          <div class="tab-content" data-tab-content="signers">
+            <div class="info-card pop-up">
+              <div class="info-card-title">계약서 단계</div>
+              <div class="activity-timeline" data-component="activity-timeline">
+                <!-- Stage 1: 문서 생성 (FileText, info) -->
+                <div class="activity-row">
+                  <div class="activity-icon tone-info">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  </div>
+                  <div class="activity-body">
+                    <span class="activity-text">문서가 생성되었습니다</span>
+                    <span class="activity-time">2025. 04. 27. 14:32</span>
+                  </div>
+                </div>
+                <!-- Stage 2: 발송 (Send, info) -->
+                <div class="activity-row">
+                  <div class="activity-icon tone-info">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                  </div>
+                  <div class="activity-body">
+                    <span class="activity-text">이용자에게 문서가 발송되었습니다.</span>
+                    <span class="activity-time">2025. 04. 27. 14:32</span>
+                  </div>
+                </div>
+                <!-- Stage 3: 열람 (Eye, info) -->
+                <div class="activity-row">
+                  <div class="activity-icon tone-info">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </div>
+                  <div class="activity-body">
+                    <span class="activity-text">이용자가 문서를 열람했습니다</span>
+                    <span class="activity-time">2025. 04. 28. 09:18</span>
+                  </div>
+                </div>
+                <!-- Stage 4: 서명 (FileSignature, info) -->
+                <div class="activity-row">
+                  <div class="activity-icon tone-info">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 18a2 2 0 0 1-2-2v-3"/><path d="M8 13a2 2 0 1 1 4 0"/></svg>
+                  </div>
+                  <div class="activity-body">
+                    <span class="activity-text">이용자가 서명을 완료했습니다</span>
+                    <span class="activity-time">2025. 04. 29. 11:24</span>
+                  </div>
+                </div>
+                <!-- Stage 5: 제공기관 검토 필요 (FileSignature, warning — current pending stage) -->
+                <div class="activity-row">
+                  <div class="activity-icon tone-warning">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 18a2 2 0 0 1-2-2v-3"/><path d="M8 13a2 2 0 1 1 4 0"/></svg>
+                  </div>
+                  <div class="activity-body">
+                    <span class="activity-text">제공기관 검토 필요</span>
+                    <span class="activity-time">현재</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===== Tab: 알림 발송 현황 (renamed from 알림톡 발송 현황) ===== -->
+          <div class="tab-content" data-tab-content="alimtalk">
+            <div class="info-card pop-up">
+              <div class="info-card-title">알림 발송 내역 · 3건</div>
+
+              <div class="doc-row">
+                <div class="doc-icon contract-doc-icon-green">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">알림톡 · 계약서 발송 안내</div>
+                  <div class="doc-meta">4월 27일 오후 2:32 · 010-1234-5678</div>
+                </div>
+                <span class="badge-mini green">완료</span>
+              </div>
+
+              <div class="doc-row">
+                <div class="doc-icon contract-doc-icon-green">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">알림톡 · 서명 요청 안내</div>
+                  <div class="doc-meta">4월 28일 오전 9:18 · 010-1234-5678</div>
+                </div>
+                <span class="badge-mini green">완료</span>
+              </div>
+
+              <div class="doc-row">
+                <div class="doc-icon contract-doc-icon-orange">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="doc-info">
+                  <div class="doc-title">알림톡 · 서명 완료 안내</div>
+                  <div class="doc-meta">4월 29일 오전 11:25 · 010-1234-5678</div>
+                </div>
+                <span class="badge-mini orange">대기</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notif popover (unchanged from prior mockup) -->
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">3</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-burgundy-light);"><svg width="15" height="15" fill="none" stroke="hsl(355,36%,45%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg></div><div class="notif-body"><div class="notif-title">매니저 배정 요청</div><div class="notif-snippet">[더미] 정유진 고객님의 서비스에 매니저 배정이 필요합니다.</div><div class="notif-time">방금 전</div></div></div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-primary-light);"><svg width="15" height="15" fill="none" stroke="hsl(214,100%,34%)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div class="notif-body"><div class="notif-title">새 메시지 · 박지민 매니저</div><div class="notif-snippet">"오늘 김도윤 고객 방문 후 보고 드릴게요."</div><div class="notif-time">5분 전</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 계약) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item active">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+      <!-- ====== STAFF FINALIZE FLOW OVERLAYS (hidden by default — toggle via demo controls) ====== -->
+
+      <!-- 1) Finalize dialog (서비스 종료일 input) -->
+      <div class="finalize-dialog-backdrop" id="finalizeDialog" data-component="mobile-contracts-finalize-dialog">
+        <div class="finalize-dialog">
+          <h2>최종 확인</h2>
+          <p class="sub">계약을 완료 처리하기 전에 서비스 종료일을 확인해주세요.</p>
+          <label>서비스 종료일</label>
+          <input value="251024" inputmode="numeric" maxlength="6" placeholder="YYMMDD" />
+          <!-- Error hint (hidden in valid state)
+          <div class="err-hint">서비스 종료일을 6자리(YYMMDD)로 입력해주세요.</div>
+          -->
+          <div class="actions">
+            <button class="cancel" onclick="closeFinalizeDialog()">취소</button>
+            <button class="submit" onclick="startProgress()">완료</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2) Headless progress modal (CONTRACT_FINALIZE_PROGRESS_STEPS) -->
+      <div class="progress-modal" id="progressModal" data-component="mobile-contracts-finalize-progress-modal">
+        <div class="progress-card">
+          <h2 class="progress-title">최종 확인 처리 중</h2>
+          <p class="progress-sub">백엔드에서 자동으로 처리하고 있어요.</p>
+          <div class="progress-list">
+            <div class="progress-row done" data-component="mobile-contracts-finalize-progress-client-started">
+              <div class="progress-indicator">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <span>전자문서 클라이언트 시작</span>
+            </div>
+            <div class="progress-row active" data-component="mobile-contracts-finalize-progress-info-inserted">
+              <div class="progress-indicator"></div>
+              <span>서비스 종료일 적용중</span>
+            </div>
+            <div class="progress-row" data-component="mobile-contracts-finalize-progress-creating">
+              <div class="progress-indicator"></div>
+              <span>전자문서 최종 확인중</span>
+            </div>
+            <div class="progress-row" data-component="mobile-contracts-finalize-progress-sent">
+              <div class="progress-indicator"></div>
+              <span>전자문서 처리 완료</span>
+            </div>
+          </div>
+          <!-- Error hint (hidden in normal state)
+          <div class="progress-err-hint">전자문서 처리에 실패했습니다. 잠시 후 수동 입력 화면으로 전환됩니다.</div>
+          -->
+        </div>
+      </div>
+
+      <!-- 3) Staff completion iframe modal (fallback when headless fails) -->
+      <div class="staff-iframe-modal" id="staffIframeModal" data-component="mobile-contracts-staff-iframe-modal">
+        <div class="staff-iframe-header">
+          <span>계약서 최종 확인</span>
+          <button onclick="closeStaffIframe()" aria-label="닫기">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="staff-iframe-body">eformsign iframe (서명 화면)</div>
+      </div>
+
+      <!-- 4) Finalize feedback toast -->
+      <div class="finalize-feedback" id="finalizeFeedback" data-component="mobile-contracts-finalize-feedback">계약서가 완료 처리되었습니다.</div>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">계약 · Contracts page (synced 2026-05-28)</div>
+
+<!-- Demo state toggle for design review (not part of real app) -->
+<div class="demo-toggle">
+  <button onclick="resetDemo()">Default</button>
+  <button onclick="openFinalizeDialog()">Finalize Dialog</button>
+  <button onclick="startProgress()">Progress Modal</button>
+  <button onclick="showStaffIframe()">Iframe Fallback</button>
+  <button onclick="showFeedback('계약서가 완료 처리되었습니다.')">Feedback Toast</button>
+</div>
+
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+
+function openDetail(el){document.getElementById('stack').classList.add('show-detail');}
+function closeDetail(){document.getElementById('stack').classList.remove('show-detail');}
+
+document.querySelectorAll('.filter-pill').forEach(p=>p.addEventListener('click',()=>{
+  const row=p.closest('.filter-row');
+  row.querySelectorAll('.filter-pill').forEach(x=>x.classList.remove('active'));
+  p.classList.add('active');
+  if(p.dataset.tab){
+    document.querySelectorAll('.tab-content').forEach(c=>c.classList.toggle('active',c.dataset.tabContent===p.dataset.tab));
+  }
+}));
+
+/* Finalize flow demo controls */
+function openFinalizeDialog(){
+  resetDemo();
+  document.getElementById('finalizeDialog').classList.add('open');
+}
+function closeFinalizeDialog(){document.getElementById('finalizeDialog').classList.remove('open');}
+function startProgress(){
+  closeFinalizeDialog();
+  document.getElementById('progressModal').classList.add('open');
+}
+function showStaffIframe(){
+  resetDemo();
+  document.getElementById('staffIframeModal').classList.add('open');
+}
+function closeStaffIframe(){document.getElementById('staffIframeModal').classList.remove('open');}
+function showFeedback(msg){
+  resetDemo();
+  const el = document.getElementById('finalizeFeedback');
+  el.textContent = msg;
+  el.classList.add('open');
+  setTimeout(()=>el.classList.remove('open'), 4000);
+}
+function resetDemo(){
+  document.getElementById('finalizeDialog').classList.remove('open');
+  document.getElementById('progressModal').classList.remove('open');
+  document.getElementById('staffIframeModal').classList.remove('open');
+  document.getElementById('finalizeFeedback').classList.remove('open');
+  const fb=document.getElementById('actionFeedback'); if(fb) fb.style.display='none';
+}
+</script>
+</body>
+</html>

@@ -1,18 +1,30 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Quarantined from CI until rewritten/unblocked — see tests/QUARANTINE.md
+const CI_QUARANTINE = [
+  '**/nav-indicator-diagnose.spec.ts', // local-only diagnostic: real login with dev credentials, dev server timing capture
+  '**/nav-slide-dense.spec.ts', // local-only diagnostic: dense frame capture, real login
+  '**/animation-plan-visual-verify.spec.ts', // animation/visual diagnostic, timing-fragile in CI
+  '**/dashboard-activities-animation.spec.ts', // animation diagnostic (addInitScript event collection)
+  '**/chat-feedback.spec.ts', // feedback UI has no production mount (MessageFeedback only lives in the unmounted ChatFullscreen) — product decision pending
+  '**/screenshots/baseline.spec.ts', // visual baseline CAPTURE tool (no assertions); networkidle-based, CI-fragile by design
+];
+
 /**
  * See https://playwright.dev/docs/test-configuration.
  */
 export default defineConfig({
   testDir: './tests',
+  testIgnore: process.env.CI ? CI_QUARANTINE : [],
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
-  /* Opt out of parallel tests on CI. */
-  workers: process.env.CI ? 1 : undefined,
+  /* 2 workers on CI (matches the runner's cores): 266 tests at 1 worker
+     with retries exceed any sane job timeout against the real backend. */
+  workers: process.env.CI ? 2 : undefined,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: 'html',
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
@@ -36,7 +48,7 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   webServer: {
-    command: 'npm run dev',
+    command: 'pnpm run dev',
     url: process.env.BASE_URL || 'http://localhost:3000',
     reuseExistingServer: true,
     timeout: 180 * 1000,

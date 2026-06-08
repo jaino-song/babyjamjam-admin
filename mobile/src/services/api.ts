@@ -1,6 +1,26 @@
+import type {
+    AlimtalkProvider,
+    AlimtalkProviderResponse,
+} from "@babyjamjam/shared/types/alimtalk";
 import { api } from "@/lib/api/client";
+import { PUBLIC_BACKEND_BASE_URL } from "@/lib/env";
+import {
+    CreateEformsignDocRecordRequest,
+    EformsignApiListResponse,
+    EformsignAuthStatusResponse,
+    EformsignDeleteDocumentsResponse,
+    EformsignDocClientSummary,
+    EformsignDocumentsResponse,
+    EformsignReRequestDocumentRequest,
+    FinalizeHeadlessResponse,
+    HeadlessDispatchResponse,
+} from "@babyjamjam/shared/types/eformsign";
+import type {
+    MessageSenderApprovalResponse,
+    MessageSenderApprovalStatus,
+} from "@babyjamjam/shared/types/message";
+import { safeStorageSetItem } from "@/lib/safe-storage";
 import { isAxiosError } from "axios";
-import { EformsignDeleteDocumentsResponse, EformsignDocumentsResponse } from '@/lib/eformsign/types';
 
 export interface ContractDataDto {
   customerName: string;
@@ -24,16 +44,91 @@ export interface ContractDataDto {
   paymentYear: string;
   paymentMonth: string;
   paymentDay: string;
-  receiptYear: string;
-  receiptMonth: string;
-  receiptDay: string;
   fullPrice: string;
   grant: string;
   actualPrice: string;
 }
-import { safeStorageSetItem } from "@/lib/safe-storage";
 
-// Auth API response types
+const HEADLESS_DISPATCH_TIMEOUT_MS = 180_000;
+const HEADLESS_FINALIZE_TIMEOUT_MS = 60_000;
+const DEFAULT_EFORMSIGN_LIMIT = 100;
+const DEFAULT_EFORMSIGN_SKIP = 0;
+const MAX_EFORMSIGN_AUTH_5XX_ATTEMPTS = 3;
+const EFORMSIGN_AUTH_5XX_BACKOFF_MS = 30_000;
+// Review finding: a permanent stop stranded read-only document views for the
+// tab lifetime (only contract write actions force-reset). The stop is now a
+// cooldown so background auth resumes on its own once the vendor recovers.
+const EFORMSIGN_AUTH_STOP_COOLDOWN_MS = 5 * 60_000;
+
+let consecutiveEformsignAuthServerFailures = 0;
+let automaticEformsignAuthStoppedUntil = 0;
+let nextAutomaticEformsignAuthAttemptAt = 0;
+
+export class EformsignAuthAutoRetryStoppedError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "EformsignAuthAutoRetryStoppedError";
+    }
+}
+
+function isServerErrorStatus(status?: number): status is number {
+    return typeof status === "number" && status >= 500 && status < 600;
+}
+
+function resetEformsignAuthFailureState(): void {
+    consecutiveEformsignAuthServerFailures = 0;
+    automaticEformsignAuthStoppedUntil = 0;
+    nextAutomaticEformsignAuthAttemptAt = 0;
+}
+
+function assertAutomaticEformsignAuthAllowed(force = false): void {
+    if (force) {
+        return;
+    }
+
+    const now = Date.now();
+
+    if (now < automaticEformsignAuthStoppedUntil) {
+        throw new EformsignAuthAutoRetryStoppedError(
+            "Eformsign authentication auto-retries are paused after repeated server errors.",
+        );
+    }
+
+    if (now < nextAutomaticEformsignAuthAttemptAt) {
+        throw new EformsignAuthAutoRetryStoppedError(
+            "Eformsign authentication is backing off after a recent server error.",
+        );
+    }
+}
+
+function recordEformsignAuthFailure(error: unknown): void {
+    if (!isAxiosError(error) || !isServerErrorStatus(error.response?.status)) {
+        return;
+    }
+
+    consecutiveEformsignAuthServerFailures += 1;
+    nextAutomaticEformsignAuthAttemptAt = Date.now() + EFORMSIGN_AUTH_5XX_BACKOFF_MS;
+
+    if (consecutiveEformsignAuthServerFailures >= MAX_EFORMSIGN_AUTH_5XX_ATTEMPTS) {
+        // Pause (not permanently stop) automatic attempts; a later failure
+        // after the cooldown re-arms the pause, a success clears everything.
+        automaticEformsignAuthStoppedUntil = Date.now() + EFORMSIGN_AUTH_STOP_COOLDOWN_MS;
+        consecutiveEformsignAuthServerFailures = MAX_EFORMSIGN_AUTH_5XX_ATTEMPTS - 1;
+    }
+}
+
+function normalizeDocumentListResponse(
+    response: EformsignApiListResponse,
+    params?: { limit?: number; skip?: number },
+): EformsignDocumentsResponse {
+    return {
+        documents: response.documents ?? [],
+        total_rows: response.total_count ?? response.documents?.length ?? 0,
+        limit: params?.limit ?? DEFAULT_EFORMSIGN_LIMIT,
+        skip: params?.skip ?? DEFAULT_EFORMSIGN_SKIP,
+    };
+}
+
 export interface AuthResponse {
     success: boolean;
     message?: string;
@@ -42,23 +137,31 @@ export interface AuthResponse {
     errors?: string[];
 }
 
+export interface EformsignAuthRequestOptions {
+    force?: boolean;
+}
+
 export interface LoginResponse extends AuthResponse {
     accessToken?: string;
     refreshToken?: string;
     user?: string;
 }
 
-export interface EformsignAuthStatusResponse {
-    hasAppAuthToken: boolean;
-    hasAccessToken: boolean;
-    hasRefreshToken: boolean;
+export interface SyncedEformsignDocResponse {
+    id?: number;
+    documentId: string;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepIndex: string;
+    stepName: string;
+    expired?: boolean;
 }
 
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
-        const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
-        window.location.href = `${API_BASE_URL}/auth/kakao`;
+        window.location.href = `${PUBLIC_BACKEND_BASE_URL}/auth/kakao`;
     },
 
     // Email authentication
@@ -115,10 +218,24 @@ export const eformsignApi = {
         const { data } = await api.post('/generate-signature', { executionTime });
         return data;
     },
-    // Authenticates and stores token in httpOnly cookie (returns { success: true })
-    authenticate: async (executionTime: number, memberEmail?: string): Promise<{ success: boolean }> => {
-        const { data } = await api.post('/access-token', { executionTime, memberEmail });
-        return data;
+    // Authenticates and stores token in httpOnly cookie (returns { success: true }).
+    // After repeated upstream 5xx responses, background callers back off and then stop
+    // retrying until a user-driven flow forces a fresh attempt.
+    authenticate: async (
+        executionTime: number,
+        memberEmail?: string,
+        options?: EformsignAuthRequestOptions,
+    ): Promise<{ success: boolean }> => {
+        assertAutomaticEformsignAuthAllowed(options?.force === true);
+
+        try {
+            const { data } = await api.post('/access-token', { executionTime, memberEmail });
+            resetEformsignAuthFailureState();
+            return data;
+        } catch (error) {
+            recordEformsignAuthFailure(error);
+            throw error;
+        }
     },
     getAuthStatus: async (): Promise<EformsignAuthStatusResponse> => {
         const { data } = await api.get('/eformsign/auth-status');
@@ -128,26 +245,76 @@ export const eformsignApi = {
         const { data } = await api.post('/refresh-access-token', { executionTime });
         return data;
     },
+    reRequestDocument: async (
+        documentId: string,
+        params: EformsignReRequestDocumentRequest
+    ): Promise<{ status?: string; code?: string; message?: string }> => {
+        const { data } = await api.post(`/eformsign/documents/${documentId}/re-request`, params);
+        return data;
+    },
     generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
         const { data } = await api.post('/generate-document', { contractData, clientId });
         return data;
     },
+    // BJJ-90: backend-driven creation dispatch. Drives the eformsign iframe gate sequence
+    // (mode:"01") via headless Chromium so staff don't see the iframe. Returns ok:false
+    // with reason on any failure so the caller can fall back to the legacy iframe modal.
+    dispatchHeadless: async (
+        contractData: ContractDataDto,
+        clientId?: number,
+        progressId?: string,
+    ): Promise<HeadlessDispatchResponse> => {
+        const { data } = await api.post('/eformsign-docs/dispatch-headless', {
+            contractData,
+            clientId,
+            progressId,
+        }, {
+            timeout: HEADLESS_DISPATCH_TIMEOUT_MS,
+        });
+        return data;
+    },
+    // Staff completion (mode:"02") — builds iframe options for the staff finalize step.
+    generateStaffDocument: async (
+        documentId: string,
+        accessToken?: string,
+        refreshToken?: string,
+        prefillEndDate?: string,
+    ) => {
+        const { data } = await api.post('/generate-staff-document', {
+            documentId,
+            accessToken,
+            refreshToken,
+            prefillEndDate,
+        });
+        return data;
+    },
+    // BJJ-90: backend-driven finalize. Drives the mode:"02" iframe gate sequence
+    // via headless Chromium. Falls back to iframe (generateStaffDocument) on ok:false.
+    finalizeHeadless: async (
+        documentId: string,
+        prefillEndDate?: string,
+        progressId?: string,
+    ): Promise<FinalizeHeadlessResponse> => {
+        const { data } = await api.post('/eformsign-docs/finalize-headless', {
+            documentId,
+            prefillEndDate,
+            progressId,
+        }, {
+            timeout: HEADLESS_FINALIZE_TIMEOUT_MS,
+        });
+        return data;
+    },
     // Create eformsign doc record to track document in local DB
-    createDocRecord: async (params: {
-        documentId: string;
-        clientId: number;
-        statusType: string;
-        statusDetail: string;
-        stepType: string;
-        stepIndex: string;
-        stepName: string;
-        stepRecipientType: string;
-        stepRecipientName: string;
-        stepRecipientSms: string;
-        expiredDate: string;
-        linkToClient?: boolean; // If true, also update client.e_doc_id
-    }) => {
+    createDocRecord: async (params: CreateEformsignDocRecordRequest) => {
         const { data } = await api.post('/eformsign-docs', params);
+        return data;
+    },
+    getDocumentClientNames: async (): Promise<EformsignDocClientSummary[]> => {
+        const { data } = await api.get('/eformsign-docs/client-names');
+        return data;
+    },
+    syncDocumentStatus: async (documentId: string): Promise<SyncedEformsignDocResponse> => {
+        const { data } = await api.post('/eformsign-docs/sync-status', { documentId });
         return data;
     },
     // Documents APIs - token is read from httpOnly cookie on server
@@ -157,17 +324,27 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/documents', { params });
         return data;
     },
-    getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/in-progress');
+    getDocument: async (documentId: string): Promise<EformsignDocumentsResponse["documents"][number]> => {
+        const { data } = await api.get(`/eformsign/documents/${documentId}`);
         return data;
+    },
+    getDocumentDownloadUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document`,
+    getDocumentReceiptDownloadUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&page=7`,
+    getDocumentPreviewUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document#toolbar=0`,
+    getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/in-progress');
+        return normalizeDocumentListResponse(data);
     },
     getCompletedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/completed');
-        return data;
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/completed');
+        return normalizeDocumentListResponse(data);
     },
     getRejectedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/eformsign/documents/rejected');
-        return data;
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/rejected');
+        return normalizeDocumentListResponse(data);
     },
     deleteDocuments: async (
         documentIds: string[],
@@ -223,25 +400,11 @@ export async function withEformsignReauth<T>(fn: () => Promise<T>): Promise<T> {
     }
 }
 
-export type AlimtalkProvider = 'aligo' | 'channeltalk' | 'none';
-
-export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
-
-export interface AlimtalkProviderResponse {
-    provider: AlimtalkProvider;
-    enabled: boolean;
-    updatedAt?: string;
-}
-
-export interface MessageSenderApprovalResponse {
-    senderPhone: string | null;
-    senderPhoneFormatted: string | null;
-    approvalStatus: MessageSenderApprovalStatus;
-    isApproved: boolean;
-    canRequest: boolean;
-    requestedAt: string | null;
-    approvedAt: string | null;
-}
+export type { AlimtalkProvider, AlimtalkProviderResponse };
+export type {
+    MessageSenderApprovalResponse,
+    MessageSenderApprovalStatus,
+};
 
 export const settingsApi = {
     getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {

@@ -1,6 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
-import { IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
+import {
+    EformsignDocCompletionClaimParams,
+    EformsignDocCompletionClaimResult,
+    EformsignDocClientSummary,
+    IEformsignDocRepository,
+} from "domain/repositories/eformsign-doc.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc.mapper";
 
@@ -30,6 +35,42 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return doc?.branchId ?? null;
     }
 
+    async claimCompletionStatus(
+        branchid: string,
+        params: EformsignDocCompletionClaimParams,
+    ): Promise<EformsignDocCompletionClaimResult> {
+        const result = await this.prismaService.eformsign_doc.updateMany({
+            where: {
+                branchId: branchid,
+                documentId: params.documentId,
+                statusType: { not: params.statusType },
+            },
+            data: {
+                statusType: params.statusType,
+                statusDetail: params.statusDetail,
+                stepType: params.stepType,
+                stepIndex: params.stepIndex,
+                stepName: params.stepName,
+                expired: params.expired,
+                updatedDate: new Date(),
+            },
+        });
+
+        if (result.count === 1) {
+            return "claimed";
+        }
+
+        const existing = await this.prismaService.eformsign_doc.findFirst({
+            where: {
+                branchId: branchid,
+                documentId: params.documentId,
+            },
+            select: { id: true },
+        });
+
+        return existing ? "duplicate" : "missing";
+    }
+
     async findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
             where: { clientId: clientId, branchId: branchid },
@@ -44,10 +85,10 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return docs.map(EformsignDocMapper.toDomain);
     }
 
-    async findClientNamesByBranch(branchid: string): Promise<Array<{ documentId: string; clientName: string }>> {
+    async findClientNamesByBranch(branchid: string): Promise<EformsignDocClientSummary[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
             where: { branchId: branchid },
-            select: { documentId: true, clientId: true },
+            select: { documentId: true, clientId: true, stepRecipientName: true },
         });
         const clientIds = Array.from(
             new Set(docs.map((d) => d.clientId).filter((id): id is number => id != null)),
@@ -55,12 +96,39 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         if (clientIds.length === 0) return [];
         const clients = await this.prismaService.client.findMany({
             where: { id: { in: clientIds } },
-            select: { id: true, name: true },
+            select: { id: true, name: true, phone: true },
         });
-        const nameById = new Map(clients.map((c) => [c.id, c.name]));
+        const schedules = await this.prismaService.employee_schedule.findMany({
+            where: {
+                clientId: { in: clientIds },
+                branchId: branchid,
+                replaced: false,
+            },
+            include: {
+                primaryEmployee: true,
+            },
+            orderBy: { id: "desc" },
+        });
+        const clientById = new Map(clients.map((c) => [c.id, c]));
+        const providerByClientId = new Map<number, string>();
+        for (const schedule of schedules) {
+            if (!providerByClientId.has(schedule.clientId)) {
+                providerByClientId.set(schedule.clientId, schedule.primaryEmployee.name);
+            }
+        }
         return docs
-            .filter((d) => d.documentId && d.clientId != null && nameById.has(d.clientId))
-            .map((d) => ({ documentId: d.documentId, clientName: nameById.get(d.clientId!)! }));
+            .filter((d) => d.documentId && d.clientId != null && clientById.has(d.clientId))
+            .map((d) => {
+                const client = clientById.get(d.clientId!)!;
+                const contractRecipientName = d.stepRecipientName.trim();
+                return {
+                    documentId: d.documentId,
+                    clientId: client.id,
+                    clientName: contractRecipientName || client.name,
+                    clientPhone: client.phone ?? null,
+                    providerName: providerByClientId.get(d.clientId!) ?? null,
+                };
+            });
     }
 
     async create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {

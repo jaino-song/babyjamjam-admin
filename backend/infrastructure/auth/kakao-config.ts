@@ -1,9 +1,7 @@
-const DEFAULT_DEVELOPMENT_KAKAO_CLIENT_ID = "dev-kakao-client-id";
-const DEFAULT_DEVELOPMENT_KAKAO_CALLBACK_URL = "http://localhost:3000/auth/kakao/callback";
+import { isProductionLikeEnvironment } from "./runtime-environment";
 
-function isProductionLikeEnvironment() {
-  return process.env["NODE_ENV"] === "production" || process.env["VERCEL_ENV"] === "preview";
-}
+const DEFAULT_DEVELOPMENT_KAKAO_CLIENT_ID = "dev-kakao-client-id";
+const DEFAULT_DEVELOPMENT_KAKAO_CALLBACK_URL = "http://localhost:3001/auth/kakao/callback";
 
 function normalizeEnv(value: string | undefined): string | undefined {
   const trimmed = value?.trim();

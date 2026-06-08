@@ -142,7 +142,7 @@ export default function TemplatesPage() {
   const [selectedValue, setSelectedValue] = useState<string | null>(null);
 
   const { data: branchTemplatesData, isLoading: isLoadingBranchTemplates } = useMessageTemplates(1, 100);
-  const branchTemplates = useMemo(() => branchTemplatesData?.data ?? [], [branchTemplatesData]);
+  const branchTemplates = useMemo(() => branchTemplatesData ?? [], [branchTemplatesData]);
 
   const branchItems = useMemo<TemplateListItem[]>(
     () =>

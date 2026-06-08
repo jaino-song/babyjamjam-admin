@@ -4,6 +4,10 @@ import * as path from "path";
 import crypto from "crypto";
 
 function readJwtSecret(): string {
+  // CI provides the secret via env; local dev falls back to backend/.env.
+  const fromEnv = process.env.JWT_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+
   const envPath = path.resolve(process.cwd(), "../backend/.env");
   const env = fs.readFileSync(envPath, "utf-8");
   const line = env
@@ -11,7 +15,7 @@ function readJwtSecret(): string {
     .find((l) => l.startsWith("JWT_SECRET="))
     ?.trim();
   if (!line) {
-    throw new Error("JWT_SECRET not found in ../backend/.env");
+    throw new Error("JWT_SECRET not found in env or ../backend/.env");
   }
   return line.slice("JWT_SECRET=".length);
 }
@@ -110,41 +114,38 @@ test.describe("Chat live stream smoke", () => {
     });
   });
 
-  test("streams a tool-based response on /chat", async ({ page }) => {
+  test("streams a deterministic Gemini stub response on /chat", async ({ page }) => {
     page.on("console", (msg) => {
       // Useful when debugging auth/stream issues locally.
       if (["warning", "error"].includes(msg.type())) {
-        // eslint-disable-next-line no-console
         console.log(`[browser:${msg.type()}] ${msg.text()}`);
       }
     });
 
     await page.goto("/chat");
-    await expect(page.getByText("AI 어시스턴트")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-component="chat"]')).toBeVisible({ timeout: 15000 });
 
-    const input = page.getByPlaceholder("무엇을 도와드릴까요?").first();
+    const input = page.locator('[data-component="chat-input"]');
     await expect(input).toBeVisible({ timeout: 10000 });
 
     const start = Date.now();
-    await input.fill("현재 등록된 제공인력은 몇명이야?");
+    await input.fill("안녕하세요");
     await input.press("Enter");
 
-    // Assistant content should stream and include employee/caregiver phrasing + a count.
-    const assistantMessages = page.locator('[data-component="chat-message-assistant"]');
-    await expect(assistantMessages.last()).toContainText(/제공인력|관리사|직원/, { timeout: 15000 });
-    await expect(assistantMessages.last()).toContainText(/\d+\s*명/, { timeout: 15000 });
+    await expect(page.getByLabel("응답 작성 중")).toBeVisible({ timeout: 5000 });
 
-    // Wait for stream completion (blinking cursor removed).
-    await expect(
-      assistantMessages.last().locator(".animate-blink")
-    ).toHaveCount(0, { timeout: 20000 });
+    const assistantMessages = page.locator('[data-component="chat-message-assistant"]');
+    await expect(assistantMessages.last()).toContainText("[e2e-stub]", { timeout: 15000 });
+    await expect(assistantMessages.last()).toContainText("안녕하세요", { timeout: 15000 });
+
+    await expect(page.getByLabel("응답 작성 중")).toHaveCount(0, { timeout: 20000 });
+    await expect(input).toBeEnabled({ timeout: 5000 });
 
     const ttfbMs = Date.now() - start;
-    // eslint-disable-next-line no-console
     console.log(`[chat-live] time-to-first-response-ms=${ttfbMs}`);
   });
 
-  test("quick action chip opens wizard without calling SSE", async ({ page }) => {
+  test("typing the local registration command opens the wizard without calling SSE", async ({ page }) => {
     let sseCalled = 0;
     await page.route("**/api/ai/chat/stream", async (route) => {
       sseCalled += 1;
@@ -156,11 +157,20 @@ test.describe("Chat live stream smoke", () => {
     });
 
     await page.goto("/chat");
-    await expect(page.getByText("AI 어시스턴트")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-component="chat"]')).toBeVisible({ timeout: 15000 });
 
-    await page.getByRole("button", { name: "산모 등록" }).click();
+    const input = page.locator('[data-component="chat-input"]');
+    await expect(input).toBeVisible({ timeout: 10000 });
+
+    await input.fill("산모 등록");
+    await input.press("Enter");
+
     await expect(page.locator('[data-component="chat-wizard-registration"]').first()).toBeVisible({ timeout: 5000 });
-    await expect(page.getByLabel("이름")).toBeVisible({ timeout: 5000 });
+    // "산모 등록" also appears inside the rendered wizard — scope to the
+    // user's message bubble to avoid a strict-mode violation.
+    await expect(
+      page.locator('[data-component="chat-message-user-bubble"]', { hasText: "산모 등록" }),
+    ).toBeVisible({ timeout: 5000 });
 
     expect(sseCalled).toBe(0);
   });

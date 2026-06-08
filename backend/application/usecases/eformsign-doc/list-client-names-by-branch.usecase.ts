@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import {
+    EformsignDocClientSummary,
     EFORMSIGN_DOC_REPOSITORY,
     IEformsignDocRepository,
 } from "domain/repositories/eformsign-doc.repository.interface";
@@ -11,7 +12,7 @@ export class ListClientNamesByBranchUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
     ) {}
 
-    execute(branchid: string): Promise<Array<{ documentId: string; clientName: string }>> {
+    execute(branchid: string): Promise<EformsignDocClientSummary[]> {
         return this.eformsignDocRepository.findClientNamesByBranch(branchid);
     }
 }

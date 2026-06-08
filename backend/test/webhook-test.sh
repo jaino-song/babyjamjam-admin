@@ -1,4 +1,6 @@
 #!/bin/bash
+set -euo pipefail
+
 # Eformsign Webhook Test Script
 # Based on: https://eformsignkr.github.io/developers/help/eformsign_webhook.html
 
@@ -6,6 +8,26 @@
 WEBHOOK_URL="${1:-http://localhost:4000/webhooks/eformsign}"
 DOCUMENT_ID="${2:-test-doc-$(date +%s)}"
 WEBHOOK_SECRET="${EFORMSIGN_WEBHOOK_SECRET:-}"
+
+command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
+command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
+
+if [[ ! "$WEBHOOK_URL" =~ ^https?:// ]]; then
+    echo "WEBHOOK_URL must start with http:// or https://" >&2
+    exit 2
+fi
+
+case "$WEBHOOK_URL" in
+    http://localhost:*|http://127.0.0.1:*|http://[::1]*|https://localhost:*|https://127.0.0.1:*|https://[::1]*)
+        ;;
+    *)
+        if [ "${ALLOW_REMOTE_WEBHOOK_TEST:-}" != "1" ]; then
+            echo "Refusing to send webhook test payloads to non-local URL: $WEBHOOK_URL" >&2
+            echo "Set ALLOW_REMOTE_WEBHOOK_TEST=1 to run this against a remote endpoint." >&2
+            exit 2
+        fi
+        ;;
+esac
 
 echo "=== Eformsign Webhook Test ==="
 echo "URL: $WEBHOOK_URL"
@@ -21,12 +43,12 @@ echo ""
 webhook_call() {
     local payload="$1"
     if [ -n "$WEBHOOK_SECRET" ]; then
-        curl -s -X POST "$WEBHOOK_URL" \
+        curl -sS --connect-timeout 5 --max-time 30 -X POST "$WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $WEBHOOK_SECRET" \
             -d "$payload"
     else
-        curl -s -X POST "$WEBHOOK_URL" \
+        curl -sS --connect-timeout 5 --max-time 30 -X POST "$WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -d "$payload"
     fi

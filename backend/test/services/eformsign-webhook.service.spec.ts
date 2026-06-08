@@ -107,6 +107,7 @@ describe("EformsignWebhookService", () => {
     const eformsignDocRepository = {
         findByDocumentId: jest.fn(),
         findBranchIdByDocumentId: jest.fn(),
+        claimCompletionStatus: jest.fn(),
     };
     const employeeScheduleRepository = {
         findByClientId: jest.fn(),
@@ -154,6 +155,7 @@ describe("EformsignWebhookService", () => {
         notificationService.sendToBranchUsers.mockResolvedValue({ sent: 1, failed: 0 });
         eformsignDocRepository.findBranchIdByDocumentId.mockResolvedValue(branchId);
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity());
+        eformsignDocRepository.claimCompletionStatus.mockResolvedValue("claimed");
         clientRepository.findById.mockResolvedValue(createClientEntity());
         employeeScheduleRepository.findByClientId.mockResolvedValue([]);
         employeeRepository.findById.mockResolvedValue(null);
@@ -165,17 +167,17 @@ describe("EformsignWebhookService", () => {
     });
 
     it("should call link and sync usecases for DOC_COMPLETE document events", async () => {
-        await expect(service.processWebhook(branchId, createDocumentPayload())).resolves.toBeUndefined();
+        await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
         expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
     });
 
-    it("should resolve the branch from the local document before updating webhook status", async () => {
-        await expect(service.processWebhook("company-1", createDocumentPayload())).resolves.toBeUndefined();
+    it("should resolve the branch from the local document before processing webhook status", async () => {
+        await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
 
         expect(eformsignDocRepository.findBranchIdByDocumentId).toHaveBeenCalledWith(documentId);
-        expect(updateStatusUsecase.execute).toHaveBeenCalledWith(
+        expect(eformsignDocRepository.claimCompletionStatus).toHaveBeenCalledWith(
             branchId,
             expect.objectContaining({ documentId }),
         );
@@ -184,7 +186,7 @@ describe("EformsignWebhookService", () => {
     it("should keep processing document events when sync throws", async () => {
         syncClientEndDateUsecase.execute.mockRejectedValue(new Error("sync failed"));
 
-        await expect(service.processWebhook(branchId, createDocumentPayload())).resolves.toBeUndefined();
+        await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
         expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
@@ -192,7 +194,7 @@ describe("EformsignWebhookService", () => {
     });
 
     it("should call link and sync usecases for DOC_COMPLETE ready_document_pdf events", async () => {
-        await expect(service.processWebhook(branchId, createReadyPdfPayload())).resolves.toBeUndefined();
+        await expect(service.processWebhook(createReadyPdfPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
         expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
@@ -201,7 +203,7 @@ describe("EformsignWebhookService", () => {
     it("should keep processing ready_document_pdf events when sync throws", async () => {
         syncClientEndDateUsecase.execute.mockRejectedValue(new Error("sync failed"));
 
-        await expect(service.processWebhook(branchId, createReadyPdfPayload())).resolves.toBeUndefined();
+        await expect(service.processWebhook(createReadyPdfPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
         expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
@@ -221,7 +223,7 @@ describe("EformsignWebhookService", () => {
         }
         payload.document.status = "doc_accept_participant";
 
-        await expect(service.processWebhook(branchId, payload)).resolves.toBeUndefined();
+        await expect(service.processWebhook(payload)).resolves.toBeUndefined();
 
         expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
             branchId,
@@ -248,7 +250,7 @@ describe("EformsignWebhookService", () => {
         }
         payload.document.status = "doc_accept_participant";
 
-        await expect(service.processWebhook(branchId, payload)).resolves.toBeUndefined();
+        await expect(service.processWebhook(payload)).resolves.toBeUndefined();
 
         expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
     });
@@ -261,12 +263,26 @@ describe("EformsignWebhookService", () => {
         }
         payload.document.status = "doc_accept_participant";
 
-        await expect(service.processWebhook(branchId, payload)).resolves.toBeUndefined();
+        await expect(service.processWebhook(payload)).resolves.toBeUndefined();
 
         expect(eventBus.emit).toHaveBeenCalledWith({
             branchId,
             documentId,
             reason: "doc:doc_accept_participant",
         });
+    });
+
+    it("should acknowledge duplicate completion webhooks without sending alimtalk twice", async () => {
+        eformsignDocRepository.claimCompletionStatus
+            .mockResolvedValueOnce("claimed")
+            .mockResolvedValueOnce("duplicate");
+
+        await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
+        await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
+
+        expect(linkDocumentUsecase.execute).toHaveBeenCalledTimes(1);
+        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledTimes(1);
+        expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
+        expect(eventBus.emit).toHaveBeenCalledTimes(1);
     });
 });

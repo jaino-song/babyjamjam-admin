@@ -1,22 +1,35 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+    withNoStore,
+} from "@/lib/api/route-utils";
 
-// Helper to get auth token from request
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-// Helper to create authorization headers
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+// Mirrors backend CreateClientDto: `name` (@IsString) plus the three booleans
+// `careCenter`, `voucherClient`, `breastPump` (@IsBoolean, no @IsOptional) are
+// required. Every other field is @IsOptional, so it passes through to the
+// backend's authoritative ValidationPipe.
+const createClientSchema = z
+    .object({
+        name: z.string().max(10_000),
+        careCenter: z.boolean(),
+        voucherClient: z.boolean(),
+        breastPump: z.boolean(),
+    })
+    .passthrough();
 
 // GET /api/clients - Get all clients (with optional pagination)
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const searchParams = request.nextUrl.searchParams;
@@ -35,46 +48,28 @@ export async function GET(request: NextRequest) {
             params,
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return withNoStore(backendJsonResponse(response));
     } catch (error) {
-        console.error("[API] Error fetching clients:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch clients" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch clients");
     }
 }
 
 // POST /api/clients - Create a new client
 export async function POST(request: NextRequest) {
-    try {
-        const token = getAuthToken(request);
-        if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+    const token = getAuthToken(request);
+    if (!token) {
+        return unauthorizedResponse("Unauthorized");
+    }
 
-        const body = await request.json();
-        const response = await serverAPIClient.post("/clients", body, {
+    const { data, response } = await parseBody(createClientSchema, request);
+    if (response) return response;
+
+    try {
+        const backendResponse = await serverAPIClient.post("/clients", data, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data, { status: 201 });
-    } catch (error: unknown) {
-        const apiError = error as {
-            response?: { data?: unknown; status?: number };
-            message?: string;
-        };
-
-        console.error("[API] Error creating client:", apiError.response?.data || apiError.message);
-
-        if (apiError.response?.data) {
-            return NextResponse.json(apiError.response.data, {
-                status: apiError.response.status || 500,
-            });
-        }
-
-        return NextResponse.json(
-            { error: "Failed to create client" },
-            { status: 500 }
-        );
+        return backendJsonResponse(backendResponse);
+    } catch (error) {
+        return errorResponse(error, "create client");
     }
 }

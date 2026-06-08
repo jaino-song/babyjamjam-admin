@@ -1,35 +1,19 @@
-export interface TemplateVariable {
-    key: string;
-    label: string;
-    type: string;
-    required: boolean;
-}
+import type {
+    CreateMessageTemplateRequest,
+    MessageTemplate,
+    MessageTemplateListResponse,
+    MessageTemplateVariable,
+    UpdateMessageTemplateRequest,
+} from "@babyjamjam/shared/types/message";
 
-export interface MessageTemplate {
-    id: string;
-    name: string;
-    content: string;
-    variables: TemplateVariable[];
-    createdAt: string;
-    updatedAt: string;
-}
+export type TemplateVariable = MessageTemplateVariable;
 
-export interface PaginatedTemplates {
-    data: MessageTemplate[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-}
+export type {
+    MessageTemplate,
+};
 
-export interface CreateTemplateDto {
-    name: string;
-    content: string;
-    variables: TemplateVariable[];
-}
-
-export interface UpdateTemplateDto {
-    name: string;
-    content: string;
-    variables: TemplateVariable[];
-}
+// Legacy alias kept locally so feature imports stay stable while the real
+// backend contract remains an array response.
+export type PaginatedTemplates = MessageTemplateListResponse;
+export type CreateTemplateDto = CreateMessageTemplateRequest;
+export type UpdateTemplateDto = UpdateMessageTemplateRequest;

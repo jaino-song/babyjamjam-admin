@@ -2,10 +2,14 @@ import { api } from '@/lib/api/client';
 
 import type {
     CustomVariable,
+    PreviewSystemTemplateRequest,
+    PreviewSystemTemplateResponse,
     SystemTemplate,
-    ValidationResult,
-    VersionDetail,
-    VersionHistoryItem,
+    SystemTemplateVersionDetail,
+    SystemTemplateVersionSummary,
+    SystemTemplateValidationResult,
+    UpdateSystemTemplateRequest,
+    UpdateSystemTemplateResponse,
 } from '../features/system-templates/types';
 
 export const systemTemplateService = {
@@ -13,23 +17,30 @@ export const systemTemplateService = {
 
     getByKey: (key: string) => api.get<SystemTemplate>(`/system-templates/${key}`),
 
-    update: (key: string, content: string, customVariables?: CustomVariable[]) =>
-        api.put<SystemTemplate>(`/system-templates/${key}`, { content, customVariables }),
+    update: (key: string, content: string, customVariables?: CustomVariable[]) => {
+        const payload: UpdateSystemTemplateRequest = customVariables
+            ? { content, customVariables }
+            : { content };
+        return api.put<UpdateSystemTemplateResponse>(`/system-templates/${key}`, payload);
+    },
 
     validate: (key: string, content: string) =>
-        api.post<ValidationResult>(`/system-templates/${key}/validate`, { content }),
+        api.post<SystemTemplateValidationResult>(`/system-templates/${key}/validate`, { content }),
 
-    preview: (key: string, data: Record<string, unknown>, content?: string) =>
-        api.post<string>(`/system-templates/${key}/preview`, { content, data }),
+    preview: (key: string, data: Record<string, unknown>, content?: string) => {
+        const payload: PreviewSystemTemplateRequest =
+            content === undefined ? { data } : { content, data };
+        return api.post<PreviewSystemTemplateResponse>(`/system-templates/${key}/preview`, payload);
+    },
 
     getVersions: (key: string) =>
-        api.get<VersionHistoryItem[]>(`/system-templates/${key}/versions`),
+        api.get<SystemTemplateVersionSummary[]>(`/system-templates/${key}/versions`),
 
     getVersionContent: (key: string, versionNumber: number) =>
-        api.get<VersionDetail>(`/system-templates/${key}/versions/${versionNumber}`),
+        api.get<SystemTemplateVersionDetail>(`/system-templates/${key}/versions/${versionNumber}`),
 
     rollback: (key: string, versionNumber: number) =>
-        api.post<SystemTemplate>(`/system-templates/${key}/rollback/${versionNumber}`),
+        api.post<UpdateSystemTemplateResponse>(`/system-templates/${key}/rollback/${versionNumber}`),
 
-    reset: (key: string) => api.post<SystemTemplate>(`/system-templates/${key}/reset`),
+    reset: (key: string) => api.post<UpdateSystemTemplateResponse>(`/system-templates/${key}/reset`),
 };

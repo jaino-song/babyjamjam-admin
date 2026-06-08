@@ -1,31 +1,38 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+// Mirrors backend CreateMessageTemplateDto: name, content and variables (array)
+// are all required; optional/forward-compatible fields flow through passthrough.
+const createMessageTemplateSchema = z
+    .object({
+        name: z.string().max(10_000),
+        content: z.string().max(10_000),
+        variables: z.array(z.unknown()),
+    })
+    .passthrough();
 
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const response = await serverAPIClient.get("/message-templates", { 
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data);
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error fetching message templates:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch message templates" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch message templates");
     }
 }
 
@@ -33,19 +40,22 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
-        const body = await request.json();
-        const response = await serverAPIClient.post("/message-templates", body, {
+        const { data, response: invalidBody } = await parseBody(
+            createMessageTemplateSchema,
+            request,
+        );
+        if (invalidBody) {
+            return invalidBody;
+        }
+
+        const response = await serverAPIClient.post("/message-templates", data, {
             headers: getAuthHeaders(token),
         });
-        return NextResponse.json(response.data, { status: 201 });
+        return backendJsonResponse(response);
     } catch (error) {
-        console.error("[API] Error creating message template:", error);
-        return NextResponse.json(
-            { error: "Failed to create message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "create message template");
     }
 }

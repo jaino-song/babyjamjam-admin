@@ -1,7 +1,7 @@
 "use client";
 
 import { Pencil, Trash2, X } from "lucide-react";
-import { Client, SERVICE_STATUS_OPTIONS, DocumentStatus } from "@/lib/client/types";
+import { Client, SERVICE_STATUS_OPTIONS, DocumentStatus, type ServiceStatus } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import type { Locale } from "@/app/actions/locale";
@@ -27,21 +27,19 @@ interface ClientDetailModalProps {
     onDelete: (id: number) => void;
 }
 
-const getStatusBadge = (status: string | null) => {
+const getStatusBadge = (status: ServiceStatus | null) => {
     const option = SERVICE_STATUS_OPTIONS.find(o => o.value === status);
     if (!option) return <Badge variant="outline" className="bg-muted text-muted-foreground border-muted">-</Badge>;
 
-    const variantMap: Record<string, "v3-active" | "v3-pending" | "v3-expired" | "outline"> = {
-        active: "v3-active",
-        pending: "v3-pending",
+    const variantMap: Record<ServiceStatus, "v3-active" | "v3-pending" | "v3-expired" | "outline"> = {
         waiting: "v3-pending",
+        replacement_requested: "v3-expired",
+        active: "v3-active",
         completed: "outline",
         terminated: "v3-expired",
-        cancelled: "v3-expired",
-        replacement_requested: "v3-expired",
     };
     
-    const variant = variantMap[status || ""] || "outline";
+    const variant = status ? variantMap[status] : "outline";
     
     return (
         <Badge variant={variant}>

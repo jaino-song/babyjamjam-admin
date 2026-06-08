@@ -10,6 +10,7 @@ import {
     FetchEformsignDocFromApiUsecase,
     CreateEformsignDocUsecase,
     CreateEformsignDocParams,
+    UpdateEformsignDocStatusUsecase,
     CreateAndSendContractUsecase,
     CreateAndSendContractParams,
     CreateAndSendContractResult,
@@ -19,6 +20,9 @@ import {
     EformsignTokenResponse,
     EformsignApiDocumentResponse,
 } from "domain/repositories/eformsign.client.interface";
+
+const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
+const REJECTED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"]);
 
 @Injectable()
 export class EformsignDocService {
@@ -31,6 +35,7 @@ export class EformsignDocService {
         private readonly findEformsignDocsByClientIdUsecase: FindEformsignDocsByClientIdUsecase,
         private readonly listEformsignDocsUsecase: ListEformsignDocsUsecase,
         private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
+        private readonly updateEformsignDocStatusUsecase: UpdateEformsignDocStatusUsecase,
         // External API use cases
         private readonly getEformsignAccessTokenUsecase: GetEformsignAccessTokenUsecase,
         private readonly refreshEformsignAccessTokenUsecase: RefreshEformsignAccessTokenUsecase,
@@ -118,10 +123,44 @@ export class EformsignDocService {
         return this.fetchEformsignDocFromApiUsecase.execute(accessToken, documentId);
     }
 
+    async syncStatusFromApi(
+        branchid: string,
+        accessToken: string,
+        documentId: string
+    ): Promise<EformsignDocEntity> {
+        const document = await this.fetchEformsignDocFromApiUsecase.execute(accessToken, documentId);
+        const currentStatus = document.current_status;
+        const statusType = this.normalizeStatusCode(currentStatus?.status_type);
+
+        return this.updateEformsignDocStatusUsecase.execute(branchid, {
+            documentId,
+            statusType,
+            statusDetail: this.statusDetail(statusType, currentStatus?.step_name),
+            stepType: currentStatus?.step_type,
+            stepIndex: currentStatus?.step_index,
+            stepName: currentStatus?.step_name,
+            expired: currentStatus?._expired,
+        });
+    }
+
     createAndSendContract(
         branchid: string,
         params: CreateAndSendContractParams
     ): Promise<CreateAndSendContractResult> {
         return this.createAndSendContractUsecase.execute(branchid, params);
+    }
+
+    private normalizeStatusCode(statusType: string | null | undefined): string {
+        return statusType?.trim().padStart(3, "0") || "000";
+    }
+
+    private statusDetail(statusType: string, stepName: string | null | undefined): string {
+        if (COMPLETED_STATUS_CODES.has(statusType)) {
+            return "완료";
+        }
+        if (REJECTED_STATUS_CODES.has(statusType)) {
+            return "거부";
+        }
+        return stepName?.trim() || "진행중";
     }
 }

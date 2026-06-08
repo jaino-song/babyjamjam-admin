@@ -9,6 +9,22 @@ import {
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
+type RefreshTokenResponse = {
+    accessToken?: string;
+    refreshToken?: string;
+    oauth_token?: {
+        access_token?: string;
+        refresh_token?: string;
+    };
+};
+
+function extractTokenPair(data: RefreshTokenResponse) {
+    return {
+        accessToken: data.oauth_token?.access_token ?? data.accessToken,
+        refreshToken: data.oauth_token?.refresh_token ?? data.refreshToken,
+    };
+}
+
 export async function POST(request: NextRequest) {
     try {
         const authToken = getAuthToken(request);
@@ -36,7 +52,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: errorMessage }, { status: response.status });
         }
 
-        const { accessToken, refreshToken: newRefreshToken } = response.data;
+        const { accessToken, refreshToken: newRefreshToken } = extractTokenPair(response.data);
         if (!accessToken || !newRefreshToken) {
             return NextResponse.json(
                 { error: "Invalid response from refresh service" },

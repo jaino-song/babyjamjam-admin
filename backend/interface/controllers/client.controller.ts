@@ -3,6 +3,7 @@ import { ClientService } from "application/services/client.service";
 import { CreateClientDto, UpdateClientDto, TerminateServiceDto, RequestReplacementDto } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { parseInteger } from "interface/parse-integer";
 
 @Controller("clients")
 @UseGuards(JwtGuard, TenantGuard)
@@ -31,6 +32,8 @@ export class ClientController {
             serviceStatus: dto.serviceStatus ?? null,
             breastPump: dto.breastPump,
             eDocId: dto.eDocId ?? null,
+            areaId: dto.areaId ?? null,
+            suppressGreetingSms: dto.suppressGreetingSms ?? false,
         });
     }
 
@@ -45,11 +48,11 @@ export class ClientController {
         if (filter) {
             return this.clientService.findByFilter(tenant.branchId ?? "", filter);
         }
-        if (page && limit) {
+        if (page !== undefined || limit !== undefined) {
             return this.clientService.findAllPaginated(
                 tenant.branchId ?? "",
-                Number(page),
-                Number(limit),
+                parseInteger(page, "page", { defaultValue: 1, min: 1 }),
+                parseInteger(limit, "limit", { defaultValue: 20, min: 1, max: 100 }),
                 search,
             );
         }
@@ -69,7 +72,7 @@ export class ClientController {
     ) {
         return this.clientService.getDashboardOverview(
             tenant.branchId ?? "",
-            limit ? Number(limit) : 50,
+            parseInteger(limit, "limit", { defaultValue: 50, min: 1, max: 100 }),
         );
     }
 
@@ -80,7 +83,7 @@ export class ClientController {
     ) {
         return this.clientService.getActionRequiredAlerts(
             tenant.branchId ?? "",
-            limit ? Number(limit) : 3,
+            parseInteger(limit, "limit", { defaultValue: 3, min: 1, max: 100 }),
         );
     }
 
@@ -115,6 +118,7 @@ export class ClientController {
             serviceStatus: dto.serviceStatus,
             breastPump: dto.breastPump,
             eDocId: dto.eDocId,
+            areaId: dto.areaId,
         });
     }
 

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { EformsignWebhookController } from "interface/controllers/eformsign-webhook.controller";
 import { EformsignWebhookService } from "application/services/eformsign-webhook.service";
 import {
@@ -10,13 +11,13 @@ import { EFORMSIGN_CLIENT_REPOSITORY } from "domain/repositories/eformsign.clien
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { EMPLOYEE_SCHEDULE_REPOSITORY } from "domain/repositories/employee-schedule.repository.interface";
 import { EMPLOYEE_REPOSITORY } from "domain/repositories/employee.repository.interface";
-import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { SbEmployeeScheduleRepository } from "infrastructure/database/repositories/sb.employee-schedule.repository";
 import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.employee.repository";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
+import { createEformsignClientRepository } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 import { AlimtalkModule } from "./alimtalk.module";
 import { EformsignDocModule } from "./eformsign-doc.module";
 import { NotificationModule } from "./notification.module";
@@ -35,7 +36,8 @@ import { NotificationModule } from "./notification.module";
         },
         {
             provide: EFORMSIGN_CLIENT_REPOSITORY,
-            useClass: EformsignApiClient,
+            inject: [ConfigService],
+            useFactory: createEformsignClientRepository,
         },
         {
             provide: CLIENT_REPOSITORY,

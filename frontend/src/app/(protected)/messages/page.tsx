@@ -5,6 +5,7 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
+import type { SystemTemplateKey } from "@/features/system-templates/types";
 import {
   useAlimtalkHistory,
   useUpcomingAlimtalkJobs,
@@ -364,9 +365,9 @@ const TEMPLATE_DETAIL_TABS = [
   { key: "preview", label: "미리보기" },
 ];
 
-const BUILTIN_TEMPLATE_SYSTEM_KEYS: Record<BuiltinTemplateType, string> = {
+const BUILTIN_TEMPLATE_SYSTEM_KEYS: Record<BuiltinTemplateType, SystemTemplateKey> = {
   greeting: "GREETING",
-  "service-info": "service_info",
+  "service-info": "SERVICE_INFO",
   "price-info": "PRICE_INFO",
   reminder: "REMINDER",
   thanks: "THANKS",
@@ -426,6 +427,7 @@ const HISTORY_EVENT_ICON_BY_TYPE: Record<TriggerEventType, typeof MessageCircle>
 const HISTORY_TEMPLATE_LABELS: Record<TriggerTemplateKey, string> = {
   CLIENT_WELCOME: "고객 등록 안내",
   SERVICE_START_REMINDER: "서비스 시작 리마인드",
+  SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 안내",
   EMPLOYEE_ASSIGNED: "직원 배정 완료",
 };
@@ -1748,7 +1750,7 @@ export default function MessagesPage() {
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
 
   const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
-  const userTemplates = useMemo(() => userTemplatesData?.data ?? [], [userTemplatesData]);
+  const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
 
   const userTemplateItems = useMemo<TemplateListItem[]>(() => {
     return userTemplates.map((template) => ({

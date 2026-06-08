@@ -1,5 +1,6 @@
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import helmet from "helmet";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
 import { PrismaExceptionFilter } from "./infrastructure/filters/prisma-exception.filter";
@@ -19,7 +20,21 @@ process.on('unhandledRejection', (reason, promise) => {
 };
 
 async function bootstrap() {
+    // Belt-and-suspenders (review finding): the e2e-only switches must never
+    // ride into a production boot — they disable vendor egress and the
+    // storage bucket bootstrap.
+    if (process.env["NODE_ENV"] === "production") {
+        for (const flag of ["E2E_VENDOR_STUBS", "STORAGE_BOOTSTRAP_DISABLED"]) {
+            if (process.env[flag] === "1") {
+                throw new Error(`${flag}=1 is not allowed when NODE_ENV=production`);
+            }
+        }
+    }
+
     const app = await NestFactory.create(AppModule);
+    app.use(helmet());
+    const expressApp = app.getHttpAdapter().getInstance();
+    expressApp.set("trust proxy", 1);
     app.use(cookieParser());
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     app.useGlobalFilters(new PrismaExceptionFilter());
