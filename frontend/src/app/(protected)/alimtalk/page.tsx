@@ -26,6 +26,7 @@ import {
   HeaderActionButton,
   ListEmptyState,
   ListPanel,
+  PageSection,
   SectionNav,
   SplitLayout,
 } from "@/components/app/v3";
@@ -1597,7 +1598,7 @@ function TemplatesSection() {
   return (
     <section
       data-component="alimtalk-templates-browser"
-      className="h-[calc(100dvh-176px)] md:h-[calc(100dvh-64px)] min-h-[calc(100dvh-176px)] md:min-h-[calc(100dvh-64px)]"
+      className="h-full min-h-0"
     >
       <SplitLayout columns={2} activePanel={mobilePanel} hasSelection={!!selectedTemplate} onBack={() => setMobilePanel(0)}>
         <ListPanel
@@ -1730,23 +1731,23 @@ export default function AlimtalkPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("overview");
 
   return (
-    <section data-component="alimtalk" className="space-y-6">
-      <div data-component="alimtalk-sections" className="flex flex-col lg:flex-row gap-8">
+    <PageSection name="alimtalk">
+      <div data-component="alimtalk-sections" className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row">
         <SectionNav
           items={NAV_SECTIONS}
           activeId={activeSection}
           onSelect={(id) => setActiveSection(id as SectionId)}
         />
 
-        <div className="flex-1 min-w-0">
+        <div data-component="alimtalk-content" className="min-h-0 flex-1 min-w-0">
           {activeSection === "overview" ? (
-            <section data-component="alimtalk-overview">
+            <section data-component="alimtalk-overview" className="h-full min-h-0">
               <UpcomingAlimtalkManager />
             </section>
           ) : null}
 
           {activeSection === "history" ? (
-            <section data-component="alimtalk-history">
+            <section data-component="alimtalk-history" className="h-full min-h-0">
               <AlimtalkHistoryManager />
             </section>
           ) : null}
@@ -1754,18 +1755,18 @@ export default function AlimtalkPage() {
           {activeSection === "templates" ? <TemplatesSection /> : null}
 
           {activeSection === "triggers" ? (
-            <section data-component="alimtalk-triggers">
+            <section data-component="alimtalk-triggers" className="h-full min-h-0">
               <TriggerRulesManager />
             </section>
           ) : null}
 
           {activeSection === "settings" ? (
-            <section data-component="alimtalk-settings">
+            <section data-component="alimtalk-settings" className="h-full min-h-0">
               <AlimtalkTenantApplicationSettings />
             </section>
           ) : null}
         </div>
       </div>
-    </section>
+    </PageSection>
   );
 }

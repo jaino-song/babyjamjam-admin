@@ -60,7 +60,7 @@ export function ExpandableSearch({
         disabled={disabled}
         style={{ border: "none", outline: "none", boxShadow: "none" }}
         className={cn(
-          "bg-transparent text-sm text-v3-dark caret-v3-primary placeholder:text-v3-text-muted/50",
+          "bg-transparent text-[0.8rem] text-v3-dark caret-v3-primary placeholder:text-v3-text-muted/50",
           expanded ? expandedWidth : "w-0",
           disabled && "cursor-not-allowed text-v3-text-muted",
         )}

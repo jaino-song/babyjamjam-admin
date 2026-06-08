@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { cn } from "@/lib/utils";
 import { SplitLayoutContext } from "./SplitLayoutContext";
 
 // Re-export the hook for external use
@@ -15,9 +16,21 @@ interface SplitLayoutProps {
   activePanel?: number;
 }
 
+type SplitLayoutMode = "desktop" | "compact";
+const COMPACT_BREAKPOINT = 1600;
+const COMPACT_PANEL_GAP = 16;
+const PANEL_MOUNT_ANIMATION_MS = 550;
+
+interface CompactMetrics {
+  listWidth: number;
+  detailWidth: number;
+  listOffset: number;
+  viewportWidth: number;
+}
+
 function getDesktopGridClass(columns: 2 | 3): string {
   if (columns === 3) return "grid-cols-1 lg:grid-cols-3";
-  return "grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)]";
+  return "grid-cols-[400px_minmax(0,1fr)]";
 }
 
 export function SplitLayout({
@@ -27,59 +40,296 @@ export function SplitLayout({
   columns = 2,
   activePanel = 0,
 }: SplitLayoutProps) {
-  const isMobile = useIsMobile();
+  const isMobileViewport = useIsMobile();
+  const splitLayoutRef = useRef<HTMLDivElement>(null);
+  const compactSlideFrameRef = useRef<number | null>(null);
+  const [mode, setMode] = useState<SplitLayoutMode>("desktop");
+  const [isCompactSlideEnabled, setIsCompactSlideEnabled] = useState(false);
+  const [isPanelMountAnimationActive, setIsPanelMountAnimationActive] = useState(true);
+  const [compactMetrics, setCompactMetrics] = useState<CompactMetrics>({
+    listWidth: 0,
+    detailWidth: 0,
+    listOffset: 0,
+    viewportWidth: 0,
+  });
 
   const childArray = React.Children.toArray(children);
+  const isDynamicSplit = columns === 2 && childArray.length >= 2;
+  const isCompact = mode === "compact";
+  const didMountWithSelectionRef = useRef(hasSelection);
+  const shouldAnimatePanelMount =
+    isPanelMountAnimationActive && (didMountWithSelectionRef.current || !hasSelection);
 
   const goToList = useCallback(() => {
     onBack?.();
   }, [onBack]);
 
   const contextValue = useMemo(
-    () => ({ goToList, isMobile }),
-    [goToList, isMobile]
+    () => ({ goToList, isMobile: isCompact }),
+    [goToList, isCompact]
   );
 
-  if (!isMobile) {
-    return (
-      <SplitLayoutContext.Provider value={contextValue}>
+  const cancelCompactSlideFrame = useCallback(() => {
+    if (compactSlideFrameRef.current === null) return;
+
+    window.cancelAnimationFrame(compactSlideFrameRef.current);
+    compactSlideFrameRef.current = null;
+  }, []);
+
+  const scheduleCompactSlideEnable = useCallback((nextMode: SplitLayoutMode) => {
+    cancelCompactSlideFrame();
+    setIsCompactSlideEnabled(false);
+
+    if (nextMode !== "compact") return;
+
+    compactSlideFrameRef.current = window.requestAnimationFrame(() => {
+      compactSlideFrameRef.current = window.requestAnimationFrame(() => {
+        compactSlideFrameRef.current = null;
+        setIsCompactSlideEnabled(true);
+      });
+    });
+  }, [cancelCompactSlideFrame]);
+
+  const setRelatedMode = useCallback((nextMode: SplitLayoutMode) => {
+    const root = splitLayoutRef.current;
+    const mainContent = root?.closest<HTMLElement>('[data-component="main-content"]');
+
+    root?.setAttribute("data-mode", nextMode);
+    root
+      ?.querySelector<HTMLElement>('[data-component="split-layout-track"]')
+      ?.setAttribute("data-mode", nextMode);
+    root
+      ?.querySelectorAll<HTMLElement>('[data-component="split-layout-panel"]')
+      .forEach((element) => element.setAttribute("data-mode", nextMode));
+    mainContent?.setAttribute("data-mode", nextMode);
+    mainContent
+      ?.querySelector<HTMLElement>('[data-component="section-nav"]')
+      ?.setAttribute("data-mode", nextMode);
+    mainContent
+      ?.querySelector<HTMLElement>('[data-component="section-nav-desktop"]')
+      ?.setAttribute("data-mode", nextMode);
+    mainContent
+      ?.querySelector<HTMLElement>('[data-component="section-nav-mobile"]')
+      ?.setAttribute("data-mode", nextMode);
+    mainContent
+      ?.querySelector<HTMLElement>('[data-component="floating-quick-actions"]')
+      ?.setAttribute("data-mode", nextMode);
+  }, []);
+
+  const measureAndApplyMode = useCallback(() => {
+    const root = splitLayoutRef.current;
+
+    if (!root) return;
+
+    if (!isDynamicSplit) {
+      const nextMode = isMobileViewport ? "compact" : "desktop";
+      setMode(nextMode);
+      setRelatedMode(nextMode);
+      scheduleCompactSlideEnable(nextMode);
+      return;
+    }
+
+    const track = root.querySelector<HTMLElement>('[data-component="split-layout-track"]');
+    const listPanel = root.querySelector<HTMLElement>('[data-component="split-layout-panel"][data-panel="list"]');
+    const detailPanel = root.querySelector<HTMLElement>('[data-component="split-layout-panel"][data-panel="detail"]');
+    const mainContent = root.closest<HTMLElement>('[data-component="main-content"]');
+    const floatingActions = mainContent?.querySelector<HTMLElement>('[data-component="floating-quick-actions"]');
+
+    if (!track || !listPanel || !detailPanel || !mainContent) return;
+
+    const relatedElements = [
+      root,
+      track,
+      listPanel,
+      detailPanel,
+      mainContent,
+      mainContent.querySelector<HTMLElement>('[data-component="section-nav"]'),
+      mainContent.querySelector<HTMLElement>('[data-component="section-nav-desktop"]'),
+      mainContent.querySelector<HTMLElement>('[data-component="section-nav-mobile"]'),
+      floatingActions,
+    ].filter((element): element is HTMLElement => element !== null);
+
+    const previousModes = relatedElements.map((element) => [
+      element,
+      element.getAttribute("data-mode"),
+    ] as const);
+    const previousRootVars = {
+      listWidth: root.style.getPropertyValue("--compact-list-width"),
+      detailWidth: root.style.getPropertyValue("--compact-detail-width"),
+      listOffset: root.style.getPropertyValue("--compact-list-offset"),
+      viewportWidth: root.style.getPropertyValue("--compact-viewport-width"),
+      panelGap: root.style.getPropertyValue("--compact-panel-gap"),
+    };
+    const previousInlineStyles = {
+      trackTransform: track.style.transform,
+      listWidth: listPanel.style.width,
+      detailWidth: detailPanel.style.width,
+    };
+
+    const restoreCustomProperty = (property: string, value: string) => {
+      if (value) {
+        root.style.setProperty(property, value);
+        return;
+      }
+
+      root.style.removeProperty(property);
+    };
+
+    const restoreMeasurementStyles = () => {
+      restoreCustomProperty("--compact-list-width", previousRootVars.listWidth);
+      restoreCustomProperty("--compact-detail-width", previousRootVars.detailWidth);
+      restoreCustomProperty("--compact-list-offset", previousRootVars.listOffset);
+      restoreCustomProperty("--compact-viewport-width", previousRootVars.viewportWidth);
+      restoreCustomProperty("--compact-panel-gap", previousRootVars.panelGap);
+      track.style.transform = previousInlineStyles.trackTransform;
+      listPanel.style.width = previousInlineStyles.listWidth;
+      detailPanel.style.width = previousInlineStyles.detailWidth;
+    };
+
+    let measuredCompactPanelWidth = 0;
+
+    try {
+      track.style.transform = "none";
+      listPanel.style.width = "";
+      detailPanel.style.width = "";
+
+      relatedElements.forEach((element) => element.setAttribute("data-mode", "compact"));
+      const compactWidth = root.parentElement?.getBoundingClientRect().width
+        ?? root.getBoundingClientRect().width;
+      const compactPanelWidth = Math.max(0, compactWidth);
+
+      root.style.setProperty("--compact-list-width", `${compactPanelWidth}px`);
+      root.style.setProperty("--compact-detail-width", `${compactPanelWidth}px`);
+      root.style.setProperty("--compact-list-offset", `${compactPanelWidth}px`);
+      root.style.setProperty("--compact-viewport-width", `${compactPanelWidth}px`);
+      root.style.setProperty("--compact-panel-gap", `${COMPACT_PANEL_GAP}px`);
+      listPanel.style.width = "var(--compact-list-width, 100%)";
+      detailPanel.style.width = "var(--compact-detail-width, 100%)";
+      measuredCompactPanelWidth = detailPanel.getBoundingClientRect().width;
+    } finally {
+      restoreMeasurementStyles();
+      previousModes.forEach(([element, previousMode]) => {
+        if (previousMode === null) {
+          element.removeAttribute("data-mode");
+          return;
+        }
+
+        element.setAttribute("data-mode", previousMode);
+      });
+    }
+
+    const nextMode = window.innerWidth <= COMPACT_BREAKPOINT
+      ? "compact"
+      : "desktop";
+
+    setCompactMetrics({
+      listWidth: measuredCompactPanelWidth,
+      detailWidth: measuredCompactPanelWidth,
+      listOffset: measuredCompactPanelWidth + COMPACT_PANEL_GAP,
+      viewportWidth: measuredCompactPanelWidth,
+    });
+    setMode(nextMode);
+    setRelatedMode(nextMode);
+    scheduleCompactSlideEnable(nextMode);
+  }, [isDynamicSplit, isMobileViewport, scheduleCompactSlideEnable, setRelatedMode]);
+
+  useLayoutEffect(() => {
+    return () => cancelCompactSlideFrame();
+  }, [cancelCompactSlideFrame]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setIsPanelMountAnimationActive(false);
+    }, PANEL_MOUNT_ANIMATION_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  useLayoutEffect(() => {
+    measureAndApplyMode();
+
+    window.addEventListener("resize", measureAndApplyMode);
+    return () => window.removeEventListener("resize", measureAndApplyMode);
+  }, [measureAndApplyMode, childArray.length]);
+
+  const mobileOffset = columns === 3
+    ? activePanel
+    : hasSelection ? 1 : 0;
+  const compactTransform = columns === 3
+    ? `translateX(-${mobileOffset * 100}%)`
+    : hasSelection
+      ? "translateX(calc(-1 * var(--compact-list-offset, 100%)))"
+      : "translateX(0)";
+  const compactViewportWidth = columns === 2 && isCompact
+    ? hasSelection
+      ? compactMetrics.detailWidth
+      : compactMetrics.listWidth
+    : compactMetrics.viewportWidth;
+  const compactStyle = {
+    "--compact-list-width": `${compactMetrics.listWidth}px`,
+    "--compact-detail-width": `${compactMetrics.detailWidth}px`,
+    "--compact-list-offset": `${compactMetrics.listOffset}px`,
+    "--compact-viewport-width": `${compactViewportWidth}px`,
+    "--compact-panel-gap": `${columns === 2 ? COMPACT_PANEL_GAP : 0}px`,
+  } as React.CSSProperties;
+
+  return (
+    <SplitLayoutContext.Provider value={contextValue}>
+      <div
+        ref={splitLayoutRef}
+        data-component="split-layout"
+        data-columns={columns}
+        data-has-selection={hasSelection ? "true" : "false"}
+        data-mode={mode}
+        className={cn(
+          "flex-1 h-full min-w-0 min-h-0",
+          "grid gap-4",
+          getDesktopGridClass(columns),
+          "data-[mode=compact]:block data-[mode=compact]:relative data-[mode=compact]:w-full data-[mode=compact]:overflow-hidden data-[mode=compact]:rounded-[28px]",
+        )}
+        style={compactStyle}
+      >
         <div
-          data-component="split-layout"
-          className={`grid ${getDesktopGridClass(columns)} gap-6 flex-1 h-full min-w-0 min-h-0`}
+          data-component="split-layout-track"
+          data-mode={mode}
+          className={cn(
+            "contents",
+            "data-[mode=compact]:flex data-[mode=compact]:h-full data-[mode=compact]:gap-[var(--compact-panel-gap)]",
+            isCompactSlideEnabled && [
+              "data-[mode=compact]:transition-transform",
+              "data-[mode=compact]:duration-300",
+              "data-[mode=compact]:ease-[cubic-bezier(0.22,1,0.36,1)]",
+              "data-[mode=compact]:will-change-transform",
+              "motion-reduce:transition-none",
+            ],
+          )}
+          style={isCompact ? { transform: compactTransform } : undefined}
         >
           {childArray.map((child, index) => {
             const key = (child as React.ReactElement).key ?? `split-panel-${index}`;
+            const panelName = index === 0 ? "list" : "detail";
+            const panelStyle = isCompact && columns === 2
+              ? {
+                  width: index === 0
+                    ? "var(--compact-list-width, 100%)"
+                    : "var(--compact-detail-width, 100%)",
+                }
+              : undefined;
 
             return (
               <div
                 key={key}
                 data-component="split-layout-panel"
-                className="min-w-0 min-h-0 flex flex-col animate-v3-slide-up"
+                data-panel={panelName}
+                className={cn(
+                  "min-w-0 min-h-0 flex flex-col",
+                  shouldAnimatePanelMount && "animate-v3-slide-up",
+                  "data-[mode=compact]:h-full data-[mode=compact]:shrink-0 data-[mode=compact]:overflow-y-auto",
+                  columns === 3 && isCompact && "w-full flex-shrink-0",
+                )}
+                data-mode={mode}
+                style={panelStyle}
               >
-                {child}
-              </div>
-            );
-          })}
-        </div>
-      </SplitLayoutContext.Provider>
-    );
-  }
-
-  const mobileOffset = columns === 3
-    ? activePanel
-    : hasSelection ? 1 : 0;
-
-  return (
-    <SplitLayoutContext.Provider value={contextValue}>
-      <div data-component="split-layout" className="w-full h-full min-h-0 overflow-hidden relative">
-        <div
-          className="absolute inset-0 flex transition-transform duration-300 ease-out"
-          style={{ transform: `translateX(-${mobileOffset * 100}%)` }}
-        >
-          {childArray.map((child, index) => {
-            const key = (child as React.ReactElement).key ?? `split-panel-${index}`;
-            return (
-              <div key={key} className="w-full h-full min-h-0 flex-shrink-0 overflow-y-auto">
                 {child}
               </div>
             );

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Building2 } from "lucide-react";
 import { AuthPanel } from "@/components/auth/auth-panel";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -22,6 +23,33 @@ interface Branch {
 }
 
 const BRANCHES_PER_PAGE = 5;
+
+function SelectBranchLoadingSkeleton() {
+    return (
+        <div data-component="select-branch-loading" className="flex w-full flex-1 flex-col gap-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+                <Card
+                    key={index}
+                    data-component="select-branch-loading-card"
+                    className="rounded-[24px] border-[1.35px] border-v3-border bg-white shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]"
+                >
+                    <CardContent className="p-4">
+                        <div data-component="select-branch-loading-card-row" className="flex items-center justify-between gap-4">
+                            <div data-component="select-branch-loading-card-main" className="flex min-w-0 items-center gap-3">
+                                <Skeleton className="h-11 w-11 shrink-0 rounded-[18px] bg-v3-dim-white" />
+                                <div data-component="select-branch-loading-card-copy" className="min-w-0 flex-1 space-y-2">
+                                    <Skeleton className="h-4 w-32 bg-v3-dim-white" />
+                                    <Skeleton className="h-3 w-48 max-w-full bg-v3-dim-white" />
+                                </div>
+                            </div>
+                            <Skeleton className="h-6 w-16 shrink-0 rounded-full bg-v3-dim-white" />
+                        </div>
+                    </CardContent>
+                </Card>
+            ))}
+        </div>
+    );
+}
 
 export default function SelectBranchPage() {
     const router = useRouter();
@@ -100,10 +128,7 @@ export default function SelectBranchPage() {
                 title="지점 불러오는 중"
                 subtitle="계정에 연결된 지점을 정리하고 있습니다."
             >
-                <div data-component="select-branch-loading" className="flex flex-col items-center gap-4 py-6 text-center">
-                    <Spinner size="lg" className="text-v3-primary" />
-                    <p className="text-sm text-v3-text-muted">지점 목록을 불러오는 중...</p>
-                </div>
+                <SelectBranchLoadingSkeleton />
             </AuthPanel>
         );
     }

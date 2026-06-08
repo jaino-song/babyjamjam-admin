@@ -9,6 +9,7 @@ export interface ContentPaperProps extends React.HTMLAttributes<HTMLDivElement> 
     title?: string;
     subtitle?: string;
     header?: React.ReactNode;
+    contentClassName?: string;
     /** @deprecated Use className instead. Kept for backward compatibility. */
     elevation?: number;
     disableAnimation?: boolean;
@@ -26,6 +27,7 @@ export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
             title,
             subtitle,
             header,
+            contentClassName,
             elevation, // Kept for backward compatibility, not used
             disableAnimation = false, // Enable fade-in by default
             className,
@@ -80,7 +82,7 @@ export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
         const content = (
             <>
                 {renderHeader()}
-                <CardContent className={cn(!title && !subtitle && !header && "pt-6")}>
+                <CardContent className={cn(!title && !subtitle && !header && "pt-6", contentClassName)}>
                     {children}
                 </CardContent>
             </>

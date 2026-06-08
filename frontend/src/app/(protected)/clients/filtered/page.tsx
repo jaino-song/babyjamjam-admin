@@ -10,7 +10,7 @@ import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
     Table,
     TableBody,
@@ -47,6 +47,35 @@ const formatDate = (dateStr: string | null): string => {
     if (!dateStr) return "-";
     return new Date(dateStr).toLocaleDateString("ko-KR");
 };
+
+function FilteredClientsTableSkeleton() {
+    return (
+        <Table>
+            <TableHeader>
+                <TableRow>
+                    <TableHead className="whitespace-nowrap">이름</TableHead>
+                    <TableHead className="whitespace-nowrap">시작일</TableHead>
+                    <TableHead className="whitespace-nowrap">계약서</TableHead>
+                </TableRow>
+            </TableHeader>
+            <TableBody>
+                {Array.from({ length: 6 }).map((_, index) => (
+                    <TableRow key={index} data-component="clients-filtered-loading-row">
+                        <TableCell>
+                            <Skeleton className="h-4 w-24 bg-v3-dim-white" />
+                        </TableCell>
+                        <TableCell>
+                            <Skeleton className="h-4 w-20 bg-v3-dim-white" />
+                        </TableCell>
+                        <TableCell>
+                            <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
+                        </TableCell>
+                    </TableRow>
+                ))}
+            </TableBody>
+        </Table>
+    );
+}
 
 export default function FilteredClientsPage() {
     const router = useRouter();
@@ -110,8 +139,8 @@ export default function FilteredClientsPage() {
             {/* Content */}
             <div data-component="clients-filtered-content" className="px-4 sm:px-6 py-4">
                 {isLoading ? (
-                    <div data-component="clients-filtered-loading" className="flex justify-center py-16">
-                        <Spinner size="lg" />
+                    <div data-component="clients-filtered-loading">
+                        <FilteredClientsTableSkeleton />
                     </div>
                 ) : error ? (
                     <Alert variant="destructive">데이터를 불러오는데 실패했습니다</Alert>

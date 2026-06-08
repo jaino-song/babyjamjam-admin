@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { settingsApi, type RibbonConfig } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
@@ -28,6 +29,29 @@ const DEFAULT_CONFIG: RibbonConfig = {
   linkHref: "",
   linkColor: "#FFB27B",
 };
+
+function RibbonConfigSkeleton() {
+  return (
+    <div data-component="website-admin-ribbon-loading-skeleton" className="space-y-6">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div
+          key={index}
+          data-component="website-admin-ribbon-loading-row"
+          className="flex items-center justify-between gap-6 rounded-xl p-3"
+        >
+          <div data-component="website-admin-ribbon-loading-copy" className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-4 w-28 bg-v3-dim-white" />
+            <Skeleton className="h-3 w-64 max-w-full bg-v3-dim-white" />
+          </div>
+          <Skeleton className="h-9 w-16 rounded-full bg-v3-dim-white" />
+        </div>
+      ))}
+      <div data-component="website-admin-ribbon-loading-actions" className="flex justify-end">
+        <Skeleton className="h-10 w-24 rounded-xl bg-v3-dim-white" />
+      </div>
+    </div>
+  );
+}
 
 export default function WebsiteAdminPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("ribbon");
@@ -92,8 +116,8 @@ export default function WebsiteAdminPage() {
                 <Separator className="mb-6" />
 
                 {ribbonQuery.isLoading ? (
-                  <div className="flex items-center justify-center py-12">
-                    <Spinner size="lg" />
+                  <div data-component="website-admin-ribbon-loading">
+                    <RibbonConfigSkeleton />
                   </div>
                 ) : (
                   <div className="space-y-6">

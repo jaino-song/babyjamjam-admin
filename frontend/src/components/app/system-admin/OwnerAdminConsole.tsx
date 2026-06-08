@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import {
   DetailPanel,
+  DetailSkeleton,
   InfoCard,
   InfoRow,
   ListEmptyState,
@@ -43,6 +44,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getSystemAdminUsers, type SystemAdminUser } from "@/lib/api/users";
 import {
   approveSystemAdminMessageSenderApproval,
@@ -1339,6 +1341,8 @@ export function OwnerAdminConsole() {
 
   const activeTheme = SECTION_THEME_CLASSNAMES[activeSection.id];
   const isApprovalSection = activeSection.id === "signups" || activeSection.id === "branches";
+  const isAccountsSectionLoading =
+    activeSection.id === "accounts" && isSystemAdminUsersLoading && !systemAdminUsersError;
 
   const filteredRecords = useMemo(() => {
     return filterSectionRecords(activeSection, activeViewState.tab, deferredSearchQuery);
@@ -1371,7 +1375,10 @@ export function OwnerAdminConsole() {
     <PageSection name="system-admin">
       <StatsBar name="system-admin" items={activeSection.stats} />
 
-      <div className="flex flex-1 min-h-0 flex-col gap-6 lg:flex-row">
+      <div
+        data-component="system-admin-sections"
+        className="flex flex-1 min-h-0 flex-col gap-6 lg:flex-row"
+      >
         <SectionNav
           items={sections.map((section) => ({
             id: section.id,
@@ -1428,7 +1435,28 @@ export function OwnerAdminConsole() {
               }
               searchPlaceholder={activeSection.searchPlaceholder}
             >
-              {filteredRecords.length === 0 ? (
+              {isAccountsSectionLoading ? (
+                <div data-component="system-admin-accounts-list-skeleton" className="space-y-2 pb-4">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <div
+                      key={index}
+                      data-component="system-admin-accounts-list-skeleton-item"
+                      className="min-h-[76px] rounded-[18px] border-2 border-transparent bg-white p-4"
+                    >
+                      <div className="flex min-h-11 items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-v3-dim-white">
+                          <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <Skeleton className="h-4 w-28 bg-v3-dim-white" />
+                          <Skeleton className="h-3 w-44 bg-v3-dim-white" />
+                        </div>
+                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : filteredRecords.length === 0 ? (
                 <ListEmptyState
                   name="system-admin-list-empty"
                   icon={activeSection.icon}
@@ -1530,7 +1558,17 @@ export function OwnerAdminConsole() {
               )}
             </ListPanel>
 
-            {selectedRecord ? (
+            {isAccountsSectionLoading ? (
+              <DetailSkeleton
+                name="system-admin-accounts-detail-skeleton"
+                headerBadge
+                headerActions={1}
+                sections={[
+                  { titleWidth: "w-24", rows: ["w-full", "w-4/5", "w-2/3"] },
+                  { titleWidth: "w-20", rows: ["w-full", "w-3/4", "w-5/6"] },
+                ]}
+              />
+            ) : selectedRecord ? (
               <DetailPanel
                 avatar={(() => {
                   const iconStyle = CATEGORY_BADGE_STYLE[selectedRecord.category]?.icon;

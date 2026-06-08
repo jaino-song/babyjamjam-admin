@@ -346,7 +346,7 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
   return (
     <section
       data-component={component("trigger-rules")}
-      className="flex h-[calc(100dvh-176px)] min-h-[calc(100dvh-176px)] flex-col md:h-[calc(100dvh-64px)] md:min-h-[calc(100dvh-64px)]"
+      className="flex h-full min-h-0 flex-col"
     >
       <div data-component={component("trigger-rules-layout")} className="flex-1 min-h-0">
         <SplitLayout hasSelection={effectiveSelectedRuleId !== null} onBack={() => setSelectedRuleId(null)}>

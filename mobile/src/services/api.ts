@@ -161,7 +161,9 @@ export interface SyncedEformsignDocResponse {
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
-        window.location.href = `${PUBLIC_BACKEND_BASE_URL}/auth/kakao`;
+        // client=mobile tells the backend to return to the mobile domain (m.staff.*)
+        // after the Kakao round-trip; it is carried through the OAuth `state` param.
+        window.location.href = `${PUBLIC_BACKEND_BASE_URL}/auth/kakao?client=mobile`;
     },
 
     // Email authentication
