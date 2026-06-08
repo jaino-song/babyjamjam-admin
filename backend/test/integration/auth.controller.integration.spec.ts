@@ -18,6 +18,11 @@ describe("AuthController (Integration)", () => {
     let prismaService: jest.Mocked<PrismaService>;
     let rateLimitGuard: jest.Mocked<Pick<RateLimitGuard, "canActivate" | "resetForKey">>;
 
+    // Several callback tests mutate process.env (NODE_ENV, *_FRONTEND_URL).
+    // Snapshot once, give each test a fresh copy, and restore at the end so the
+    // mutations can't leak across tests (or into the next file in this worker).
+    const OLD_ENV = process.env;
+
     const mockUser = {
         id: "user-uuid-123",
         name: "Test User",
@@ -75,6 +80,7 @@ describe("AuthController (Integration)", () => {
     };
 
     beforeEach(async () => {
+        process.env = { ...OLD_ENV };
         const mockAuthService = {
             validateKakaoUser: jest.fn(),
             validateEmailPassword: jest.fn(),
@@ -87,6 +93,12 @@ describe("AuthController (Integration)", () => {
             completeKakaoOnboarding: jest.fn(),
             getPendingAccountOnboarding: jest.fn(),
             completeAccountOnboarding: jest.fn(),
+            // Kakao OAuth state binding (login-CSRF protection). The callback
+            // rejects with invalid_oauth_state unless verifyKakaoLoginState
+            // resolves truthy; /auth/kakao mints the signed state + nonce.
+            createKakaoLoginState: jest.fn().mockResolvedValue({ signedState: "signed-state-jwt", nonce: "nonce-123" }),
+            verifyLinkingState: jest.fn().mockResolvedValue(null),
+            verifyKakaoLoginState: jest.fn().mockResolvedValue({ client: "desktop" }),
         };
 
         const mockPrismaService = {
@@ -139,19 +151,27 @@ describe("AuthController (Integration)", () => {
         await app.close();
     });
 
+    afterAll(() => {
+        process.env = OLD_ENV;
+    });
+
     // ============================================
     // GET /auth/kakao - Kakao Login Redirect
     // ============================================
     describe("GET /auth/kakao", () => {
         describe("given kakao guard passes", () => {
-            it("should return 200 (guard handles redirect in real scenario)", async () => {
-                // Note: In real scenario, AuthGuard("kakao") redirects to Kakao.
-                // With mocked guard, we just verify the endpoint is accessible.
+            it("mints signed state, sets the nonce cookie, and 302s to Kakao", async () => {
+                process.env['NODE_ENV'] = "development";
+
                 const response = await request(app.getHttpServer())
                     .get("/auth/kakao");
 
-                // The mocked guard returns true, so endpoint returns 200
-                expect(response.status).toBe(200);
+                // New behavior: bind the round-trip to this browser (login-CSRF)
+                // — set the single-use nonce cookie, then redirect to Kakao.
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toContain("kauth.kakao.com/oauth/authorize");
+                expect(authService.createKakaoLoginState).toHaveBeenCalled();
+                expect(String(response.headers['set-cookie'] ?? "")).toContain("kakao_oauth_nonce=");
             });
         });
     });
@@ -177,7 +197,7 @@ describe("AuthController (Integration)", () => {
 
                 // Act
                 const response = await request(app.getHttpServer())
-                    .get("/auth/kakao/callback");
+                    .get("/auth/kakao/callback?state=valid-login-state");
 
                 // Assert
                 expect(response.status).toBe(302); // Redirect
@@ -199,7 +219,7 @@ describe("AuthController (Integration)", () => {
                 process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
 
                 const response = await request(app.getHttpServer())
-                    .get("/auth/kakao/callback");
+                    .get("/auth/kakao/callback?state=valid-login-state");
 
                 expect(response.status).toBe(302);
                 expect(response.headers['location']).toContain(`/callback?code=${pendingSignupCode}`);
@@ -224,7 +244,7 @@ describe("AuthController (Integration)", () => {
                 process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
 
                 const response = await request(app.getHttpServer())
-                    .get("/auth/kakao/callback");
+                    .get("/auth/kakao/callback?state=valid-login-state");
 
                 expect(response.status).toBe(302);
                 expect(response.headers['location']).toContain(`/callback?code=${pendingOnboardingCode}`);
@@ -248,7 +268,7 @@ describe("AuthController (Integration)", () => {
 
                 // Act
                 const response = await request(app.getHttpServer())
-                    .get("/auth/kakao/callback");
+                    .get("/auth/kakao/callback?state=valid-login-state");
 
                 // Assert
                 expect(response.status).toBe(302);
@@ -265,10 +285,37 @@ describe("AuthController (Integration)", () => {
 
                 // Act
                 const response = await request(app.getHttpServer())
-                    .get("/auth/kakao/callback");
+                    .get("/auth/kakao/callback?state=valid-login-state");
 
                 // Assert
                 expect(response.status).toBe(401);
+            });
+        });
+
+        describe("given missing or invalid OAuth state (login-CSRF guard)", () => {
+            it("redirects to login with invalid_oauth_state when no state is present", async () => {
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe("http://localhost:3000/login?error=invalid_oauth_state");
+                expect(authService.validateKakaoUser).not.toHaveBeenCalled();
+            });
+
+            it("redirects to login with invalid_oauth_state when state verification fails", async () => {
+                authService.verifyKakaoLoginState.mockResolvedValueOnce(null);
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=forged-or-expired");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe("http://localhost:3000/login?error=invalid_oauth_state");
+                expect(authService.validateKakaoUser).not.toHaveBeenCalled();
             });
         });
     });
