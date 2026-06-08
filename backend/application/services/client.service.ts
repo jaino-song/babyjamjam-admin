@@ -123,6 +123,27 @@ export class ClientService {
         }
     }
 
+    private async assertAllowedClientArea(branchid: string, areaId: string | null | undefined): Promise<void> {
+        if (!areaId) return;
+
+        const areaScope = branchid
+            ? [{ branchId: branchid }, { branchId: null }]
+            : [{ branchId: null }];
+        const bankAccountInfo = await this.prismaService.bank_account_info.findFirst({
+            where: {
+                areaId,
+                area: {
+                    OR: areaScope,
+                },
+            },
+            select: { areaId: true },
+        });
+
+        if (!bankAccountInfo) {
+            throw new BadRequestException("areaId must reference an available bank account");
+        }
+    }
+
     async create(branchid: string, params: {
         name: string;
         primaryEmployeeId?: number | null;
@@ -150,6 +171,7 @@ export class ClientService {
         const endDate = params.endDate ? new Date(params.endDate) : null;
         const dueDate = params.dueDate ? new Date(params.dueDate) : null;
         this.assertAllowedServiceStatus(params.serviceStatus);
+        await this.assertAllowedClientArea(branchid, params.areaId);
 
         // First create the client
         const client = await this.createClientUsecase.execute(branchid, {
@@ -446,6 +468,7 @@ export class ClientService {
             throw new Error(`Client with id ${id} not found`);
         }
         this.assertAllowedServiceStatus(params.serviceStatus);
+        await this.assertAllowedClientArea(branchid, params.areaId);
 
         const startDate = params.startDate ? new Date(params.startDate) : existingClient.startDate ?? new Date();
         const endDate = params.endDate ? new Date(params.endDate) : existingClient.endDate ?? new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
