@@ -261,6 +261,18 @@ export const eformsignApi = {
 
 export type { AlimtalkProvider, AlimtalkProviderResponse };
 
+export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
+
+export interface MessageSenderApprovalResponse {
+    senderPhone: string | null;
+    senderPhoneFormatted: string | null;
+    approvalStatus: MessageSenderApprovalStatus;
+    isApproved: boolean;
+    canRequest: boolean;
+    requestedAt: string | null;
+    approvedAt: string | null;
+}
+
 export interface NotificationPreferencesResponse {
     emailNotificationsEnabled: boolean;
     updatedAt?: string;
@@ -350,6 +362,10 @@ export const settingsApi = {
     },
     updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
         const { data } = await api.put('/settings/alimtalk-provider', { provider });
+        return data;
+    },
+    getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
+        const { data } = await api.get("/settings/message-sender-approval");
         return data;
     },
     getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {

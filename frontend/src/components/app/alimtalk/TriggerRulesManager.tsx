@@ -184,11 +184,15 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
 
   const rules = useMemo(() => (Array.isArray(rulesData) ? rulesData : []), [rulesData]);
 
-  const { data: providerSettings, isLoading: isProviderSettingsLoading } = useQuery({
+  const { data: providerSettings } = useQuery({
     queryKey: ["settings", "alimtalk-provider"],
     queryFn: settingsApi.getAlimtalkProvider,
   });
-  const isTriggerRulesLocked = !isProviderSettingsLoading && providerSettings?.enabled === false;
+  const { data: senderApproval, isLoading: isSenderApprovalLoading } = useQuery({
+    queryKey: ["settings", "message-sender-approval"],
+    queryFn: settingsApi.getMessageSenderApproval,
+  });
+  const isTriggerRulesLocked = !isSenderApprovalLoading && senderApproval?.isApproved === false;
   const effectiveSelectedRuleId = isTriggerRulesLocked ? null : selectedRuleId;
 
   const resolvedProvider: Exclude<AlimtalkProvider, "none"> =

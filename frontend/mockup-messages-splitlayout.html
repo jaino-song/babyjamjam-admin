@@ -1,0 +1,1311 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Messages Split Layout Responsive Mockup</title>
+  <style>
+    :root {
+      --page-bg: #f6f8fb;
+      --surface: #ffffff;
+      --panel-bg: #f2f7ff;
+      --panel-bg-strong: #e8f2ff;
+      --line: #d8e7fb;
+      --line-strong: #b9d5f6;
+      --text: #16345a;
+      --muted: #7488a5;
+      --blue: #075bc5;
+      --blue-soft: #e7f1ff;
+      --green: #0b9a66;
+      --red: #e0475c;
+      --amber: #c98117;
+      --shadow: 0 18px 46px rgba(20, 56, 98, 0.12);
+      --ease: cubic-bezier(.22, .86, .26, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100svh;
+      overflow: hidden;
+      background: var(--page-bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:focus-visible,
+    [role="button"]:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid rgba(7, 91, 197, 0.28);
+      outline-offset: 2px;
+    }
+
+    #codex-browser-sidebar-comments-root {
+      display: none !important;
+      pointer-events: none !important;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 250px 214px minmax(0, 1fr);
+      min-height: 100svh;
+    }
+
+    .side-nav {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      padding: 30px 14px;
+      background: var(--surface);
+      border-radius: 0 28px 28px 0;
+      box-shadow: 6px 0 24px rgba(24, 57, 95, 0.07);
+      z-index: 2;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 8px;
+      min-height: 50px;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      flex: 0 0 auto;
+      border: 2px solid var(--blue);
+      border-radius: 50%;
+      color: var(--blue);
+      background: #f8fbff;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 900;
+      line-height: 1.1;
+      color: var(--blue);
+    }
+
+    .brand-subtitle {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #8a98aa;
+    }
+
+    .nav-group {
+      display: grid;
+      gap: 6px;
+    }
+
+    .nav-label {
+      padding: 0 14px 6px;
+      color: #9aa9bb;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      min-height: 44px;
+      border: 0;
+      border-radius: 22px;
+      padding: 0 15px;
+      background: transparent;
+      color: #40526b;
+      font-size: 14px;
+      font-weight: 750;
+      text-align: left;
+    }
+
+    .nav-item svg {
+      width: 19px;
+      height: 19px;
+      flex: 0 0 auto;
+    }
+
+    .nav-item.active {
+      color: #fff;
+      background: var(--blue);
+      box-shadow: 0 8px 18px rgba(7, 91, 197, 0.22);
+    }
+
+    .user-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: auto;
+      padding: 11px;
+      border: 1px solid #dce6f5;
+      border-radius: 23px;
+      background: #fff;
+    }
+
+    .avatar {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      color: #fff;
+      background: linear-gradient(135deg, #1b2533, #06090f);
+      font-weight: 850;
+    }
+
+    .user-name {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .user-role {
+      margin: 3px 0 0;
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .section-nav {
+      padding: 33px 16px;
+    }
+
+    .section-nav-inner {
+      display: grid;
+      gap: 6px;
+    }
+
+    .section-link {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      min-height: 44px;
+      border: 0;
+      border-radius: 18px;
+      padding: 0 14px;
+      color: #6f8097;
+      background: transparent;
+      font-size: 13px;
+      font-weight: 760;
+      text-align: left;
+    }
+
+    .section-link svg {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+    }
+
+    .section-link.active {
+      color: var(--blue);
+      background: #e7f1ff;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 29px 30px 29px 24px;
+    }
+
+    .message-frame {
+      height: calc(100svh - 58px);
+      min-height: 680px;
+      max-height: 920px;
+      min-width: 0;
+    }
+
+    .split-layout {
+      height: 100%;
+      min-height: 0;
+    }
+
+    .split-viewport {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      overflow: visible;
+    }
+
+    .split-track {
+      display: grid;
+      grid-template-columns: minmax(330px, 380px) minmax(480px, 1fr);
+      gap: 20px;
+      height: 100%;
+      min-height: 0;
+      transition: transform 360ms var(--ease);
+      will-change: transform;
+    }
+
+    .split-panel {
+      min-width: 0;
+      min-height: 0;
+      opacity: 1;
+      transform: translateY(0);
+      animation: panel-rise 420ms var(--ease) both;
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+      border-radius: 26px;
+      background: var(--panel-bg);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 23px 22px 12px;
+      flex: 0 0 auto;
+    }
+
+    .panel-title-row {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .compact-back {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      flex: 0 0 auto;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      color: var(--blue);
+      background: #fff;
+    }
+
+    .compact-back svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 19px;
+      line-height: 1.18;
+      font-weight: 900;
+      color: #142f54;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .panel-subtitle {
+      margin: 5px 0 0;
+      color: #7d92ae;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+    }
+
+    .text-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      border: 0;
+      border-radius: 16px;
+      padding: 0 12px;
+      color: var(--blue);
+      background: transparent;
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .icon-action {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border: 0;
+      border-radius: 16px;
+      color: #84a2c8;
+      background: #e8f2ff;
+    }
+
+    .icon-action.danger {
+      color: var(--red);
+      background: transparent;
+    }
+
+    .icon-action svg,
+    .text-action svg {
+      width: 17px;
+      height: 17px;
+    }
+
+    .tabs {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 22px;
+      flex: 0 0 auto;
+      border-bottom: 1px solid transparent;
+    }
+
+    .tab {
+      position: relative;
+      min-height: 42px;
+      border: 0;
+      background: transparent;
+      color: #8aa0bb;
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .tab.active {
+      color: var(--blue);
+    }
+
+    .tab.active::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 2px;
+      border-radius: 999px;
+      background: var(--blue);
+    }
+
+    .panel-content {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding: 13px 20px 22px;
+      scrollbar-width: thin;
+      scrollbar-color: #bfd7f5 transparent;
+    }
+
+    .rule-list {
+      display: grid;
+      gap: 11px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .rule-item {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 64px;
+      border: 1px solid transparent;
+      border-radius: 20px;
+      padding: 9px 13px 9px 10px;
+      color: inherit;
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: 0 1px 0 rgba(255,255,255,.7) inset;
+      animation: slot-pop 460ms var(--ease) both;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .rule-item:nth-child(2) {
+      animation-delay: 45ms;
+    }
+
+    .rule-item:nth-child(3) {
+      animation-delay: 90ms;
+    }
+
+    .rule-item:nth-child(4) {
+      animation-delay: 135ms;
+    }
+
+    .rule-item:hover {
+      border-color: rgba(7, 91, 197, 0.22);
+      background: #fff;
+    }
+
+    .rule-item:active {
+      transform: scale(.985);
+    }
+
+    .rule-item.selected {
+      border-color: var(--line-strong);
+      background: #dcedff;
+      box-shadow: 0 0 0 1px rgba(7,91,197,.04), 0 12px 24px rgba(7,91,197,.08);
+    }
+
+    .rule-icon {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 15px;
+      color: #7796bb;
+      background: #e8f3ff;
+    }
+
+    .rule-icon svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .rule-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      margin: 0 0 3px;
+      font-size: 13px;
+      font-weight: 900;
+      color: #183961;
+    }
+
+    .rule-name span:first-child {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .rule-meta {
+      margin: 0;
+      font-size: 11px;
+      line-height: 1.35;
+      color: #8398b3;
+      font-weight: 700;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 22px;
+      border-radius: 999px;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .badge.active {
+      color: var(--green);
+      background: #dff7ef;
+    }
+
+    .badge.pending {
+      color: var(--amber);
+      background: #fff3d9;
+    }
+
+    .badge.off {
+      color: #718099;
+      background: #eef3f9;
+    }
+
+    .detail-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    .settings-stack {
+      display: grid;
+      gap: 20px;
+    }
+
+    .setting-card {
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.48);
+      padding: 16px;
+    }
+
+    .setting-card-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 0 0 6px;
+      font-size: 13px;
+      font-weight: 900;
+      color: #183961;
+    }
+
+    .setting-card-desc {
+      margin: 0;
+      max-width: 420px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: #7389a7;
+      font-weight: 700;
+    }
+
+    .switch {
+      position: relative;
+      width: 44px;
+      height: 26px;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      background: var(--blue);
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 2px 5px rgba(30, 67, 110, .24);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px 16px;
+    }
+
+    .field {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .field.full {
+      grid-column: 1 / -1;
+    }
+
+    .field label {
+      font-size: 12px;
+      color: #183961;
+      font-weight: 900;
+    }
+
+    .control {
+      display: flex;
+      align-items: center;
+      min-height: 44px;
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 15px;
+      padding: 0 13px;
+      color: #24466f;
+      background: #e9f4ff;
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .select-like {
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .select-like svg {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+      color: #7694b8;
+    }
+
+    .template-preview {
+      display: grid;
+      gap: 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      padding: 15px;
+      background: rgba(255, 255, 255, 0.36);
+    }
+
+    .preview-title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .preview-copy {
+      margin: 0;
+      color: #7288a5;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+
+    .preview-chip {
+      justify-self: start;
+      min-height: 28px;
+      border-radius: 999px;
+      padding: 0 12px;
+      border: 1px solid #bdd6f6;
+      color: #6682a5;
+      background: #ecf6ff;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .responsive-dots {
+      display: none;
+      justify-content: center;
+      align-items: center;
+      gap: 7px;
+      margin-top: 14px;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #bfd1e8;
+      transition: width 240ms var(--ease), background 240ms var(--ease);
+    }
+
+    .split-layout[data-view="list"] .dot.list,
+    .split-layout[data-view="detail"] .dot.detail {
+      width: 18px;
+      background: var(--blue);
+    }
+
+    @keyframes panel-rise {
+      from {
+        opacity: 0;
+        transform: translateY(14px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes slot-pop {
+      from {
+        opacity: 0;
+        transform: translateY(14px) scale(.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @media (max-width: 1299px) {
+      body {
+        overflow: hidden;
+      }
+
+      .app-shell {
+        grid-template-columns: 78px minmax(0, 1fr);
+      }
+
+      .side-nav {
+        padding: 22px 10px;
+        border-radius: 0 23px 23px 0;
+      }
+
+      .brand {
+        justify-content: center;
+        padding: 0;
+      }
+
+      .brand-mark {
+        width: 42px;
+        height: 42px;
+      }
+
+      .brand-copy,
+      .nav-label,
+      .nav-item span,
+      .user-card > div {
+        display: none;
+      }
+
+      .nav-item {
+        justify-content: center;
+        padding: 0;
+        border-radius: 18px;
+      }
+
+      .user-card {
+        justify-content: center;
+        padding: 7px;
+        border-radius: 20px;
+      }
+
+      .avatar {
+        width: 38px;
+        height: 38px;
+        font-size: 13px;
+      }
+
+      .section-nav {
+        display: none;
+      }
+
+      .main {
+        display: grid;
+        place-items: center;
+        padding: 20px 18px;
+      }
+
+      .message-frame {
+        width: 100%;
+        height: min(760px, calc(100svh - 40px));
+        min-height: 600px;
+      }
+
+      .split-layout {
+        --panel-size: clamp(340px, 45vw, 584px);
+        width: var(--panel-size);
+        max-width: calc(100vw - 112px);
+        margin-inline: auto;
+      }
+
+      .split-viewport {
+        width: var(--panel-size);
+        max-width: 100%;
+        overflow: hidden;
+        border-radius: 26px;
+      }
+
+      .split-track {
+        display: flex;
+        width: max-content;
+        gap: 18px;
+        height: 100%;
+      }
+
+      .split-panel {
+        flex: 0 0 var(--panel-size);
+        width: var(--panel-size);
+      }
+
+      .split-layout[data-view="detail"] .split-track {
+        transform: translateX(calc((var(--panel-size) + 18px) * -1));
+      }
+
+      .panel {
+        box-shadow: var(--shadow);
+      }
+
+      .compact-back {
+        display: inline-flex;
+      }
+
+      .panel-title {
+        font-size: 17px;
+      }
+
+      .panel-header {
+        padding: 19px 18px 10px;
+      }
+
+      .tabs {
+        padding: 0 18px;
+      }
+
+      .panel-content {
+        padding: 12px 17px 20px;
+      }
+
+      .rule-item {
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        min-height: 62px;
+        padding-right: 11px;
+      }
+
+      .rule-icon {
+        width: 42px;
+        height: 42px;
+      }
+
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .responsive-dots {
+        display: flex;
+      }
+    }
+
+    @media (max-width: 460px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .side-nav {
+        display: none;
+      }
+
+      .main {
+        padding: 14px;
+      }
+
+      .message-frame {
+        height: calc(100svh - 28px);
+        min-height: 0;
+      }
+
+      .split-layout {
+        --panel-size: calc(100vw - 28px);
+        max-width: none;
+      }
+
+      .panel-title {
+        font-size: 16px;
+      }
+
+      .header-actions {
+        gap: 4px;
+      }
+
+      .text-action {
+        padding: 0 9px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 1ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="side-nav" aria-label="주 메뉴">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="8"></circle>
+            <path d="M8.5 13.5c1.8 1.5 5.2 1.5 7 0"></path>
+            <path d="M9 9.5h.01M15 9.5h.01"></path>
+          </svg>
+        </div>
+        <div class="brand-copy">
+          <p class="brand-title">아가잼잼</p>
+          <span class="brand-subtitle">인천점</span>
+        </div>
+      </div>
+
+      <nav class="nav-group" aria-label="서비스 관리">
+        <div class="nav-label">서비스 관리</div>
+        <button class="nav-item active" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path>
+          </svg>
+          <span>메시지</span>
+        </button>
+        <button class="nav-item" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 4h16v16H4z"></path>
+            <path d="M8 8h8M8 12h8M8 16h5"></path>
+          </svg>
+          <span>가격표</span>
+        </button>
+        <button class="nav-item" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+            <path d="M10 21h4"></path>
+          </svg>
+          <span>알림톡</span>
+        </button>
+      </nav>
+
+      <div class="user-card">
+        <div class="avatar">N</div>
+        <div>
+          <p class="user-name">송진호</p>
+          <p class="user-role">오너</p>
+        </div>
+      </div>
+    </aside>
+
+    <aside class="section-nav" aria-label="메시지 섹션">
+      <div class="section-nav-inner">
+        <button class="section-link" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 8v4l3 2"></path>
+            <circle cx="12" cy="12" r="9"></circle>
+          </svg>
+          발송 예정
+        </button>
+        <button class="section-link" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 3-6.7"></path>
+            <path d="M3 4v6h6"></path>
+          </svg>
+          발송 기록
+        </button>
+        <button class="section-link" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <path d="M14 2v6h6"></path>
+          </svg>
+          템플릿
+        </button>
+        <button class="section-link active" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 3v6"></path>
+            <path d="M18 15v6"></path>
+            <path d="M6 21v-6"></path>
+            <path d="M18 9V3"></path>
+            <path d="M3 12h6"></path>
+            <path d="M15 12h6"></path>
+          </svg>
+          발송 트리거 설정
+        </button>
+        <button class="section-link" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"></path>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.1A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1a2 2 0 0 1 0 4h-.1A1.7 1.7 0 0 0 19.4 15z"></path>
+          </svg>
+          설정
+        </button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="message-frame" aria-label="발송 트리거 설정 반응형 목업">
+        <div class="split-layout" data-component="split-layout" data-view="list">
+          <div class="split-viewport">
+            <div class="split-track" data-component="split-layout-track">
+              <section class="split-panel" data-component="split-layout-panel" aria-label="발송 규칙 목록">
+                <div class="panel">
+                  <header class="panel-header">
+                    <div>
+                      <h1 class="panel-title">발송 규칙</h1>
+                      <p class="panel-subtitle">메시지 자동 발송 규칙을 설정할 수 있어요</p>
+                    </div>
+                    <button class="text-action" type="button" aria-label="새 규칙 추가">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                        <path d="M12 5v14M5 12h14"></path>
+                      </svg>
+                      새 규칙
+                    </button>
+                  </header>
+
+                  <div class="tabs" role="tablist" aria-label="규칙 상태 필터">
+                    <button class="tab active" type="button" role="tab" aria-selected="true">활성화</button>
+                    <button class="tab" type="button" role="tab" aria-selected="false">비활성화</button>
+                  </div>
+
+                  <div class="panel-content" data-component="list-panel-content">
+                    <ul class="rule-list" data-component="animated-slot-list">
+                      <li>
+                        <button class="rule-item selected" type="button" data-rule-item="service-before" data-title="서비스 시작 7일 전 서비스 안내" data-template="서비스 안내" data-days="7" data-recipient="고객" data-timing="시작 N일 전">
+                          <span class="rule-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M8 2v3M16 2v3M4 9h16"></path>
+                              <rect x="4" y="5" width="16" height="17" rx="2"></rect>
+                              <path d="M9 14h.01M15 14h.01M12 17h.01"></path>
+                            </svg>
+                          </span>
+                          <span>
+                            <span class="rule-name"><span>서비스 시작 7일 전 서비스 안내</span><span class="badge active">활성</span></span>
+                            <span class="rule-meta">서비스 시작 · 시작 7일 전 · 고객</span>
+                          </span>
+                        </button>
+                      </li>
+                      <li>
+                        <button class="rule-item" type="button" data-rule-item="price-before" data-title="서비스 시작 3일 전 요금 안내" data-template="요금 안내" data-days="3" data-recipient="고객" data-timing="시작 N일 전">
+                          <span class="rule-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <rect x="3" y="5" width="18" height="14" rx="3"></rect>
+                              <path d="M3 10h18"></path>
+                              <path d="M7 15h4"></path>
+                            </svg>
+                          </span>
+                          <span>
+                            <span class="rule-name"><span>서비스 시작 3일 전 요금 안내</span><span class="badge active">활성</span></span>
+                            <span class="rule-meta">서비스 시작 · 시작 3일 전 · 고객</span>
+                          </span>
+                        </button>
+                      </li>
+                      <li>
+                        <button class="rule-item" type="button" data-rule-item="staff-reminder" data-title="상담 1일 전 직원 리마인더" data-template="리마인더" data-days="1" data-recipient="직원" data-timing="상담 N일 전">
+                          <span class="rule-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+                              <path d="M10 21h4"></path>
+                            </svg>
+                          </span>
+                          <span>
+                            <span class="rule-name"><span>상담 1일 전 직원 리마인더</span><span class="badge pending">검토</span></span>
+                            <span class="rule-meta">상담 예약 · 상담 1일 전 · 직원</span>
+                          </span>
+                        </button>
+                      </li>
+                      <li>
+                        <button class="rule-item" type="button" data-rule-item="survey-after" data-title="서비스 종료 후 만족도 설문" data-template="설문" data-days="0" data-recipient="고객" data-timing="종료 당일">
+                          <span class="rule-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M9 11l2 2 4-4"></path>
+                              <path d="M20 6L9 17l-5-5"></path>
+                            </svg>
+                          </span>
+                          <span>
+                            <span class="rule-name"><span>서비스 종료 후 만족도 설문</span><span class="badge off">중지</span></span>
+                            <span class="rule-meta">서비스 종료 · 종료 당일 · 고객</span>
+                          </span>
+                        </button>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <section class="split-panel" data-component="split-layout-panel" aria-label="발송 규칙 상세">
+                <div class="panel">
+                  <header class="panel-header">
+                    <div class="panel-title-row">
+                      <button class="compact-back" type="button" data-back-list aria-label="목록으로 돌아가기">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M15 18l-6-6 6-6"></path>
+                        </svg>
+                      </button>
+                      <div>
+                        <h2 class="panel-title" data-detail-title>서비스 시작 7일 전 서비스 안내</h2>
+                        <p class="panel-subtitle">이벤트 시점, 수신자, 템플릿을 조합해 자동 발송 동작을 정의합니다.</p>
+                      </div>
+                    </div>
+                    <div class="detail-actions">
+                      <button class="icon-action danger" type="button" aria-label="규칙 삭제">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M3 6h18"></path>
+                          <path d="M8 6V4h8v2"></path>
+                          <path d="M19 6l-1 14H6L5 6"></path>
+                        </svg>
+                      </button>
+                      <button class="icon-action" type="button" aria-label="규칙 저장">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                          <path d="M17 21v-8H7v8"></path>
+                          <path d="M7 3v5h8"></path>
+                        </svg>
+                      </button>
+                    </div>
+                  </header>
+
+                  <div class="panel-content">
+                    <div class="settings-stack">
+                      <section class="setting-card">
+                        <h3 class="setting-card-title">
+                          규칙 활성화
+                          <span class="switch" aria-hidden="true"></span>
+                        </h3>
+                        <p class="setting-card-desc">비활성화하면 저장된 상태는 유지되고 자동 발송만 중단됩니다.</p>
+                      </section>
+
+                      <div class="form-grid">
+                        <div class="field">
+                          <label for="rule-name">규칙 이름</label>
+                          <input id="rule-name" class="control" value="서비스 시작 7일 전 서비스" data-rule-name />
+                        </div>
+                        <div class="field">
+                          <label>이벤트 기준</label>
+                          <div class="control select-like">
+                            <span>서비스 시작</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M6 9l6 6 6-6"></path>
+                            </svg>
+                          </div>
+                        </div>
+                        <div class="field">
+                          <label>발송 시점</label>
+                          <div class="control select-like">
+                            <span data-detail-timing>시작 N일 전</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M6 9l6 6 6-6"></path>
+                            </svg>
+                          </div>
+                        </div>
+                        <div class="field">
+                          <label>수신 대상</label>
+                          <div class="control select-like">
+                            <span data-detail-recipient>고객</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M6 9l6 6 6-6"></path>
+                            </svg>
+                          </div>
+                        </div>
+                        <div class="field">
+                          <label for="days">기준 일수</label>
+                          <input id="days" class="control" value="7" inputmode="numeric" data-detail-days />
+                        </div>
+                        <div class="field full">
+                          <label>발송 템플릿</label>
+                          <div class="control select-like">
+                            <span data-detail-template>서비스 안내</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M6 9l6 6 6-6"></path>
+                            </svg>
+                          </div>
+                        </div>
+                      </div>
+
+                      <section class="template-preview">
+                        <h3 class="preview-title" data-preview-title>서비스 안내</h3>
+                        <p class="preview-copy" data-preview-copy>서비스 시작 전 주요 안내사항을 고객에게 SMS로 발송하는 메시지</p>
+                        <span class="preview-chip">산모님 성함</span>
+                      </section>
+
+                      <section class="setting-card">
+                        <h3 class="setting-card-title">규칙 미리보기</h3>
+                        <p class="setting-card-desc" data-preview-summary>서비스 시작 7일 전 서비스 안내: 서비스 시작 · 시작 7일 전 · 고객에게 서비스 안내 템플릿을 발송합니다.</p>
+                      </section>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+          <div class="responsive-dots" aria-hidden="true">
+            <span class="dot list"></span>
+            <span class="dot detail"></span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const splitLayout = document.querySelector('[data-component="split-layout"]');
+    const ruleItems = Array.from(document.querySelectorAll('[data-rule-item]'));
+    const backButton = document.querySelector('[data-back-list]');
+    const detailTitle = document.querySelector('[data-detail-title]');
+    const ruleNameInput = document.querySelector('[data-rule-name]');
+    const detailTiming = document.querySelector('[data-detail-timing]');
+    const detailRecipient = document.querySelector('[data-detail-recipient]');
+    const detailDays = document.querySelector('[data-detail-days]');
+    const detailTemplate = document.querySelector('[data-detail-template]');
+    const previewTitle = document.querySelector('[data-preview-title]');
+    const previewCopy = document.querySelector('[data-preview-copy]');
+    const previewSummary = document.querySelector('[data-preview-summary]');
+
+    const templateCopy = {
+      "서비스 안내": "서비스 시작 전 주요 안내사항을 고객에게 SMS로 발송하는 메시지",
+      "요금 안내": "본인 부담금, 지원금, 입금 정보를 고객에게 자동 안내하는 메시지",
+      "리마인더": "상담이나 방문 일정을 직원에게 다시 확인시키는 메시지",
+      "설문": "서비스 종료 후 만족도 설문 링크를 고객에게 발송하는 메시지"
+    };
+
+    function isCompactLayout() {
+      return window.matchMedia("(max-width: 1299px)").matches;
+    }
+
+    function selectRule(item) {
+      ruleItems.forEach((ruleItem) => {
+        ruleItem.classList.toggle("selected", ruleItem === item);
+      });
+
+      const title = item.dataset.title;
+      const template = item.dataset.template;
+      const days = item.dataset.days;
+      const recipient = item.dataset.recipient;
+      const timing = item.dataset.timing;
+
+      detailTitle.textContent = title;
+      ruleNameInput.value = title.replace(" 안내", "");
+      detailTiming.textContent = timing;
+      detailRecipient.textContent = recipient;
+      detailDays.value = days;
+      detailTemplate.textContent = template;
+      previewTitle.textContent = template;
+      previewCopy.textContent = templateCopy[template] || templateCopy["서비스 안내"];
+      previewSummary.textContent = `${title}: 서비스 시작 · ${timing.replace("N", days)} · ${recipient}에게 ${template} 템플릿을 발송합니다.`;
+
+      if (isCompactLayout()) {
+        splitLayout.dataset.view = "detail";
+      }
+    }
+
+    ruleItems.forEach((item) => {
+      item.addEventListener("click", () => selectRule(item));
+    });
+
+    backButton.addEventListener("click", () => {
+      splitLayout.dataset.view = "list";
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && isCompactLayout()) {
+        splitLayout.dataset.view = "list";
+      }
+    });
+
+    let dragStartX = null;
+    let dragDeltaX = 0;
+
+    splitLayout.addEventListener("pointerdown", (event) => {
+      if (!isCompactLayout()) return;
+      dragStartX = event.clientX;
+      dragDeltaX = 0;
+    });
+
+    splitLayout.addEventListener("pointermove", (event) => {
+      if (dragStartX === null) return;
+      dragDeltaX = event.clientX - dragStartX;
+    });
+
+    splitLayout.addEventListener("pointerup", () => {
+      if (dragStartX === null) return;
+      if (splitLayout.dataset.view === "detail" && dragDeltaX > 54) {
+        splitLayout.dataset.view = "list";
+      }
+      dragStartX = null;
+      dragDeltaX = 0;
+    });
+  </script>
+</body>
+</html>
