@@ -114,6 +114,7 @@ export function MobileBottomNav() {
             key={item.href}
             href={item.href}
             aria-current={isActive ? "page" : undefined}
+            data-visual-active={isIndicated ? "true" : undefined}
             onClick={() => {
               if (!isActive) {
                 setPressedItem({ href: item.href, pathname: safePathname });
