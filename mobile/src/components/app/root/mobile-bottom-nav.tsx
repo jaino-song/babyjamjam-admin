@@ -104,8 +104,9 @@ export function MobileBottomNav() {
     >
       <span data-component="mobile-bottom-indicator" role="presentation" style={indicatorStyle} />
 
-      {NAV_ITEMS.map((item) => {
+      {NAV_ITEMS.map((item, index) => {
         const isActive = isNavItemActive(item.href, pathname);
+        const isIndicated = indicatorVisible && index === indicatorIndex;
         const Icon = item.icon;
 
         return (
@@ -125,7 +126,8 @@ export function MobileBottomNav() {
             }
             className={cn(
               "relative z-10 flex h-10 flex-col items-center gap-[2px] rounded-[14px] px-1 py-[5px]",
-              isActive ? "text-white" : "text-gray-500"
+              prefersReducedMotion ? null : "transition-colors duration-300 ease-out",
+              isIndicated ? "text-white" : "text-gray-500"
             )}
           >
             <Icon
