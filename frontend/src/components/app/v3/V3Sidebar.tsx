@@ -165,7 +165,7 @@ export const V3Sidebar = () => {
 
   return (
     <aside
-      className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[280px] bg-white z-40 rounded-tr-[32px] rounded-br-[32px] shadow-v3 animate-v3-slide-right overflow-hidden"
+      className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[20vw] max-w-[240px] bg-white z-40 rounded-tr-[32px] rounded-br-[32px] shadow-v3 animate-v3-slide-right overflow-hidden"
       aria-label="Sidebar Navigation"
       data-component="sidebar"
     >

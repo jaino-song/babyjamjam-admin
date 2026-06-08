@@ -1,7 +1,10 @@
 import { memo, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { Copy } from "lucide-react";
+
+import { InfoCard, InfoRow } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
+
 import { MsgField } from "./MsgField";
 
 export interface GeneratedMsgMetaItem {
@@ -102,49 +105,47 @@ export const GeneratedMsg = memo(function GeneratedMsg({
 
           <div
             data-component="messages-generated-msg-detail-side"
-            className="flex flex-col self-start"
+            className="flex flex-col gap-3 self-start"
           >
-            <div
+            <InfoCard
               data-component="messages-generated-msg-detail-meta"
-              className="h-fit rounded-t-[20px] border border-v3-border bg-white p-5"
+              title={metaTitle}
+              className="h-fit"
             >
-              <h3 className="text-[0.85rem] font-bold text-v3-dark">{metaTitle}</h3>
               <div
                 data-component="messages-generated-msg-detail-meta-list"
-                className="mt-4 space-y-3"
+                className="-mt-1"
               >
                 {resolvedMetaItems.map((item) => (
-                  <div
+                  <InfoRow
                     key={`${item.label}`}
                     data-component="messages-generated-msg-detail-meta-item"
-                    className="flex items-center justify-between gap-3 text-[0.78rem]"
-                  >
-                    <span className="text-v3-text-muted">{item.label}</span>
-                    <span className="text-right font-semibold text-v3-dark">{item.value}</span>
-                  </div>
+                    label={item.label}
+                    value={item.value}
+                  />
                 ))}
               </div>
-            </div>
+            </InfoCard>
 
-            <div
+            <InfoCard
               data-component="messages-generated-msg-detail-variables"
-              className="h-fit rounded-b-[20px] border border-t-0 border-v3-border bg-white p-5"
+              title={variableTitle}
+              className="h-fit"
             >
-              <h3 className="text-[0.85rem] font-bold text-v3-dark">{variableTitle}</h3>
               <div
                 data-component="messages-generated-msg-detail-variables-body"
-                className="mt-4"
+                className="-mt-1"
               >
                 {hasVariableItems ? (
                   <div
                     data-component="messages-generated-msg-detail-variable-list"
-                    className="space-y-3"
+                    className="space-y-1"
                   >
                     {variableItems?.map((item) => (
                       <div
                         key={`${item.token}-${item.label}`}
                         data-component="messages-generated-msg-detail-variable-item"
-                        className="flex items-center justify-between gap-3 text-[0.78rem]"
+                        className="flex items-center justify-between gap-3 border-b border-v3-border py-2.5 text-[0.75rem] last:border-b-0"
                       >
                         <div
                           data-component="messages-generated-msg-detail-variable-meta"
@@ -165,7 +166,7 @@ export const GeneratedMsg = memo(function GeneratedMsg({
                         </div>
                         <p
                           data-component="messages-generated-msg-detail-variable-value"
-                          className="shrink-0 text-right font-semibold text-v3-dark"
+                          className="shrink-0 text-right text-[0.75rem] font-semibold text-v3-dark"
                         >
                           {item.value}
                         </p>
@@ -176,7 +177,7 @@ export const GeneratedMsg = memo(function GeneratedMsg({
                   <p className="text-[0.75rem] text-v3-text-muted">{variableEmptyText}</p>
                 )}
               </div>
-            </div>
+            </InfoCard>
           </div>
         </div>
 

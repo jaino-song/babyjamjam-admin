@@ -355,6 +355,17 @@ describe("ClientController (Integration)", () => {
                 expect(clientService.findById).toHaveBeenCalledWith(expect.any(String), 999);
             });
         });
+
+        describe("given an invalid client id", () => {
+            it("should reject the request before calling the service", async () => {
+                // Act
+                const response = await request(app.getHttpServer()).get("/clients/undefined");
+
+                // Assert
+                expect(response.status).toBe(400);
+                expect(clientService.findById).not.toHaveBeenCalled();
+            });
+        });
     });
 
     // ============================================

@@ -15,7 +15,7 @@ export function EmptyState({ icon: Icon, message, name, className }: EmptyStateP
     >
       <div className="text-center text-v3-text-muted">
         {Icon && <Icon className="w-12 h-12 mx-auto mb-3 opacity-30" />}
-        <p className="text-[0.85rem]">{message}</p>
+        <p className="text-[0.8rem]">{message}</p>
       </div>
     </div>
   );

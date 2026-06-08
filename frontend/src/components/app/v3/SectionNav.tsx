@@ -19,8 +19,16 @@ interface SectionNavProps {
 
 export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProps) {
   return (
-    <nav data-component="section-nav" className="lg:w-[220px] shrink-0 self-start">
-      <div className="hidden lg:block sticky top-24">
+    <nav
+      data-component="section-nav"
+      data-mode="desktop"
+      className="w-full lg:w-[220px] shrink-0 self-start animate-v3-slide-up"
+    >
+      <div
+        data-component="section-nav-desktop"
+        data-mode="desktop"
+        className="hidden lg:block sticky top-24"
+      >
         <div className="flex flex-col gap-1">
           {items.map((item) => {
             const Icon = item.icon;
@@ -34,7 +42,7 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
                   item.disabled
                     ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed"
                     : isActive
-                      ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
+                      ? "bg-[hsl(var(--v3-primary))] text-white"
                       : "text-[hsl(var(--v3-text-muted))] hover:bg-[hsl(var(--v3-bg))]"
                 }`}
               >
@@ -47,7 +55,11 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
         {footer && <div className="mt-4 flex flex-col gap-2">{footer}</div>}
       </div>
 
-      <div className="lg:hidden overflow-x-auto scrollbar-hide -mx-4 px-4">
+      <div
+        data-component="section-nav-mobile"
+        data-mode="desktop"
+        className="lg:hidden overflow-x-auto scrollbar-hide -mx-4 px-4"
+      >
         <div className="flex gap-2 pb-2">
           {items.map((item) => {
             const Icon = item.icon;
@@ -61,7 +73,7 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
                   item.disabled
                     ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed bg-[hsl(var(--v3-bg))]"
                     : isActive
-                      ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
+                      ? "bg-[hsl(var(--v3-primary))] text-white"
                       : "text-[hsl(var(--v3-text-muted))] bg-[hsl(var(--v3-bg))]"
                 }`}
               >

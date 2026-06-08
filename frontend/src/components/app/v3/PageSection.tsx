@@ -9,7 +9,7 @@ export function PageSection({ name, children }: PageSectionProps) {
   return (
     <section
       data-component={name}
-      className="flex flex-col gap-6 h-[calc(100dvh-176px)] md:h-[calc(100dvh-64px)]"
+      className="flex h-full min-h-0 flex-col gap-6"
     >
       {children}
     </section>

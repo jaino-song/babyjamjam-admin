@@ -1,14 +1,40 @@
 'use client';
 
 import { use } from 'react';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useSystemTemplate } from '@/features/system-templates/hooks';
 import { SystemTemplateEditor } from '@/features/system-templates/components/system-template-editor';
 import { VersionHistory } from '@/features/system-templates/components/VersionHistory';
 import { ContentPaper } from '@/components/app/root/content-paper';
+
+function SystemTemplateDetailSkeleton() {
+  return (
+      <div data-component="messages-system-template-detail-loading-skeleton" className="space-y-6">
+        <div data-component="messages-system-template-detail-loading-header" className="space-y-3">
+        <div data-component="messages-system-template-detail-loading-title-row" className="flex items-center gap-3">
+          <Skeleton className="h-6 w-44 bg-v3-dim-white" />
+          <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
+        </div>
+        <Skeleton className="h-4 w-72 max-w-full bg-v3-dim-white" />
+      </div>
+      <div data-component="messages-system-template-detail-loading-actions" className="flex justify-between">
+        <Skeleton className="h-9 w-20 rounded-[10px] bg-v3-dim-white" />
+        <Skeleton className="h-9 w-28 rounded-[10px] bg-v3-dim-white" />
+      </div>
+      <div data-component="messages-system-template-detail-loading-editor" className="space-y-4">
+        <Skeleton className="h-11 w-full rounded-[14px] bg-v3-dim-white" />
+        <Skeleton className="h-52 w-full rounded-[14px] bg-v3-dim-white" />
+        <div data-component="messages-system-template-detail-loading-save" className="flex justify-end">
+          <Skeleton className="h-10 w-24 rounded-[12px] bg-v3-dim-white" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function EditSystemTemplatePage({ params }: { params: Promise<{ templateKey: string }> }) {
   const { templateKey } = use(params);
@@ -19,8 +45,8 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
     return (
       <div data-component="messages-system-template-detail" className="bg-background">
         <section data-component="messages-system-template-detail-content" className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
-          <ContentPaper className="min-h-[70vh] flex items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <ContentPaper className="min-h-[70vh]">
+            <SystemTemplateDetailSkeleton />
           </ContentPaper>
         </section>
       </div>

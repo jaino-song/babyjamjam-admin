@@ -383,6 +383,7 @@ export default function ClientsPage() {
 
                 {activeSelectedClient ? (
                     <DetailPanel
+                        compactBackLabel="고객 목록으로 돌아가기"
                         avatar={
                             <div
                                 data-component="clients-detail-avatar"

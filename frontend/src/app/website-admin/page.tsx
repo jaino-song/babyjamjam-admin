@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Flag, Save } from "lucide-react";
 import { ContentPaper } from "@/components/app/root/content-paper";
@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { settingsApi, type RibbonConfig } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
@@ -29,9 +30,32 @@ const DEFAULT_CONFIG: RibbonConfig = {
   linkColor: "#FFB27B",
 };
 
+function RibbonConfigSkeleton() {
+  return (
+    <div data-component="website-admin-ribbon-loading-skeleton" className="space-y-6">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div
+          key={index}
+          data-component="website-admin-ribbon-loading-row"
+          className="flex items-center justify-between gap-6 rounded-xl p-3"
+        >
+          <div data-component="website-admin-ribbon-loading-copy" className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-4 w-28 bg-v3-dim-white" />
+            <Skeleton className="h-3 w-64 max-w-full bg-v3-dim-white" />
+          </div>
+          <Skeleton className="h-9 w-16 rounded-full bg-v3-dim-white" />
+        </div>
+      ))}
+      <div data-component="website-admin-ribbon-loading-actions" className="flex justify-end">
+        <Skeleton className="h-10 w-24 rounded-xl bg-v3-dim-white" />
+      </div>
+    </div>
+  );
+}
+
 export default function WebsiteAdminPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("ribbon");
-  const [form, setForm] = useState<RibbonConfig>(DEFAULT_CONFIG);
+  const [formDraft, setFormDraft] = useState<RibbonConfig | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -40,18 +64,13 @@ export default function WebsiteAdminPage() {
     queryKey: ["settings", "ribbon-config"],
     queryFn: settingsApi.getRibbonConfig,
   });
-
-  useEffect(() => {
-    if (ribbonQuery.data) {
-      setForm(ribbonQuery.data);
-      setIsDirty(false);
-    }
-  }, [ribbonQuery.data]);
+  const form = formDraft ?? ribbonQuery.data ?? DEFAULT_CONFIG;
 
   const updateMutation = useMutation({
     mutationFn: settingsApi.updateRibbonConfig,
     onSuccess: (data) => {
       queryClient.setQueryData(["settings", "ribbon-config"], data);
+      setFormDraft(data);
       setIsDirty(false);
       toast({ title: "저장 완료", description: "리본 배너 설정이 저장되었습니다." });
     },
@@ -61,7 +80,7 @@ export default function WebsiteAdminPage() {
   });
 
   const updateField = <K extends keyof RibbonConfig>(key: K, value: RibbonConfig[K]) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setFormDraft((prev) => ({ ...(prev ?? ribbonQuery.data ?? DEFAULT_CONFIG), [key]: value }));
     setIsDirty(true);
   };
 
@@ -94,8 +113,8 @@ export default function WebsiteAdminPage() {
                 <Separator className="mb-6" />
 
                 {ribbonQuery.isLoading ? (
-                  <div className="flex items-center justify-center py-12">
-                    <Spinner size="lg" />
+                  <div data-component="website-admin-ribbon-loading">
+                    <RibbonConfigSkeleton />
                   </div>
                 ) : (
                   <div className="space-y-6">

@@ -643,7 +643,7 @@ export default function ContractsPage() {
         ]}
       />
 
-      <div data-component="contracts-sections" className="flex flex-col lg:flex-row gap-8 flex-1 min-h-0">
+      <div data-component="contracts-sections" className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
         <SectionNav
           items={NAV_SECTIONS}
           activeId={activeSection}

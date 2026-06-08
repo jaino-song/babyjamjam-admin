@@ -1,12 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import type { ComponentType } from "react";
 import { Send, MessageSquare, Calculator } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
-import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 import {
   DEFAULT_QUICK_ACTION_COLORS,
   type QuickActionIcon,
@@ -26,16 +24,14 @@ const FLOATING_ACTIONS: FloatingAction[] = [
 ];
 
 export function FloatingQuickActions() {
-  const pathname = usePathname();
-
-  if (isLayoutExcluded(pathname)) return null;
-
   return (
     <nav
       data-component="floating-quick-actions"
+      data-mode="desktop"
       className={cn(
-        "fixed bottom-8 right-6 z-40",
-        "hidden md:flex flex-col items-center gap-4",
+        "hidden md:flex",
+        "flex-none w-[72px] h-[calc(100vh-32px)] sticky top-4 z-20",
+        "flex-col items-center justify-end gap-4 pb-4",
       )}
     >
       {FLOATING_ACTIONS.map((action, idx) => {

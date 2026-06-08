@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Query, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import { CreateClientDto, UpdateClientDto, TerminateServiceDto, RequestReplacementDto } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -85,17 +85,17 @@ export class ClientController {
     }
 
     @Get(":id")
-    findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
-        return this.clientService.findById(tenant.branchId ?? "", Number(id));
+    findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
+        return this.clientService.findById(tenant.branchId ?? "", id);
     }
 
     @Patch(":id")
     update(
         @CurrentTenant() tenant: { branchId?: string },
-        @Param("id") id: string,
+        @Param("id", ParseIntPipe) id: number,
         @Body() dto: UpdateClientDto
     ) {
-        return this.clientService.update(tenant.branchId ?? "", Number(id), {
+        return this.clientService.update(tenant.branchId ?? "", id, {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
             secondaryEmployeeId: dto.secondaryEmployeeId,
@@ -119,8 +119,8 @@ export class ClientController {
     }
 
     @Delete(":id")
-    delete(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
-        return this.clientService.delete(tenant.branchId ?? "", Number(id));
+    delete(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
+        return this.clientService.delete(tenant.branchId ?? "", id);
     }
 
     /**
@@ -130,10 +130,10 @@ export class ClientController {
     @Patch(":id/terminate")
     terminate(
         @CurrentTenant() tenant: { branchId?: string },
-        @Param("id") id: string,
+        @Param("id", ParseIntPipe) id: number,
         @Body() dto: TerminateServiceDto
     ) {
-        return this.clientService.terminateService(tenant.branchId ?? "", Number(id), dto.reason);
+        return this.clientService.terminateService(tenant.branchId ?? "", id, dto.reason);
     }
 
     /**
@@ -143,12 +143,12 @@ export class ClientController {
     @Patch(":id/request-replacement")
     requestReplacement(
         @CurrentTenant() tenant: { branchId?: string },
-        @Param("id") id: string,
+        @Param("id", ParseIntPipe) id: number,
         @Body() dto: RequestReplacementDto
     ) {
         return this.clientService.requestReplacement(
             tenant.branchId ?? "",
-            Number(id),
+            id,
             dto.newPrimaryEmployeeId,
             dto.newSecondaryEmployeeId,
         );
@@ -158,7 +158,7 @@ export class ClientController {
      * Complete a replacement and restore service to normal status
      */
     @Patch(":id/complete-replacement")
-    completeReplacement(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) {
-        return this.clientService.completeReplacement(tenant.branchId ?? "", Number(id));
+    completeReplacement(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
+        return this.clientService.completeReplacement(tenant.branchId ?? "", id);
     }
 }
