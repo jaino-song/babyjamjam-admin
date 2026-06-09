@@ -1129,7 +1129,6 @@ function buildBranchRecords(branches: readonly SystemAdminBranchRequest[]): Admi
             detailRows: [
               { label: "기관명", value: branch.name },
               { label: "요청 기능", value: "SMS/LMS 발송" },
-              { label: "발신번호", value: branch.messageSenderApproval.senderPhone ?? "-" },
               { label: "상태", value: "접수 대기" },
             ],
             action: {

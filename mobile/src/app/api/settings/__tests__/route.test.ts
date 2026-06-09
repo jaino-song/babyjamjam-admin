@@ -163,7 +163,9 @@ describe("settings API routes", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it("rejects message sender approval requests missing senderPhone before proxying", async () => {
+  it("forwards an empty message sender approval request body before proxying", async () => {
+    mockPost.mockResolvedValue({ status: 200, data: { approvalStatus: "pending" } });
+
     const response = await requestMessageSenderApproval(
       createRequest("/api/settings/message-sender-approval", {
         method: "POST",
@@ -172,8 +174,12 @@ describe("settings API routes", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mockPost).toHaveBeenCalledWith(
+      "/settings/message-sender-approval/request",
+      {},
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
   });
 
   it("forwards validated message sender approval request to the backend", async () => {

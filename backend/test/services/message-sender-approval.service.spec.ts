@@ -1,3 +1,4 @@
+import { ForbiddenException } from "@nestjs/common";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -34,10 +35,9 @@ describe("MessageSenderApprovalService", () => {
     });
 
     describe("requestApproval", () => {
-        it("should save a mobile sender phone when the requester is allowed", async () => {
+        it("should move the branch to pending when the requester is allowed", async () => {
             const requestedAt = new Date("2026-06-05T00:00:00.000Z");
             prisma.branch.update.mockResolvedValue({
-                smsSenderPhone: "01012345678",
                 smsSenderApprovalStatus: "pending",
                 smsSenderApprovalRequestedAt: requestedAt,
                 smsSenderApprovalApprovedAt: null,
@@ -47,45 +47,42 @@ describe("MessageSenderApprovalService", () => {
                 branchId: "branch-1",
                 userId: "user-1",
                 branchRole: "owner",
-                senderPhone: "010-1234-5678",
             });
 
             expect(prisma.branch.update).toHaveBeenCalledWith(
                 expect.objectContaining({
+                    where: { id: "branch-1" },
                     data: expect.objectContaining({
-                        smsSenderPhone: "01012345678",
+                        smsSenderApprovalStatus: "pending",
+                        smsSenderApprovalRequestedBy: "user-1",
+                        smsSenderApprovalApprovedAt: null,
+                        smsSenderApprovalApprovedBy: null,
                     }),
                 }),
             );
-            expect(result.senderPhone).toBe("01012345678");
             expect(result.approvalStatus).toBe("pending");
         });
 
-        it("should reject a regional sender phone", async () => {
+        it("should reject a requester whose role is not allowed", async () => {
             await expect(
                 service.requestApproval({
                     branchId: "branch-1",
                     userId: "user-1",
-                    branchRole: "owner",
-                    senderPhone: "02-1234-5678",
+                    branchRole: "staff",
                 }),
-            ).rejects.toThrow("휴대 전화번호만 가능합니다.");
+            ).rejects.toBeInstanceOf(ForbiddenException);
             expect(prisma.branch.update).not.toHaveBeenCalled();
         });
     });
 
     describe("approvePendingRequest", () => {
-        it("should approve a pending sender phone request", async () => {
+        it("should approve a pending request", async () => {
             const requestedAt = new Date("2026-06-04T09:00:00.000Z");
             const approvedAt = new Date("2026-06-05T00:00:00.000Z");
             prisma.branch.findUnique.mockResolvedValue({
-                id: "branch-1",
-                smsSenderPhone: "01012345678",
                 smsSenderApprovalStatus: "pending",
-                smsSenderApprovalRequestedAt: requestedAt,
             });
             prisma.branch.update.mockResolvedValue({
-                smsSenderPhone: "01012345678",
                 smsSenderApprovalStatus: "approved",
                 smsSenderApprovalRequestedAt: requestedAt,
                 smsSenderApprovalApprovedAt: approvedAt,
@@ -106,15 +103,11 @@ describe("MessageSenderApprovalService", () => {
                 }),
             );
             expect(result.approvalStatus).toBe("approved");
-            expect(result.senderPhone).toBe("01012345678");
         });
 
-        it("should reject approval when the branch has no pending sender phone request", async () => {
+        it("should reject approval when the branch has no pending request", async () => {
             prisma.branch.findUnique.mockResolvedValue({
-                id: "branch-1",
-                smsSenderPhone: null,
                 smsSenderApprovalStatus: "not_requested",
-                smsSenderApprovalRequestedAt: null,
             });
 
             await expect(
@@ -122,8 +115,32 @@ describe("MessageSenderApprovalService", () => {
                     branchId: "branch-1",
                     userId: "owner-1",
                 }),
-            ).rejects.toThrow("승인 대기 중인 메시지 발신번호 신청이 없습니다.");
+            ).rejects.toThrow("승인 대기 중인 메시지 발송 권한 신청이 없습니다.");
             expect(prisma.branch.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("ensureApproved", () => {
+        it("should resolve when the branch is approved", async () => {
+            prisma.branch.findUnique.mockResolvedValue({
+                smsSenderApprovalStatus: "approved",
+                smsSenderApprovalRequestedAt: null,
+                smsSenderApprovalApprovedAt: null,
+            });
+
+            await expect(service.ensureApproved("branch-1")).resolves.toBeUndefined();
+        });
+
+        it("should throw when the branch is not approved", async () => {
+            prisma.branch.findUnique.mockResolvedValue({
+                smsSenderApprovalStatus: "pending",
+                smsSenderApprovalRequestedAt: null,
+                smsSenderApprovalApprovedAt: null,
+            });
+
+            await expect(service.ensureApproved("branch-1")).rejects.toBeInstanceOf(
+                ForbiddenException,
+            );
         });
     });
 });

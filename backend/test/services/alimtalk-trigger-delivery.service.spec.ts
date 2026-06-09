@@ -51,7 +51,7 @@ describe("AlimtalkTriggerDeliveryService", () => {
             getAlimtalkProvider: jest.fn(),
         };
         const messageSenderApprovalService = {
-            ensureApproved: jest.fn().mockResolvedValue("01099998888"),
+            ensureApproved: jest.fn().mockResolvedValue(undefined),
         };
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
@@ -101,7 +101,6 @@ describe("AlimtalkTriggerDeliveryService", () => {
         expect(systemSettingService.getAlimtalkProvider).not.toHaveBeenCalled();
         expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.SERVICE_INFO);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
-            senderPhone: "01099998888",
             receiver: "010-1234-5678",
             message: "김지니 산모님 서비스 안내",
             recipientName: "김지니",

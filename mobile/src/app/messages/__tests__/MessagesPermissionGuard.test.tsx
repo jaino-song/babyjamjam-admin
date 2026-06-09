@@ -46,8 +46,6 @@ describe("MessagesPermissionGuard", () => {
     mockPathname = "/messages/new";
     mockGetMessageSenderApproval.mockReset();
     mockGetMessageSenderApproval.mockResolvedValue({
-      senderPhone: null,
-      senderPhoneFormatted: null,
       approvalStatus: "not_requested",
       isApproved: false,
       canRequest: true,
@@ -98,8 +96,6 @@ describe("MessagesPermissionGuard", () => {
 
   it("shows the permission-only modal when the account cannot request message approval", async () => {
     mockGetMessageSenderApproval.mockResolvedValue({
-      senderPhone: null,
-      senderPhoneFormatted: null,
       approvalStatus: "not_requested",
       isApproved: false,
       canRequest: false,
@@ -118,8 +114,6 @@ describe("MessagesPermissionGuard", () => {
 
   it("shows a confirm-only pending modal when message approval is waiting", async () => {
     mockGetMessageSenderApproval.mockResolvedValue({
-      senderPhone: "01012345678",
-      senderPhoneFormatted: "010-1234-5678",
       approvalStatus: "pending",
       isApproved: false,
       canRequest: true,

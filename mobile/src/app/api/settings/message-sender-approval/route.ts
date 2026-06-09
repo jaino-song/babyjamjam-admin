@@ -10,14 +10,10 @@ import {
   unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
-// Mirrors backend RequestMessageSenderApprovalDto: senderPhone is @IsString()
-// @IsNotEmpty() @MaxLength(20) required. Passthrough preserves any
-// forward-compatible fields.
-const requestMessageSenderApprovalSchema = z
-  .object({
-    senderPhone: z.string().min(1).max(20),
-  })
-  .passthrough();
+// The approval request no longer carries a sender number — all messages send
+// from the unified, pre-registered 1661-2386 number. Accept an empty body;
+// passthrough preserves any forward-compatible fields.
+const requestMessageSenderApprovalSchema = z.object({}).passthrough();
 
 export async function GET(request: NextRequest) {
   const token = getAuthToken(request);

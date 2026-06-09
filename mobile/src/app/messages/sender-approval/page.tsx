@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { isAxiosError } from "axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -10,8 +10,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { MessageSenderApprovalModal } from "@/components/app/messages/MessageSenderApprovalModal";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useToast } from "@/hooks/use-toast";
@@ -24,6 +22,7 @@ import styles from "./page.module.css";
 const MESSAGE_SENDER_APPROVAL_QUERY_KEY = ["settings", "message-sender-approval"] as const;
 const ALIGO_JOIN_URL = "https://smartsms.aligo.in/join.html";
 const ALIGO_API_SPEC_URL = "https://smartsms.aligo.in/admin/api/spec.html";
+const UNIFIED_SENDER_PHONE = "1661-2386";
 
 interface AgreementItem {
   id: "aligoTerms" | "privacyThirdParty" | "senderNumber";
@@ -45,7 +44,7 @@ interface SenderApprovalFormProps {
   errorMessage: string | null;
   isLoading: boolean;
   isSubmitting: boolean;
-  onSubmit: (senderPhone: string) => void;
+  onSubmit: () => void;
 }
 
 const AGREEMENT_ITEMS: AgreementItem[] = [
@@ -71,22 +70,6 @@ const AGREEMENT_ITEMS: AgreementItem[] = [
     href: ALIGO_API_SPEC_URL,
   },
 ];
-
-function normalizeSenderPhone(value: string): string {
-  return value.replace(/\D/g, "").slice(0, 11);
-}
-
-function isMobileSenderPhone(value: string): boolean {
-  return /^01[016789]\d{7,8}$/.test(normalizeSenderPhone(value));
-}
-
-function formatSenderPhone(value: string): string {
-  const digits = normalizeSenderPhone(value);
-
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
-}
 
 function getApprovalErrorMessage(error: unknown): string {
   if (isAxiosError<{ error?: string; message?: string | string[] }>(error)) {
@@ -116,9 +99,6 @@ function SenderApprovalForm({
   isSubmitting,
   onSubmit,
 }: SenderApprovalFormProps) {
-  const [senderPhone, setSenderPhone] = useState(
-    formatSenderPhone(approval?.senderPhoneFormatted ?? approval?.senderPhone ?? ""),
-  );
   const [agreements, setAgreements] = useState<AgreementState>({
     aligoTerms: false,
     privacyThirdParty: false,
@@ -126,10 +106,9 @@ function SenderApprovalForm({
   });
 
   const canRequest = approval?.canRequest ?? true;
-  const phoneDigits = normalizeSenderPhone(senderPhone);
   const allAgreed = AGREEMENT_ITEMS.every((item) => agreements[item.id]);
-  const canSubmit = isMobileSenderPhone(senderPhone) && allAgreed && canRequest && !isLoading && !isSubmitting;
-  const submitLabel = approval?.approvalStatus === "pending" ? "수정 신청하기" : "신청하기";
+  const canSubmit = allAgreed && canRequest && !isLoading && !isSubmitting;
+  const submitLabel = approval?.approvalStatus === "pending" ? "다시 신청하기" : "신청하기";
 
   return (
     <>
@@ -154,26 +133,13 @@ function SenderApprovalForm({
 
       <Card data-component="messages-settings-tenant-phone-card" className={styles.formCard}>
         <CardContent className={styles.formCardContent}>
-          <div data-component="messages-settings-tenant-phone-field" className={styles.formSection}>
-            <Label htmlFor="message-sender-phone" className={styles.formLabel}>
-              발신 전화번호 <span className={styles.required}>*</span>
-            </Label>
-            <Input
-              id="message-sender-phone"
-              data-component="messages-settings-tenant-phone-input"
-              inputMode="numeric"
-              pattern="[0-9-]*"
-              maxLength={13}
-              autoComplete="tel"
-              required
-              value={senderPhone}
-              placeholder="010-0000-0000"
-              disabled={isLoading || isSubmitting || !canRequest}
-              className={styles.phoneInput}
-              onChange={(event) => setSenderPhone(formatSenderPhone(event.target.value))}
-            />
+          <div data-component="messages-settings-tenant-sender-info" className={styles.formSection}>
+            <span className={styles.formLabel}>발신번호</span>
+            <span data-component="messages-settings-tenant-sender-number" className={styles.branchName}>
+              {UNIFIED_SENDER_PHONE}
+            </span>
             <p className={styles.helperText}>
-              메시지 발신 번호를 입력해 주세요. 휴대 전화번호만 가능합니다.
+              모든 메시지는 사전 등록된 대표 발신번호 {UNIFIED_SENDER_PHONE} 으로 발송됩니다. 별도의 발신번호 입력이 필요하지 않습니다.
             </p>
           </div>
         </CardContent>
@@ -247,7 +213,7 @@ function SenderApprovalForm({
           variant="v3"
           disabled={!canSubmit}
           className={styles.submitButton}
-          onClick={() => onSubmit(phoneDigits)}
+          onClick={() => onSubmit()}
         >
           <Send aria-hidden="true" size={16} strokeWidth={2.5} />
           {isSubmitting ? "신청 중" : submitLabel}
@@ -287,11 +253,6 @@ export default function MessageSenderApprovalPage() {
     },
   });
 
-  const initialPhone = useMemo(
-    () => approvalQuery.data?.senderPhoneFormatted ?? approvalQuery.data?.senderPhone ?? "",
-    [approvalQuery.data?.senderPhone, approvalQuery.data?.senderPhoneFormatted],
-  );
-
   const handleBack = () => {
     router.replace("/messages");
   };
@@ -324,13 +285,12 @@ export default function MessageSenderApprovalPage() {
 
           <div data-component="messages-sender-approval-scroll" className={styles.formScroll}>
             <SenderApprovalForm
-              key={initialPhone}
               approval={approvalQuery.data}
               branchName={branchName}
               isLoading={approvalQuery.isLoading}
               isSubmitting={requestApprovalMutation.isPending}
               errorMessage={errorMessage}
-              onSubmit={(senderPhone) => requestApprovalMutation.mutate(senderPhone)}
+              onSubmit={() => requestApprovalMutation.mutate()}
             />
           </div>
         </div>

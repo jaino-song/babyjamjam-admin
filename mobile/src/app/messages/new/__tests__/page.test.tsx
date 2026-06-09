@@ -139,8 +139,6 @@ describe("NewMessagePage", () => {
     mockReplace.mockClear();
     mockGetMessageSenderApproval.mockReset();
     mockGetMessageSenderApproval.mockResolvedValue({
-      senderPhone: "0324425992",
-      senderPhoneFormatted: "032-442-5992",
       approvalStatus: "approved",
       isApproved: true,
       canRequest: true,
@@ -286,7 +284,6 @@ describe("NewMessagePage", () => {
       expect(api.post).toHaveBeenCalledWith(
         "/message-deliveries/sms",
         expect.objectContaining({
-          channel: "sms",
           msgType: "AUTO",
           receiver: "010-1234-5678",
         }),

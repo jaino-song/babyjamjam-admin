@@ -15,7 +15,7 @@ describe("MessageDeliveryController", () => {
             sendSms: jest.fn(),
         };
         messageSenderApprovalService = {
-            ensureApproved: jest.fn().mockResolvedValue("0212345678"),
+            ensureApproved: jest.fn().mockResolvedValue(undefined),
         };
         prismaService = {
             alimtalk_log: {
@@ -88,7 +88,6 @@ describe("MessageDeliveryController", () => {
         );
 
         expect(aligoService.sendSms).toHaveBeenCalledWith({
-            senderPhone: "0212345678",
             receiver: "010-1234-5678",
             message: "장문 테스트 메시지",
             recipientName: undefined,

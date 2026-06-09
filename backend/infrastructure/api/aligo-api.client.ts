@@ -15,6 +15,8 @@ import {
 } from "domain/ports/aligo-sms-api.port";
 import { maskPhone } from "application/utils/mask";
 
+export const DEFAULT_ALIGO_SENDER_PHONE = "1661-2386";
+
 @Injectable()
 export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
     private readonly logger = new Logger(AligoApiClient.name);
@@ -34,17 +36,16 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
         this.ALIGO_API_KEY = configService.get("ALIGO_API_KEY") || "";
         this.ALIGO_USER_ID = configService.get("ALIGO_USER_ID") || "";
         this.ALIGO_SENDER_KEY = configService.get("ALIGO_SENDER_KEY") || "";
-        this.ALIGO_SENDER_PHONE = configService.get("ALIGO_SENDER_PHONE") || "";
+        this.ALIGO_SENDER_PHONE = (configService.get("ALIGO_SENDER_PHONE") || DEFAULT_ALIGO_SENDER_PHONE).replace(/\D/g, "");
         this.isConfigured = Boolean(
             this.ALIGO_API_URL &&
             this.ALIGO_API_KEY &&
             this.ALIGO_USER_ID &&
-            this.ALIGO_SENDER_KEY &&
-            this.ALIGO_SENDER_PHONE,
+            this.ALIGO_SENDER_KEY,
         );
 
         if (!this.isConfigured) {
-            this.logger.warn("ALIGO_API_URL, ALIGO_API_KEY, ALIGO_USER_ID, ALIGO_SENDER_KEY, and ALIGO_SENDER_PHONE not configured. Aligo integration will be disabled.");
+            this.logger.warn("ALIGO_API_URL, ALIGO_API_KEY, ALIGO_USER_ID, and ALIGO_SENDER_KEY not configured. Aligo integration will be disabled.");
         }
     }
 

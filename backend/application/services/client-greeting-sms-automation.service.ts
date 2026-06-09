@@ -30,11 +30,10 @@ export class ClientGreetingSmsAutomationService {
             return;
         }
 
-        const senderPhone = await this.messageSenderApprovalService.ensureApproved(branchId);
+        await this.messageSenderApprovalService.ensureApproved(branchId);
         const message = await this.resolveGreetingMessage(client);
         const receiver = phone.toString();
         const result = await this.aligoService.sendSms({
-            senderPhone,
             receiver,
             message,
             recipientName: client.name,
@@ -46,7 +45,6 @@ export class ClientGreetingSmsAutomationService {
                 client,
                 receiver,
                 message,
-                senderPhone,
                 error,
             );
             throw error;
@@ -68,7 +66,6 @@ export class ClientGreetingSmsAutomationService {
                     title: CLIENT_GREETING_SMS_TITLE,
                     triggerType: "client_created",
                     msgType: result.request.msgType,
-                    senderPhone,
                 },
                 status: isAccepted ? "sent" : "failed",
                 aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
@@ -89,7 +86,6 @@ export class ClientGreetingSmsAutomationService {
         client: ClientEntity,
         receiver: string,
         message: string,
-        senderPhone: string,
         error: unknown,
     ) {
         const errorMessage = this.formatErrorMessage(error);
@@ -108,7 +104,6 @@ export class ClientGreetingSmsAutomationService {
                     title: CLIENT_GREETING_SMS_TITLE,
                     triggerType: "client_created",
                     msgType: "AUTO",
-                    senderPhone,
                     providerError: errorMessage,
                 },
                 status: "failed",

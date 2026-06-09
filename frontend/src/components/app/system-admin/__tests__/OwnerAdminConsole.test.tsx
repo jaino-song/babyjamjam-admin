@@ -56,7 +56,6 @@ beforeEach(() => {
               role: "owner",
             },
             messageSenderApproval: {
-              senderPhone: "01012345678",
               approvalStatus: "pending",
               requestedAt: "2026-06-04T09:00:00.000Z",
               approvedAt: null,

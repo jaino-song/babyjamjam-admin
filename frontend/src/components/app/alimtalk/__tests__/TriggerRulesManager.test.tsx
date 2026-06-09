@@ -59,8 +59,6 @@ function mockSettingsQueries({
 
     if (queryKey.includes("message-sender-approval")) {
       return useQueryResult({
-        senderPhone: senderApproved ? "01012345678" : null,
-        senderPhoneFormatted: senderApproved ? "010-1234-5678" : null,
         approvalStatus: senderApproved ? "approved" : "not_requested",
         isApproved: senderApproved,
         canRequest: !senderApproved,

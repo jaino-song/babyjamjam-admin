@@ -264,8 +264,6 @@ export type { AlimtalkProvider, AlimtalkProviderResponse };
 export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
 
 export interface MessageSenderApprovalResponse {
-    senderPhone: string | null;
-    senderPhoneFormatted: string | null;
     approvalStatus: MessageSenderApprovalStatus;
     isApproved: boolean;
     canRequest: boolean;
