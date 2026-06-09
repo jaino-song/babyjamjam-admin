@@ -267,7 +267,6 @@ model branch {
   businessHours                String?                @map("business_hours")
   description                  String?
   isActive                     Boolean?               @default(true) @map("is_active")
-  smsSenderPhone               String?                @map("sms_sender_phone") @db.VarChar(20)
   smsSenderApprovalStatus      String                 @default("not_requested") @map("sms_sender_approval_status") @db.VarChar(20)
   smsSenderApprovalRequestedAt DateTime?              @map("sms_sender_approval_requested_at") @db.Timestamptz(6)
   smsSenderApprovalRequestedBy String?                @map("sms_sender_approval_requested_by") @db.Uuid

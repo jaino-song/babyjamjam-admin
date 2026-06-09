@@ -30,7 +30,6 @@ export class SystemAdminService {
                 isActive: true,
                 createdAt: true,
                 updatedAt: true,
-                smsSenderPhone: true,
                 smsSenderApprovalStatus: true,
                 smsSenderApprovalRequestedAt: true,
                 smsSenderApprovalApprovedAt: true,
@@ -84,7 +83,6 @@ export class SystemAdminService {
             updatedAt: branch.updatedAt?.toISOString() ?? null,
             owner: branch.owner,
             messageSenderApproval: {
-                senderPhone: branch.smsSenderPhone ?? null,
                 approvalStatus: normalizeMessageSenderApprovalStatus(
                     branch.smsSenderApprovalStatus,
                 ),

@@ -38,9 +38,8 @@ export class MessageDeliveryController {
             `[SMS] Request received: branchId=${branchId || "unknown"}, triggerType=${triggerType}, recipientCount=${this.countSmsRecipients(dto.receiver)}`,
         );
 
-        let senderPhone: string;
         try {
-            senderPhone = await this.messageSenderApprovalService.ensureApproved(branchId);
+            await this.messageSenderApprovalService.ensureApproved(branchId);
         } catch (error) {
             this.logger.warn(
                 `[SMS] Sender approval check failed: branchId=${branchId || "unknown"}, error=${error instanceof Error ? error.message : String(error)}`,
@@ -62,7 +61,6 @@ export class MessageDeliveryController {
             ? dto.scheduledTime?.replace(":", "")
             : undefined;
         const result = await this.aligoService.sendSms({
-            senderPhone,
             receiver: dto.receiver,
             message: dto.message,
             recipientName: dto.recipientName,

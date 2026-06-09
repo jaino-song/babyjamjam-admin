@@ -13,7 +13,6 @@ import {
 } from "interface/dto/system-setting.dto";
 import {
     MessageSenderApprovalResponseDto,
-    RequestMessageSenderApprovalDto,
 } from "interface/dto/message-sender-approval.dto";
 import { TenantGuard, CurrentTenant } from "infrastructure/tenant";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
@@ -112,13 +111,11 @@ export class SystemSettingController {
     async requestMessageSenderApproval(
         @CurrentTenant() tenant: { branchId?: string; branchRole?: string },
         @Request() request: { user: { userId: string } },
-        @Body() dto: RequestMessageSenderApprovalDto,
     ): Promise<MessageSenderApprovalResponseDto> {
         const state = await this.messageSenderApprovalService.requestApproval({
             branchId: tenant.branchId ?? "",
             branchRole: tenant.branchRole,
             userId: request.user.userId,
-            senderPhone: dto.senderPhone,
         });
 
         return MessageSenderApprovalResponseDto.from({

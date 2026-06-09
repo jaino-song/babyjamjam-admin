@@ -145,13 +145,7 @@ export const MESSAGE_SENDER_APPROVAL_STATUSES = [
 export type MessageSenderApprovalStatus =
   (typeof MESSAGE_SENDER_APPROVAL_STATUSES)[number];
 
-export interface RequestMessageSenderApproval {
-  senderPhone: string;
-}
-
 export interface MessageSenderApprovalResponse {
-  senderPhone: string | null;
-  senderPhoneFormatted: string | null;
   approvalStatus: MessageSenderApprovalStatus;
   isApproved: boolean;
   canRequest: boolean;
@@ -168,7 +162,6 @@ export interface SystemAdminBranchUser {
 }
 
 export interface SystemAdminBranchMessageSenderApproval {
-  senderPhone: string | null;
   approvalStatus: MessageSenderApprovalStatus;
   requestedAt: string | null;
   approvedAt: string | null;

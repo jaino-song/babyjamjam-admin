@@ -9,13 +9,13 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { AnimatedSlotList, DetailPanel, ListPanel } from "@/components/app/v3";
-import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-components/TitleTextInputMolecule";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
-import { formatKoreanPhoneNumber, isValidKoreanPhoneNumber, normalizePhoneDigits } from "@/lib/phone";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+
+const UNIFIED_SENDER_PHONE = "1661-2386";
 
 const ALIGO_POLICY_ITEMS = [
   {
@@ -48,10 +48,6 @@ type TenantApplicationListItem = {
   icon: typeof Building2;
 };
 
-function isValidSenderPhone(value: string) {
-  return isValidKoreanPhoneNumber(value);
-}
-
 function formatRequestedAt(date: Date) {
   return new Intl.DateTimeFormat("ko-KR", {
     month: "short",
@@ -64,21 +60,14 @@ function formatRequestedAt(date: Date) {
 export function MessageTenantApplicationSettings() {
   const { data: authUser } = useGetAuthUser();
   const { toast } = useToast();
-  const [senderPhone, setSenderPhone] = useState("");
   const [agreements, setAgreements] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(ALIGO_POLICY_ITEMS.map((item) => [item.id, false])),
   );
   const [requestedAt, setRequestedAt] = useState<string | null>(null);
 
   const tenantName = authUser?.branchName?.trim() || "현재 선택된 지점";
-  const normalizedPhone = useMemo(() => normalizePhoneDigits(senderPhone), [senderPhone]);
-  const formattedPhone = useMemo(() => formatKoreanPhoneNumber(normalizedPhone), [normalizedPhone]);
-  const phoneError =
-    normalizedPhone.length > 0 && !isValidSenderPhone(normalizedPhone)
-      ? "발신 신청에 사용할 전화번호 형식을 확인해 주세요."
-      : undefined;
   const allAgreed = ALIGO_POLICY_ITEMS.every((item) => agreements[item.id]);
-  const canSubmit = isValidSenderPhone(normalizedPhone) && allAgreed;
+  const canSubmit = allAgreed;
   const listItems = useMemo<TenantApplicationListItem[]>(
     () => [
       {
@@ -86,14 +75,12 @@ export function MessageTenantApplicationSettings() {
         title: "메시지 발송 기능 신청",
         subtitle: requestedAt
           ? `신청 접수 ${requestedAt}`
-          : formattedPhone
-            ? `발신 번호 ${formattedPhone}`
-            : "발신 전화번호와 정책 동의를 확인해 주세요.",
+          : "알리고 정책 동의 후 신청해 주세요.",
         statusLabel: requestedAt ? "접수됨" : canSubmit ? "준비 완료" : "작성 중",
         icon: Building2,
       },
     ],
-    [canSubmit, formattedPhone, requestedAt],
+    [canSubmit, requestedAt],
   );
 
   const toggleAgreement = (id: string, checked: boolean) => {
@@ -104,11 +91,6 @@ export function MessageTenantApplicationSettings() {
   };
 
   const handleSubmit = () => {
-    if (!isValidSenderPhone(normalizedPhone)) {
-      toast({ variant: "destructive", description: "발신 전화번호를 정확히 입력해 주세요." });
-      return;
-    }
-
     if (!allAgreed) {
       toast({ variant: "destructive", description: "알리고 정책 동의 항목을 모두 확인해 주세요." });
       return;
@@ -174,7 +156,7 @@ export function MessageTenantApplicationSettings() {
           </div>
         }
         title="메시지 발송 기능 신청"
-        subtitle="메시지 발송 기능 사용을 위해 아래의 항목들을 입력 및 동의해 주세요."
+        subtitle="메시지 발송 기능 사용을 위해 아래의 항목들을 확인 및 동의해 주세요."
         trailing={
           requestedAt ? (
             <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
@@ -199,21 +181,14 @@ export function MessageTenantApplicationSettings() {
               </div>
             </div>
 
-            <div data-component="messages-settings-tenant-phone-field" className="space-y-2">
-              <TitleTextInputMolecule
-                label="발신 전화번호"
-                value={formattedPhone}
-                onValueChange={(value) => setSenderPhone(normalizePhoneDigits(value))}
-                placeholder="예: 0212345678"
-                required
-                error={Boolean(phoneError)}
-                helperText={phoneError}
-                containerClassName="gap-2"
-                inputClassName="h-11 rounded-[14px] border-v3-border bg-white"
-                dataComponent="messages-settings-tenant-phone-input"
-              />
-              <p className="text-[0.72rem] leading-5 text-v3-text-muted">
-                신청 후 알리고에 등록할 발신 번호를 입력해 주세요. 숫자만 입력해도 자동으로 구분자를 적용합니다.
+            <div
+              data-component="messages-settings-tenant-sender-info"
+              className="rounded-[18px] border border-v3-border bg-v3-dim-white/35 p-4"
+            >
+              <p className="text-[0.76rem] font-semibold text-v3-dark">발신번호</p>
+              <p className="mt-1 text-[1rem] font-semibold text-v3-primary">{UNIFIED_SENDER_PHONE}</p>
+              <p className="mt-1 text-[0.72rem] leading-5 text-v3-text-muted">
+                모든 메시지는 사전 등록된 대표 발신번호 {UNIFIED_SENDER_PHONE} 으로 발송됩니다. 별도의 발신번호 입력이 필요하지 않습니다.
               </p>
             </div>
 
