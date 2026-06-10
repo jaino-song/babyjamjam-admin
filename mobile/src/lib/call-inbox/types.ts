@@ -12,6 +12,8 @@ export interface TranscriptTurn {
 export interface Proposal {
     field: string;
     value: string | number | boolean | null;
+    /** extraction-time snapshot for CLIENT_UPDATE diffs; render the live client value when available */
+    currentValue?: string | number | boolean | null;
     evidence: string;
     confidence: Confidence;
 }
@@ -68,18 +70,41 @@ export interface ClientDraftListItem {
     phoneMatchesExistingClient: boolean;
 }
 
+/**
+ * What GET /client-drafts/:id actually nests: the raw call_record row +
+ * matchedClient. Unlike CallRecordDetail it has NO draft / summaryLine /
+ * driveUrl (those are list/detail projections) — build the Drive link from
+ * driveFileId.
+ */
+export interface DraftCallRecord {
+    id: string;
+    driveFileId: string;
+    fileName: string;
+    recordedAt: string | null;
+    transcript: TranscriptTurn[];
+    summary: Record<string, string> | null;
+    category: CallCategory | null;
+    callerName: string | null;
+    callerPhone: string | null;
+    matchedClient: ClientRef | null;
+    createdAt: string;
+}
+
 export interface ClientDraftDetail {
     id: string;
     type: DraftType;
     status: DraftStatus;
     clientId: number | null;
+    callRecordId: string;
     proposals: Proposal[];
     requestSummary: string;
-    callRecord: CallRecordDetail;
+    extractionMeta: { model: string; promptVersion: string } | null;
+    callRecord: DraftCallRecord;
     client: (ClientRef & Record<string, unknown>) | null;
     reviewedBy: { id: string; name: string } | null;
     reviewedAt: string | null;
     discardReason: string | null;
+    createdAt: string;
 }
 
 export interface ConfirmDraftBody {
