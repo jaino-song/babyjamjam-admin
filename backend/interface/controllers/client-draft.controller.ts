@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from
 import { Request } from "express";
 import { CallInboxService } from "application/services/call-inbox.service";
 import {
+    ConfirmDraftDto,
     ConfirmNewClientDraftDto,
     DiscardClientDraftDto,
     PatchClientDraftDto,
@@ -54,9 +55,9 @@ export class ClientDraftController {
         @CurrentTenant() tenant: { branchId?: string },
         @Req() request: Request & { user?: { userId?: string } },
         @Param("id") id: string,
-        @Body() dto: ConfirmNewClientDraftDto,
+        @Body() dto: ConfirmDraftDto,
     ) {
-        return this.callInboxService.confirmNewClient(
+        return this.callInboxService.confirm(
             tenant.branchId ?? "",
             request.user?.userId ?? "",
             id,

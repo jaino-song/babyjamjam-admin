@@ -1,4 +1,4 @@
-import { INestApplication, ExecutionContext, NotImplementedException } from "@nestjs/common";
+import { INestApplication, ExecutionContext } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { ClientDraftController } from "interface/controllers/client-draft.controller";
@@ -10,7 +10,7 @@ describe("ClientDraftController (Integration)", () => {
     let app: INestApplication;
     let callInboxService: jest.Mocked<Pick<
         CallInboxService,
-        "listDrafts" | "countDrafts" | "getDraft" | "patchDraft" | "confirmNewClient" | "discard"
+        "listDrafts" | "countDrafts" | "getDraft" | "patchDraft" | "confirmNewClient" | "confirm" | "discard"
     >>;
 
     const mockGuard = {
@@ -28,6 +28,7 @@ describe("ClientDraftController (Integration)", () => {
             getDraft: jest.fn(),
             patchDraft: jest.fn(),
             confirmNewClient: jest.fn(),
+            confirm: jest.fn(),
             discard: jest.fn(),
         };
 
@@ -67,9 +68,9 @@ describe("ClientDraftController (Integration)", () => {
         expect(callInboxService.getDraft).not.toHaveBeenCalled();
     });
 
-    it("POST /client-drafts/draft-1/confirm calls confirmNewClient with correct args", async () => {
+    it("POST /client-drafts/draft-1/confirm (NEW_CLIENT) calls confirm with correct args", async () => {
         const body = { fields: { name: "김서연", careCenter: false, voucherClient: false, breastPump: false } };
-        callInboxService.confirmNewClient.mockResolvedValue({ clientId: 42 });
+        callInboxService.confirm.mockResolvedValue({ clientId: 42 });
 
         const res = await request(app.getHttpServer())
             .post("/client-drafts/draft-1/confirm")
@@ -77,11 +78,29 @@ describe("ClientDraftController (Integration)", () => {
 
         expect(res.status).toBe(201);
         expect(res.body).toEqual({ clientId: 42 });
-        expect(callInboxService.confirmNewClient).toHaveBeenCalledWith(
+        expect(callInboxService.confirm).toHaveBeenCalledWith(
             "branch-1",
             "user-1",
             "draft-1",
             expect.objectContaining({ fields: body.fields }),
+        );
+    });
+
+    it("POST /client-drafts/draft-2/confirm (CLIENT_UPDATE) passes changes through to confirm", async () => {
+        const body = { changes: { startDate: "2026-06-23", serviceStatus: "active_with_replacement_requested" } };
+        callInboxService.confirm.mockResolvedValue({ clientId: 99 });
+
+        const res = await request(app.getHttpServer())
+            .post("/client-drafts/draft-2/confirm")
+            .send(body);
+
+        expect(res.status).toBe(201);
+        expect(res.body).toEqual({ clientId: 99 });
+        expect(callInboxService.confirm).toHaveBeenCalledWith(
+            "branch-1",
+            "user-1",
+            "draft-2",
+            expect.objectContaining({ changes: body.changes }),
         );
     });
 
@@ -96,15 +115,14 @@ describe("ClientDraftController (Integration)", () => {
         expect(callInboxService.discard).toHaveBeenCalledWith("branch-1", "user-1", "draft-1", "오인식");
     });
 
-    it("NotImplementedException from service propagates as 501", async () => {
-        callInboxService.confirmNewClient.mockRejectedValue(
-            new NotImplementedException("CLIENT_UPDATE confirm ships in Phase 2"),
-        );
+    it("service exceptions propagate with correct HTTP status", async () => {
+        const { ConflictException } = await import("@nestjs/common");
+        callInboxService.confirm.mockRejectedValue(new ConflictException("Draft already reviewed"));
 
         const res = await request(app.getHttpServer())
-            .post("/client-drafts/draft-2/confirm")
-            .send({ fields: { name: "x", careCenter: false, voucherClient: false, breastPump: false } });
+            .post("/client-drafts/draft-3/confirm")
+            .send({ changes: { startDate: "2026-06-23" } });
 
-        expect(res.status).toBe(501);
+        expect(res.status).toBe(409);
     });
 });

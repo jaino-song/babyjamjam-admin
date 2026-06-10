@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException, NotImplementedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException, NotImplementedException } from "@nestjs/common";
 import { CallInboxService } from "application/services/call-inbox.service";
 
 describe("CallInboxService", () => {
@@ -10,7 +10,7 @@ describe("CallInboxService", () => {
         },
         client: { findMany: jest.fn(), findFirst: jest.fn() },
     };
-    const clientService = { create: jest.fn() };
+    const clientService = { create: jest.fn(), update: jest.fn() };
     let service: CallInboxService;
 
     const pendingDraft = {
@@ -109,6 +109,119 @@ describe("CallInboxService", () => {
         await expect(
             service.confirmNewClient("branch-1", "user-1", "draft-1", { fields: { name: "x", careCenter: false, voucherClient: false, breastPump: false } }),
         ).rejects.toThrow(NotImplementedException);
+    });
+
+    // ── confirmClientUpdate / confirm dispatch ────────────────────────────────
+
+    const clientUpdateDraft = {
+        ...pendingDraft,
+        type: "CLIENT_UPDATE",
+        clientId: 142,
+    };
+
+    it("confirmClientUpdate: applies allowlisted changes via ClientService.update and marks CONFIRMED", async () => {
+        prisma.client_draft.findFirst.mockResolvedValue(clientUpdateDraft);
+        prisma.client_draft.updateMany.mockResolvedValue({ count: 1 });
+        clientService.update.mockResolvedValue({});
+        prisma.client_draft.update.mockResolvedValue({});
+
+        const result = await service.confirm("branch-1", "user-1", "draft-1", {
+            changes: { startDate: "2026-06-23", serviceStatus: "active_with_replacement_requested", hairColor: "x" },
+        });
+
+        expect(result).toEqual({ clientId: 142 });
+        // hairColor must be dropped (not in PROPOSAL_FIELDS)
+        expect(clientService.update).toHaveBeenCalledWith("branch-1", 142, {
+            startDate: "2026-06-23",
+            serviceStatus: "active_with_replacement_requested",
+        });
+        expect(prisma.client_draft.update).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "draft-1" },
+            data: expect.objectContaining({ status: "CONFIRMED", reviewedById: "user-1" }),
+        }));
+    });
+
+    it("confirmClientUpdate: 409 when no client linked — clientId check happens BEFORE lock", async () => {
+        const unlinkeddraft = { ...clientUpdateDraft, clientId: null };
+        prisma.client_draft.findFirst.mockResolvedValue(unlinkeddraft);
+
+        await expect(
+            service.confirm("branch-1", "user-1", "draft-1", {
+                changes: { startDate: "2026-06-23" },
+            }),
+        ).rejects.toThrow(ConflictException);
+        expect(clientService.update).not.toHaveBeenCalled();
+        expect(prisma.client_draft.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("confirmClientUpdate: 400 when changes empty after allowlist filtering", async () => {
+        prisma.client_draft.findFirst.mockResolvedValue(clientUpdateDraft);
+
+        await expect(
+            service.confirm("branch-1", "user-1", "draft-1", { changes: { hairColor: "blonde" } }),
+        ).rejects.toThrow(BadRequestException);
+        expect(prisma.client_draft.updateMany).not.toHaveBeenCalled();
+        expect(clientService.update).not.toHaveBeenCalled();
+    });
+
+    it("confirmClientUpdate: 409 on lock race (updateMany count 0)", async () => {
+        prisma.client_draft.findFirst.mockResolvedValue(clientUpdateDraft);
+        prisma.client_draft.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(
+            service.confirm("branch-1", "user-1", "draft-1", { changes: { startDate: "2026-06-23" } }),
+        ).rejects.toThrow(ConflictException);
+        expect(clientService.update).not.toHaveBeenCalled();
+    });
+
+    it("confirmClientUpdate: rolls back to PENDING when ClientService.update throws", async () => {
+        prisma.client_draft.findFirst.mockResolvedValue(clientUpdateDraft);
+        prisma.client_draft.updateMany.mockResolvedValue({ count: 1 });
+        clientService.update.mockRejectedValue(new Error("serviceStatus invalid"));
+
+        await expect(
+            service.confirm("branch-1", "user-1", "draft-1", { changes: { startDate: "2026-06-23" } }),
+        ).rejects.toThrow("serviceStatus invalid");
+        expect(prisma.client_draft.update).toHaveBeenCalledWith({
+            where: { id: "draft-1" },
+            data: { status: "PENDING" },
+        });
+    });
+
+    it("confirmClientUpdate: stays CONFIRMED-path when bookkeeping fails after successful update", async () => {
+        prisma.client_draft.findFirst.mockResolvedValue(clientUpdateDraft);
+        prisma.client_draft.updateMany.mockResolvedValue({ count: 1 });
+        clientService.update.mockResolvedValue({});
+        prisma.client_draft.update
+            .mockRejectedValueOnce(new Error("db blip"))  // CONFIRMED write fails
+            .mockResolvedValueOnce({});                    // re-assert succeeds
+
+        const result = await service.confirm("branch-1", "user-1", "draft-1", {
+            changes: { startDate: "2026-06-23" },
+        });
+
+        expect(result).toEqual({ clientId: 142 });
+        const updateCalls = prisma.client_draft.update.mock.calls;
+        expect(updateCalls.some(([args]: [{ data: { status?: string } }]) => args.data.status === "PENDING")).toBe(false);
+        expect(updateCalls[updateCalls.length - 1]![0].data).toEqual(
+            expect.objectContaining({ status: "CONFIRMED" }),
+        );
+    });
+
+    it("confirm dispatch: NEW_CLIENT without fields → 400", async () => {
+        prisma.client_draft.findFirst.mockResolvedValue(pendingDraft);
+
+        await expect(
+            service.confirm("branch-1", "user-1", "draft-1", { changes: { startDate: "2026-06-23" } }),
+        ).rejects.toThrow(BadRequestException);
+    });
+
+    it("confirm dispatch: CLIENT_UPDATE without changes → 400", async () => {
+        prisma.client_draft.findFirst.mockResolvedValue(clientUpdateDraft);
+
+        await expect(
+            service.confirm("branch-1", "user-1", "draft-1", { fields: { name: "x", careCenter: false, voucherClient: false, breastPump: false } }),
+        ).rejects.toThrow(BadRequestException);
     });
 
     it("discard: PENDING → DISCARDED with reason; 409 when already reviewed", async () => {
