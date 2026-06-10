@@ -31,6 +31,9 @@ export class CallIngestTokenController {
     @Post("branches/:branchId/call-ingest-tokens")
     async create(@Param("branchId") branchId: string, @Body() dto: CreateCallIngestTokenDto) {
         this.assertOwner();
+        if (branchId !== this.tenantContext.branchId) {
+            throw new ForbiddenException("Cannot manage tokens for another branch");
+        }
         return this.tokenService.createToken(branchId, dto.label);
     }
 
@@ -38,7 +41,7 @@ export class CallIngestTokenController {
     @HttpCode(200)
     async revoke(@Param("id") id: string) {
         this.assertOwner();
-        await this.tokenService.revoke(id);
+        await this.tokenService.revoke(id, this.tenantContext.branchId);
         return { success: true };
     }
 }

@@ -1,4 +1,4 @@
-import { INestApplication, ExecutionContext } from "@nestjs/common";
+import { INestApplication, ExecutionContext, NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { CallIngestTokenController } from "interface/controllers/call-ingest-token.controller";
@@ -68,6 +68,22 @@ describe("CallIngestTokenController (Integration)", () => {
         tokenService.revoke.mockResolvedValue(undefined);
         const response = await request(app.getHttpServer()).post("/call-ingest-tokens/tok-1/revoke");
         expect(response.status).toBe(200);
-        expect(tokenService.revoke).toHaveBeenCalledWith("tok-1");
+        expect(tokenService.revoke).toHaveBeenCalledWith("tok-1", "branch-1");
+    });
+
+    it("owner cannot create a token for another branch (403)", async () => {
+        await bootstrap("owner");
+        const response = await request(app.getHttpServer())
+            .post("/branches/branch-OTHER/call-ingest-tokens")
+            .send({ label: "x" });
+        expect(response.status).toBe(403);
+        expect(tokenService.createToken).not.toHaveBeenCalled();
+    });
+
+    it("revoke propagates 404 when service throws NotFoundException", async () => {
+        await bootstrap("owner");
+        tokenService.revoke.mockRejectedValue(new NotFoundException("Token not found"));
+        const response = await request(app.getHttpServer()).post("/call-ingest-tokens/tok-1/revoke");
+        expect(response.status).toBe(404);
     });
 });

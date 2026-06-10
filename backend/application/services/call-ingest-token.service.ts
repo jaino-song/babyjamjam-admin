@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { createHash, randomBytes } from "crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -42,10 +42,13 @@ export class CallIngestTokenService {
         return record.branchId;
     }
 
-    async revoke(id: string): Promise<void> {
-        await this.prismaService.call_ingest_token.update({
-            where: { id },
+    async revoke(id: string, branchId: string): Promise<void> {
+        const result = await this.prismaService.call_ingest_token.updateMany({
+            where: { id, branchId },
             data: { active: false, revokedAt: new Date() },
         });
+        if (result.count === 0) {
+            throw new NotFoundException("Token not found");
+        }
     }
 }

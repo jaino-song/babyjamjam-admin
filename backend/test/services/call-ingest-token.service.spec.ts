@@ -1,3 +1,4 @@
+import { NotFoundException } from "@nestjs/common";
 import { createHash } from "crypto";
 import { CallIngestTokenService } from "application/services/call-ingest-token.service";
 
@@ -7,6 +8,7 @@ describe("CallIngestTokenService", () => {
             create: jest.fn(),
             findUnique: jest.fn(),
             update: jest.fn(),
+            updateMany: jest.fn(),
         },
     };
     let service: CallIngestTokenService;
@@ -51,12 +53,17 @@ describe("CallIngestTokenService", () => {
         await expect(service.resolveBranchId("cit_unknown")).resolves.toBeNull();
     });
 
-    it("revokes a token", async () => {
-        prisma.call_ingest_token.update.mockResolvedValue({ id: "tok-1", active: false });
-        await service.revoke("tok-1");
-        expect(prisma.call_ingest_token.update).toHaveBeenCalledWith({
-            where: { id: "tok-1" },
+    it("revokes a token scoped to its branch", async () => {
+        prisma.call_ingest_token.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+        await service.revoke("tok-1", "branch-1");
+        expect(prisma.call_ingest_token.updateMany).toHaveBeenCalledWith({
+            where: { id: "tok-1", branchId: "branch-1" },
             data: { active: false, revokedAt: expect.any(Date) },
         });
+    });
+
+    it("404s when revoking a token from another branch", async () => {
+        prisma.call_ingest_token.updateMany = jest.fn().mockResolvedValue({ count: 0 });
+        await expect(service.revoke("tok-1", "branch-2")).rejects.toThrow(NotFoundException);
     });
 });
