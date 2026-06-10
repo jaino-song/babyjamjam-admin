@@ -1,0 +1,41 @@
+import { CallExtractionRetrySchedulerService } from "application/services/call-extraction-retry-scheduler.service";
+
+describe("CallExtractionRetrySchedulerService", () => {
+    const prisma = { call_record: { findMany: jest.fn(), update: jest.fn() } };
+    const processingService = { processCallRecord: jest.fn() };
+    let scheduler: CallExtractionRetrySchedulerService;
+
+    beforeEach(() => {
+        jest.resetAllMocks();
+        prisma.call_record.update.mockResolvedValue({});
+        processingService.processCallRecord.mockResolvedValue(undefined);
+        scheduler = new CallExtractionRetrySchedulerService(prisma as never, processingService as never);
+    });
+
+    it("retries FAILED records under the attempt cap and stuck RECEIVED records", async () => {
+        prisma.call_record.findMany.mockResolvedValue([
+            { id: "rec-1", extractionRetryCount: 1, processingStatus: "FAILED" },
+            { id: "rec-2", extractionRetryCount: 0, processingStatus: "RECEIVED" },
+        ]);
+
+        await scheduler.retryFailedExtractions();
+
+        // FAILED row: reset to RECEIVED + increment counter, then process
+        expect(prisma.call_record.update).toHaveBeenCalledWith({
+            where: { id: "rec-1" },
+            data: { extractionRetryCount: { increment: 1 }, processingStatus: "RECEIVED" },
+        });
+        // RECEIVED stuck row: only re-process, do NOT increment counter
+        expect(prisma.call_record.update).not.toHaveBeenCalledWith(
+            expect.objectContaining({ where: { id: "rec-2" } }),
+        );
+        expect(processingService.processCallRecord).toHaveBeenCalledWith("rec-1");
+        expect(processingService.processCallRecord).toHaveBeenCalledWith("rec-2");
+    });
+
+    it("does nothing when no candidates", async () => {
+        prisma.call_record.findMany.mockResolvedValue([]);
+        await scheduler.retryFailedExtractions();
+        expect(processingService.processCallRecord).not.toHaveBeenCalled();
+    });
+});
