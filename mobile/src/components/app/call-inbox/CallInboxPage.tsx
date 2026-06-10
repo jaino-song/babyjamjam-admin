@@ -165,14 +165,14 @@ export function CallInboxPage() {
   const draftsQuery = useClientDrafts("PENDING", draftPage);
   const recordsQuery = useCallRecords(recordPage, category, search.trim() || undefined);
 
-  const selectedDraft = useMemo(
-    () => draftsQuery.data?.data.find((d) => d.id === reviewDraftId) ?? null,
-    [draftsQuery.data, reviewDraftId],
-  );
+  // snapshot at click time: the live page query can drop the row (pagination,
+  // post-mutation refetch) and would silently hide the duplicate-phone banner
+  const [selectedDraft, setSelectedDraft] = useState<ClientDraftListItem | null>(null);
 
   const closeSheets = () => {
     setReviewDraftId(null);
     setLogRecordId(null);
+    setSelectedDraft(null);
   };
 
   const tabFilters = [
@@ -241,7 +241,10 @@ export function CallInboxPage() {
                       <DraftCard
                         key={draft.id}
                         draft={draft}
-                        onClick={() => setReviewDraftId(draft.id)}
+                        onClick={() => {
+                          setSelectedDraft(draft);
+                          setReviewDraftId(draft.id);
+                        }}
                       />
                     ))}
                     <Pager

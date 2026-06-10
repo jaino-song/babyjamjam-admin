@@ -153,9 +153,11 @@ function ReviewHeader({ draft, title }: { draft: ClientDraftDetail; title: strin
       />
       <div className="flex items-center justify-between px-1 text-[0.72rem] text-v3-text-muted">
         <span>{formatCallTime(draft.callRecord.recordedAt ?? draft.callRecord.createdAt)}</span>
-        <a href={driveUrl} target="_blank" rel="noreferrer" className="text-v3-primary">
-          ▶ 원본 듣기
-        </a>
+        {draft.callRecord.driveFileId && (
+          <a href={driveUrl} target="_blank" rel="noreferrer" className="text-v3-primary">
+            ▶ 원본 듣기
+          </a>
+        )}
       </div>
       {draft.requestSummary && (
         <p className="px-1 text-[0.8rem] leading-relaxed text-v3-text">{draft.requestSummary}</p>
