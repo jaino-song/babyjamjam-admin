@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     ConflictException,
     Injectable,
     Logger,
@@ -8,7 +9,9 @@ import {
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientService } from "application/services/client.service";
 import { normalizePhone } from "application/utils/normalize-phone";
+import { PROPOSAL_FIELDS } from "application/services/call-extraction.prompt";
 import {
+    ConfirmDraftDto,
     ConfirmNewClientDraftDto,
     PatchClientDraftDto,
 } from "interface/dto/call-inbox.dto";
@@ -215,7 +218,16 @@ export class CallInboxService {
         if (draft.type !== "NEW_CLIENT") {
             throw new NotImplementedException("CLIENT_UPDATE confirm ships in Phase 2");
         }
+        return this.confirmNewClientWithDraft(branchId, userId, id, draft, dto);
+    }
 
+    private async confirmNewClientWithDraft(
+        branchId: string,
+        userId: string,
+        id: string,
+        draft: { callRecordId: string },
+        dto: { fields: Record<string, unknown>; suppressGreetingSms?: boolean },
+    ) {
         // optimistic lock BEFORE side effects: only one caller flips PENDING→CONFIRMING
         const locked = await this.prismaService.client_draft.updateMany({
             where: { id, status: "PENDING" },
@@ -278,6 +290,93 @@ export class CallInboxService {
                 return { clientId: createdClientId };
             }
             // create itself failed: roll the lock back so staff can fix input and retry
+            await this.prismaService.client_draft
+                .update({ where: { id }, data: { status: "PENDING" } })
+                .catch(() => undefined);
+            throw error;
+        }
+    }
+
+    /** Unified confirm entry-point: dispatches to NEW_CLIENT or CLIENT_UPDATE path */
+    async confirm(branchId: string, userId: string, id: string, dto: ConfirmDraftDto) {
+        const draft = await this.requirePendingDraft(branchId, id);
+        if (draft.type === "NEW_CLIENT") {
+            if (!dto.fields || typeof dto.fields !== "object") {
+                throw new BadRequestException("fields is required for NEW_CLIENT");
+            }
+            return this.confirmNewClientWithDraft(branchId, userId, id, draft, {
+                fields: dto.fields,
+                suppressGreetingSms: dto.suppressGreetingSms,
+            });
+        }
+        if (draft.type === "CLIENT_UPDATE") {
+            if (!dto.changes || typeof dto.changes !== "object" || Array.isArray(dto.changes)) {
+                throw new BadRequestException("changes is required for CLIENT_UPDATE");
+            }
+            return this.confirmClientUpdate(branchId, userId, id, draft, dto.changes);
+        }
+        throw new BadRequestException(`Unknown draft type: ${draft.type}`);
+    }
+
+    private async confirmClientUpdate(
+        branchId: string,
+        userId: string,
+        id: string,
+        draft: { clientId: number | null; callRecordId: string },
+        rawChanges: Record<string, unknown>,
+    ) {
+        // a. clientId must be set (guard before locking)
+        if (draft.clientId == null) {
+            throw new ConflictException("고객 연결이 필요합니다");
+        }
+        const clientId = draft.clientId;
+
+        // b. filter changes to PROPOSAL_FIELDS allowlist
+        const allowedSet = new Set<string>(PROPOSAL_FIELDS);
+        const filteredChanges: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(rawChanges)) {
+            if (allowedSet.has(key)) filteredChanges[key] = value;
+        }
+        if (Object.keys(filteredChanges).length === 0) {
+            throw new BadRequestException("No valid fields remain after allowlist filtering");
+        }
+
+        // c. optimistic lock PENDING → CONFIRMING
+        const locked = await this.prismaService.client_draft.updateMany({
+            where: { id, status: "PENDING" },
+            data: { status: "CONFIRMING" },
+        });
+        if (locked.count === 0) {
+            throw new ConflictException("Draft already reviewed");
+        }
+
+        let updateApplied = false;
+        try {
+            // d. apply the changes via the validated update path
+            await this.clientService.update(branchId, clientId, filteredChanges as Parameters<typeof this.clientService.update>[2]);
+            updateApplied = true;
+
+            // e. mark CONFIRMED
+            await this.prismaService.client_draft.update({
+                where: { id },
+                data: { status: "CONFIRMED", reviewedById: userId, reviewedAt: new Date() },
+            });
+            return { clientId };
+        } catch (error) {
+            if (updateApplied) {
+                // f. update succeeded but bookkeeping failed — never revert to PENDING
+                this.logger.error(
+                    `Confirm bookkeeping failed after changes applied to client ${clientId} for draft ${id}: ${error}`,
+                );
+                await this.prismaService.client_draft
+                    .update({
+                        where: { id },
+                        data: { status: "CONFIRMED", reviewedById: userId, reviewedAt: new Date() },
+                    })
+                    .catch(() => undefined);
+                return { clientId };
+            }
+            // update itself failed — roll back lock
             await this.prismaService.client_draft
                 .update({ where: { id }, data: { status: "PENDING" } })
                 .catch(() => undefined);

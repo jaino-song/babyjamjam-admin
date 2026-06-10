@@ -62,6 +62,9 @@ const TOGGLE_FIELDS = [
   { field: "breastPump", label: "유축기" },
 ] as const;
 
+// birthday is YYMMDD text, not ISO — keep it out
+const DATE_FIELDS = new Set(["dueDate", "startDate", "endDate"]);
+
 function proposalFor(proposals: Proposal[], field: string): Proposal | undefined {
   return proposals.find((p) => p.field === field);
 }
@@ -385,11 +388,30 @@ function ClientUpdateReview({
   onClose: () => void;
 }) {
   const { proposals } = draft;
+  const confirmDraft = useConfirmDraft(draft.id);
   const discardDraft = useDiscardDraft(draft.id);
   const patchDraft = usePatchDraft(draft.id);
   const { highlight, jump } = useEvidenceJump();
 
   const isPending = draft.status === "PENDING";
+  const isLinked = draft.clientId != null;
+
+  // per-row include toggles (all ON by default)
+  const [included, setIncluded] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(proposals.map((p) => [p.field, true])),
+  );
+
+  // per-row editable values (seeded from proposal.value)
+  const [editedValues, setEditedValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      proposals
+        .filter((p) => typeof p.value !== "boolean")
+        .map((p) => [p.field, p.value === null || p.value === undefined ? "" : String(p.value)]),
+    ),
+  );
+
+  const includedCount = proposals.filter((p) => included[p.field]).length;
+  const busy = confirmDraft.isPending || discardDraft.isPending;
 
   const handleDiscard = async () => {
     try {
@@ -398,6 +420,37 @@ function ClientUpdateReview({
       onClose();
     } catch {
       toast({ title: "폐기 실패", variant: "destructive" });
+    }
+  };
+
+  const handleApply = async () => {
+    const changes: Record<string, string | number | boolean | null> = {};
+    for (const proposal of proposals) {
+      if (!included[proposal.field]) continue;
+      if (typeof proposal.value === "boolean") {
+        // boolean toggles keep their proposal value (read-only in this view)
+        changes[proposal.field] = proposal.value;
+      } else {
+        const raw = editedValues[proposal.field] ?? "";
+        // coerce numeric fields
+        if (typeof proposal.value === "number") {
+          const n = Number(raw);
+          changes[proposal.field] = Number.isFinite(n) ? n : null;
+        } else {
+          changes[proposal.field] = raw || null;
+        }
+      }
+    }
+
+    try {
+      await confirmDraft.mutateAsync({ changes });
+      toast({ title: `변경 적용 완료 (${includedCount}건)` });
+      onClose();
+    } catch {
+      toast({
+        title: "적용에 실패했습니다. 값을 확인해 주세요.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -437,25 +490,56 @@ function ClientUpdateReview({
           const isLow = proposal.confidence === "low";
           const hasCurrent =
             proposal.currentValue !== null && proposal.currentValue !== undefined;
+          const isIncluded = included[proposal.field] ?? true;
+          const isBool = typeof proposal.value === "boolean";
+
           return (
             <div
               key={proposal.field}
-              className="rounded-xl border border-v3-border p-3"
+              className={`rounded-xl border p-3 ${isIncluded ? "border-v3-border" : "border-v3-border opacity-50"}`}
               data-component="call-inbox-review-diff-row"
             >
               <div className="mb-1 flex items-center justify-between text-[0.72rem] text-v3-text-muted">
                 <span>{FIELD_LABELS[proposal.field] ?? proposal.field}</span>
-                {isLow && <span className="font-bold text-amber-600">⚠ 확신도 낮음</span>}
+                <div className="flex items-center gap-2">
+                  {isLow && <span className="font-bold text-amber-600">⚠ 확신도 낮음</span>}
+                  {isPending && (
+                    <Switch
+                      checked={isIncluded}
+                      onCheckedChange={(checked) =>
+                        setIncluded((prev) => ({ ...prev, [proposal.field]: checked }))
+                      }
+                      aria-label={`${FIELD_LABELS[proposal.field] ?? proposal.field} 포함`}
+                    />
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-[0.85rem]">
-                {hasCurrent && (
-                  <span className="text-v3-text-muted line-through">
-                    {displayValue(proposal.currentValue ?? null)}
-                  </span>
-                )}
-                {hasCurrent && <span className="text-v3-text-muted">→</span>}
-                <span className="font-bold text-v3-orange">{displayValue(proposal.value)}</span>
-              </div>
+              {hasCurrent && (
+                <div className="mb-1 flex items-center gap-2 text-[0.78rem] text-v3-text-muted">
+                  <span className="line-through">{displayValue(proposal.currentValue ?? null)}</span>
+                  <span>→</span>
+                </div>
+              )}
+              {isPending && !isBool ? (
+                <Input
+                  type={DATE_FIELDS.has(proposal.field) ? "date" : "text"}
+                  value={editedValues[proposal.field] ?? ""}
+                  disabled={!isIncluded}
+                  onChange={(e) =>
+                    setEditedValues((prev) => ({ ...prev, [proposal.field]: e.target.value }))
+                  }
+                  className="text-[0.85rem]"
+                  aria-label={FIELD_LABELS[proposal.field] ?? proposal.field}
+                />
+              ) : isPending && isBool ? (
+                <div className="flex items-center gap-2 text-[0.85rem]">
+                  <span className="font-bold text-v3-orange">{displayValue(proposal.value)}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-[0.85rem]">
+                  <span className="font-bold text-v3-orange">{displayValue(proposal.value)}</span>
+                </div>
+              )}
               <EvidenceChip
                 proposal={proposal}
                 transcript={draft.callRecord.transcript}
@@ -474,20 +558,20 @@ function ClientUpdateReview({
               label: "폐기",
               variant: "secondary",
               onClick: handleDiscard,
-              disabled: discardDraft.isPending,
+              disabled: busy,
               busy: discardDraft.isPending,
             },
             {
-              label: "변경 적용",
+              label: confirmDraft.isPending
+                ? "적용 중..."
+                : `변경 적용 (${includedCount}건)`,
               variant: "primary",
-              disabled: true,
+              onClick: handleApply,
+              disabled: !isLinked || includedCount === 0 || busy,
+              busy: confirmDraft.isPending,
             },
           ]}
-        >
-          <p className="mt-1 w-full text-center text-[0.7rem] text-v3-text-muted">
-            Phase 2에서 제공
-          </p>
-        </MobileDetailActions>
+        />
       )}
 
       <TranscriptSection draft={draft} highlight={highlight} />

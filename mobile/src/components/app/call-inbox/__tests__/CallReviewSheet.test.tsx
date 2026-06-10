@@ -163,11 +163,21 @@ describe("CallReviewSheet — CLIENT_UPDATE PENDING", () => {
   const updateDetail = {
     ...baseDetail,
     type: "CLIENT_UPDATE" as const,
+    clientId: 7,
+    client: { id: 7, name: "박지영", phone: "01099998888" },
     proposals: [
       {
         field: "startDate",
         value: "2026-07-20",
+        currentValue: "2026-06-01",
         evidence: "7월 20일부터 시작하고 싶어요",
+        confidence: "high" as const,
+      },
+      {
+        field: "endDate",
+        value: "2026-08-20",
+        currentValue: null,
+        evidence: "8월 20일까지요",
         confidence: "high" as const,
       },
     ],
@@ -176,15 +186,20 @@ describe("CallReviewSheet — CLIENT_UPDATE PENDING", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUseClientDraft.mockReturnValue({ data: updateDetail, isLoading: false });
+    mockConfirmMutateAsync.mockResolvedValue({ clientId: 7 });
   });
 
-  it("renders Phase 2 notice and disables 변경 적용 button", () => {
+  it("does NOT render Phase 2 notice", () => {
     render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
 
-    expect(screen.getByText(/Phase 2에서 제공/)).toBeInTheDocument();
+    expect(screen.queryByText(/Phase 2에서 제공/i)).not.toBeInTheDocument();
+  });
+
+  it("enables 변경 적용 button when client is linked and proposals exist", () => {
+    render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
 
     const applyBtn = screen.getByRole("button", { name: /변경 적용/i });
-    expect(applyBtn).toBeDisabled();
+    expect(applyBtn).not.toBeDisabled();
   });
 
   it("enables the 폐기 button for a pending CLIENT_UPDATE draft", () => {
@@ -192,6 +207,42 @@ describe("CallReviewSheet — CLIENT_UPDATE PENDING", () => {
 
     const discardBtn = screen.getByRole("button", { name: /^폐기$/i });
     expect(discardBtn).not.toBeDisabled();
+  });
+
+  it("calls confirmDraft with only included changes and excludes toggled-off row", async () => {
+    const user = userEvent.setup();
+    render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+    // Find the include toggles for each diff row — they are Switch components
+    // with aria-label matching the field label
+    const endDateToggle = screen.getByRole("switch", { name: /종료일 포함/i });
+    await user.click(endDateToggle);
+
+    const applyBtn = screen.getByRole("button", { name: /변경 적용/i });
+    await user.click(applyBtn);
+
+    expect(mockConfirmMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: expect.not.objectContaining({ endDate: expect.anything() }),
+      }),
+    );
+    expect(mockConfirmMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: expect.objectContaining({ startDate: "2026-07-20" }),
+      }),
+    );
+  });
+
+  it("disables 변경 적용 button when client is not linked", () => {
+    mockUseClientDraft.mockReturnValue({
+      data: { ...updateDetail, clientId: null, client: null },
+      isLoading: false,
+    });
+
+    render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+    const applyBtn = screen.getByRole("button", { name: /변경 적용/i });
+    expect(applyBtn).toBeDisabled();
   });
 });
 

@@ -1,6 +1,6 @@
 # 통화요약 (Call Inbox) — API Sheet
 
-**Status:** implementation in progress (Phase 1). This file is the **source of truth** for the UI-facing API; implementation must conform or update this sheet in the same PR.
+**Status:** Phase 1 + 변경 적용 (BJJ-232) 구현 완료. This file is the **source of truth** for the UI-facing API; implementation must conform or update this sheet in the same PR.
 **Spec:** `docs/superpowers/specs/2026-06-10-call-inbox-design.md` · **Wireframe:** `docs/mockups/call-inbox-wireframe.html`
 
 ## Conventions
@@ -213,9 +213,16 @@ interface ConfirmNewClientBody {
 // → 201 { clientId: number }
 ```
 
-CLIENT_UPDATE — **501 Not Implemented in Phase 1.** The UI renders the confirm button as disabled for CLIENT_UPDATE drafts. This path ships in Phase 2.
+CLIENT_UPDATE — body carries **only the changed fields** (included proposals after staff review):
 
-Common errors: `409` draft not PENDING (already confirmed/discarded) · `409` "Draft already reviewed" when a concurrent confirm wins the CONFIRMING lock · `422` validation failure (same rules as existing client create/update paths).
+```ts
+interface ConfirmClientUpdateBody {
+  changes: Record<ProposalField, string | number | boolean | null>;  // included changes only; non-allowlist keys dropped server-side; non-empty required
+}
+// → 200 { clientId: number }
+```
+
+Errors: `409` draft not PENDING (already confirmed/discarded) · `409` "Draft already reviewed" when a concurrent confirm wins the CONFIRMING lock · `409` "고객 연결이 필요합니다" (unlinked client — `clientId` not set on draft) · `400` empty or invalid changes · 4xx from client-update validation (same rules as existing client update path).
 
 ### `POST /api/client-drafts/:id/discard`
 
@@ -249,7 +256,8 @@ Body `{ reason?: string }` → `200 { id, status: "DISCARDED" }` · `409` not PE
 | Unknown / foreign-branch resource | 404 |
 | Draft already reviewed (not PENDING) | 409 |
 | Draft already reviewed — concurrent confirm/discard wins CONFIRMING lock | 409 |
+| CLIENT_UPDATE confirm — `clientId` not set on draft (고객 연결이 필요합니다) | 409 |
+| CLIENT_UPDATE confirm — `changes` empty or contains only non-allowlist keys | 400 |
 | Validation failure (body caps, unknown fields) | 400 / 422 |
-| CLIENT_UPDATE confirm (Phase 1) | 501 |
 | Webhook body exceeds 1 mb | 400 (express) |
 | Webhook payload fails DTO validation (cap violations, malformed `recordedAt`) | 400 |

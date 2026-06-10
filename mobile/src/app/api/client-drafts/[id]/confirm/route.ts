@@ -12,7 +12,7 @@ import {
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-const confirmDraftSchema = z.object({
+const newClientShape = z.object({
     fields: z
         .object({
             name: z.string().min(1).max(10_000),
@@ -23,6 +23,17 @@ const confirmDraftSchema = z.object({
         .passthrough(),
     suppressGreetingSms: z.boolean().optional(),
 });
+
+const clientUpdateShape = z
+    .object({
+        changes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+    })
+    .refine(
+        (obj) => Object.keys(obj.changes).length > 0,
+        { message: "변경 사항이 없습니다." },
+    );
+
+const confirmDraftSchema = z.union([newClientShape, clientUpdateShape]);
 
 // POST /api/client-drafts/[id]/confirm - 초안 확정 (backend 409/501 status preserved)
 export async function POST(request: NextRequest, { params }: RouteParams) {

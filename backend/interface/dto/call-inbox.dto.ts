@@ -86,6 +86,27 @@ export class ConfirmNewClientDraftDto {
     suppressGreetingSms?: boolean;
 }
 
+export class ConfirmClientUpdateDraftDto {
+    /** included changes only; keys validated against PROPOSAL_FIELDS in the service */
+    @IsObject()
+    changes!: Record<string, unknown>;
+}
+
+/** Permissive union DTO used by the controller — the service discriminates by draft type */
+export class ConfirmDraftDto {
+    @IsOptional()
+    @IsObject()
+    fields?: Record<string, unknown>;
+
+    @IsOptional()
+    @IsBoolean()
+    suppressGreetingSms?: boolean;
+
+    @IsOptional()
+    @IsObject()
+    changes?: Record<string, unknown>;
+}
+
 export class DiscardClientDraftDto {
     @IsOptional()
     @IsString()
