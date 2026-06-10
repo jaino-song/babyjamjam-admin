@@ -56,4 +56,16 @@ describe("GeminiCallExtractionAdapter", () => {
         const adapter = new GeminiCallExtractionAdapter(emptyConfig as never);
         await expect(adapter.extract(input)).rejects.toThrow(/GEMINI_API_KEY/);
     });
+
+    it("throws a descriptive error on unparseable model output", async () => {
+        jest.spyOn(global, "fetch" as never).mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                candidates: [{ content: { parts: [{ text: "not-json{" }] } }],
+            }),
+        } as never);
+
+        const adapter = new GeminiCallExtractionAdapter(configService as never);
+        await expect(adapter.extract(input)).rejects.toThrow(/unparseable JSON/);
+    });
 });

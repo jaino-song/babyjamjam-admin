@@ -10,6 +10,7 @@ export interface TranscriptTurn {
 export interface ExtractionProposal {
     /** client column name, validated against PROPOSAL_FIELDS allowlist */
     field: string;
+    /** From the Gemini adapter this is always string|null (schema emits strings); the processing-service sanitizer coerces booleans/numbers before persistence. */
     value: string | number | boolean | null;
     /** verbatim transcript quote backing the value */
     evidence: string;

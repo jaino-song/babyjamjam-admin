@@ -55,6 +55,10 @@ export class GeminiCallExtractionAdapter implements CallExtractionPort {
             throw new Error("Gemini extraction returned no candidates");
         }
 
-        return JSON.parse(text) as CallExtractionResult;
+        try {
+            return JSON.parse(text) as CallExtractionResult;
+        } catch {
+            throw new Error(`Gemini extraction returned unparseable JSON (length=${text.length})`);
+        }
     }
 }
