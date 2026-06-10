@@ -2,15 +2,20 @@ import {
     ArrayMaxSize,
     ArrayMinSize,
     IsArray,
+    IsBoolean,
     IsDateString,
+    IsIn,
+    IsInt,
     IsNotEmpty,
     IsObject,
     IsOptional,
     IsString,
     MaxLength,
+    ValidateIf,
     ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { PROPOSAL_FIELDS } from "application/services/call-extraction.prompt";
 
 export class CreateCallIngestTokenDto {
     @IsString()
@@ -41,6 +46,51 @@ export class CallSummaryDto {
 
     @IsOptional() @IsString() @MaxLength(2_000)
     result_action?: string;
+}
+
+export class ProposalDto {
+    @IsIn([...PROPOSAL_FIELDS])
+    field!: string;
+
+    @ValidateIf((_, value) => value !== null)
+    value!: string | number | boolean | null;
+
+    @IsString()
+    @MaxLength(2_000)
+    evidence!: string;
+
+    @IsIn(["high", "low"])
+    confidence!: "high" | "low";
+}
+
+export class PatchClientDraftDto {
+    @IsOptional()
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => ProposalDto)
+    proposals?: ProposalDto[];
+
+    @IsOptional()
+    @ValidateIf((_, value) => value !== null)
+    @IsInt()
+    clientId?: number | null;
+}
+
+export class ConfirmNewClientDraftDto {
+    /** staff-final values; same shape as CreateClientDto minus employee fields */
+    @IsObject()
+    fields!: Record<string, unknown>;
+
+    @IsOptional()
+    @IsBoolean()
+    suppressGreetingSms?: boolean;
+}
+
+export class DiscardClientDraftDto {
+    @IsOptional()
+    @IsString()
+    @MaxLength(1_000)
+    reason?: string;
 }
 
 export class CallTranscriptWebhookDto {
