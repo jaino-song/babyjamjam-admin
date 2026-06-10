@@ -117,3 +117,7 @@ export interface ConfirmDraftBody {
     };
     suppressGreetingSms?: boolean;
 }
+
+export interface ConfirmUpdateBody {
+    changes: Record<string, string | number | boolean | null>;
+}

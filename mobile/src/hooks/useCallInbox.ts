@@ -9,6 +9,7 @@ import type {
     ClientDraftDetail,
     ClientDraftListItem,
     ConfirmDraftBody,
+    ConfirmUpdateBody,
     Paginated,
     Proposal,
 } from "@/lib/call-inbox/types";
@@ -96,7 +97,7 @@ export function usePatchDraft(id: string) {
 export function useConfirmDraft(id: string) {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: async (body: ConfirmDraftBody) => {
+        mutationFn: async (body: ConfirmDraftBody | ConfirmUpdateBody) => {
             const { data } = await api.post(`/client-drafts/${id}/confirm`, body);
             return data as { clientId: number };
         },
