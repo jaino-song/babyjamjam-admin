@@ -38,4 +38,19 @@ describe("CallExtractionRetrySchedulerService", () => {
         await scheduler.retryFailedExtractions();
         expect(processingService.processCallRecord).not.toHaveBeenCalled();
     });
+
+    it("continues with remaining candidates when one throws", async () => {
+        prisma.call_record.findMany.mockResolvedValue([
+            { id: "rec-1", extractionRetryCount: 0, processingStatus: "RECEIVED" },
+            { id: "rec-2", extractionRetryCount: 0, processingStatus: "RECEIVED" },
+        ]);
+        processingService.processCallRecord
+            .mockRejectedValueOnce(new Error("unexpected"))
+            .mockResolvedValueOnce(undefined);
+
+        await scheduler.retryFailedExtractions();
+
+        expect(processingService.processCallRecord).toHaveBeenCalledTimes(2);
+        expect(processingService.processCallRecord).toHaveBeenLastCalledWith("rec-2");
+    });
 });

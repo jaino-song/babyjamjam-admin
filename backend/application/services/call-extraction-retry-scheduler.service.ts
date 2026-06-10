@@ -3,6 +3,10 @@ import { Cron } from "@nestjs/schedule";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { CallProcessingService } from "application/services/call-processing.service";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
+import {
+    isTransientPrismaConnectivityError,
+    summarizePrismaError,
+} from "infrastructure/database/prisma-error.utils";
 
 const MAX_ATTEMPTS = 3;
 const STUCK_RECEIVED_MS = 10 * 60 * 1000;
@@ -45,7 +49,7 @@ export class CallExtractionRetrySchedulerService {
                 },
                 select: { id: true, extractionRetryCount: true, processingStatus: true },
                 orderBy: { createdAt: "asc" },
-                take: 20,
+                take: 8,
             });
 
             if (candidates.length === 0) return;
@@ -53,17 +57,35 @@ export class CallExtractionRetrySchedulerService {
             this.logger.log(`[CallRetry] Retrying ${candidates.length} call records`);
 
             for (const candidate of candidates) {
-                // Only FAILED rows need their counter incremented and status reset;
-                // stuck RECEIVED rows are already in the correct status — incrementing
-                // their attempt count would burn retries they never actually consumed.
-                if (candidate.processingStatus === "FAILED") {
-                    await this.prismaService.call_record.update({
-                        where: { id: candidate.id },
-                        data: { extractionRetryCount: { increment: 1 }, processingStatus: "RECEIVED" },
-                    });
+                try {
+                    // Only FAILED rows need their counter incremented and status reset;
+                    // stuck RECEIVED rows are already in the correct status — incrementing
+                    // their attempt count would burn retries they never actually consumed.
+                    if (candidate.processingStatus === "FAILED") {
+                        // retryCount counts scheduler pickups, not completed extraction attempts; stuck-RECEIVED recovery (no count filter) guarantees records are never permanently lost
+                        await this.prismaService.call_record.update({
+                            where: { id: candidate.id },
+                            data: { extractionRetryCount: { increment: 1 }, processingStatus: "RECEIVED" },
+                        });
+                    }
+                    await this.processingService.processCallRecord(candidate.id);
+                } catch (error) {
+                    this.logger.warn(
+                        `[CallRetry] Unexpected error processing candidate ${candidate.id}; skipping`,
+                        error instanceof Error ? error.stack : String(error),
+                    );
                 }
-                await this.processingService.processCallRecord(candidate.id);
             }
+        } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                this.executionGuard.enterCooldown(summarizePrismaError(error));
+                return;
+            }
+
+            this.logger.error(
+                "[CallRetry] Failed to load or retry call records",
+                error instanceof Error ? error.stack : String(error),
+            );
         } finally {
             this.executionGuard.finish(runToken);
         }
