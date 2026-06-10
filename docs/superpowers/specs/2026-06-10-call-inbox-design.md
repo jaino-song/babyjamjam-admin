@@ -130,11 +130,11 @@ Indexes: `(branchId, createdAt)`, `processingStatus`, `matchedClientId`.
 | callRecordId | uuid FK, **unique** | |
 | branchId | uuid FK branch | denormalized for scoping |
 | type | enum | `NEW_CLIENT \| CLIENT_UPDATE` |
-| status | enum | `PENDING \| CONFIRMED \| DISCARDED`; transitions only out of PENDING |
+| status | enum | `PENDING \| CONFIRMED \| DISCARDED`; transient `CONFIRMING` (set during confirm; crash-swept back to PENDING by 10-min cron); transitions only out of PENDING |
 | clientId | int? FK client | UPDATE: target client; NEW: set to created client on confirm |
 | proposals | JSONB | `[{ field, value, currentValue?, evidence, confidence: "high"\|"low" }]` |
 | requestSummary | text | 한 줄 요약 (예: "출산이 빨라져 시작일 6/23로 변경 요청") |
-| extractionMeta | JSONB | `{ model, promptVersion, rawResponse }` — enables re-extraction/debugging |
+| extractionMeta | JSONB | `{ model, promptVersion }` — enables re-extraction/debugging |
 | reviewedById / reviewedAt | FK?, timestamptz? | |
 | discardReason | text? | |
 | createdAt | timestamptz | |
@@ -150,7 +150,7 @@ Indexes: `(branchId, createdAt)`, `processingStatus`, `matchedClientId`.
 - **Classification:** `NEW_CONSULTATION` = caller inquiring to start service; `CLIENT_SERVICE` = request to change an existing service (예정일/시작일/종료일 변경, 교체, 연장, 종료 등); `OTHER` = everything else (주차, 제휴, spam…). NEW_CONSULTATION → `NEW_CLIENT` draft; CLIENT_SERVICE → `CLIENT_UPDATE` draft; OTHER → no draft.
 - **Prompt:** Korean, in-repo constant with `promptVersion`; reuses the 아이미래로 terminology dictionary from the n8n prompt.
 - **Client matching:** normalize phones (strip non-digits, `+82`→`0`); exact match against branch-scoped `client.phone` (normalized). Single match → set `matchedClientId`/`clientId`; zero or multiple → unmatched + UI flag (변경요청 drafts require manual link before confirm).
-- **Async processing:** webhook responds 202 immediately; extraction runs via async event. Failures → `FAILED` + retry cron (max 3 attempts; cadence per existing alimtalk retry conventions), then surfaced in the call log with manual 재시도.
+- **Async processing:** webhook responds 202 immediately; extraction runs via async event. Persistence of the call record and its draft is transactional (record + draft written atomically). `CONFIRMING` drafts not yet resolved are swept back to `PENDING` after 10 minutes by the retry cron. Failures → `FAILED` + retry cron (max 3 attempts; cadence per existing alimtalk retry conventions), then surfaced in the call log with manual 재시도.
 
 ## 8. Staff API (JwtGuard + TenantGuard, branch-scoped like existing list endpoints)
 
@@ -160,14 +160,14 @@ Indexes: `(branchId, createdAt)`, `processingStatus`, `matchedClientId`.
 | `GET /call-records/:id` | Full record: transcript, summary, draft, Drive link |
 | `GET /client-drafts?status=PENDING&cursor` | Review queue |
 | `PATCH /client-drafts/:id` | Edit proposals / link `clientId` — only while PENDING |
-| `POST /client-drafts/:id/confirm` | NEW_CLIENT: body = staff-final `CreateClientDto`-shaped fields (+ `suppressGreetingSms?`) → existing `ClientService.create`; CLIENT_UPDATE: body = included `{field: value}` set → existing client update path (same validation as today's edits, incl. serviceStatus transitions). Transactional; 409 unless PENDING; stamps reviewedBy/At |
+| `POST /client-drafts/:id/confirm` | NEW_CLIENT: body = staff-final `CreateClientDto`-shaped fields (+ `suppressGreetingSms?`) → existing `ClientService.create`; CLIENT_UPDATE: **501 in Phase 1** (ships in Phase 2; UI renders button disabled). Transactional; 409 unless PENDING; stamps reviewedBy/At |
 | `POST /client-drafts/:id/discard` | `{ reason? }` |
 | `GET /client-drafts/count?status=PENDING` | Cheap count for the nav badge / NotificationBell |
 | `POST /call-records/:id/re-extract` | Phase 2, admin: re-runs extraction; only replaces proposals of a still-PENDING draft |
 
 **Full request/response contract:** `docs/api/call-inbox-api.md` — the source of truth for UI work; implementation keeps it in sync.
 
-**Webhook responses:** 202 accepted · 200 duplicate no-op · 401 bad token · 400 invalid payload · 413 transcript over size cap.
+**Webhook responses:** 202 `{accepted:true,duplicate:false,callRecordId}` fresh accepted · 200 `{accepted:true,duplicate:true,callRecordId}` duplicate no-op · 401 bad token · 400 invalid payload (incl. cap violations; replaces the earlier 413 — validation is DTO-level, not HTTP body size).
 
 **Mobile BFF:** `mobile/src/app/api/call-records/...` and `/api/client-drafts/...` proxy routes mirroring the existing `/api/clients` pattern (session token + zod validation).
 
@@ -190,7 +190,7 @@ Reuse: existing list/infinite-scroll patterns, `ClientAutocomplete`, `ClientForm
 - **NEW_CLIENT confirm with existing-client phone match:** warning in confirm sheet before create.
 - **Unmatched/ambiguous CLIENT_UPDATE:** confirm blocked until staff link a client.
 - **Double confirm:** status guard, 409.
-- **Oversized transcript:** 413 with cap (exact cap at plan stage; generous — calls are minutes, not hours).
+- **Oversized transcript:** 400 via DTO caps (≤ 500 turns, each turn text ≤ 2000 chars) plus the express-level 1 mb body limit.
 
 ## 11. PII & retention
 
