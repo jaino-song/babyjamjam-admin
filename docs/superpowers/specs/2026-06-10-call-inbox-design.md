@@ -160,7 +160,7 @@ Indexes: `(branchId, createdAt)`, `processingStatus`, `matchedClientId`.
 | `GET /call-records/:id` | Full record: transcript, summary, draft, Drive link |
 | `GET /client-drafts?status=PENDING&page&limit` | Review queue |
 | `PATCH /client-drafts/:id` | Edit proposals / link `clientId` — only while PENDING |
-| `POST /client-drafts/:id/confirm` | NEW_CLIENT: body = staff-final `CreateClientDto`-shaped fields (+ `suppressGreetingSms?`) → existing `ClientService.create`; CLIENT_UPDATE: **501 in Phase 1** (ships in Phase 2; UI renders button disabled). Transactional; 409 unless PENDING; stamps reviewedBy/At |
+| `POST /client-drafts/:id/confirm` | NEW_CLIENT: body = staff-final `CreateClientDto`-shaped fields (+ `suppressGreetingSms?`) → existing `ClientService.create`; CLIENT_UPDATE: body = `{ changes: Record<ProposalField, string\|number\|boolean\|null> }` (included changes only; non-empty required; non-allowlist keys dropped) → existing client update path → `200 { clientId }`. Transactional; 409 unless PENDING; 409 unlinked client; stamps reviewedBy/At |
 | `POST /client-drafts/:id/discard` | `{ reason? }` |
 | `GET /client-drafts/count?status=PENDING` | Cheap count for the nav badge / NotificationBell |
 | `POST /call-records/:id/re-extract` | Phase 2, admin: re-runs extraction; only replaces proposals of a still-PENDING draft |
@@ -206,5 +206,5 @@ Transcripts contain PII and pregnancy/birth-adjacent details — stored in the s
 ## 13. Phasing
 
 - **Phase 1 — intake + 신규상담 (end-to-end value):** schema (3 tables) + `CallIngestGuard` + webhook + extraction + token provisioning endpoints + mobile 검토 대기/통화 기록 + 신규 상담 confirm. n8n template updated.
-- **Phase 2 — 변경요청 + polish:** CLIENT_UPDATE confirm flow, re-extract, NotificationBell integration, client-detail 통화 탭, call-log search polish.
+- **Phase 2 — 변경요청 + polish:** ~~CLIENT_UPDATE confirm flow~~ → shipped 2026-06-10 (BJJ-232), re-extract, NotificationBell integration, client-detail 통화 탭, call-log search polish.
 - **Phase 3 — SaaS self-serve:** branch settings UI for token create/rotate + n8n onboarding guide for branch-operated setups.
