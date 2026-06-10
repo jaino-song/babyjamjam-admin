@@ -62,6 +62,9 @@ const TOGGLE_FIELDS = [
   { field: "breastPump", label: "유축기" },
 ] as const;
 
+// birthday is YYMMDD text, not ISO — keep it out
+const DATE_FIELDS = new Set(["dueDate", "startDate", "endDate"]);
+
 function proposalFor(proposals: Proposal[], field: string): Proposal | undefined {
   return proposals.find((p) => p.field === field);
 }
@@ -519,6 +522,7 @@ function ClientUpdateReview({
               )}
               {isPending && !isBool ? (
                 <Input
+                  type={DATE_FIELDS.has(proposal.field) ? "date" : "text"}
                   value={editedValues[proposal.field] ?? ""}
                   disabled={!isIncluded}
                   onChange={(e) =>
