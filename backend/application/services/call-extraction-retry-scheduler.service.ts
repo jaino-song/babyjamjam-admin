@@ -10,6 +10,7 @@ import {
 
 const MAX_ATTEMPTS = 3;
 const STUCK_RECEIVED_MS = 10 * 60 * 1000;
+const STUCK_CONFIRMING_MS = 10 * 60 * 1000;
 const MAX_RUN_MS = 10 * 60 * 1000;
 const DB_COOLDOWN_MS = 5 * 60 * 1000;
 
@@ -52,29 +53,47 @@ export class CallExtractionRetrySchedulerService {
                 take: 8,
             });
 
-            if (candidates.length === 0) return;
+            if (candidates.length > 0) {
+                this.logger.log(`[CallRetry] Retrying ${candidates.length} call records`);
 
-            this.logger.log(`[CallRetry] Retrying ${candidates.length} call records`);
-
-            for (const candidate of candidates) {
-                try {
-                    // Only FAILED rows need their counter incremented and status reset;
-                    // stuck RECEIVED rows are already in the correct status — incrementing
-                    // their attempt count would burn retries they never actually consumed.
-                    if (candidate.processingStatus === "FAILED") {
-                        // retryCount counts scheduler pickups, not completed extraction attempts; stuck-RECEIVED recovery (no count filter) guarantees records are never permanently lost
-                        await this.prismaService.call_record.update({
-                            where: { id: candidate.id },
-                            data: { extractionRetryCount: { increment: 1 }, processingStatus: "RECEIVED" },
-                        });
+                for (const candidate of candidates) {
+                    try {
+                        // Only FAILED rows need their counter incremented and status reset;
+                        // stuck RECEIVED rows are already in the correct status — incrementing
+                        // their attempt count would burn retries they never actually consumed.
+                        if (candidate.processingStatus === "FAILED") {
+                            // retryCount counts scheduler pickups, not completed extraction attempts; stuck-RECEIVED recovery (no count filter) guarantees records are never permanently lost
+                            await this.prismaService.call_record.update({
+                                where: { id: candidate.id },
+                                data: { extractionRetryCount: { increment: 1 }, processingStatus: "RECEIVED" },
+                            });
+                        }
+                        await this.processingService.processCallRecord(candidate.id);
+                    } catch (error) {
+                        this.logger.warn(
+                            `[CallRetry] Unexpected error processing candidate ${candidate.id}; skipping`,
+                            error instanceof Error ? error.stack : String(error),
+                        );
                     }
-                    await this.processingService.processCallRecord(candidate.id);
-                } catch (error) {
-                    this.logger.warn(
-                        `[CallRetry] Unexpected error processing candidate ${candidate.id}; skipping`,
-                        error instanceof Error ? error.stack : String(error),
-                    );
                 }
+            }
+
+            // confirm() crashed mid-flight (Railway restart etc.): CONFIRMING drafts are
+            // invisible to every list — sweep them back to PENDING so staff can re-review.
+            // Under the confirm flow's ordering, clientId+CONFIRMED land in one atomic update,
+            // so a swept draft never has a client silently attached; re-confirm shows the
+            // phoneMatchesExistingClient warning if a client did get created.
+            const sweptDrafts = await this.prismaService.client_draft.updateMany({
+                where: {
+                    status: "CONFIRMING",
+                    createdAt: { lt: new Date(Date.now() - STUCK_CONFIRMING_MS) },
+                },
+                data: { status: "PENDING" },
+            });
+            if (sweptDrafts.count > 0) {
+                this.logger.warn(
+                    `[CallRetry] Swept ${sweptDrafts.count} stuck CONFIRMING draft(s) back to PENDING — a confirm crashed mid-flight; check recent clients for possible orphans`,
+                );
             }
         } catch (error) {
             if (isTransientPrismaConnectivityError(error)) {

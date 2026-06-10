@@ -77,6 +77,26 @@ describe("CallInboxService", () => {
         });
     });
 
+    it("confirmNewClient: never rolls back to PENDING once the client was created (bookkeeping failure)", async () => {
+        prisma.client_draft.findFirst.mockResolvedValue(pendingDraft);
+        prisma.client_draft.updateMany.mockResolvedValue({ count: 1 });
+        clientService.create.mockResolvedValue({ id: 77 });
+        prisma.client_draft.update
+            .mockRejectedValueOnce(new Error("db blip"))   // CONFIRMED write fails
+            .mockResolvedValueOnce({});                     // re-assert succeeds
+
+        const result = await service.confirmNewClient("branch-1", "user-1", "draft-1", {
+            fields: { name: "김서연", careCenter: false, voucherClient: false, breastPump: false },
+        });
+
+        expect(result).toEqual({ clientId: 77 });
+        const updateCalls = prisma.client_draft.update.mock.calls;
+        expect(updateCalls.some(([args]: [{ data: { status?: string } }]) => args.data.status === "PENDING")).toBe(false);
+        expect(updateCalls[updateCalls.length - 1]![0].data).toEqual(
+            expect.objectContaining({ status: "CONFIRMED", clientId: 77 }),
+        );
+    });
+
     it("confirmNewClient: 404 for a draft in another branch", async () => {
         prisma.client_draft.findFirst.mockResolvedValue(null);
         await expect(

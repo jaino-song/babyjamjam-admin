@@ -1,13 +1,17 @@
 import { CallExtractionRetrySchedulerService } from "application/services/call-extraction-retry-scheduler.service";
 
 describe("CallExtractionRetrySchedulerService", () => {
-    const prisma = { call_record: { findMany: jest.fn(), update: jest.fn() } };
+    const prisma = {
+        call_record: { findMany: jest.fn(), update: jest.fn() },
+        client_draft: { updateMany: jest.fn() },
+    };
     const processingService = { processCallRecord: jest.fn() };
     let scheduler: CallExtractionRetrySchedulerService;
 
     beforeEach(() => {
         jest.resetAllMocks();
         prisma.call_record.update.mockResolvedValue({});
+        prisma.client_draft.updateMany.mockResolvedValue({ count: 0 });
         processingService.processCallRecord.mockResolvedValue(undefined);
         scheduler = new CallExtractionRetrySchedulerService(prisma as never, processingService as never);
     });
@@ -33,10 +37,14 @@ describe("CallExtractionRetrySchedulerService", () => {
         expect(processingService.processCallRecord).toHaveBeenCalledWith("rec-2");
     });
 
-    it("does nothing when no candidates", async () => {
+    it("does nothing when no candidates but still runs the CONFIRMING sweep", async () => {
         prisma.call_record.findMany.mockResolvedValue([]);
         await scheduler.retryFailedExtractions();
         expect(processingService.processCallRecord).not.toHaveBeenCalled();
+        expect(prisma.client_draft.updateMany).toHaveBeenCalledWith({
+            where: { status: "CONFIRMING", createdAt: { lt: expect.any(Date) } },
+            data: { status: "PENDING" },
+        });
     });
 
     it("continues with remaining candidates when one throws", async () => {
@@ -52,5 +60,17 @@ describe("CallExtractionRetrySchedulerService", () => {
 
         expect(processingService.processCallRecord).toHaveBeenCalledTimes(2);
         expect(processingService.processCallRecord).toHaveBeenLastCalledWith("rec-2");
+    });
+
+    it("sweeps stale CONFIRMING drafts back to PENDING", async () => {
+        prisma.call_record.findMany.mockResolvedValue([]);
+        prisma.client_draft.updateMany.mockResolvedValue({ count: 2 });
+
+        await scheduler.retryFailedExtractions();
+
+        expect(prisma.client_draft.updateMany).toHaveBeenCalledWith({
+            where: { status: "CONFIRMING", createdAt: { lt: expect.any(Date) } },
+            data: { status: "PENDING" },
+        });
     });
 });

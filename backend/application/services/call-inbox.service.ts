@@ -33,10 +33,10 @@ export class CallInboxService {
             ...(search
                 ? {
                     OR: [
-                        { callerName: { contains: search } },
+                        { callerName: { contains: search, mode: 'insensitive' as const } },
                         { callerPhone: { contains: search.replace(/\D/g, "") || search } },
-                        { fileName: { contains: search } },
-                        { draft: { requestSummary: { contains: search } } },
+                        { fileName: { contains: search, mode: 'insensitive' as const } },
+                        { draft: { requestSummary: { contains: search, mode: 'insensitive' as const } } },
                     ],
                 }
                 : {}),
@@ -225,6 +225,7 @@ export class CallInboxService {
             throw new ConflictException("Draft already reviewed");
         }
 
+        let createdClientId: number | null = null;
         try {
             const fields = dto.fields as Record<string, unknown>;
             const client = await this.clientService.create(branchId, {
@@ -249,6 +250,7 @@ export class CallInboxService {
                 secondaryEmployeeId: (fields["secondaryEmployeeId"] as number | null | undefined) ?? null,
                 suppressGreetingSms: dto.suppressGreetingSms ?? false,
             });
+            createdClientId = client.id;
 
             await this.prismaService.client_draft.update({
                 where: { id },
@@ -260,7 +262,22 @@ export class CallInboxService {
             });
             return { clientId: client.id };
         } catch (error) {
-            // roll the lock back so staff can retry after fixing input
+            if (createdClientId !== null) {
+                // The client EXISTS — never roll back to PENDING (re-confirm would duplicate it).
+                // Best-effort re-assert CONFIRMED; if even that fails the CONFIRMING sweep
+                // surfaces the draft again and staff see the duplicate-phone warning.
+                this.logger.error(
+                    `Confirm bookkeeping failed after client ${createdClientId} was created for draft ${id}: ${error}`,
+                );
+                await this.prismaService.client_draft
+                    .update({
+                        where: { id },
+                        data: { status: "CONFIRMED", clientId: createdClientId, reviewedById: userId, reviewedAt: new Date() },
+                    })
+                    .catch(() => undefined);
+                return { clientId: createdClientId };
+            }
+            // create itself failed: roll the lock back so staff can fix input and retry
             await this.prismaService.client_draft
                 .update({ where: { id }, data: { status: "PENDING" } })
                 .catch(() => undefined);
