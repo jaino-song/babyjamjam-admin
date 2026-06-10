@@ -156,9 +156,9 @@ Indexes: `(branchId, createdAt)`, `processingStatus`, `matchedClientId`.
 
 | Endpoint | Behavior |
 |---|---|
-| `GET /call-records?category&search&cursor` | Call log; includes draft status per row |
+| `GET /call-records?category&search&page&limit` | Call log; includes draft status per row |
 | `GET /call-records/:id` | Full record: transcript, summary, draft, Drive link |
-| `GET /client-drafts?status=PENDING&cursor` | Review queue |
+| `GET /client-drafts?status=PENDING&page&limit` | Review queue |
 | `PATCH /client-drafts/:id` | Edit proposals / link `clientId` — only while PENDING |
 | `POST /client-drafts/:id/confirm` | NEW_CLIENT: body = staff-final `CreateClientDto`-shaped fields (+ `suppressGreetingSms?`) → existing `ClientService.create`; CLIENT_UPDATE: **501 in Phase 1** (ships in Phase 2; UI renders button disabled). Transactional; 409 unless PENDING; stamps reviewedBy/At |
 | `POST /client-drafts/:id/discard` | `{ reason? }` |
