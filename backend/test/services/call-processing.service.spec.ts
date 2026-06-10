@@ -6,6 +6,7 @@ describe("CallProcessingService", () => {
         call_record: { findUnique: jest.fn(), update: jest.fn() },
         client: { findMany: jest.fn() },
         client_draft: { create: jest.fn() },
+        $transaction: jest.fn(),
     };
     const extractionPort = { extract: jest.fn() };
     let service: CallProcessingService;
@@ -37,6 +38,7 @@ describe("CallProcessingService", () => {
         prisma.client.findMany.mockResolvedValue([]);
         prisma.call_record.update.mockResolvedValue({});
         prisma.client_draft.create.mockResolvedValue({ id: "draft-1" });
+        prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => fn(prisma));
         service = new CallProcessingService(prisma as never, extractionPort as never);
     });
 
@@ -142,5 +144,45 @@ describe("CallProcessingService", () => {
         prisma.call_record.findUnique.mockResolvedValue({ ...record, processingStatus: "EXTRACTED" });
         await service.processCallRecord("rec-1");
         expect(extractionPort.extract).not.toHaveBeenCalled();
+    });
+
+    it("leaves client unmatched when two branch clients share the phone", async () => {
+        prisma.client.findMany.mockResolvedValue([
+            { id: 142, phone: "010-2210-9987" },
+            { id: 143, phone: "01022109987" },
+        ]);
+        extractionPort.extract.mockResolvedValue(extraction({
+            category: "CLIENT_SERVICE",
+            callerPhoneCandidates: ["010-2210-9987"],
+            proposals: [
+                { field: "startDate", value: "2026-06-23", evidence: "e", confidence: "high" },
+            ],
+        }));
+
+        await service.processCallRecord("rec-1");
+
+        expect(prisma.call_record.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ matchedClientId: null }),
+        }));
+        expect(prisma.client_draft.create.mock.calls[0][0].data.clientId).toBeNull();
+    });
+
+    it("marks FAILED when the record+draft transaction fails (no silent EXTRACTED-without-draft)", async () => {
+        extractionPort.extract.mockResolvedValue(extraction({
+            category: "NEW_CONSULTATION",
+            requestSummary: "신규 문의",
+            proposals: [{ field: "name", value: "김서연", evidence: "e", confidence: "high" }],
+        }));
+        prisma.$transaction.mockRejectedValue(new Error("db down"));
+
+        await service.processCallRecord("rec-1");
+
+        expect(prisma.call_record.update).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "rec-1" },
+            data: expect.objectContaining({
+                processingStatus: "FAILED",
+                failureReason: expect.stringContaining("persistence"),
+            }),
+        }));
     });
 });

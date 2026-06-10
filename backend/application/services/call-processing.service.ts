@@ -63,33 +63,48 @@ export class CallProcessingService {
         const matchedClientId = await this.matchClient(record.branchId, callerPhone);
         const proposals = this.sanitizeProposals(extraction.proposals);
 
-        await this.prismaService.call_record.update({
-            where: { id: callRecordId },
-            data: {
-                category: extraction.category,
-                callerName: extraction.callerName ?? null,
-                callerPhone,
-                matchedClientId,
-                processingStatus: "EXTRACTED",
-                failureReason: null,
-            },
-        });
-
-        if (extraction.category === "NEW_CONSULTATION" || extraction.category === "CLIENT_SERVICE") {
-            await this.prismaService.client_draft.create({
-                data: {
-                    callRecordId,
-                    branchId: record.branchId,
-                    type: extraction.category === "NEW_CONSULTATION" ? "NEW_CLIENT" : "CLIENT_UPDATE",
-                    clientId: matchedClientId,
-                    proposals: proposals as unknown as Prisma.InputJsonValue,
-                    requestSummary: extraction.requestSummary,
-                    extractionMeta: {
-                        model: "gemini-2.5-flash",
-                        promptVersion: CALL_EXTRACTION_PROMPT_VERSION,
-                    } as unknown as Prisma.InputJsonValue,
-                },
+        try {
+            await this.prismaService.$transaction(async (tx) => {
+                await tx.call_record.update({
+                    where: { id: callRecordId },
+                    data: {
+                        category: extraction.category,
+                        callerName: extraction.callerName ?? null,
+                        callerPhone,
+                        matchedClientId,
+                        processingStatus: "EXTRACTED",
+                        failureReason: null,
+                    },
+                });
+                if (extraction.category === "NEW_CONSULTATION" || extraction.category === "CLIENT_SERVICE") {
+                    await tx.client_draft.create({
+                        data: {
+                            callRecordId,
+                            branchId: record.branchId,
+                            type: extraction.category === "NEW_CONSULTATION" ? "NEW_CLIENT" : "CLIENT_UPDATE",
+                            clientId: matchedClientId,
+                            proposals: proposals as unknown as Prisma.InputJsonValue,
+                            requestSummary: extraction.requestSummary,
+                            extractionMeta: {
+                                model: "gemini-2.5-flash",
+                                promptVersion: CALL_EXTRACTION_PROMPT_VERSION,
+                            } as unknown as Prisma.InputJsonValue,
+                        },
+                    });
+                }
             });
+        } catch (error) {
+            this.logger.error(`Persistence failed for ${callRecordId}: ${error}`);
+            // rollback left the record RECEIVED/FAILED; mark FAILED so the retry cron picks it up with a reason
+            await this.prismaService.call_record
+                .update({
+                    where: { id: callRecordId },
+                    data: {
+                        processingStatus: "FAILED",
+                        failureReason: `persistence: ${String(error).slice(0, 950)}`,
+                    },
+                })
+                .catch(() => undefined); // if even this fails, the stuck-RECEIVED cron branch recovers it
         }
     }
 
