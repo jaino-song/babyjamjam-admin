@@ -102,6 +102,8 @@ model client {
   area                 area?               @relation(fields: [areaId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   eformsignDocs        eformsign_doc[]     @relation("eformsign_doc_client_idToclient")
   employeeSchedules    employee_schedule[]
+  callRecords          call_record[]
+  clientDrafts         client_draft[]
 
   @@index([areaId], map: "idx_client_area")
   @@index([branchId], map: "idx_client_branch")
@@ -286,6 +288,9 @@ model branch {
   messageTemplates             message_template[]
   notifications                notification[]
   consultationInquiries        consultation_inquiry[]
+  callIngestTokens             call_ingest_token[]
+  callRecords                  call_record[]
+  clientDrafts                 client_draft[]
   owner                        user                   @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   userBranches                 user_branch[]
 
@@ -339,26 +344,27 @@ model system_template_version {
 }
 
 model user {
-  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email             String?             @unique @db.VarChar
-  name              String?             @db.VarChar
-  phone             String?             @db.VarChar
-  birthDate         String?             @map("birth_date") @db.VarChar
-  profileImage      String?             @map("profile_image") @db.VarChar
-  role              String?             @db.VarChar
-  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamp(6)
-  kakaoId           String?             @unique(map: "user_kakaoId_key") @map("kakao_id") @db.VarChar
-  passwordHash      String?             @map("password_hash") @db.VarChar
-  emailVerified     Boolean             @default(false) @map("email_verified")
-  emailVerifiedAt   DateTime?           @map("email_verified_at") @db.Timestamptz(6)
-  authProvider      String              @default("kakao") @map("auth_provider")
-  chatFeedback      chat_feedback[]
-  chatSessions      chat_session[]
-  notifications     notification[]
-  ownedBranches     branch[]
-  pushSubscriptions push_subscription[]
-  userBranches      user_branch[]
-  authTokens        auth_token[]
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                String?             @unique @db.VarChar
+  name                 String?             @db.VarChar
+  phone                String?             @db.VarChar
+  birthDate            String?             @map("birth_date") @db.VarChar
+  profileImage         String?             @map("profile_image") @db.VarChar
+  role                 String?             @db.VarChar
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamp(6)
+  kakaoId              String?             @unique(map: "user_kakaoId_key") @map("kakao_id") @db.VarChar
+  passwordHash         String?             @map("password_hash") @db.VarChar
+  emailVerified        Boolean             @default(false) @map("email_verified")
+  emailVerifiedAt      DateTime?           @map("email_verified_at") @db.Timestamptz(6)
+  authProvider         String              @default("kakao") @map("auth_provider")
+  chatFeedback         chat_feedback[]
+  chatSessions         chat_session[]
+  notifications        notification[]
+  ownedBranches        branch[]
+  pushSubscriptions    push_subscription[]
+  userBranches         user_branch[]
+  authTokens           auth_token[]
+  reviewedClientDrafts client_draft[]
 }
 
 model user_branch {
@@ -531,4 +537,66 @@ model alimtalk_trigger_job {
   @@index([status, scheduledFor], map: "idx_alimtalk_trigger_job_status_scheduled_for")
   @@index([clientId], map: "idx_alimtalk_trigger_job_client_id")
   @@index([employeeScheduleId], map: "idx_alimtalk_trigger_job_employee_schedule_id")
+}
+
+model call_ingest_token {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId   String    @map("branch_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  label      String
+  active     Boolean   @default(true)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  branch     branch    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([branchId], map: "idx_call_ingest_token_branch")
+}
+
+model call_record {
+  id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId             String        @map("branch_id") @db.Uuid
+  driveFileId          String        @unique @map("drive_file_id")
+  fileName             String        @map("file_name")
+  recordedAt           DateTime?     @map("recorded_at") @db.Timestamptz(6)
+  transcript           Json
+  summary              Json?
+  category             String?
+  callerName           String?       @map("caller_name")
+  callerPhone          String?       @map("caller_phone")
+  matchedClientId      Int?          @map("matched_client_id")
+  processingStatus     String        @default("RECEIVED") @map("processing_status")
+  extractionRetryCount Int           @default(0) @map("extraction_retry_count")
+  failureReason        String?       @map("failure_reason")
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  branch               branch        @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  matchedClient        client?       @relation(fields: [matchedClientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  draft                client_draft?
+
+  @@index([branchId, createdAt], map: "idx_call_record_branch_created")
+  @@index([branchId, category], map: "idx_call_record_branch_category")
+  @@index([processingStatus], map: "idx_call_record_processing_status")
+}
+
+model client_draft {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  callRecordId   String      @unique @map("call_record_id") @db.Uuid
+  branchId       String      @map("branch_id") @db.Uuid
+  type           String
+  status         String      @default("PENDING")
+  clientId       Int?        @map("client_id")
+  proposals      Json
+  requestSummary String      @map("request_summary")
+  extractionMeta Json?       @map("extraction_meta")
+  reviewedById   String?     @map("reviewed_by_id") @db.Uuid
+  reviewedAt     DateTime?   @map("reviewed_at") @db.Timestamptz(6)
+  discardReason  String?     @map("discard_reason")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  callRecord     call_record @relation(fields: [callRecordId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  branch         branch      @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  client         client?     @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  reviewedBy     user?       @relation(fields: [reviewedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([branchId, status], map: "idx_client_draft_branch_status")
+  @@index([clientId], map: "idx_client_draft_client")
 }

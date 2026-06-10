@@ -1,6 +1,6 @@
 # 통화요약 (Call Inbox) — API Sheet
 
-**Status:** design contract (pre-implementation). This file is the **source of truth** for the UI-facing API; implementation must conform or update this sheet in the same PR.
+**Status:** implementation in progress (Phase 1). This file is the **source of truth** for the UI-facing API; implementation must conform or update this sheet in the same PR.
 **Spec:** `docs/superpowers/specs/2026-06-10-call-inbox-design.md` · **Wireframe:** `docs/mockups/call-inbox-wireframe.html`
 
 ## Conventions
@@ -8,8 +8,8 @@
 - UI calls the **mobile BFF** routes (`m.staff` → `mobile/src/app/api/...`), which proxy to the backend with the session token — same pattern as `/api/clients`.
 - Auth: session cookie (BFF) → Bearer JWT (backend). All list/detail data is branch-scoped server-side; the UI never sends a branch id.
 - Dates/timestamps: ISO 8601 strings (`"2026-07-15"` for dates, `"2026-06-10T14:02:11+09:00"` for timestamps).
-- Pagination: cursor-based — `?cursor=<opaque>&limit=20` → `{ items, nextCursor }`, `nextCursor: null` on last page.
-- Error envelope mirrors the existing `/api/clients` convention (confirm exact shape at implementation); status codes below are contractual.
+- Pagination: page/limit — `?page=1&limit=20` → `{ data, total, page, limit, totalPages }`. Default `page=1`, default `limit=20`, max `limit=100`.
+- Error envelope mirrors the existing `/api/clients` convention; status codes below are contractual.
 
 ## Shared types
 
@@ -41,7 +41,7 @@ type ProposalField =
 interface Proposal {
   field: ProposalField;
   value: string | number | boolean | null;  // dates as ISO strings, duration in days
-  currentValue?: string | number | boolean | null; // extraction-time snapshot — display LIVE client value instead
+  currentValue?: string | number | boolean | null; // extraction-time snapshot (optional; used for CLIENT_UPDATE diffs)
   evidence: string;                          // transcript quote backing the value
   confidence: Confidence;                    // "low" → amber highlight in UI
 }
@@ -51,13 +51,13 @@ interface ClientRef { id: number; name: string; phone: string | null; }
 
 ## 1. Call log
 
-### `GET /api/call-records?category&search&cursor&limit`
+### `GET /api/call-records?category&search&page&limit`
 
 | Param | Type | Notes |
 |---|---|---|
 | `category` | `CallCategory` (optional) | omit = 전체 |
 | `search` | string (optional) | matches caller name/phone, summary, transcript text |
-| `cursor`, `limit` | pagination | default `limit=20` |
+| `page`, `limit` | pagination | defaults 1/20, max limit 100 |
 
 ```ts
 interface CallRecordListItem {
@@ -78,7 +78,7 @@ interface CallRecordListItem {
   } | null;
   summaryLine: string | null;       // requestSummary ?? summary.key_content (list display)
 }
-// → 200 { items: CallRecordListItem[], nextCursor: string | null }
+// → 200 { data: CallRecordListItem[], total: number, page: number, limit: number, totalPages: number }
 ```
 
 ### `GET /api/call-records/:id`
@@ -96,9 +96,11 @@ interface CallRecordDetail extends CallRecordListItem {
 
 ## 2. Review queue (drafts)
 
-### `GET /api/client-drafts?status&cursor&limit`
+### `GET /api/client-drafts?status&page&limit`
 
 `status` default `PENDING`.
+
+**Note on flags:** `possibleDuplicate` is computed within the returned page (another item on the same page shares this phone). `phoneMatchesExistingClient` is only populated for `NEW_CLIENT` type drafts.
 
 ```ts
 interface ClientDraftListItem {
@@ -113,27 +115,58 @@ interface ClientDraftListItem {
   callRecordId: string;
   client: ClientRef | null;         // CLIENT_UPDATE: matched client (null = 고객 연결 필요)
   hasLowConfidence: boolean;        // any proposal.confidence === "low"
-  possibleDuplicate: boolean;       // another PENDING draft shares this phone
-  phoneMatchesExistingClient: boolean; // NEW_CLIENT: phone already on a live client → warn
+  possibleDuplicate: boolean;       // another draft on this page shares this phone
+  phoneMatchesExistingClient: boolean; // NEW_CLIENT only: phone already on a live client → warn
 }
-// → 200 { items: ClientDraftListItem[], nextCursor: string | null }
+// → 200 { data: ClientDraftListItem[], total: number, page: number, limit: number, totalPages: number }
 ```
 
 ### `GET /api/client-drafts/count?status=PENDING`
 
 → `200 { count: number }` — nav badge / NotificationBell.
 
+**Route ordering note:** this endpoint must be declared before `/:id` routes in the router to avoid the path being treated as an id lookup (no client-side impact).
+
 ### `GET /api/client-drafts/:id`
 
+The nested `callRecord` is a `DraftCallRecord` — the raw `call_record` row plus `matchedClient`. It does **not** carry `draft`, `summaryLine`, or `driveUrl` fields (those are list/detail projections). Build the Drive link as `https://drive.google.com/file/d/{driveFileId}/view`.
+
+`clientCurrent` is not available in Phase 1 — live client values come in Phase 2. Do not render a diff panel against clientCurrent in Phase 1.
+
+`reviewedBy.id` is a UUID string.
+
+`extractionMeta` is `{ model: string; promptVersion: string } | null`.
+
 ```ts
-interface ClientDraftDetail extends ClientDraftListItem {
+interface DraftCallRecord {
+  id: string;
+  driveFileId: string;
+  fileName: string;
+  recordedAt: string | null;
+  transcript: TranscriptTurn[];
+  summary: Record<string, string> | null;
+  category: CallCategory | null;
+  callerName: string | null;
+  callerPhone: string | null;
+  matchedClient: ClientRef | null;
+  createdAt: string;
+}
+
+interface ClientDraftDetail {
+  id: string;
+  type: DraftType;
+  status: DraftStatus;
+  clientId: number | null;
+  callRecordId: string;
   proposals: Proposal[];
-  clientCurrent: Partial<Record<ProposalField, unknown>> | null; // LIVE values for linked client (diff display)
-  callRecord: CallRecordDetail;     // transcript inline for the evidence-scroll UX
-  reviewedBy: { id: number; name: string } | null;
+  requestSummary: string;
+  extractionMeta: { model: string; promptVersion: string } | null;
+  callRecord: DraftCallRecord;
+  client: (ClientRef & Record<string, unknown>) | null;
+  reviewedBy: { id: string; name: string } | null;  // id is UUID string
   reviewedAt: string | null;
   discardReason: string | null;
-  extractionMeta: { model: string; promptVersion: string };
+  createdAt: string;
 }
 // → 200 ClientDraftDetail · 404
 ```
@@ -180,20 +213,13 @@ interface ConfirmNewClientBody {
 // → 201 { clientId: number }
 ```
 
-CLIENT_UPDATE — body carries only the **included** changes (allowlisted keys):
+CLIENT_UPDATE — **501 Not Implemented in Phase 1.** The UI renders the confirm button as disabled for CLIENT_UPDATE drafts. This path ships in Phase 2.
 
-```ts
-interface ConfirmClientUpdateBody {
-  changes: Partial<Record<ProposalField, string | number | boolean | null>>;
-}
-// → 200 { clientId: number }
-```
-
-Common errors: `409` draft not PENDING (already confirmed/discarded) · `409` CLIENT_UPDATE with no linked client · `422` validation failure (same rules as existing client create/update paths).
+Common errors: `409` draft not PENDING (already confirmed/discarded) · `409` "Draft already reviewed" when a concurrent confirm wins the CONFIRMING lock · `422` validation failure (same rules as existing client create/update paths).
 
 ### `POST /api/client-drafts/:id/discard`
 
-Body `{ reason?: string }` → `200 { id, status: "DISCARDED" }` · `409` not PENDING.
+Body `{ reason?: string }` → `200 { id, status: "DISCARDED" }` · `409` not PENDING · `409` "Draft already reviewed" (concurrent discard).
 
 ## 3. Phase 2 endpoints (contract reserved)
 
@@ -203,6 +229,27 @@ Body `{ reason?: string }` → `200 { id, status: "DISCARDED" }` · `409` not PE
 
 | Endpoint | Auth | Notes |
 |---|---|---|
-| `POST /webhooks/call-transcripts` | `Authorization: Bearer <cit_… ingest token>` | n8n only. Body: `{ fileId, fileName, recordedAt?, transcript[], summary? }`. `202` accepted · `200` duplicate no-op · `401` bad token · `400` invalid payload · `413` transcript over cap |
+| `POST /webhooks/call-transcripts` | `Authorization: Bearer <cit_… ingest token>` | n8n only. Body: `{ fileId, fileName, recordedAt?, transcript[], summary? }`. Body limit: **1 mb** (express-level). Transcript caps: ≤ 500 turns, each turn text ≤ 2000 chars. `recordedAt` must be a strict ISO 8601 calendar-validated date-time string. **202** `{ accepted: true, duplicate: false, callRecordId }` fresh accepted · **200** `{ accepted: true, duplicate: true, callRecordId }` duplicate (idempotent re-delivery) · **401** bad token · **400** invalid payload (including validation cap violations or malformed `recordedAt`) |
 | `POST /branches/:branchId/call-ingest-tokens` | admin JWT | `{ label }` → `{ token }` — plaintext shown once |
 | `POST /call-ingest-tokens/:id/revoke` | admin JWT | kills exactly one ingest source |
+
+## 5. Draft status reference
+
+| Status | Description |
+|---|---|
+| `PENDING` | Awaiting staff review. Shown in the review queue. |
+| `CONFIRMING` | Transient — set atomically when staff submits confirm, to prevent double-confirm. If the process crashes mid-confirm, a 10-minute retry cron sweeps `CONFIRMING` drafts back to `PENDING`. Not returned by list endpoints in practice, but can appear in a detail fetch mid-confirm. |
+| `CONFIRMED` | Staff confirmed; client created (NEW_CLIENT) or changes applied (CLIENT_UPDATE). |
+| `DISCARDED` | Staff discarded with optional reason. |
+
+## 6. Errors
+
+| Scenario | Status |
+|---|---|
+| Unknown / foreign-branch resource | 404 |
+| Draft already reviewed (not PENDING) | 409 |
+| Draft already reviewed — concurrent confirm/discard wins CONFIRMING lock | 409 |
+| Validation failure (body caps, unknown fields) | 400 / 422 |
+| CLIENT_UPDATE confirm (Phase 1) | 501 |
+| Webhook body exceeds 1 mb | 400 (express) |
+| Webhook payload fails DTO validation (cap violations, malformed `recordedAt`) | 400 |
