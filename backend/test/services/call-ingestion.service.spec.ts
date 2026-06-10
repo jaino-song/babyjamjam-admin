@@ -62,4 +62,18 @@ describe("CallIngestionService", () => {
             callRecordId: "rec-1",
         });
     });
+
+    it("returns duplicate when a concurrent create loses the unique race (P2002)", async () => {
+        prisma.call_record.findUnique
+            .mockResolvedValueOnce(null)                     // pre-check misses
+            .mockResolvedValueOnce({ id: "rec-winner" });    // post-P2002 re-read
+        const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+        prisma.call_record.create.mockRejectedValue(p2002);
+
+        await expect(service.ingest("branch-1", payload)).resolves.toEqual({
+            duplicate: true,
+            callRecordId: "rec-winner",
+        });
+        expect(processingService.processCallRecord).not.toHaveBeenCalled();
+    });
 });

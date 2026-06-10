@@ -9,6 +9,10 @@ export interface IngestResult {
     callRecordId: string;
 }
 
+function isUniqueViolation(error: unknown): boolean {
+    return typeof error === "object" && error !== null && (error as { code?: string }).code === "P2002";
+}
+
 @Injectable()
 export class CallIngestionService {
     private readonly logger = new Logger(CallIngestionService.name);
@@ -27,17 +31,31 @@ export class CallIngestionService {
             return { duplicate: true, callRecordId: existing.id };
         }
 
-        const record = await this.prismaService.call_record.create({
-            data: {
-                branchId,
-                driveFileId: payload.fileId,
-                fileName: payload.fileName,
-                recordedAt: payload.recordedAt ? new Date(payload.recordedAt) : null,
-                transcript: payload.transcript as unknown as Prisma.InputJsonValue,
-                summary: payload.summary as unknown as Prisma.InputJsonValue ?? undefined,
-                processingStatus: "RECEIVED",
-            },
-        });
+        let record;
+        try {
+            record = await this.prismaService.call_record.create({
+                data: {
+                    branchId,
+                    driveFileId: payload.fileId,
+                    fileName: payload.fileName,
+                    recordedAt: payload.recordedAt ? new Date(payload.recordedAt) : null,
+                    transcript: payload.transcript as unknown as Prisma.InputJsonValue,
+                    summary: payload.summary as unknown as Prisma.InputJsonValue,
+                    processingStatus: "RECEIVED",
+                },
+            });
+        } catch (error) {
+            if (isUniqueViolation(error)) {
+                const winner = await this.prismaService.call_record.findUnique({
+                    where: { driveFileId: payload.fileId },
+                });
+                if (winner) {
+                    this.logger.log(`Concurrent duplicate for drive file ${payload.fileId}; no-op`);
+                    return { duplicate: true, callRecordId: winner.id };
+                }
+            }
+            throw error;
+        }
 
         // Fire-and-forget (repo convention): webhook responds immediately,
         // extraction failures land in FAILED status for the retry cron.

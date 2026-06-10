@@ -25,7 +25,7 @@ export class TranscriptTurnDto {
     speaker!: string;
 
     @IsString()
-    @MaxLength(5_000)
+    @MaxLength(2_000)
     text!: string;
 }
 
@@ -53,12 +53,12 @@ export class CallTranscriptWebhookDto {
     fileName!: string;
 
     @IsOptional()
-    @IsDateString()
+    @IsDateString({ strict: true })
     recordedAt?: string;
 
     @IsArray()
     @ArrayMinSize(1)
-    @ArrayMaxSize(2_000)
+    @ArrayMaxSize(500)
     @ValidateNested({ each: true })
     @Type(() => TranscriptTurnDto)
     transcript!: TranscriptTurnDto[];

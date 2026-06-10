@@ -83,4 +83,14 @@ describe("CallTranscriptWebhookController (Integration)", () => {
             .send({ fileId: "drive-1", fileName: "x.m4a" });
         expect(response.status).toBe(400);
     });
+
+    it("400 on calendar-impossible recordedAt", async () => {
+        tokenService.resolveBranchId.mockResolvedValue("branch-1");
+        const response = await request(app.getHttpServer())
+            .post("/webhooks/call-transcripts")
+            .set({ Authorization: "Bearer cit_valid" })
+            .send({ ...payload, recordedAt: "2026-02-31T10:00:00.000Z" });
+        expect(response.status).toBe(400);
+        expect(ingestionService.ingest).not.toHaveBeenCalled();
+    });
 });

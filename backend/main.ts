@@ -1,5 +1,6 @@
 import { NestFactory } from "@nestjs/core";
 import helmet from "helmet";
+import { json } from "express";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
 import { PrismaExceptionFilter } from "./infrastructure/filters/prisma-exception.filter";
@@ -33,6 +34,8 @@ async function bootstrap() {
 
     const app = await NestFactory.create(AppModule);
     app.use(helmet());
+    // 1mb: call-transcript webhook payloads (long transcripts) exceed the 100kb express default
+    app.use(json({ limit: "1mb" }));
     const expressApp = app.getHttpAdapter().getInstance();
     expressApp.set("trust proxy", 1);
     app.use(cookieParser());
