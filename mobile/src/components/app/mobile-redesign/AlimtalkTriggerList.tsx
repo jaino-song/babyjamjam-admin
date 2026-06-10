@@ -2,7 +2,6 @@
 
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import Link from "next/link";
 import { Check, MessageSquareText, Send, UserCheck, UserPlus, type LucideIcon } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
@@ -190,7 +189,7 @@ function compareTriggerRules(first: AlimtalkTriggerRule, second: AlimtalkTrigger
   return getRuleTitle(first).localeCompare(getRuleTitle(second), "ko-KR");
 }
 
-export function AlimtalkAutomationPage() {
+export function AlimtalkTriggerList() {
   const {
     data: rulesResponse = [],
     isError: isRulesError,
@@ -258,104 +257,91 @@ export function AlimtalkAutomationPage() {
   }, [updateRuleMutation]);
 
   return (
-    <section data-component="alimtalk" className="alimtalk-page">
-      <div className="shell-content" data-component="alimtalk-content">
-        <div className="list-card pop-up alimtalk-trigger-card" data-component="alimtalk-trigger-card">
-          <div className="list-title" data-component="alimtalk-trigger-card-title">
-            <span className="list-title-text">발송 자동화</span>
-            <Link href="/messages" className="list-action">
-              메시지 관리
-            </Link>
-          </div>
+    <div className="list-card-scroll" data-component="alimtalk-trigger-scroll">
+      <div className="section-block" data-component="alimtalk-trigger-section">
+        <div className="section-header" data-component="alimtalk-trigger-section-header">자동 전송 트리거</div>
 
-          <div className="list-card-scroll" data-component="alimtalk-trigger-scroll">
-            <div className="section-block" data-component="alimtalk-trigger-section">
-              <div className="section-header" data-component="alimtalk-trigger-section-header">자동 전송 트리거</div>
+        {allDisplayRows.map((row) => {
+          const Icon = row.icon;
+          const rowActive = row.kind === "live" ? row.rule.isActive : row.isActive;
+          const rowKey = row.kind === "live" ? row.rule.id : row.id;
+          const triggerKey = row.kind === "live" ? row.rule.templateKey : row.id;
+          const triggerId = row.kind === "live" ? row.rule.id : row.id;
 
-              {allDisplayRows.map((row) => {
-                const Icon = row.icon;
-                const rowActive = row.kind === "live" ? row.rule.isActive : row.isActive;
-                const rowKey = row.kind === "live" ? row.rule.id : row.id;
-                const triggerKey = row.kind === "live" ? row.rule.templateKey : row.id;
-                const triggerId = row.kind === "live" ? row.rule.id : row.id;
+          return (
+            <button
+              key={rowKey}
+              type="button"
+              className="list-item alimtalk-trigger-row"
+              aria-pressed={rowActive}
+              data-component="alimtalk-trigger-row"
+              data-trigger-id={triggerId}
+              data-trigger-key={triggerKey}
+              data-trigger-channel={row.channelLabel}
+              disabled={row.kind === "live" && updateRuleMutation.isPending}
+              onClick={() => handleToggle(row)}
+            >
+              <div
+                className={`trigger-icon trigger-icon-${row.tone}`}
+                data-component="alimtalk-trigger-icon"
+              >
+                <Icon size={18} strokeWidth={2.5} />
+              </div>
 
-                return (
-                  <button
-                    key={rowKey}
-                    type="button"
-                    className="list-item alimtalk-trigger-row"
-                    aria-pressed={rowActive}
-                    data-component="alimtalk-trigger-row"
-                    data-trigger-id={triggerId}
-                    data-trigger-key={triggerKey}
-                    data-trigger-channel={row.channelLabel}
-                    disabled={row.kind === "live" && updateRuleMutation.isPending}
-                    onClick={() => handleToggle(row)}
-                  >
-                    <div
-                      className={`trigger-icon trigger-icon-${row.tone}`}
-                      data-component="alimtalk-trigger-icon"
-                    >
-                      <Icon size={18} strokeWidth={2.5} />
-                    </div>
-
-                    <div className="trigger-info" data-component="alimtalk-trigger-info">
-                      <div className="trigger-title" data-component="alimtalk-trigger-title">{row.title}</div>
-                      <div className="trigger-meta" data-component="alimtalk-trigger-meta">
-                        <span className={`send-stat ${row.kind === "live" && (isLogsError || (row.failedCount ?? 0) > 0) ? "fail" : ""}`}>
-                          {isLogsLoading && row.kind === "live" ? (
-                            <span className="alimtalk-count-skeleton" aria-label="발송 건수 집계 중" />
-                          ) : isLogsError && row.kind === "live" ? (
-                            "집계 실패"
-                          ) : (
-                            `${monthLabel} ${row.monthlyCount ?? 0}건`
-                          )}
-                        </span>
-                        <span className="sep">·</span>
-                        <span>{row.timingLabel}</span>
-                        <span className="sep">·</span>
-                        <span>{row.channelLabel}</span>
-                      </div>
-                    </div>
-
-                    <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
-                  </button>
-                );
-              })}
-
-              {isRulesLoading && (
-                Array.from({ length: 4 }).map((_, index) => (
-                  <div
-                    key={`alimtalk-trigger-skeleton-${index}`}
-                    className="list-item alimtalk-trigger-row alimtalk-trigger-row-skeleton"
-                    data-component="alimtalk-trigger-row-skeleton"
-                    aria-hidden="true"
-                  >
-                    <Skeleton className="trigger-icon bg-v3-dim-white animate-pulse" />
-                    <div className="trigger-info" data-component="alimtalk-trigger-skeleton-info">
-                      <Skeleton className="h-4 w-28 bg-v3-dim-white animate-pulse" />
-                      <Skeleton className="mt-2 h-3 w-36 bg-v3-dim-white animate-pulse" />
-                    </div>
-                    <Skeleton className="h-[22px] w-[38px] rounded-full bg-v3-dim-white animate-pulse" />
-                  </div>
-                ))
-              )}
-
-              {!isRulesLoading && isRulesError && (
-                <div className="alimtalk-empty-state" data-component="alimtalk-trigger-error">
-                  자동 전송 트리거를 불러오지 못했습니다.
+              <div className="trigger-info" data-component="alimtalk-trigger-info">
+                <div className="trigger-title" data-component="alimtalk-trigger-title">{row.title}</div>
+                <div className="trigger-meta" data-component="alimtalk-trigger-meta">
+                  <span className={`send-stat ${row.kind === "live" && (isLogsError || (row.failedCount ?? 0) > 0) ? "fail" : ""}`}>
+                    {isLogsLoading && row.kind === "live" ? (
+                      <span className="alimtalk-count-skeleton" aria-label="발송 건수 집계 중" />
+                    ) : isLogsError && row.kind === "live" ? (
+                      "집계 실패"
+                    ) : (
+                      `${monthLabel} ${row.monthlyCount ?? 0}건`
+                    )}
+                  </span>
+                  <span className="sep">·</span>
+                  <span>{row.timingLabel}</span>
+                  <span className="sep">·</span>
+                  <span>{row.channelLabel}</span>
                 </div>
-              )}
+              </div>
 
-              {!isRulesLoading && !isRulesError && allDisplayRows.length === 0 && (
-                <div className="alimtalk-empty-state" data-component="alimtalk-trigger-empty">
-                  등록된 자동 전송 트리거가 없습니다.
-                </div>
-              )}
+              <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
+            </button>
+          );
+        })}
+
+        {isRulesLoading && (
+          Array.from({ length: 4 }).map((_, index) => (
+            <div
+              key={`alimtalk-trigger-skeleton-${index}`}
+              className="list-item alimtalk-trigger-row alimtalk-trigger-row-skeleton"
+              data-component="alimtalk-trigger-row-skeleton"
+              aria-hidden="true"
+            >
+              <Skeleton className="trigger-icon bg-v3-dim-white animate-pulse" />
+              <div className="trigger-info" data-component="alimtalk-trigger-skeleton-info">
+                <Skeleton className="h-4 w-28 bg-v3-dim-white animate-pulse" />
+                <Skeleton className="mt-2 h-3 w-36 bg-v3-dim-white animate-pulse" />
+              </div>
+              <Skeleton className="h-[22px] w-[38px] rounded-full bg-v3-dim-white animate-pulse" />
             </div>
+          ))
+        )}
+
+        {!isRulesLoading && isRulesError && (
+          <div className="alimtalk-empty-state" data-component="alimtalk-trigger-error">
+            자동 전송 트리거를 불러오지 못했습니다.
           </div>
-        </div>
+        )}
+
+        {!isRulesLoading && !isRulesError && allDisplayRows.length === 0 && (
+          <div className="alimtalk-empty-state" data-component="alimtalk-trigger-empty">
+            등록된 자동 전송 트리거가 없습니다.
+          </div>
+        )}
       </div>
-    </section>
+    </div>
   );
 }
