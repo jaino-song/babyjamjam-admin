@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { AlimtalkTriggerList } from "../AlimtalkTriggerList";
+import { AlimtalkAutomationPage } from "../AlimtalkAutomationPage";
 import {
   useAlimtalkTriggerRules,
   useUpdateAlimtalkTriggerRule,
@@ -63,12 +63,12 @@ function renderPage() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <AlimtalkTriggerList />
+      <AlimtalkAutomationPage />
     </QueryClientProvider>,
   );
 }
 
-describe("AlimtalkTriggerList", () => {
+describe("AlimtalkAutomationPage", () => {
   const updateMutate = jest.fn();
 
   beforeEach(() => {
