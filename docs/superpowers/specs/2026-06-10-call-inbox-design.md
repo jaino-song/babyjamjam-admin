@@ -20,11 +20,14 @@ This is a SaaS product: every call is allocated to a branch (tenant) by its inge
 | Review surface | Mobile app (m.staff) first. |
 | Branch allocation | Per-branch ingest tokens (DB-backed, hashed). No env-configured branch. |
 | LLM provider | Gemini 2.5 Flash via REST behind a port/adapter (existing Gemini key; swappable). |
+| Nav placement | **통화요약** replaces the current 어시스턴트 center slot in the bottom nav (`mobile-bottom-nav.tsx` `/chat` item). UI label: 통화요약. |
+| STT correction | The two-pass correction stays in n8n; the second pass is converted from markdown output to the same structured JSON schema as pass 1 (see §4). |
+| API contract | `docs/api/call-inbox-api.md` is the source of truth for the UI-facing API — kept in sync through implementation so frontend fine-tuning can rely on it. |
 
 Assumptions (confirm at spec review):
 - Operator runs n8n for all branches initially; per-branch token contract already supports branch-operated n8n later.
 - Greeting-SMS toggle on NEW_CLIENT confirm defaults ON (same as manual creation today).
-- 통화 gets a bottom-nav tab; falls back to 전체 menu if nav space doesn't allow (decided at implementation against the current nav).
+- The `/chat` 어시스턴트 route itself is untouched — only its nav slot is replaced (re-linkable from 전체 if desired).
 - 기타-category transcripts are kept indefinitely for now (retention policy revisit later).
 
 ## 3. Architecture
@@ -50,9 +53,11 @@ Current workflow "Call Transcription" (id `4lbxMDu5my7pfh2h`, currently inactive
 
 **Keep:** Google Drive trigger (per-branch folder) → Download → Gemini resumable upload → `Gemini Transcribe Audio` (existing `responseSchema`: `summary{inquiry_type, customer_info, key_content, result_action}` + `transcript[{speaker, text}]`, with the 아이미래로 terminology-correction prompt).
 
-**Remove:** `AI Agent - STT Correction` (second LLM pass), markdown formatter code node, dead POST to `staff.babyjamjam.com`.
+**Keep (reworked): `AI Agent - STT Correction`** — the second correction pass stays for accuracy (audio-aware correction in pass 1, dictionary-enforced text correction in pass 2), but its output format changes: today it takes pass 1's structured JSON as plain text and emits **markdown**, destroying the structure. Rework: it receives pass 1's parsed JSON and must return the **same JSON schema** (`summary` + `transcript[]`), corrected. Additionally, pass 2's richer dictionary entries (쌍둥이/단태아, A-통합형, 바우처/보건소, 본인 부담금, 국적, 11월↔10일 disambiguation) are merged into pass 1's prompt so most corrections land at the audio-aware stage.
 
-**Add:** one code node that `JSON.parse`s the Gemini response text, then an HTTP node:
+**Remove:** markdown formatter code node, dead POST to `staff.babyjamjam.com`.
+
+**Add:** one code node that `JSON.parse`s the corrected response, then an HTTP node:
 
 ```
 POST https://api.babyjamjam.com/webhooks/call-transcripts
@@ -79,6 +84,17 @@ Content-Type: application/json
 - **`CallIngestGuard`** (new, DB-backed; same spirit as the eformsign `WebhookGuard`): hash Bearer token → look up active row → attach `branchId` to request; touch `lastUsedAt`. 401 on missing/revoked/unknown.
 - All downstream rows inherit `branchId` from the token. Payload never carries branch identity.
 - **Provisioning (Phase 1, ops-level):** `POST /branches/:branchId/call-ingest-tokens { label }` → `{ token }` (once) and `POST /call-ingest-tokens/:id/revoke`, gated by the existing admin/role mechanism (exact guard confirmed at plan stage). Self-serve branch settings UI is Phase 3.
+
+### 5.1 Branch onboarding runbook (how a tenant actually gets connected)
+
+The branch↔calls mapping lives **only in the token**; the Drive-folder↔branch mapping is implicit in which workflow holds which token. No per-branch Google OAuth is needed:
+
+1. **Token (backend):** admin issues an ingest token for the branch (`POST /branches/:id/call-ingest-tokens`), copies the `cit_…` plaintext once.
+2. **Drive folder (Google):** the branch gets a dedicated folder, e.g. `Call Recordings — 인천본점`. Two equivalent setups: the operator creates it and shares it to the branch, **or** the branch creates it and shares it to the operator's Google account (the single account n8n's existing Drive credential belongs to — shared folders are watchable by folder ID with that one credential). The branch phone's auto-sync app uploads call recordings into this folder.
+3. **n8n (operator):** duplicate the template workflow; fill the three per-branch blanks — Drive folder ID, ingest token (the Drive credential stays the operator's single account); activate.
+4. **Smoke test:** drop a sample audio file into the folder → confirm the call appears in that branch's 통화요약 inbox and nowhere else.
+
+Offboarding/rotation: revoke the token (kills exactly that one source), deactivate the workflow. **Phase 3 automation:** steps 1+3 can be wrapped in a provisioning flow using n8n's REST API (create workflow from template programmatically); step 2 remains a Drive-side share action by the tenant.
 
 ## 6. Data model
 
@@ -146,7 +162,10 @@ Indexes: `(branchId, createdAt)`, `processingStatus`, `matchedClientId`.
 | `PATCH /client-drafts/:id` | Edit proposals / link `clientId` — only while PENDING |
 | `POST /client-drafts/:id/confirm` | NEW_CLIENT: body = staff-final `CreateClientDto`-shaped fields (+ `suppressGreetingSms?`) → existing `ClientService.create`; CLIENT_UPDATE: body = included `{field: value}` set → existing client update path (same validation as today's edits, incl. serviceStatus transitions). Transactional; 409 unless PENDING; stamps reviewedBy/At |
 | `POST /client-drafts/:id/discard` | `{ reason? }` |
+| `GET /client-drafts/count?status=PENDING` | Cheap count for the nav badge / NotificationBell |
 | `POST /call-records/:id/re-extract` | Phase 2, admin: re-runs extraction; only replaces proposals of a still-PENDING draft |
+
+**Full request/response contract:** `docs/api/call-inbox-api.md` — the source of truth for UI work; implementation keeps it in sync.
 
 **Webhook responses:** 202 accepted · 200 duplicate no-op · 401 bad token · 400 invalid payload · 413 transcript over size cap.
 
@@ -154,7 +173,7 @@ Indexes: `(branchId, createdAt)`, `processingStatus`, `matchedClientId`.
 
 ## 9. Mobile UI (wireframe: `docs/mockups/call-inbox-wireframe.html`)
 
-New **통화 인박스** section, bottom-nav tab with pending-count badge (placement provisional, see assumptions):
+New **통화요약** section (internal name: call inbox). Nav: the bottom-nav center slot currently held by 어시스턴트 (`mobile-bottom-nav.tsx` — `{ href: "/chat", label: "어시스턴트", icon: Sparkles, kind: "chat" }`) is replaced by `{ href: "/calls", label: "통화요약", icon: Phone(Call) }`, with a pending-count badge fed by `GET /client-drafts/count`. Whether the slot keeps the special center "chat-kind" styling is a UI fine-tuning call left to final polish. The `/chat` route itself stays functional:
 
 1. **검토 대기 (default tab)** — pending drafts only. Card: 신규/변경 badge, caller name+phone, one-line `requestSummary`, time/duration, low-confidence ⚠, matched-client chip or "고객 연결 필요".
 2. **통화 기록** — all calls incl. 기타; category chips (전체/신규상담/고객 변경/기타) + search; row shows outcome (적용 완료/폐기/대기). Replaces the old markdown report. Detail view: summary + chat-style transcript + Drive audio link.
