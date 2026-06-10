@@ -1,4 +1,4 @@
-export const CALL_EXTRACTION_PROMPT_VERSION = "v1";
+export const CALL_EXTRACTION_PROMPT_VERSION = "v2";
 
 /** client fields a proposal may target (spec §6) */
 export const PROPOSAL_FIELDS = [
@@ -43,7 +43,7 @@ export function buildCallExtractionPrompt(input: {
     duration(일수, 숫자), careCenter(조리원 이용, boolean), voucherClient(정부지원, boolean),
     startDate(희망 시작일), type 등)
   - CLIENT_SERVICE: 변경 요청된 필드만. 관리사 교체 요청 → field "serviceStatus",
-    value "active_with_replacement_requested". 서비스 종료 요청 → "serviceStatus", "terminated".
+    value "replacement_requested". 서비스 종료 요청 → "serviceStatus", "terminated".
   - OTHER: proposals는 [].
 - 각 proposal: value(날짜는 YYYY-MM-DD, 기간은 일수 숫자, boolean은 true/false),
   evidence(근거가 된 발화 인용, 원문 그대로), confidence("high" | "low").

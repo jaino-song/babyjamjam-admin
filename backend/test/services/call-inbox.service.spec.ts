@@ -126,14 +126,14 @@ describe("CallInboxService", () => {
         prisma.client_draft.update.mockResolvedValue({});
 
         const result = await service.confirm("branch-1", "user-1", "draft-1", {
-            changes: { startDate: "2026-06-23", serviceStatus: "active_with_replacement_requested", hairColor: "x" },
+            changes: { startDate: "2026-06-23", serviceStatus: "replacement_requested", hairColor: "x" },
         });
 
         expect(result).toEqual({ clientId: 142 });
         // hairColor must be dropped (not in PROPOSAL_FIELDS)
         expect(clientService.update).toHaveBeenCalledWith("branch-1", 142, {
             startDate: "2026-06-23",
-            serviceStatus: "active_with_replacement_requested",
+            serviceStatus: "replacement_requested",
         });
         expect(prisma.client_draft.update).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: "draft-1" },

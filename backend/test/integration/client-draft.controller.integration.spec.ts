@@ -87,7 +87,7 @@ describe("ClientDraftController (Integration)", () => {
     });
 
     it("POST /client-drafts/draft-2/confirm (CLIENT_UPDATE) passes changes through to confirm", async () => {
-        const body = { changes: { startDate: "2026-06-23", serviceStatus: "active_with_replacement_requested" } };
+        const body = { changes: { startDate: "2026-06-23", serviceStatus: "replacement_requested" } };
         callInboxService.confirm.mockResolvedValue({ clientId: 99 });
 
         const res = await request(app.getHttpServer())

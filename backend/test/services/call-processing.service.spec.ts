@@ -1,4 +1,5 @@
 import { CallProcessingService } from "application/services/call-processing.service";
+import { CALL_EXTRACTION_PROMPT_VERSION } from "application/services/call-extraction.prompt";
 import { CallExtractionResult } from "domain/ports/call-extraction.port";
 
 describe("CallProcessingService", () => {
@@ -82,7 +83,7 @@ describe("CallProcessingService", () => {
             { field: "duration", value: 10, evidence: "10일이요", confidence: "high" },
             { field: "careCenter", value: false, evidence: "조리원은 안 가요", confidence: "high" },
         ]);
-        expect(draftData.extractionMeta).toEqual(expect.objectContaining({ promptVersion: "v1" }));
+        expect(draftData.extractionMeta).toEqual(expect.objectContaining({ promptVersion: CALL_EXTRACTION_PROMPT_VERSION }));
         expect(prisma.call_record.update).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.objectContaining({ callerPhone: "01048217763", callerName: "김서연" }),
         }));
@@ -117,7 +118,7 @@ describe("CallProcessingService", () => {
             category: "CLIENT_SERVICE",
             requestSummary: "관리사 교체 요청",
             proposals: [
-                { field: "serviceStatus", value: "active_with_replacement_requested", evidence: "교체해 주세요", confidence: "high" },
+                { field: "serviceStatus", value: "replacement_requested", evidence: "교체해 주세요", confidence: "high" },
             ],
         }));
 
